@@ -3,8 +3,10 @@
 // Settings
 const settings = require('../settings/local');
 
+// Serevices
 const StarCitizen = require('../services/StarCitizen');
 
+// Main Process
 async function main (input = {}) {
   const sc = new StarCitizen(input);
   await sc.start();
@@ -13,6 +15,7 @@ async function main (input = {}) {
   };
 }
 
+// Run the main process, catch any exceptions, and log the output
 main(settings).catch((exception) => {
   console.error('[FABRIC:STAR-CITIZEN]', '[ERROR]', 'Main Process Exception:', exception);
 }).then((output) => {

@@ -1,12 +1,26 @@
+/**
+ * Core service for Star Citizen.
+ */
 'use strict';
 
+// Dependencies
 const merge = require('lodash.merge');
 const Hub = require('@fabric/hub');
 
+// TODO: render GoonCitizen/goon.vc static site / import / upgrade it to use this tool
+/**
+ * Core service for Star Citizen.
+ */
 class StarCitizen extends Hub {
+  /**
+   * Create an instance of the Star Citizen service.
+   * @param {Object} settings Configuration for this instance.
+   * @returns {StarCitizen} A new instance of the Star Citizen service.
+   */
   constructor (settings = {}) {
     super(settings);
 
+    // Settings
     this.settings = merge({}, this.settings, {
       state: {
         status: 'STOPPED'
@@ -16,10 +30,12 @@ class StarCitizen extends Hub {
       }
     }, settings);
 
+    // HTTP Server
     this.routes = [
       { path: '/services/star-citizen', method: 'GET', handler: this.handleGenericRequest.bind(this) }
     ];
 
+    // State
     this._state = {
       content: JSON.parse(JSON.stringify(this.settings.state))
     };
@@ -29,6 +45,7 @@ class StarCitizen extends Hub {
 
   handleGenericRequest (req, res, next) {
     console.debug('received request:', req);
+    return res.send('Hello, Star Citizen!');
   }
 
   async start () {

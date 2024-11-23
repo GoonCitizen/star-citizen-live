@@ -1,0 +1,10 @@
+{
+  "name": "@rsi/star-citizen",
+  "chat": "https://grove.chat/#/room/#games:fabric.pub",
+  "source": "https://github.com/GoonCitizen/star-citizen-live",
+  "templates": {
+    "default": {
+      "layoutFile": "assets/docs.tmpl"
+    }
+  }
+}

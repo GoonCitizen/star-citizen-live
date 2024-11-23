@@ -5,6 +5,7 @@
   "main": "services/StarCitizen.js",
   "scripts": {
     "coverage": "c8 npm test",
+    "make:api": "jsdoc2md --configure jsdoc.json --files types/*.js services/*.js README.md > API.md",
     "report:install": "rm -rf node_modules && echo \"\n\" > package-lock.json && echo \"$ npm i\" > reports/install.log && npm i >> reports/install.log",
     "report:todo": "grep --exclude package.json --exclude-dir=.env --exclude-dir=.git --exclude-dir=_book --exclude-dir=stores --exclude-dir=assets --exclude-dir=node_modules --exclude-dir=reports --exclude-dir=coverage --exclude-dir=docs --exclude-dir=libraries -rEI \"TODO|FIXME\" . | sed 's/\\([^:]*:\\)[ ]*/\\1 /' > reports/TODO.txt",
     "start": "node scripts/node.js",
@@ -28,5 +29,8 @@
   "homepage": "https://github.com/GoonCitizen/star-citizen-live#readme",
   "dependencies": {
     "@fabric/hub": "FabricLabs/hub.fabric.pub#feature/sensemaker"
+  },
+  "devDependencies": {
+    "jsdoc-to-markdown": "=9.0.5"
   }
 }
