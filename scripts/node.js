@@ -1,5 +1,8 @@
 'use strict';
 
+// Settings
+const settings = require('../settings/local');
+
 const StarCitizen = require('../services/StarCitizen');
 
 async function main (input = {}) {
