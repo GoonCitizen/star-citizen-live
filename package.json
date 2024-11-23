@@ -1,0 +1,25 @@
+{
+  "name": "@rsi/star-citizen",
+  "version": "0.1.0-dev",
+  "description": "Fabric connectivity for the Star Citizen universe.",
+  "main": "services/StarCitizen.js",
+  "scripts": {
+    "test": "mocha tests"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/GoonCitizen/star-citizen-live.git"
+  },
+  "keywords": [
+    "star",
+    "citizen",
+    "fabric",
+    "bitcoin"
+  ],
+  "author": "Fabric Labs",
+  "license": "MIT",
+  "bugs": {
+    "url": "https://github.com/GoonCitizen/star-citizen-live/issues"
+  },
+  "homepage": "https://github.com/GoonCitizen/star-citizen-live#readme"
+}
