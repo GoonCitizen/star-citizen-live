@@ -32,7 +32,10 @@ class StarCitizen extends Hub {
 
     // HTTP Server
     this.routes = [
-      { path: '/services/star-citizen', method: 'GET', handler: this.handleGenericRequest.bind(this) }
+      { path: '/services/star-citizen', method: 'GET', handler: this.handleGenericRequest.bind(this) },
+      { path: '/services/star-citizen', method: 'POST', handler: this.handleGenericRequest.bind(this) },
+      { path: '/services/star-citizen/messages', method: 'GET', handler: this.handleGenericRequest.bind(this) },
+      { path: '/services/star-citizen/messages', method: 'POST', handler: this.handleGenericRequest.bind(this) }
     ];
 
     // State
