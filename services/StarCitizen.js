@@ -4,6 +4,7 @@
 'use strict';
 
 // Dependencies
+const fs = require('fs');
 const merge = require('lodash.merge');
 const Hub = require('@fabric/hub');
 
@@ -22,6 +23,7 @@ class StarCitizen extends Hub {
 
     // Settings
     this.settings = merge({}, this.settings, {
+      logfile: 'C:/Program Files/Roberts Space Industries/StarCitizen/LIVE/logs',
       state: {
         status: 'STOPPED'
       },
@@ -49,6 +51,15 @@ class StarCitizen extends Hub {
   handleGenericRequest (req, res, next) {
     console.debug('received request:', req);
     return res.send('Hello, Star Citizen!');
+  }
+
+  handleLogChange (current, previous) {
+    console.debug('previous:', previous);
+    console.debug('current:', current);
+  }
+
+  openLog () {
+    this.logwatcher = fs.watch(this.settings.logfile, this.handleLogChange.bind(this));
   }
 
   async start () {
