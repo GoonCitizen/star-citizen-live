@@ -65,6 +65,7 @@ class StarCitizen extends Hub {
   async start () {
     this._state.status = 'STARTING';
     await this.http.start();
+    this.openLog();
     this._state.status = 'STARTED';
     this.commit();
     return this;
