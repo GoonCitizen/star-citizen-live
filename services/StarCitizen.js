@@ -25,7 +25,9 @@ class StarCitizen extends Hub {
     this.settings = merge({}, this.settings, {
       logfile: 'C:/Program Files/Roberts Space Industries/StarCitizen/LIVE/logs',
       state: {
-        status: 'STOPPED'
+        status: 'STOPPED',
+        players: {},
+        vehicles: {}
       },
       http: {
         port: 3041
@@ -38,6 +40,7 @@ class StarCitizen extends Hub {
       { path: '/services/star-citizen', method: 'POST', handler: this.handleGenericRequest.bind(this) },
       { path: '/services/star-citizen/messages', method: 'GET', handler: this.handleGenericRequest.bind(this) },
       { path: '/services/star-citizen/messages', method: 'POST', handler: this.handleGenericRequest.bind(this) }
+      { path: '/services/star-citizen/kills', method: 'POST', handler: this.handleCreateKillRequest.bind(this) }
     ];
 
     // State
@@ -46,6 +49,10 @@ class StarCitizen extends Hub {
     };
 
     return this;
+  }
+
+  handleCreateKillRequest (req, res, next) {
+    console.debug('[PLACEHOLDER]', 'Creating kill:', req.body);
   }
 
   handleGenericRequest (req, res, next) {
