@@ -59,7 +59,7 @@ class StarCitizen extends Hub {
   }
 
   openLog () {
-    this.logwatcher = fs.watch(this.settings.logfile, this.handleLogChange.bind(this));
+    this.logwatcher = fs.watchFile(this.settings.logfile, this.handleLogChange.bind(this));
   }
 
   async start () {
