@@ -23,7 +23,7 @@ class StarCitizen extends Hub {
 
     // Settings
     this.settings = merge({}, this.settings, {
-      logfile: 'C:/Program Files/Roberts Space Industries/StarCitizen/LIVE/logs',
+      logfile: 'C:/Program Files/Roberts Space Industries/StarCitizen/LIVE/Game.log',
       state: {
         status: 'STOPPED',
         players: {},
