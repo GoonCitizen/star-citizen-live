@@ -7,6 +7,8 @@
 const merge = require('lodash.merge');
 const { Tail } = require('tail');
 
+// Fabric Types
+const Actor = require('@fabric/core/types/actor');
 const Hub = require('@fabric/hub');
 
 // TODO: render GoonCitizen/goon.vc static site / import / upgrade it to use this tool
@@ -65,7 +67,32 @@ class StarCitizen extends Hub {
   }
 
   handleLogChange (entry) {
-    console.debug('entry:', entry);
+    const actor = new Actor(entry);
+    const message = this.parseLogEntry(entry);
+
+    console.debug('message:', message);
+
+    this.emit('activity', {
+      type: 'StarCitizenLogEntry',
+      actor: {
+        id: this.id
+      },
+      object: {
+        id: actor.id,
+        content: entry
+      },
+      target: '/logs'
+    });
+  }
+
+  parseLogEntry (entry) {
+    const parts = entry.split(' ');
+    const object = {
+      timestamp: parts[0],
+      parts: parts
+    };
+
+    return object;
   }
 
   handleLogError (error) {
