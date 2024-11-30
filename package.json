@@ -28,7 +28,8 @@
   },
   "homepage": "https://github.com/GoonCitizen/star-citizen-live#readme",
   "dependencies": {
-    "@fabric/hub": "FabricLabs/hub.fabric.pub#feature/sensemaker"
+    "@fabric/hub": "FabricLabs/hub.fabric.pub#feature/sensemaker",
+    "tail": "2.2.6"
   },
   "devDependencies": {
     "jsdoc-to-markdown": "=9.0.5"

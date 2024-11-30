@@ -4,8 +4,9 @@
 'use strict';
 
 // Dependencies
-const fs = require('fs');
 const merge = require('lodash.merge');
+const { Tail } = require('tail');
+
 const Hub = require('@fabric/hub');
 
 // TODO: render GoonCitizen/goon.vc static site / import / upgrade it to use this tool
@@ -43,6 +44,8 @@ class StarCitizen extends Hub {
       { path: '/services/star-citizen/kills', method: 'POST', handler: this.handleCreateKillRequest.bind(this) }
     ];
 
+    this.logwatcher = null;
+
     // State
     this._state = {
       content: JSON.parse(JSON.stringify(this.settings.state))
@@ -60,13 +63,23 @@ class StarCitizen extends Hub {
     return res.send('Hello, Star Citizen!');
   }
 
-  handleLogChange (current, previous) {
-    console.debug('previous:', previous);
-    console.debug('current:', current);
+  handleLogChange (entry) {
+    console.debug('entry:', entry);
+  }
+
+  handleLogError (error) {
+    console.error('Error reading log:', error);
   }
 
   openLog () {
-    this.logwatcher = fs.watchFile(this.settings.logfile, this.handleLogChange.bind(this));
+    // this.logwatcher = fs.watchFile(this.settings.logfile, this.handleLogChange.bind(this));
+    try {
+      this.logwatcher = new Tail(this.settings.logfile);
+      this.logwatcher.on('line', this.handleLogChange.bind(this));
+      this.logwatcher.on('error', this.handleLogError.bind(this));
+    } catch (exception) {
+      console.error('Could not open log:', exception);
+    }
   }
 
   async start () {
