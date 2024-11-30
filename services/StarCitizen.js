@@ -16,7 +16,8 @@ const Hub = require('@fabric/hub');
 class StarCitizen extends Hub {
   /**
    * Create an instance of the Star Citizen service.
-   * @param {Object} settings Configuration for this instance.
+   * @param {Object} [settings] Configuration for this instance.
+   * @param {Object} [settings.logfile=C:/Program Files/Roberts Space Industries/StarCitizen/LIVE/Game.log] Path to the log file for Star Citizen.
    * @returns {StarCitizen} A new instance of the Star Citizen service.
    */
   constructor (settings = {}) {
