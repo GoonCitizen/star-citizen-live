@@ -4,6 +4,7 @@
 'use strict';
 
 // Dependencies
+const fetch = require('cross-fetch');
 const merge = require('lodash.merge');
 const { Tail } = require('tail');
 
@@ -27,6 +28,7 @@ class StarCitizen extends Hub {
 
     // Settings
     this.settings = merge({}, this.settings, {
+      authority: 'https://sensemaker.io',
       logfile: 'C:/Program Files/Roberts Space Industries/StarCitizen/LIVE/Game.log',
       state: {
         status: 'STOPPED',
@@ -40,8 +42,10 @@ class StarCitizen extends Hub {
 
     // HTTP Server
     this.routes = [
+      // TODO: prefix with /services/star-citizen only when imported as library
       { path: '/services/star-citizen', method: 'GET', handler: this.handleGenericRequest.bind(this) },
       { path: '/services/star-citizen', method: 'POST', handler: this.handleGenericRequest.bind(this) },
+      { path: '/services/star-citizen/activities', method: 'POST', handler: this.handleGenericRequest.bind(this) },
       { path: '/services/star-citizen/messages', method: 'GET', handler: this.handleGenericRequest.bind(this) },
       { path: '/services/star-citizen/messages', method: 'POST', handler: this.handleGenericRequest.bind(this) },
       { path: '/services/star-citizen/kills', method: 'POST', handler: this.handleCreateKillRequest.bind(this) }
@@ -57,6 +61,27 @@ class StarCitizen extends Hub {
     return this;
   }
 
+  async announceActivity (activity) {
+    return new Promise((resolve, reject) => {
+      const announcement = fetch(`${this.settings.authority}/services/star-citizen/activities`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(activity)
+      });
+
+      announcement.catch((error) => {
+        console.error('Could not announce activity:', error);
+        reject(error);
+      });
+
+      announcement.then((response) => {
+        resolve(response);
+      });
+    });
+  }
+
   handleCreateKillRequest (req, res, next) {
     console.debug('[PLACEHOLDER]', 'Creating kill:', req.body);
   }
@@ -67,12 +92,9 @@ class StarCitizen extends Hub {
   }
 
   handleLogChange (entry) {
-    const actor = new Actor(entry);
+    const actor = new Actor({ content: entry });
     const message = this.parseLogEntry(entry);
-
-    console.debug('message:', message);
-
-    this.emit('activity', {
+    const activity = {
       type: 'StarCitizenLogEntry',
       actor: {
         id: this.id
@@ -82,7 +104,15 @@ class StarCitizen extends Hub {
         content: entry
       },
       target: '/logs'
-    });
+    };
+
+    console.debug('message:', message);
+    console.debug('activity:', activity);
+
+    this.emit('activity', activity);
+    this.announceActivity(activity);
+
+    return this;
   }
 
   parseLogEntry (entry) {
@@ -100,7 +130,6 @@ class StarCitizen extends Hub {
   }
 
   openLog () {
-    // this.logwatcher = fs.watchFile(this.settings.logfile, this.handleLogChange.bind(this));
     try {
       this.logwatcher = new Tail(this.settings.logfile);
       this.logwatcher.on('line', this.handleLogChange.bind(this));
