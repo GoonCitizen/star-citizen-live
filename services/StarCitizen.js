@@ -113,7 +113,7 @@ class StarCitizen extends Hub {
     console.debug('activity:', activity);
 
     this.emit('activity', activity);
-    this.announceActivity(activity);
+    this.announceActivity(activity).catch((error) => { console.error('Could not announce activity:', error); });
 
     return this;
   }
