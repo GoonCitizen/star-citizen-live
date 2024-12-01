@@ -63,7 +63,10 @@ class StarCitizen extends Hub {
 
   async announceActivity (activity) {
     return new Promise((resolve, reject) => {
-      const announcement = fetch(`${this.settings.authority}/services/star-citizen/activities`, {
+      const url = `${this.settings.authority}/services/star-citizen/activities`;
+      console.debug('Announcing activity:', activity);
+      console.debug('Announcement URL:', url);
+      const announcement = fetch(url, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json'
