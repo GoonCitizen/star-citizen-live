@@ -1,7 +1,9 @@
 'use strict';
 
 const NAME = 'GOONCITIZEN';
+const BRAND_NAME = 'G00N CITIZEN';
 
 module.exports = {
-  NAME
+  NAME,
+  BRAND_NAME
 };

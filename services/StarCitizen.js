@@ -45,6 +45,7 @@ class StarCitizen extends Hub {
       // TODO: prefix with /services/star-citizen only when imported as library
       { path: '/services/star-citizen', method: 'GET', handler: this.handleGenericRequest.bind(this) },
       { path: '/services/star-citizen', method: 'POST', handler: this.handleGenericRequest.bind(this) },
+      { path: '/services/star-citizen/activities', method: 'GET', handler: this.handleGenericRequest.bind(this) },
       { path: '/services/star-citizen/activities', method: 'POST', handler: this.handleGenericRequest.bind(this) },
       { path: '/services/star-citizen/messages', method: 'GET', handler: this.handleGenericRequest.bind(this) },
       { path: '/services/star-citizen/messages', method: 'POST', handler: this.handleGenericRequest.bind(this) },
@@ -64,8 +65,6 @@ class StarCitizen extends Hub {
   async announceActivity (activity) {
     return new Promise((resolve, reject) => {
       const url = `${this.settings.authority}/services/star-citizen/activities`;
-      console.debug('Announcing activity:', activity);
-      console.debug('Announcement URL:', url);
       const announcement = fetch(url, {
         method: 'POST',
         headers: {
@@ -109,8 +108,7 @@ class StarCitizen extends Hub {
       target: '/logs'
     };
 
-    console.debug('message:', message);
-    console.debug('activity:', activity);
+    console.debug('[FABRIC]', '[STAR-CITIZEN]', '[LOG]', `[${actor.id}]`, message);
 
     this.emit('activity', activity);
     this.announceActivity(activity).catch((error) => { console.error('Could not announce activity:', error); });
