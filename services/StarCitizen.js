@@ -142,7 +142,7 @@ class StarCitizen extends Hub {
 
   async start () {
     this._state.status = 'STARTING';
-    await this.http.start();
+    if (this.settings.http && this.settings.http.enable) await this.http.start();
     this.openLog();
     this._state.status = 'STARTED';
     this.commit();
@@ -151,7 +151,7 @@ class StarCitizen extends Hub {
 
   async stop () {
     this._state.status = 'STOPPING';
-    await this.http.stop();
+    if (this.settings.http && this.settings.http.enable) await this.http.stop();
     this._state.status = 'STOPPED';
     this.commit();
     return this;
