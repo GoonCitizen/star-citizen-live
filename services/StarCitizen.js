@@ -121,7 +121,7 @@ class StarCitizen extends Hub {
         return this;
     }
 
-    if (this._state.logs[actor.id]) {
+    if (this._state.content.logs[actor.id]) {
       // This should never happen...
       console.debug('Log entry already exists:', actor.id);
       console.debug('This should never happen.');
