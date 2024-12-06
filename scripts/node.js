@@ -1,3 +1,4 @@
+#!/usr/bin/env node
 'use strict';
 
 // Settings
@@ -16,8 +17,10 @@ async function main (input = {}) {
 }
 
 // Run the main process, catch any exceptions, and log the output
+console.log('[STAR-CITIZEN-LIVE]', '[STATUS]', 'Starting node...');
 main(settings).catch((exception) => {
-  console.error('[FABRIC:STAR-CITIZEN]', '[ERROR]', 'Main Process Exception:', exception);
+  console.error('[STAR-CITIZEN-LIVE]', '[ERROR]', 'Main Process Exception:', exception);
 }).then((output) => {
-  console.debug('[FABRIC:STAR-CITIZEN]', '[OUTPUT]', 'Main Process Complete:', output);
+  console.log('[STAR-CITIZEN-LIVE]', '[OUTPUT]', 'Main Process:', JSON.stringify(output));
+  console.log('[STAR-CITIZEN-LIVE]', '[STATUS]', 'Listening for logs...');
 });

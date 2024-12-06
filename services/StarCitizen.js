@@ -111,6 +111,12 @@ class StarCitizen extends Hub {
     console.debug('[FABRIC]', '[STAR-CITIZEN]', '[LOG]', `[${actor.id}]`, message);
 
     this.emit('activity', activity);
+
+    switch (message.parts[1]) {
+      case '[Notice]':
+        return this;
+    }
+
     this.announceActivity(activity).catch((error) => { console.error('Could not announce activity:', error); });
 
     return this;
