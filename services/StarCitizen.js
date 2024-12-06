@@ -118,14 +118,9 @@ class StarCitizen extends Hub {
 
     switch (message.parts[1]) {
       case '[Notice]':
+      case 'CryAnimation:':
+      case 'Warning':
         return this;
-    }
-
-    if (this._state.content.logs[actor.id]) {
-      // This should never happen...
-      console.debug('Log entry already exists:', actor.id);
-      console.debug('This should never happen.');
-      process.exit();
     }
 
     this._state.content.logs[actor.id] = message;
