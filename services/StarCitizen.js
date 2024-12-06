@@ -128,7 +128,7 @@ class StarCitizen extends Hub {
       process.exit();
     }
 
-    this._state.logs[actor.id] = message;
+    this._state.content.logs[actor.id] = message;
     this.commit();
     this.announceActivity(activity).catch((error) => { console.error('Could not announce activity:', error); });
 
