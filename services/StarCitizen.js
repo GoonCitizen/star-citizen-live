@@ -32,6 +32,7 @@ class StarCitizen extends Hub {
       logfile: 'C:/Program Files/Roberts Space Industries/StarCitizen/LIVE/Game.log',
       state: {
         status: 'STOPPED',
+        logs: {},
         players: {},
         vehicles: {}
       },
@@ -60,6 +61,10 @@ class StarCitizen extends Hub {
     };
 
     return this;
+  }
+
+  get logs () {
+    return Object.values(this.state.logs);
   }
 
   async announceActivity (activity) {
@@ -109,7 +114,6 @@ class StarCitizen extends Hub {
     };
 
     console.debug('[FABRIC]', '[STAR-CITIZEN]', '[LOG]', `[${actor.id}]`, message);
-
     this.emit('activity', activity);
 
     switch (message.parts[1]) {
@@ -117,6 +121,15 @@ class StarCitizen extends Hub {
         return this;
     }
 
+    if (this._state.logs[actor.id]) {
+      // This should never happen...
+      console.debug('Log entry already exists:', actor.id);
+      console.debug('This should never happen.');
+      process.exit();
+    }
+
+    this._state.logs[actor.id] = message;
+    this.commit();
     this.announceActivity(activity).catch((error) => { console.error('Could not announce activity:', error); });
 
     return this;
