@@ -7,6 +7,7 @@
 const fetch = require('cross-fetch');
 const merge = require('lodash.merge');
 const { Tail } = require('tail');
+const { capturePrimaryMonitory } = require('windows-ss');
 
 // Fabric Types
 const Actor = require('@fabric/core/types/actor');
@@ -113,7 +114,6 @@ class StarCitizen extends Hub {
       target: '/logs'
     };
 
-    console.debug('[FABRIC]', '[STAR-CITIZEN]', '[LOG]', `[${actor.id}]`, message);
     this.emit('activity', activity);
 
     switch (message.parts[1]) {
@@ -123,6 +123,7 @@ class StarCitizen extends Hub {
         return this;
     }
 
+    console.debug('[FABRIC]', '[STAR-CITIZEN]', '[LOG]', `[${actor.id}]`, message);
     this._state.content.logs[actor.id] = message;
     this.commit();
     this.announceActivity(activity).catch((error) => { console.error('Could not announce activity:', error); });
@@ -152,6 +153,10 @@ class StarCitizen extends Hub {
     } catch (exception) {
       console.error('Could not open log:', exception);
     }
+  }
+
+  async screenshot () {
+    return capturePrimaryMonitory();
   }
 
   async start () {
