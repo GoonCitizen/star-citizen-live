@@ -7,7 +7,7 @@
 const fetch = require('cross-fetch');
 const merge = require('lodash.merge');
 const { Tail } = require('tail');
-const { capturePrimaryMonitory } = require('windows-ss');
+const screenshot = require('screenshot-desktop');
 
 // Fabric Types
 const Actor = require('@fabric/core/types/actor');
@@ -156,7 +156,15 @@ class StarCitizen extends Hub {
   }
 
   async screenshot () {
-    return capturePrimaryMonitory();
+    return new Promise((resolve, reject) => {
+      screenshot({
+        format: 'png'
+      }).then((image) => {
+        resolve(image);
+      }).catch((error) => {
+        reject(error);
+      });
+    });
   }
 
   async start () {
