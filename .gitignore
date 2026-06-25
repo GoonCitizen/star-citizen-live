@@ -2,13 +2,17 @@
 node_modules/
 package-lock.json
 
-# Environment
+# Environment / secrets — never commit these
 .env
 settings/local.js
+settings/auth.txt
 
 # Logs
 *.log
 logs/
+# ...but keep committed test fixtures (a tiny sample combat log)
+!test/fixtures/
+!test/fixtures/*.log
 
 # Stores
 stores/
@@ -29,6 +33,9 @@ reports/coverage/
 .DS_Store
 Thumbs.db
 
+# Local AI assistant config (machine-specific)
+.claude/
+
 # Build
 dist/
 build/
@@ -37,3 +44,8 @@ build/
 tmp/
 temp/
 *.tmp
+
+# Solution-brief build: keep the source scripts, drop generated images
+# (node_modules is already ignored above)
+reports/brief/*.png
+reports/brief/*.svg

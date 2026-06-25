@@ -1,3 +1,13 @@
+> ⚠️ **STALE — legacy Fabric API.** This file is auto-generated JSDoc for the
+> **original Fabric-based code** (`StarCitizen ⇐ Hub`, `Mission ⇐ Entity`,
+> `MissionApplication`) that this fork **removed** (see `DECISIONS.md` → D-002).
+> It does **not** describe the current Fabric-free service. There is no longer a
+> generator script for it.
+>
+> **For the real, current REST API and architecture, see `AGENTS.md` §4** (and
+> `README.md` → REST API). This file is retained only for historical reference
+> during the migration.
+
 ## Classes
 
 <dl>

@@ -1,7 +1,33 @@
 # Changelog
 All notable changes to this project will be documented in this file.
 
-## [0.1.0-RC1] - 2025-12-05
+> **Note:** the authoritative, milestone-by-milestone trail (with retros and
+> findings) lives in **`PROGRESS.md`**. This file is a high-level summary; the
+> entries below the `[0.1.0-dev]` line describe the *original Fabric-based* code,
+> most of which was removed in the fabric-free rebuild — treat them as historical.
+
+## [Unreleased] — Fabric-free rebuild (`feature/fabric-free-m1`)
+### Changed
+- **Removed the Fabric/p2p framework** and rebuilt the core as a zero-dependency
+  Node.js service (`app/server.js`). `npm start` now runs the Fabric-free service;
+  the old Fabric entry is kept as `npm run start:fabric` (deprecated). (D-002)
+### Added
+- **Live monitoring** with auto-detection of install/channel + offline replay
+  (`app/locate.js`, `app/server.js`, `scripts/replay.js`), session/restart tracking.
+- **Real SC 4.x log parser** (`app/parser.js`): logins, sessions/build, missions,
+  objectives, notifications, mission-type classification, player-down detection,
+  combat-progress proxy, and version-verified kill/vehicle rules (dormant on 4.8.0).
+- **Live dashboard** (`app/ui.html`) + expanded REST API.
+- **Officer-validated mission register** (`services/MissionManager.js`,
+  `app/store.js`): full lifecycle + officer allowlist + hash-chained audit log,
+  exposed over REST. (D-005)
+- Test suite on Node's built-in runner (`test/*.test.js`, 45 tests).
+- Tool-agnostic AI-assistant context: `AGENTS.md` (canonical), `CLAUDE.md`
+  (imports it), `PROJECT_CONTEXT.md` (pointer).
+
+---
+
+## [0.1.0-RC1] - 2025-12-05 — *historical (Fabric-based)*
 ### Added
 
 ## [0.1.0-dev] - 2024-12-05

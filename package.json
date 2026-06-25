@@ -4,28 +4,29 @@
   "description": "Fabric connectivity for the Star Citizen universe with Discord integration.",
   "main": "main.js",
   "exports": {
-    ".": "./services/StarCitizen.js",
-    "./components/StarCitizenHome": "./components/StarCitizenHome.js",
-    "./components/MissionHome": "./components/MissionHome.js",
-    "./components/Interface": "./components/Interface.js",
-    "./services/MissionManager": "./services/MissionManager.js",
-    "./types/Mission": "./types/Mission.js",
-    "./types/MissionApplication": "./types/MissionApplication.js"
+    ".": "./app/server.js",
+    "./parser": "./app/parser.js",
+    "./types/Mission": "./types/Mission.js"
   },
   "scripts": {
-    "build": "npm run make:api && npm run build:browser",
+    "backfill": "node scripts/backfill.js",
     "build:browser": "node scripts/build.js",
+    "build:electron": "npm run build:browser && electron-builder",
+    "build:win:installer": "npm run build:browser && electron-builder --win --publish never",
+    "build:win": "npm run build:browser && electron-builder --win",
+    "build": "npm run make:api && npm run build:browser",
     "coverage": "c8 npm test",
+    "electron:dev": "electron . --dev",
+    "electron": "electron .",
     "make:api": "jsdoc2md --configure jsdoc.json --files types/*.js services/*.js README.md > API.md",
+    "replay": "node scripts/replay.js",
     "report:install": "rm -rf node_modules && echo \"\n\" > package-lock.json && echo \"$ npm i\" > reports/install.log && npm i >> reports/install.log",
     "report:todo": "grep --exclude package.json --exclude-dir=.env --exclude-dir=.git --exclude-dir=_book --exclude-dir=stores --exclude-dir=assets --exclude-dir=node_modules --exclude-dir=reports --exclude-dir=coverage --exclude-dir=docs --exclude-dir=libraries -rEI \"TODO|FIXME\" . | sed 's/\\([^:]*:\\)[ ]*/\\1 /' > reports/TODO.txt",
+    "start:browser": "node app/server.js",
+    "start:fabric": "node scripts/node.js   # DEPRECATED original Fabric-based entry (kept for reference)",
     "start": "node scripts/node.js",
-    "test": "mocha tests",
-    "electron": "electron .",
-    "electron:dev": "electron . --dev",
-    "build:electron": "npm run build:browser && electron-builder",
-    "build:win": "npm run build:browser && electron-builder --win",
-    "build:win:installer": "npm run build:browser && electron-builder --win --publish never"
+    "test:browser": "node --test test/*.test.js",
+    "test": "mocha tests"
   },
   "repository": {
     "type": "git",

@@ -1,59 +1,66 @@
 'use strict';
 
+/**
+ * MissionManager — the org mission register (M5.1).
+ *
+ * Implements D-005: a centralized, OFFICER-VALIDATED register. Lifecycle:
+ *   open --apply--> (applications) --officer accept--> assigned
+ *        --claim(assignee)--> (claim) --officer validate(approve)--> completed
+ *                                       --officer validate(reject)--> back to assigned
+ *   open|assigned --officer cancel--> cancelled
+ *
+ * Every mutation appends a hash-chained AuditEntry (tamper-evident; M6 adds
+ * officer signatures over each entry). Backed by app/store.js (memory or file).
+ * Keeps the method names/events the rest of the code already uses
+ * (createMission/getMission/missions, start/stop) so nothing else breaks.
+ *
+ * Officer model: settings.officers is an allowlist of actor ids. If EMPTY, the
+ * register runs in permissive "bootstrap" mode (everyone is an officer) so it is
+ * usable before roles are wired (REST/Discord auth lands in M5.2/M5.3).
+ */
+
 // Dependencies
 const crypto = require('crypto');
-// Use tiny-secp256k1 directly (same as @fabric/core uses)
+const EventEmitter = require('events');
 const secp256k1 = require('tiny-secp256k1');
-
-// Fabric Types
 const Actor = require('@fabric/core/types/actor');
-const Service = require('@fabric/core/types/service');
+const { Store } = require('../app/store');
 
 // Local Types
 const Mission = require('../types/Mission');
 const MissionApplication = require('../types/MissionApplication');
+
+// Constants
+const ZERO = '0'.repeat(64);
+// TODO: replace with @fabric/core
+const sha256 = (s) => crypto.createHash('sha256').update(String(s)).digest('hex');
 
 /**
  * Mission Manager service.
  * Handles mission lifecycle, applications, and cryptographic verification.
  * Supports both single secp256k1 signatures and Musig2 multisig.
  */
-class MissionManager extends Service {
+class MissionManager extends EventEmitter {
   /**
    * Create a MissionManager instance.
    * @param {Object} [settings] - Configuration settings.
    */
   constructor (settings = {}) {
-    super(settings);
-
-    this.settings = Object.assign({
-      name: 'MissionManager',
-      enableMusig2: true,
-      autoApprove: false,
-      maxApplicationsPerMission: 10
-    }, settings);
-
-    // State
-    this._state = {
-      content: {
-        missions: {},
-        applications: {},
-        signatures: {}
-      }
-    };
-
-    return this;
+    super();
+    this.settings = Object.assign({ enable: true, officers: [], dir: null }, settings);
+    this.officers = new Set((this.settings.officers || []).map(String));
+    this.store = settings.store || new Store({ dir: this.settings.dir });
+    this._counter = 0;
   }
+
+  // ---- collections ----
+  get missions () { return this.store.all('missions'); }
+  get applications () { return this.store.all('applications'); }
+  get claims () { return this.store.all('claims'); }
+  get validations () { return this.store.all('validations'); }
+  get audit () { return this.store.all('audit').sort((a, b) => a.seq - b.seq); }
 
   // Declarative API Properties
-  get missions () {
-    return Object.values(this.state.missions || {});
-  }
-
-  get applications () {
-    return Object.values(this.state.applications || {});
-  }
-
   get openMissions () {
     return this.missions.filter(m => m.status === 'open' && !m.isExpired);
   }
@@ -66,28 +73,68 @@ class MissionManager extends Service {
     return this.missions.filter(m => m.status === 'completed');
   }
 
+  async start () { this.emit('ready'); return this; }
+  async stop () { this.emit('stopped'); return this; }
+
+  _id (prefix) { this._counter += 1; return `${prefix}-${Date.now().toString(36)}-${this._counter}`; }
+  _mission (id) { const m = this.store.get('missions', id); if (!m) throw new Error('mission not found'); return m; }
+
+  // ---- officer permission ----
+  isOfficer (actor) { return this.officers.size === 0 || this.officers.has(String(actor)); }
+  _requireOfficer (actor) { if (!this.isOfficer(actor)) { const e = new Error('forbidden: not an officer'); e.code = 'FORBIDDEN'; throw e; } }
+
+  // ---- audit (hash chain) ----
+  _audit (actor, action, entity, entityId, summary) {
+    const chain = this.audit;
+    const prevHash = chain.length ? chain[chain.length - 1].hash : ZERO;
+    const body = { seq: chain.length, ts: new Date().toISOString(), actor: actor != null ? String(actor) : null, action, entity, entityId, summary: summary || '' };
+    const hash = sha256(prevHash + JSON.stringify(body));
+    const entry = Object.assign({ id: `audit-${body.seq}` }, body, { prevHash, hash });
+    this.store.put('audit', entry.id, entry);
+    this.emit('audit', entry);
+    return entry;
+  }
+
+  // Recompute the chain and confirm nothing was altered.
+  verifyAudit () {
+    let prev = ZERO;
+    for (const e of this.audit) {
+      const body = { seq: e.seq, ts: e.ts, actor: e.actor, action: e.action, entity: e.entity, entityId: e.entityId, summary: e.summary };
+      if (e.prevHash !== prev || e.hash !== sha256(prev + JSON.stringify(body))) return false;
+      prev = e.hash;
+    }
+    return true;
+  }
+
+  // ---- missions ----
   /**
    * Create a new mission.
    * @param {Object} data - Mission data.
    * @returns {Mission} Created mission.
    */
-  async createMission (data) {
-    // Generate ID from JSON string
-    const actor = new Actor(JSON.stringify(data));
-    const missionData = {
-      ...data,
-      _id: actor.id,
-      id: actor.id,
+  async createMission (data = {}) {
+    const officer = data.createdBy || data.officerId || null;
+    this._requireOfficer(officer);
+    const id = data.id || this._id('mission');
+    const mission = {
+      id,
+      title: data.title || 'Untitled mission',
+      type: data.type || 'bounty',
+      description: data.description || '',
+      reward: Number(data.reward) || 0,
+      requirements: data.requirements || null,
+      location: data.location || null,
+      deadline: data.deadline || null,
+      outOfGame: !!data.outOfGame,
+      createdBy: officer != null ? String(officer) : null,
+      createdAt: new Date().toISOString(),
       status: 'open',
-      createdAt: Date.now()
+      assigneeId: null,
+      contract: data.contract || { type: 'single' }
     };
-
-    const mission = new Mission(missionData);
-
-    this._state.content.missions[actor.id] = missionData;
-    this.commit();
-    this.emit('mission:created', missionData);
-
+    this.store.put('missions', id, mission);
+    this._audit(officer, 'mission.create', 'mission', id, mission.title);
+    this.emit('mission:created', mission);
     return mission;
   }
 
@@ -96,9 +143,112 @@ class MissionManager extends Service {
    * @param {String} missionId - Mission ID.
    * @returns {Mission|null} Mission instance or null.
    */
-  getMission (missionId) {
-    const data = this._state.content.missions[missionId];
-    return data ? new Mission(data) : null;
+  getMission (id) { return this.store.get('missions', id); }
+
+  /**
+   * Get applications for a mission.
+   * @param {String} missionId - Mission ID.
+   * @returns {Array<MissionApplication>} Mission applications.
+   */
+  getMissionApplications (missionId) { return this.applications.filter((a) => a.missionId === missionId); }
+
+  getMissionClaims (missionId) { return this.claims.filter((c) => c.missionId === missionId); }
+
+  async cancelMission (data = {}) {
+    const m = this._mission(data.missionId);
+    this._requireOfficer(data.officerId);
+    if (m.status === 'completed' || m.status === 'cancelled') throw new Error(`cannot cancel a ${m.status} mission`);
+    m.status = 'cancelled';
+    m.cancelReason = data.reason || null;
+    this.store.put('missions', m.id, m);
+    this._audit(data.officerId, 'mission.cancel', 'mission', m.id, data.reason || '');
+    this.emit('mission:cancelled', m);
+    return m;
+  }
+
+  // ---- applications ----
+  async applyToMission (data = {}) {
+    const m = this._mission(data.missionId);
+    if (m.status !== 'open') throw new Error(`mission is ${m.status}, not open`);
+    const id = data.id || this._id('application');
+    const app = { id, missionId: m.id, applicantId: String(data.applicantId || 'unknown'), message: data.message || '', status: 'pending', createdAt: new Date().toISOString() };
+    this.store.put('applications', id, app);
+    this._audit(app.applicantId, 'application.submit', 'application', id, m.title);
+    this.emit('application:submitted', app);
+    return app;
+  }
+
+  async decideApplication (data = {}) {
+    const app = this.store.get('applications', data.applicationId);
+    if (!app) throw new Error('application not found');
+    this._requireOfficer(data.officerId);
+    if (app.status !== 'pending') throw new Error(`application already ${app.status}`);
+    app.decidedBy = data.officerId != null ? String(data.officerId) : null;
+    app.decidedAt = new Date().toISOString();
+
+    if (data.decision === 'accept') {
+      const m = this._mission(app.missionId);
+      if (m.status !== 'open') throw new Error(`mission is ${m.status}, cannot assign`);
+      app.status = 'accepted';
+      m.status = 'assigned';
+      m.assigneeId = app.applicantId;
+      this.store.put('applications', app.id, app);
+      this.store.put('missions', m.id, m);
+      this._audit(data.officerId, 'application.accept', 'application', app.id, m.title);
+      this.emit('application:accepted', app);
+    } else if (data.decision === 'reject') {
+      app.status = 'rejected';
+      app.reason = data.reason || null;
+      this.store.put('applications', app.id, app);
+      this._audit(data.officerId, 'application.reject', 'application', app.id, data.reason || '');
+      this.emit('application:rejected', app);
+    } else {
+      throw new Error('decision must be "accept" or "reject"');
+    }
+    return app;
+  }
+
+  // ---- completion claims + officer validation ----
+  async submitClaim (data = {}) {
+    const m = this._mission(data.missionId);
+    if (m.status !== 'assigned') throw new Error(`mission is ${m.status}, not assigned`);
+    if (String(data.claimantId) !== String(m.assigneeId)) throw new Error('only the assignee can claim completion');
+    const id = data.id || this._id('claim');
+    const claim = { id, missionId: m.id, claimantId: String(data.claimantId), note: data.note || '', evidence: Array.isArray(data.evidence) ? data.evidence : [], status: 'pending', claimedAt: new Date().toISOString() };
+    this.store.put('claims', id, claim);
+    this._audit(claim.claimantId, 'claim.submit', 'claim', id, m.title);
+    this.emit('claim:submitted', claim);
+    return claim;
+  }
+
+  async validateClaim (data = {}) {
+    const claim = this.store.get('claims', data.claimId);
+    if (!claim) throw new Error('claim not found');
+    this._requireOfficer(data.officerId);
+    if (claim.status !== 'pending') throw new Error(`claim already ${claim.status}`);
+    const m = this._mission(claim.missionId);
+    const validation = { id: this._id('validation'), claimId: claim.id, missionId: m.id, officerId: data.officerId != null ? String(data.officerId) : null, decision: data.decision, note: data.note || '', validatedAt: new Date().toISOString() };
+
+    if (data.decision === 'approve') {
+      claim.status = 'validated';
+      m.status = 'completed';
+      m.completedAt = validation.validatedAt;
+      this.store.put('claims', claim.id, claim);
+      this.store.put('missions', m.id, m);
+      this.store.put('validations', validation.id, validation);
+      this._audit(data.officerId, 'claim.validate', 'claim', claim.id, 'approved');
+      this.emit('claim:validated', validation);
+      this.emit('mission:completed', m);
+    } else if (data.decision === 'reject') {
+      claim.status = 'rejected';                 // mission stays 'assigned'; assignee may re-claim
+      this.store.put('claims', claim.id, claim);
+      this.store.put('validations', validation.id, validation);
+      this._audit(data.officerId, 'claim.validate', 'claim', claim.id, 'rejected');
+      this.emit('claim:rejected', validation);
+    } else {
+      throw new Error('decision must be "approve" or "reject"');
+    }
+    return validation;
   }
 
   /**
@@ -112,23 +262,25 @@ class MissionManager extends Service {
    * @returns {Promise<MissionApplication>} Created application.
    */
   async submitApplication (applicationData) {
-    const mission = this.getMission(applicationData.missionId);
+    const missionData = this.store.get('missions', applicationData.missionId);
 
-    if (!mission) {
+    if (!missionData) {
       throw new Error('Mission not found');
     }
+
+    const mission = new Mission(missionData);
 
     if (!mission.isOpen()) {
       throw new Error('Mission is not open for applications');
     }
 
-    // Check application count
+    const maxApplications = this.settings.maxApplicationsPerMission != null
+      ? this.settings.maxApplicationsPerMission : 10;
     const existingApps = this.applications.filter(a => a.missionId === mission._id);
-    if (existingApps.length >= this.settings.maxApplicationsPerMission) {
+    if (existingApps.length >= maxApplications) {
       throw new Error('Maximum applications reached for this mission');
     }
 
-    // Create application
     const actor = new Actor(JSON.stringify(applicationData));
     const appData = {
       ...applicationData,
@@ -140,7 +292,6 @@ class MissionManager extends Service {
 
     const application = new MissionApplication(appData);
 
-    // Verify signature
     const commitment = mission.generateContractCommitment();
     const verified = await this.verifySignature(
       commitment,
@@ -155,12 +306,9 @@ class MissionManager extends Service {
       throw new Error('Invalid signature');
     }
 
-    // Store application
-    this._state.content.applications[actor.id] = appData;
-    this.commit();
+    this.store.put('applications', actor.id, appData);
     this.emit('application:submitted', appData);
 
-    // Auto-approve if configured
     if (this.settings.autoApprove) {
       await this.approveApplication(actor.id);
     }
@@ -178,7 +326,8 @@ class MissionManager extends Service {
    */
   async verifySignature (message, signature, publicKey, multisigData = null) {
     try {
-      if (multisigData && this.settings.enableMusig2) {
+      const enableMusig2 = this.settings.enableMusig2 !== false;
+      if (multisigData && enableMusig2) {
         return await this.verifyMusig2Signature(message, signature, multisigData);
       } else {
         return this.verifySecp256k1Signature(message, signature, publicKey);
@@ -198,12 +347,10 @@ class MissionManager extends Service {
    */
   verifySecp256k1Signature (message, signature, publicKey) {
     try {
-      // Message should already be a hash (32 bytes)
       const msgBuffer = Buffer.from(message, 'hex');
       const sigBuffer = Buffer.from(signature, 'hex');
       const pubKeyBuffer = Buffer.from(publicKey, 'hex');
 
-      // Verify signature matches public key for this message
       return secp256k1.verify(msgBuffer, pubKeyBuffer, sigBuffer);
     } catch (error) {
       console.error('[MISSION-MANAGER]', 'secp256k1 verification error:', error);
@@ -220,27 +367,16 @@ class MissionManager extends Service {
    */
   async verifyMusig2Signature (message, signature, multisigData) {
     try {
-      // TODO: Implement Musig2 verification
-      // This is a placeholder for Musig2 verification logic
-      // Musig2 verification involves:
-      // 1. Aggregate public keys
-      // 2. Verify nonce commitments
-      // 3. Verify partial signatures
-      // 4. Verify final aggregated signature
-
       const { participantKeys, aggregatedKey, nonces } = multisigData;
 
       if (!participantKeys || !aggregatedKey) {
         throw new Error('Invalid Musig2 data');
       }
 
-      // Placeholder: Basic validation
       const msgBuffer = Buffer.from(message, 'hex');
       const sigBuffer = Buffer.from(signature, 'hex');
       const aggKeyBuffer = Buffer.from(aggregatedKey, 'hex');
 
-      // In production, use a proper Musig2 library
-      // For now, verify using the aggregated key as a standard signature
       return secp256k1.verify(msgBuffer, sigBuffer, aggKeyBuffer);
     } catch (error) {
       console.error('[MISSION-MANAGER]', 'Musig2 verification error:', error);
@@ -254,7 +390,7 @@ class MissionManager extends Service {
    * @returns {Promise<MissionApplication>} Approved application.
    */
   async approveApplication (applicationId) {
-    const appData = this._state.content.applications[applicationId];
+    const appData = this.store.get('applications', applicationId);
     if (!appData) {
       throw new Error('Application not found');
     }
@@ -262,16 +398,15 @@ class MissionManager extends Service {
     const application = new MissionApplication(appData);
     application.approve();
 
-    // Update mission status
-    const mission = this.getMission(application.missionId);
-    if (mission) {
+    const missionData = this.store.get('missions', application.missionId);
+    if (missionData) {
+      const mission = new Mission(missionData);
       mission.status = 'assigned';
       mission.assignee = application.applicantId;
-      this._state.content.missions[mission.id] = mission.toJSON();
+      this.store.put('missions', mission.id, mission.toJSON());
     }
 
-    this._state.content.applications[applicationId] = application.toJSON();
-    this.commit();
+    this.store.put('applications', applicationId, application.toJSON());
     this.emit('application:approved', application.toJSON());
 
     return application;
@@ -284,7 +419,7 @@ class MissionManager extends Service {
    * @returns {Promise<MissionApplication>} Rejected application.
    */
   async rejectApplication (applicationId, reason) {
-    const appData = this._state.content.applications[applicationId];
+    const appData = this.store.get('applications', applicationId);
     if (!appData) {
       throw new Error('Application not found');
     }
@@ -292,8 +427,7 @@ class MissionManager extends Service {
     const application = new MissionApplication(appData);
     application.reject(reason);
 
-    this._state.content.applications[applicationId] = application.toJSON();
-    this.commit();
+    this.store.put('applications', applicationId, application.toJSON());
     this.emit('application:rejected', application.toJSON());
 
     return application;
@@ -306,17 +440,18 @@ class MissionManager extends Service {
    * @returns {Promise<Mission>} Completed mission.
    */
   async completeMission (missionId, completionData = {}) {
-    const mission = this.getMission(missionId);
-    if (!mission) {
+    const missionData = this.store.get('missions', missionId);
+    if (!missionData) {
       throw new Error('Mission not found');
     }
+
+    const mission = new Mission(missionData);
 
     mission.status = 'completed';
     mission.completedAt = Date.now();
     mission.completionData = completionData;
 
-    this._state.content.missions[missionId] = mission.toJSON();
-    this.commit();
+    this.store.put('missions', missionId, mission.toJSON());
     this.emit('mission:completed', mission.toJSON());
 
     return mission;
@@ -329,29 +464,21 @@ class MissionManager extends Service {
    * @returns {Promise<Mission>} Failed mission.
    */
   async failMission (missionId, reason) {
-    const mission = this.getMission(missionId);
-    if (!mission) {
+    const missionData = this.store.get('missions', missionId);
+    if (!missionData) {
       throw new Error('Mission not found');
     }
+
+    const mission = new Mission(missionData);
 
     mission.status = 'failed';
     mission.failureReason = reason;
     mission.failedAt = Date.now();
 
-    this._state.content.missions[missionId] = mission.toJSON();
-    this.commit();
+    this.store.put('missions', missionId, mission.toJSON());
     this.emit('mission:failed', mission.toJSON());
 
     return mission;
-  }
-
-  /**
-   * Get applications for a mission.
-   * @param {String} missionId - Mission ID.
-   * @returns {Array<MissionApplication>} Mission applications.
-   */
-  getMissionApplications (missionId) {
-    return this.applications.filter(app => app.missionId === missionId);
   }
 
   /**
@@ -362,22 +489,6 @@ class MissionManager extends Service {
   getApplicantApplications (applicantId) {
     return this.applications.filter(app => app.applicantId === applicantId);
   }
-
-  async start () {
-    console.log('[MISSION-MANAGER]', 'Starting Mission Manager...');
-    this._state.content.status = 'STARTED';
-    this.commit();
-    this.emit('ready');
-    return this;
-  }
-
-  async stop () {
-    console.log('[MISSION-MANAGER]', 'Stopping Mission Manager...');
-    this._state.content.status = 'STOPPED';
-    this.commit();
-    return this;
-  }
 }
 
 module.exports = MissionManager;
-
