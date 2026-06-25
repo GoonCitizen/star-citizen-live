@@ -12,7 +12,7 @@
  */
 
 const path = require('path');
-const StarCitizenService = require('../app/server');
+const StarCitizenService = require('../node');
 
 async function main () {
   const file = process.argv[2];
