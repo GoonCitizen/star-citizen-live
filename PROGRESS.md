@@ -1,5 +1,4 @@
 # Progress & Retrospective Log
-
 A running, plain-English trail of what's been done, what we learned, and what's
 next. Each milestone closes with a short retro. Newest at the top.
 

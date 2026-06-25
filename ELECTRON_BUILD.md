@@ -1,5 +1,4 @@
 # Electron Desktop Application Build Guide
-
 This project includes Electron support for building a Windows desktop application with installer.
 
 ## Prerequisites

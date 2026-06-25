@@ -1,5 +1,4 @@
 # Decisions Log (ADRs)
-
 Plain-English record of the *why* behind key choices, so anyone joining later
 understands the direction. Newest at the top.
 

@@ -1,5 +1,4 @@
 # AGENTS.md — Project context for AI coding assistants
-
 > **This is the canonical, tool-agnostic context file for this repo.** It is the
 > single source of truth for AI coding tools. OpenAI's tooling (Codex) reads
 > `AGENTS.md`; Claude Code reads `CLAUDE.md`, which simply imports this file. Keep

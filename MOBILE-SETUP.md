@@ -1,5 +1,4 @@
 # Mobile Setup — working on this project from a second computer (e.g. MacBook)
-
 This project syncs between computers through **GitHub**. One machine *pushes*
 (uploads) changes; the other *pulls* (downloads) them. As long as you do that,
 all your machines stay in sync.
@@ -9,9 +8,7 @@ all your machines stay in sync.
 ---
 
 ## One-time setup on a new machine
-
 ### 1. Install Node.js (the engine that runs the project + Claude Code)
-
 - Easiest: download the **LTS** installer from <https://nodejs.org> and run it.
 - macOS with Homebrew, alternatively: `brew install node`
 
@@ -22,13 +19,11 @@ node --version && npm --version
 ```
 
 ### 2. Install Claude Code (the `claude` command-line assistant)
-
 ```bash
 npm install -g @anthropic-ai/claude-code
 ```
 
 ### 3. Clone this repo and install dependencies
-
 ```bash
 git clone -b feature/fabric-free-m1 https://github.com/Neorion/star-citizen-live.git
 cd star-citizen-live
@@ -59,7 +54,6 @@ git push        # LAST — send it up before you walk away
 ---
 
 ## Picking up a session (parity across devices & tools)
-
 Whichever machine or AI tool you use, get to the same state the same way:
 
 1. `git pull` — grab the latest.

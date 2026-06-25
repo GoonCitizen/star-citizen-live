@@ -1,5 +1,4 @@
 # Implementation Summary: Fabric-Compatible Declarative API with Discord Integration
-
 ## Overview
 
 The star-citizen-live repository now provides a comprehensive Fabric-compatible declarative API that seamlessly integrates with Discord for real-time game event announcements.

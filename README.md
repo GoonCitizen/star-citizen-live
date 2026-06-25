@@ -1,6 +1,5 @@
 # Star Citizen Live
-
-A **zero-dependency Node.js service** that watches the Star Citizen `Game.log`
+A ~~**zero-dependency Node.js service**~~ that watches the Star Citizen `Game.log`
 file (read-only) and relays gameplay — logins, missions/objectives,
 combat-progress, player-downs, and (on older game builds) kills — to a **live web
 dashboard**, an optional **Discord webhook**, and a small **REST API**. On top of

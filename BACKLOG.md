@@ -1,5 +1,4 @@
 # Idea Backlog
-
 Parked ideas not yet scheduled. Each notes *what*, *why*, and an honest
 *feasibility* read against what the `Game.log` actually provides (we know its
 limits well — see `sc-log` findings in `PROGRESS.md` / memory). Promote to a

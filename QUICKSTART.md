@@ -1,5 +1,4 @@
 # Quick Start Guide
-
 Get Star Citizen Live running with Discord integration in 5 minutes.
 
 ## Prerequisites
