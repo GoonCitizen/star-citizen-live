@@ -2,7 +2,7 @@
   "name": "@rsi/star-citizen",
   "version": "0.1.0-dev",
   "description": "Fabric connectivity for the Star Citizen universe with Discord integration.",
-  "main": "services/StarCitizen.js",
+  "main": "main.js",
   "exports": {
     ".": "./services/StarCitizen.js",
     "./components/StarCitizenHome": "./components/StarCitizenHome.js",
@@ -20,7 +20,12 @@
     "report:install": "rm -rf node_modules && echo \"\n\" > package-lock.json && echo \"$ npm i\" > reports/install.log && npm i >> reports/install.log",
     "report:todo": "grep --exclude package.json --exclude-dir=.env --exclude-dir=.git --exclude-dir=_book --exclude-dir=stores --exclude-dir=assets --exclude-dir=node_modules --exclude-dir=reports --exclude-dir=coverage --exclude-dir=docs --exclude-dir=libraries -rEI \"TODO|FIXME\" . | sed 's/\\([^:]*:\\)[ ]*/\\1 /' > reports/TODO.txt",
     "start": "node scripts/node.js",
-    "test": "mocha tests"
+    "test": "mocha tests",
+    "electron": "electron .",
+    "electron:dev": "electron . --dev",
+    "build:electron": "npm run build:browser && electron-builder",
+    "build:win": "npm run build:browser && electron-builder --win",
+    "build:win:installer": "npm run build:browser && electron-builder --win --publish never"
   },
   "repository": {
     "type": "git",
@@ -54,8 +59,48 @@
     "tail": "=2.2.6"
   },
   "devDependencies": {
+    "electron": "=28.0.0",
+    "electron-builder": "=24.9.1",
     "jsdoc-to-markdown": "=9.0.5",
     "mocha": "=10.8.2",
     "c8": "=7.11.3"
+  },
+  "build": {
+    "appId": "com.rsi.star-citizen-live",
+    "productName": "Star Citizen Live",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "**/*",
+      "!**/node_modules/*/{CHANGELOG.md,README.md,README,readme.md,readme}",
+      "!**/node_modules/*/{test,__tests__,tests,powered-test,example,examples}",
+      "!**/node_modules/*.d.ts",
+      "!**/node_modules/.bin",
+      "!**/*.{iml,o,hprof,orig,pyc,pyo,rbc,swp,csproj,sln,xproj}",
+      "!.editorconfig",
+      "!**/._*",
+      "!**/{.DS_Store,.git,.hg,.svn,CVS,RCS,SCCS,.gitignore,.gitattributes}",
+      "!**/{__pycache__,thumbs.db,.flowconfig,.idea,.vs,.nyc_output}",
+      "!**/{appveyor.yml,.travis.yml,circle.yml}",
+      "!**/{npm-debug.log,yarn.lock,.yarn-integrity,.yarn-metadata.json}"
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "publisherName": "RSI"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true
+    }
   }
 }
