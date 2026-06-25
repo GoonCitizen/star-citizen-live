@@ -24,7 +24,7 @@ const crypto = require('crypto');
 const EventEmitter = require('events');
 const secp256k1 = require('tiny-secp256k1');
 const Actor = require('@fabric/core/types/actor');
-const { Store } = require('../app/store');
+const { Store } = require('../stores/register');
 
 // Local Types
 const Mission = require('../types/Mission');
