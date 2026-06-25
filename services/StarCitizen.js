@@ -800,6 +800,39 @@ class StarCitizen extends Hub {
 
     return this;
   }
+
+  /**
+   * Get UI component configuration for Sensemaker integration.
+   * Services can override this method to declare their UI components.
+   * @returns {Object|null} UI component configuration or null
+   */
+  getUIConfig () {
+    return {
+      name: 'Star Citizen',
+      icon: 'space shuttle',
+      basePath: '/services/star-citizen',
+      routes: [
+        {
+          path: '',
+          component: '@rsi/star-citizen/components/StarCitizenHome',
+          title: 'Star Citizen',
+          icon: 'space shuttle',
+          exact: true
+        },
+        {
+          path: '/missions',
+          component: '@rsi/star-citizen/components/MissionHome',
+          title: 'Missions',
+          icon: 'tasks',
+          exact: true
+        }
+      ],
+      metadata: {
+        packageName: '@rsi/star-citizen',
+        description: 'Star Citizen Live service with missions, activities, and Discord integration'
+      }
+    };
+  }
 }
 
 module.exports = StarCitizen;
