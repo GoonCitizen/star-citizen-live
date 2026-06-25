@@ -1,5 +1,4 @@
 # Mobile Setup — working on this project from a second computer (e.g. MacBook)
-
 This project syncs between computers through **GitHub**. One machine *pushes*
 (uploads) changes; the other *pulls* (downloads) them. As long as you do that,
 all your machines stay in sync.

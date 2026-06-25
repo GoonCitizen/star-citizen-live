@@ -1,5 +1,6 @@
 # HANDOFF — Lead dev, start here
-
+## Sign-off: Eric
+### 2026-07-25
 > **Status:** Core feature set is complete and green; handed to the lead dev to
 > integrate the **communication/transport layer**. The codebase is deliberately
 > shaped so that layer is a **transport swap, not a rewrite** (see §3).

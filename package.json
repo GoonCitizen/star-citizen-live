@@ -55,16 +55,17 @@
   "dependencies": {
     "@fabric/hub": "FabricLabs/hub.fabric.pub#feature/sensemaker",
     "cross-fetch": "=4.0.0",
+    "ecpair": "=3.0.1",
     "lodash.merge": "=4.6.2",
     "screenshot-desktop": "=1.15.1",
     "tail": "=2.2.6"
   },
   "devDependencies": {
+    "c8": "=7.11.3",
     "electron": "=28.0.0",
     "electron-builder": "=24.9.1",
     "jsdoc-to-markdown": "=9.0.5",
-    "mocha": "=10.8.2",
-    "c8": "=7.11.3"
+    "mocha": "=10.8.2"
   },
   "build": {
     "appId": "com.rsi.star-citizen-live",

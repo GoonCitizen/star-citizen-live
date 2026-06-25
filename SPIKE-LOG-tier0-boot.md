@@ -1,5 +1,4 @@
 # Tier 0 Spike — "Can we get this project running?"
-
 **Date:** 8 June 2026
 **Who/what ran it:** Automated assistant working from the project's GitHub branch `feature/fabric-0.1.0`.
 **Goal in one sentence:** Find out whether the project can actually be installed and started on a clean machine — because that single answer decides how we approach everything else.

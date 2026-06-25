@@ -1,5 +1,4 @@
 # Start Here: Running this project in Claude Code
-
 A beginner-friendly handoff. No prior coding needed — you'll talk to Claude Code
 in plain English, just like in Cowork. The difference: Claude Code works directly
 on **your own computer**, so it can install, run, test, and (later) deploy this

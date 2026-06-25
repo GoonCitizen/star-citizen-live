@@ -1,13 +1,3 @@
-> ⚠️ **STALE — legacy Fabric API.** This file is auto-generated JSDoc for the
-> **original Fabric-based code** (`StarCitizen ⇐ Hub`, `Mission ⇐ Entity`,
-> `MissionApplication`) that this fork **removed** (see `DECISIONS.md` → D-002).
-> It does **not** describe the current Fabric-free service. There is no longer a
-> generator script for it.
->
-> **For the real, current REST API and architecture, see `AGENTS.md` §4** (and
-> `README.md` → REST API). This file is retained only for historical reference
-> during the migration.
-
 ## Classes
 
 <dl>
@@ -26,6 +16,36 @@ Supports both single secp256k1 signatures and Musig2 multisig.</p>
 <dt><a href="#StarCitizen">StarCitizen</a> ⇐ <code>Hub</code></dt>
 <dd><p>Core service for Star Citizen.
 Provides a Fabric-compatible declarative API with Discord integration.</p>
+</dd>
+</dl>
+
+## Constants
+
+<dl>
+<dt><a href="#http">http</a></dt>
+<dd><p>Star Citizen Live - Fabric-free service (M1 skeleton + M3 parser).</p>
+<p>Boots with ZERO external dependencies - only Node.js built-ins (http, crypto,
+events, fs, readline) plus global fetch. No @fabric/hub, no SSH git deps, no
+400 MB install. <code>node app/server.js</code> just works.</p>
+<p>Features: in-memory collections, REST endpoints, live log tailing (read-only,
+optional) AND offline replay, real Game.log event parsing (app/parser.js),
+optional Discord webhook posting, and the mission/contract seam.</p>
+<p>It edits NOTHING in the Star Citizen installation - the log is only ever read.</p>
+</dd>
+<dt><a href="#crypto">crypto</a></dt>
+<dd><p>MissionManager — the org mission register (M5.1).</p>
+<p>Implements D-005: a centralized, OFFICER-VALIDATED register. Lifecycle:
+  open --apply--&gt; (applications) --officer accept--&gt; assigned
+       --claim(assignee)--&gt; (claim) --officer validate(approve)--&gt; completed
+                                      --officer validate(reject)--&gt; back to assigned
+  open|assigned --officer cancel--&gt; cancelled</p>
+<p>Every mutation appends a hash-chained AuditEntry (tamper-evident; M6 adds
+officer signatures over each entry). Backed by app/store.js (memory or file).
+Keeps the method names/events the rest of the code already uses
+(createMission/getMission/missions, start/stop) so nothing else breaks.</p>
+<p>Officer model: settings.officers is an allowlist of actor ids. If EMPTY, the
+register runs in permissive &quot;bootstrap&quot; mode (everyone is an officer) so it is
+usable before roles are wired (REST/Discord auth lands in M5.2/M5.3).</p>
 </dd>
 </dl>
 
@@ -381,6 +401,7 @@ Supports both single secp256k1 signatures and Musig2 multisig.
     * [new MissionManager([settings])](#new_MissionManager_new)
     * [.createMission(data)](#MissionManager+createMission) ⇒ [<code>Mission</code>](#Mission)
     * [.getMission(missionId)](#MissionManager+getMission) ⇒ [<code>Mission</code>](#Mission) \| <code>null</code>
+    * [.getMissionApplications(missionId)](#MissionManager+getMissionApplications) ⇒ [<code>Array.&lt;MissionApplication&gt;</code>](#MissionApplication)
     * [.submitApplication(applicationData)](#MissionManager+submitApplication) ⇒ [<code>Promise.&lt;MissionApplication&gt;</code>](#MissionApplication)
     * [.verifySignature(message, signature, publicKey, [multisigData])](#MissionManager+verifySignature) ⇒ <code>Promise.&lt;Boolean&gt;</code>
     * [.verifySecp256k1Signature(message, signature, publicKey)](#MissionManager+verifySecp256k1Signature) ⇒ <code>Boolean</code>
@@ -389,7 +410,6 @@ Supports both single secp256k1 signatures and Musig2 multisig.
     * [.rejectApplication(applicationId, reason)](#MissionManager+rejectApplication) ⇒ [<code>Promise.&lt;MissionApplication&gt;</code>](#MissionApplication)
     * [.completeMission(missionId, completionData)](#MissionManager+completeMission) ⇒ [<code>Promise.&lt;Mission&gt;</code>](#Mission)
     * [.failMission(missionId, reason)](#MissionManager+failMission) ⇒ [<code>Promise.&lt;Mission&gt;</code>](#Mission)
-    * [.getMissionApplications(missionId)](#MissionManager+getMissionApplications) ⇒ [<code>Array.&lt;MissionApplication&gt;</code>](#MissionApplication)
     * [.getApplicantApplications(applicantId)](#MissionManager+getApplicantApplications) ⇒ [<code>Array.&lt;MissionApplication&gt;</code>](#MissionApplication)
 
 <a name="new_MissionManager_new"></a>
@@ -421,6 +441,18 @@ Get a mission by ID.
 
 **Kind**: instance method of [<code>MissionManager</code>](#MissionManager)  
 **Returns**: [<code>Mission</code>](#Mission) \| <code>null</code> - Mission instance or null.  
+
+| Param | Type | Description |
+| --- | --- | --- |
+| missionId | <code>String</code> | Mission ID. |
+
+<a name="MissionManager+getMissionApplications"></a>
+
+### missionManager.getMissionApplications(missionId) ⇒ [<code>Array.&lt;MissionApplication&gt;</code>](#MissionApplication)
+Get applications for a mission.
+
+**Kind**: instance method of [<code>MissionManager</code>](#MissionManager)  
+**Returns**: [<code>Array.&lt;MissionApplication&gt;</code>](#MissionApplication) - Mission applications.  
 
 | Param | Type | Description |
 | --- | --- | --- |
@@ -537,18 +569,6 @@ Fail a mission.
 | missionId | <code>String</code> | Mission ID. |
 | reason | <code>String</code> | Failure reason. |
 
-<a name="MissionManager+getMissionApplications"></a>
-
-### missionManager.getMissionApplications(missionId) ⇒ [<code>Array.&lt;MissionApplication&gt;</code>](#MissionApplication)
-Get applications for a mission.
-
-**Kind**: instance method of [<code>MissionManager</code>](#MissionManager)  
-**Returns**: [<code>Array.&lt;MissionApplication&gt;</code>](#MissionApplication) - Mission applications.  
-
-| Param | Type | Description |
-| --- | --- | --- |
-| missionId | <code>String</code> | Mission ID. |
-
 <a name="MissionManager+getApplicantApplications"></a>
 
 ### missionManager.getApplicantApplications(applicantId) ⇒ [<code>Array.&lt;MissionApplication&gt;</code>](#MissionApplication)
@@ -584,6 +604,7 @@ Provides a Fabric-compatible declarative API with Discord integration.
 * [StarCitizen](#StarCitizen) ⇐ <code>Hub</code>
     * [new StarCitizen([settings])](#new_StarCitizen_new)
     * [.postToDiscord(payload)](#StarCitizen+postToDiscord) ⇒ <code>Promise.&lt;Response&gt;</code>
+    * [.getUIConfig()](#StarCitizen+getUIConfig) ⇒ <code>Object</code> \| <code>null</code>
 
 <a name="new_StarCitizen_new"></a>
 
@@ -613,6 +634,51 @@ Post a message to Discord via webhook.
 | --- | --- | --- |
 | payload | <code>Object</code> | The Discord webhook payload. |
 
+<a name="StarCitizen+getUIConfig"></a>
+
+### starCitizen.getUIConfig() ⇒ <code>Object</code> \| <code>null</code>
+Get UI component configuration for Sensemaker integration.
+Services can override this method to declare their UI components.
+
+**Kind**: instance method of [<code>StarCitizen</code>](#StarCitizen)  
+**Returns**: <code>Object</code> \| <code>null</code> - UI component configuration or null  
+<a name="http"></a>
+
+## http
+Star Citizen Live - Fabric-free service (M1 skeleton + M3 parser).
+
+Boots with ZERO external dependencies - only Node.js built-ins (http, crypto,
+events, fs, readline) plus global fetch. No @fabric/hub, no SSH git deps, no
+400 MB install. `node app/server.js` just works.
+
+Features: in-memory collections, REST endpoints, live log tailing (read-only,
+optional) AND offline replay, real Game.log event parsing (app/parser.js),
+optional Discord webhook posting, and the mission/contract seam.
+
+It edits NOTHING in the Star Citizen installation - the log is only ever read.
+
+**Kind**: global constant  
+<a name="crypto"></a>
+
+## crypto
+MissionManager — the org mission register (M5.1).
+
+Implements D-005: a centralized, OFFICER-VALIDATED register. Lifecycle:
+  open --apply--> (applications) --officer accept--> assigned
+       --claim(assignee)--> (claim) --officer validate(approve)--> completed
+                                      --officer validate(reject)--> back to assigned
+  open|assigned --officer cancel--> cancelled
+
+Every mutation appends a hash-chained AuditEntry (tamper-evident; M6 adds
+officer signatures over each entry). Backed by app/store.js (memory or file).
+Keeps the method names/events the rest of the code already uses
+(createMission/getMission/missions, start/stop) so nothing else breaks.
+
+Officer model: settings.officers is an allowlist of actor ids. If EMPTY, the
+register runs in permissive "bootstrap" mode (everyone is an officer) so it is
+usable before roles are wired (REST/Discord auth lands in M5.2/M5.3).
+
+**Kind**: global constant  
 <a name="StarCitizenActivity"></a>
 
 ## StarCitizenActivity : <code>Object</code>
