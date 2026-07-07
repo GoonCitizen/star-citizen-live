@@ -9,9 +9,7 @@ The Mission module has been successfully implemented with full support for:
 - ✅ Declarative API properties
 
 ## Implementation Components
-
 ### Core Types
-
 1. **Mission** (`types/Mission.js`)
    - Entity representing a mission with contract configuration
    - Methods for checking requirements, expiration, signatures

@@ -53,7 +53,7 @@
   },
   "homepage": "https://github.com/GoonCitizen/star-citizen-live#readme",
   "dependencies": {
-    "@fabric/hub": "FabricLabs/hub.fabric.pub#feature/sensemaker",
+    "@fabric/hub": "FabricLabs/hub.fabric.pub#feature/rsi",
     "cross-fetch": "=4.0.0",
     "ecpair": "=3.0.1",
     "lodash.merge": "=4.6.2",
