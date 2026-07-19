@@ -7,7 +7,8 @@
     ".": "./services/LiveRelay.js",
     "./parser": "./functions/parser.js",
     "./locate": "./functions/locate.js",
-    "./types/Mission": "./types/Mission.js"
+    "./types/Mission": "./types/Mission.js",
+    "./components/Dashboard": "./components/Dashboard.js"
   },
   "scripts": {
     "backfill": "node scripts/backfill.js",
@@ -73,12 +74,15 @@
     "c8": "=7.11.3",
     "electron": "^43.1.1",
     "electron-builder": "^26.15.3",
+    "esbuild": "^0.25.12",
     "jsdoc-to-markdown": "=9.0.5",
     "mocha": "=10.8.2"
   },
   "build": {
-    "appId": "com.rsi.star-citizen-live",
-    "productName": "Star Citizen Live",
+    "appId": "vc.goon.desktop",
+    "productName": "GoonCitizen",
+    "executableName": "GoonCitizen",
+    "icon": "assets/icon.png",
     "directories": {
       "output": "dist"
     },
@@ -105,7 +109,9 @@
           ]
         }
       ],
-      "publisherName": "RSI"
+      "signtoolOptions": {
+        "publisherName": "GoonCitizen"
+      }
     },
     "nsis": {
       "oneClick": false,
@@ -119,10 +125,12 @@
       ],
       "category": "Game",
       "maintainer": "Fabric Labs <support@fabric.pub>",
-      "synopsis": "Live Star Citizen log relay and org dashboard",
-      "description": "G00N Citizen desktop app: read-only Game.log monitoring, live dashboard, mission register, and optional Discord relay."
+      "synopsis": "GoonCitizen — Star Citizen log relay and org dashboard",
+      "description": "GoonCitizen desktop app: read-only Game.log monitoring, live dashboard, mission register, and optional Discord relay.",
+      "executableName": "GoonCitizen"
     },
     "deb": {
+      "packageName": "gooncitizen",
       "depends": [
         "libnotify4",
         "libxtst6",

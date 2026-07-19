@@ -1,22 +1,62 @@
 'use strict';
 
 /**
- * Prepare browser assets for Electron packaging.
- * Copies the live dashboard to assets/index.html (production fallback).
- * The running app prefers the LiveRelay HTTP server for live data.
+ * Build the browser/Electron dashboard.
+ *
+ * Source of truth: components/Dashboard.js (React).
+ * Output: assets/index.html (self-contained HTML + inlined bundle).
  */
 
 const fs = require('fs');
 const path = require('path');
+const esbuild = require('esbuild');
 
 const root = path.join(__dirname, '..');
-const src = path.join(root, 'assets', 'dashboard.html');
+const entry = path.join(__dirname, 'dashboard-entry.js');
 const dest = path.join(root, 'assets', 'index.html');
+const Dashboard = require('../components/Dashboard');
 
-if (!fs.existsSync(src)) {
-  console.error('[BUILD]', 'Missing assets/dashboard.html');
-  process.exit(1);
+async function main () {
+  const result = await esbuild.build({
+    entryPoints: [entry],
+    bundle: true,
+    write: false,
+    format: 'iife',
+    platform: 'browser',
+    target: ['chrome100'],
+    minify: true,
+    define: {
+      'process.env.NODE_ENV': '"production"'
+    },
+    logLevel: 'warning'
+  });
+
+  const js = result.outputFiles[0].text;
+  const html = `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>${Dashboard.TITLE}</title>
+<style>
+${Dashboard.CSS}
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script>
+${js}
+</script>
+</body>
+</html>
+`;
+
+  fs.mkdirSync(path.dirname(dest), { recursive: true });
+  fs.writeFileSync(dest, html);
+  console.log('[BUILD]', 'Wrote assets/index.html from components/Dashboard.js');
 }
 
-fs.copyFileSync(src, dest);
-console.log('[BUILD]', 'Wrote assets/index.html from dashboard.html');
+main().catch((err) => {
+  console.error('[BUILD]', err);
+  process.exit(1);
+});

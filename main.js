@@ -1,7 +1,7 @@
 'use strict';
 
-// Electron main process — G00N Citizen desktop app.
-// Starts the live log relay and opens the same dashboard as `npm start`.
+// Electron main process — GoonCitizen desktop app.
+// Starts the live log relay, tray icon, and login-item auto-start.
 
 const electron = require('electron');
 if (!electron || typeof electron !== 'object' || !electron.app) {
@@ -14,7 +14,7 @@ if (!electron || typeof electron !== 'object' || !electron.app) {
   process.exit(1);
 }
 
-const { app, BrowserWindow, ipcMain, shell } = electron;
+const { app, BrowserWindow, Tray, Menu, nativeImage, ipcMain, shell } = electron;
 const path = require('path');
 const fs = require('fs');
 const http = require('http');
@@ -32,8 +32,23 @@ try {
 }
 
 let mainWindow = null;
+let tray = null;
 let starCitizenService = null;
 let activePort = null;
+/** When true, closing the window quits instead of hiding to tray. */
+let isQuitting = false;
+
+const startHidden = process.argv.includes('--hidden') ||
+  process.argv.includes('--open-as-hidden');
+
+const gotLock = app.requestSingleInstanceLock();
+if (!gotLock) {
+  app.quit();
+} else {
+  app.on('second-instance', () => {
+    showMainWindow();
+  });
+}
 
 function servicePort () {
   return Number(process.env.PORT) || settings.http?.port || settings.port || 3041;
@@ -96,12 +111,139 @@ function waitForHttp (port, { timeoutMs = 10000, intervalMs = 100 } = {}) {
   });
 }
 
-function createWindow (port) {
+function resolveAppIcon () {
   const iconPng = path.join(__dirname, 'assets', 'icon.png');
   const iconIco = path.join(__dirname, 'assets', 'icon.ico');
-  const icon = process.platform === 'win32' && fs.existsSync(iconIco)
-    ? iconIco
-    : (fs.existsSync(iconPng) ? iconPng : undefined);
+  if (process.platform === 'win32' && fs.existsSync(iconIco)) return iconIco;
+  if (fs.existsSync(iconPng)) return iconPng;
+  return undefined;
+}
+
+function resolveTrayImage () {
+  const assets = path.join(__dirname, 'assets');
+  if (process.platform === 'darwin') {
+    const template2x = path.join(assets, 'trayTemplate@2x.png');
+    const template = path.join(assets, 'trayTemplate.png');
+    const file = fs.existsSync(template2x) ? template2x
+      : (fs.existsSync(template) ? template : path.join(assets, 'tray.png'));
+    if (!fs.existsSync(file)) return nativeImage.createEmpty();
+    const img = nativeImage.createFromPath(file);
+    img.setTemplateImage(true);
+    return img;
+  }
+  const trayPng = path.join(assets, 'tray.png');
+  const iconPng = path.join(assets, 'icon.png');
+  const file = fs.existsSync(trayPng) ? trayPng : iconPng;
+  if (!fs.existsSync(file)) return nativeImage.createEmpty();
+  return nativeImage.createFromPath(file);
+}
+
+function showMainWindow () {
+  if (!mainWindow) {
+    if (activePort != null) createWindow(activePort);
+    return;
+  }
+  if (mainWindow.isMinimized()) mainWindow.restore();
+  mainWindow.show();
+  mainWindow.focus();
+  if (process.platform === 'darwin' && app.dock) app.dock.show();
+}
+
+function hideMainWindow () {
+  if (!mainWindow) return;
+  mainWindow.hide();
+  if (process.platform === 'darwin' && app.dock) app.dock.hide();
+}
+
+function quitApp () {
+  isQuitting = true;
+  app.quit();
+}
+
+function openAtLoginEnabled () {
+  try {
+    return !!app.getLoginItemSettings().openAtLogin;
+  } catch (_) {
+    return false;
+  }
+}
+
+/** Enable launch at OS login for installed builds (and opt-in via settings). */
+function configureAutoLaunch () {
+  const forceOff = process.env.SC_OPEN_AT_LOGIN === '0' || settings.openAtLogin === false;
+  const forceOn = process.env.SC_OPEN_AT_LOGIN === '1' || settings.openAtLogin === true;
+  const enable = forceOn || (!forceOff && app.isPackaged);
+
+  try {
+    app.setLoginItemSettings({
+      openAtLogin: enable,
+      openAsHidden: true,
+      path: process.execPath,
+      args: enable ? ['--hidden'] : []
+    });
+    console.log('[ELECTRON]', '[STATUS]', `Open at login: ${enable ? 'on' : 'off'}`);
+  } catch (error) {
+    console.warn('[ELECTRON]', '[WARNING]', 'Could not set login item:', error.message || error);
+  }
+}
+
+function setOpenAtLogin (enabled) {
+  try {
+    app.setLoginItemSettings({
+      openAtLogin: !!enabled,
+      openAsHidden: true,
+      path: process.execPath,
+      args: enabled ? ['--hidden'] : []
+    });
+  } catch (error) {
+    console.warn('[ELECTRON]', '[WARNING]', 'Could not update login item:', error.message || error);
+  }
+  rebuildTrayMenu();
+}
+
+function rebuildTrayMenu () {
+  if (!tray) return;
+  const atLogin = openAtLoginEnabled();
+  const menu = Menu.buildFromTemplate([
+    {
+      label: `Show ${BRAND_NAME}`,
+      click: () => showMainWindow()
+    },
+    {
+      label: 'Open at Login',
+      type: 'checkbox',
+      checked: atLogin,
+      click: (item) => setOpenAtLogin(item.checked)
+    },
+    { type: 'separator' },
+    {
+      label: 'Quit',
+      click: () => quitApp()
+    }
+  ]);
+  tray.setContextMenu(menu);
+}
+
+function createTray () {
+  if (tray) return;
+  const image = resolveTrayImage();
+  tray = new Tray(image.isEmpty() ? nativeImage.createEmpty() : image);
+  tray.setToolTip(BRAND_NAME);
+  rebuildTrayMenu();
+
+  tray.on('click', () => {
+    if (mainWindow && mainWindow.isVisible()) {
+      hideMainWindow();
+    } else {
+      showMainWindow();
+    }
+  });
+
+  tray.on('double-click', () => showMainWindow());
+}
+
+function createWindow (port) {
+  const icon = resolveAppIcon();
 
   mainWindow = new BrowserWindow({
     width: 1200,
@@ -132,19 +274,32 @@ function createWindow (port) {
 
   mainWindow.once('ready-to-show', () => {
     mainWindow.setTitle(BRAND_NAME);
-    mainWindow.show();
-    if (isDev) mainWindow.focus();
+    if (!startHidden) {
+      mainWindow.show();
+      if (isDev) mainWindow.focus();
+    } else {
+      console.log('[ELECTRON]', '[STATUS]', 'Started hidden (tray only)');
+      if (process.platform === 'darwin' && app.dock) app.dock.hide();
+    }
   });
 
-  // If the page never becomes ready, still show the window so errors are visible.
+  // If the page never becomes ready, still show unless we intentionally hid.
   setTimeout(() => {
-    if (mainWindow && !mainWindow.isVisible()) {
+    if (mainWindow && !mainWindow.isVisible() && !startHidden) {
       mainWindow.show();
     }
   }, 2500);
 
   mainWindow.webContents.on('did-fail-load', (_e, code, desc, url) => {
     console.error('[ELECTRON]', '[ERROR]', `did-fail-load ${code} ${desc} (${url})`);
+  });
+
+  // Close → tray (keep relay running). Quit only via tray menu / Cmd+Q.
+  mainWindow.on('close', (event) => {
+    if (!isQuitting) {
+      event.preventDefault();
+      hideMainWindow();
+    }
   });
 
   mainWindow.on('closed', () => {
@@ -229,33 +384,42 @@ async function stopService () {
   }
 }
 
-app.whenReady().then(async () => {
-  try {
-    await startService();
-    createWindow(activePort || servicePort());
-  } catch (error) {
-    console.error('[ELECTRON]', '[ERROR]', 'Startup failed:', error);
-    app.quit();
-    return;
-  }
-
-  app.on('activate', () => {
-    if (BrowserWindow.getAllWindows().length === 0) {
+if (gotLock) {
+  app.whenReady().then(async () => {
+    try {
+      configureAutoLaunch();
+      createTray();
+      await startService();
       createWindow(activePort || servicePort());
+    } catch (error) {
+      console.error('[ELECTRON]', '[ERROR]', 'Startup failed:', error);
+      isQuitting = true;
+      app.quit();
+      return;
+    }
+
+    app.on('activate', () => {
+      showMainWindow();
+    });
+  });
+
+  // Keep running in the tray when the window is closed.
+  app.on('window-all-closed', (event) => {
+    if (!isQuitting) {
+      // Electron may still emit this; do not quit — tray owns lifetime.
+      if (typeof event.preventDefault === 'function') event.preventDefault();
     }
   });
-});
 
-app.on('window-all-closed', async () => {
-  await stopService();
-  if (process.platform !== 'darwin') {
-    app.quit();
-  }
-});
-
-app.on('before-quit', async () => {
-  await stopService();
-});
+  app.on('before-quit', async () => {
+    isQuitting = true;
+    if (tray) {
+      tray.destroy();
+      tray = null;
+    }
+    await stopService();
+  });
+}
 
 ipcMain.handle('get-service-status', () => {
   if (starCitizenService) {
@@ -263,10 +427,16 @@ ipcMain.handle('get-service-status', () => {
       status: starCitizenService.status || 'UNKNOWN',
       port: activePort || starCitizenService.settings?.port || servicePort(),
       channel: starCitizenService.channel || null,
-      brand: BRAND_NAME
+      brand: BRAND_NAME,
+      openAtLogin: openAtLoginEnabled()
     };
   }
-  return { status: 'STOPPED', port: null, brand: BRAND_NAME };
+  return { status: 'STOPPED', port: null, brand: BRAND_NAME, openAtLogin: openAtLoginEnabled() };
+});
+
+ipcMain.handle('set-open-at-login', (_e, enabled) => {
+  setOpenAtLogin(!!enabled);
+  return { openAtLogin: openAtLoginEnabled() };
 });
 
 ipcMain.handle('restart-service', async () => {

@@ -1,6 +1,6 @@
 'use strict';
 
-const NAME = 'STAR-CITIZEN-LIVE';
+const NAME = 'GOONCITIZEN';
 const BRAND_NAME = 'G00N CITIZEN';
 
 module.exports = {

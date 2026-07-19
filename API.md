@@ -26,9 +26,9 @@ Provides a Fabric-compatible declarative API with Discord integration.</p>
 <dd><p>Star Citizen Live - Fabric-free service (M1 skeleton + M3 parser).</p>
 <p>Boots with ZERO external dependencies - only Node.js built-ins (http, crypto,
 events, fs, readline) plus global fetch. No @fabric/hub, no SSH git deps, no
-400 MB install. <code>node app/server.js</code> just works.</p>
+400 MB install. <code>node services/LiveRelay.js</code> just works.</p>
 <p>Features: in-memory collections, REST endpoints, live log tailing (read-only,
-optional) AND offline replay, real Game.log event parsing (app/parser.js),
+optional) AND offline replay, real Game.log event parsing (functions/parser.js),
 optional Discord webhook posting, and the mission/contract seam.</p>
 <p>It edits NOTHING in the Star Citizen installation - the log is only ever read.</p>
 </dd>
@@ -40,7 +40,7 @@ optional Discord webhook posting, and the mission/contract seam.</p>
                                       --officer validate(reject)--&gt; back to assigned
   open|assigned --officer cancel--&gt; cancelled</p>
 <p>Every mutation appends a hash-chained AuditEntry (tamper-evident; M6 adds
-officer signatures over each entry). Backed by app/store.js (memory or file).
+officer signatures over each entry). Backed by stores/register.js (memory or file).
 Keeps the method names/events the rest of the code already uses
 (createMission/getMission/missions, start/stop) so nothing else breaks.</p>
 <p>Officer model: settings.officers is an allowlist of actor ids. If EMPTY, the
@@ -332,8 +332,7 @@ Create a MissionApplication instance.
 | --- | --- | --- |
 | data | <code>Object</code> | Application data. |
 | data.missionId | <code>String</code> | Mission ID being applied to. |
-| data.applicantId | <code>String</code> | Applicant's player ID. |
-| data.publicKey | <code>String</code> | Applicant's public key (secp256k1). |
+| data.applicantId | <code>String</code> | Combined public key (hex). Single secp256k1   or Musig2-aggregated key — same opaque format as any other public key in the   system; not a separate player/handle identity. |
 | data.signature | <code>String</code> | Application signature. |
 | [data.message] | <code>String</code> | Optional message from applicant. |
 | data.status | <code>String</code> | Application status ('pending', 'approved', 'rejected'). |
@@ -470,8 +469,7 @@ Submit an application to accept a mission.
 | --- | --- | --- |
 | applicationData | <code>Object</code> | Application data. |
 | applicationData.missionId | <code>String</code> | Mission ID. |
-| applicationData.applicantId | <code>String</code> | Applicant ID. |
-| applicationData.publicKey | <code>String</code> | Applicant's public key. |
+| applicationData.applicantId | <code>String</code> | Combined public key (hex). |
 | applicationData.signature | <code>String</code> | Application signature. |
 | [applicationData.multisigData] | <code>Object</code> | Musig2 data if applicable. |
 
@@ -579,7 +577,7 @@ Get applications by applicant.
 
 | Param | Type | Description |
 | --- | --- | --- |
-| applicantId | <code>String</code> | Applicant ID. |
+| applicantId | <code>String</code> | Combined public key (hex). |
 
 <a name="StarCitizen"></a>
 
@@ -649,10 +647,10 @@ Star Citizen Live - Fabric-free service (M1 skeleton + M3 parser).
 
 Boots with ZERO external dependencies - only Node.js built-ins (http, crypto,
 events, fs, readline) plus global fetch. No @fabric/hub, no SSH git deps, no
-400 MB install. `node app/server.js` just works.
+400 MB install. `node services/LiveRelay.js` just works.
 
 Features: in-memory collections, REST endpoints, live log tailing (read-only,
-optional) AND offline replay, real Game.log event parsing (app/parser.js),
+optional) AND offline replay, real Game.log event parsing (functions/parser.js),
 optional Discord webhook posting, and the mission/contract seam.
 
 It edits NOTHING in the Star Citizen installation - the log is only ever read.
@@ -670,7 +668,7 @@ Implements D-005: a centralized, OFFICER-VALIDATED register. Lifecycle:
   open|assigned --officer cancel--> cancelled
 
 Every mutation appends a hash-chained AuditEntry (tamper-evident; M6 adds
-officer signatures over each entry). Backed by app/store.js (memory or file).
+officer signatures over each entry). Backed by stores/register.js (memory or file).
 Keeps the method names/events the rest of the code already uses
 (createMission/getMission/missions, start/stop) so nothing else breaks.
 

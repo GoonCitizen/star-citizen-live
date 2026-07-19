@@ -186,14 +186,14 @@ class StarCitizenService extends EventEmitter {
     const body = async () => { const c = []; for await (const ch of req) c.push(ch); return c.length ? JSON.parse(Buffer.concat(c).toString()) : {}; };
 
     try {
-      // Live monitor web UI (read-only dashboard).
+      // Live monitor web UI (read-only dashboard) — built from components/Dashboard.js.
       if (req.method === 'GET' && (pathname === '/' || pathname === `${base}/ui`)) {
         let html;
         try {
-          const uiPath = path.join(__dirname, '..', 'assets', 'dashboard.html');
+          const uiPath = path.join(__dirname, '..', 'assets', 'index.html');
           html = this._uiHtml || (this._uiHtml = fs.readFileSync(uiPath, 'utf8'));
         } catch (_) {
-          html = '<h1>G00N Citizen</h1><p>UI file missing (assets/dashboard.html).</p>';
+          html = '<h1>GoonCitizen</h1><p>UI missing — run <code>npm run build:browser</code> to generate assets/index.html from components/Dashboard.js.</p>';
         }
         res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
         return res.end(html);

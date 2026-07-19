@@ -11,6 +11,7 @@ const { contextBridge, ipcRenderer } = require('electron');
 contextBridge.exposeInMainWorld('electronAPI', {
   getServiceStatus: () => ipcRenderer.invoke('get-service-status'),
   restartService: () => ipcRenderer.invoke('restart-service'),
+  setOpenAtLogin: (enabled) => ipcRenderer.invoke('set-open-at-login', enabled),
   platform: process.platform,
   versions: {
     node: process.versions.node,
