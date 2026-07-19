@@ -10,7 +10,7 @@
  *   open|assigned --officer cancel--> cancelled
  *
  * Every mutation appends a hash-chained AuditEntry (tamper-evident; M6 adds
- * officer signatures over each entry). Backed by app/store.js (memory or file).
+ * officer signatures over each entry). Backed by stores/register.js (memory or file).
  * Keeps the method names/events the rest of the code already uses
  * (createMission/getMission/missions, start/stop) so nothing else breaks.
  *
@@ -255,8 +255,7 @@ class MissionManager extends EventEmitter {
    * Submit an application to accept a mission.
    * @param {Object} applicationData - Application data.
    * @param {String} applicationData.missionId - Mission ID.
-   * @param {String} applicationData.applicantId - Applicant ID.
-   * @param {String} applicationData.publicKey - Applicant's public key.
+   * @param {String} applicationData.applicantId - Combined public key (hex).
    * @param {String} applicationData.signature - Application signature.
    * @param {Object} [applicationData.multisigData] - Musig2 data if applicable.
    * @returns {Promise<MissionApplication>} Created application.
@@ -296,7 +295,7 @@ class MissionManager extends EventEmitter {
     const verified = await this.verifySignature(
       commitment,
       application.signature,
-      application.publicKey,
+      application.applicantId,
       application.multisigData
     );
 
@@ -483,7 +482,7 @@ class MissionManager extends EventEmitter {
 
   /**
    * Get applications by applicant.
-   * @param {String} applicantId - Applicant ID.
+   * @param {String} applicantId - Combined public key (hex).
    * @returns {Array<MissionApplication>} Applicant's applications.
    */
   getApplicantApplications (applicantId) {

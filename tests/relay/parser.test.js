@@ -2,7 +2,7 @@
 
 const { test } = require('node:test');
 const assert = require('node:assert');
-const { parseLine, shipName, isNPC, parseSessionInfo, missionType, missionFaction } = require('../app/parser');
+const { parseLine, shipName, isNPC, parseSessionInfo, missionType, missionFaction } = require('../../functions/parser');
 
 // --- VERIFIED patterns (from a real Game.log hangar session) ---
 

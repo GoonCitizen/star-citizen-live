@@ -1,8 +1,9 @@
 'use strict';
 
+const path = require('path');
 const { test } = require('node:test');
 const assert = require('node:assert');
-const { resolveLogFile, candidateLogs, channelFromPath } = require('../app/locate');
+const { resolveLogFile, candidateLogs, channelFromPath } = require('../../functions/locate');
 
 test('channelFromPath pulls the channel folder from a log path', () => {
   assert.strictEqual(channelFromPath('E:\\Roberts Space Industries\\StarCitizen\\HOTFIX\\Game.log'), 'HOTFIX');
@@ -24,13 +25,14 @@ test('explicit path always wins', () => {
 });
 
 test('auto-detect picks the most recently modified channel log', () => {
+  const base = 'E:\\SC';
   const mtimes = {
-    'E:\\SC\\LIVE\\Game.log': 100,
-    'E:\\SC\\HOTFIX\\Game.log': 500,        // freshest -> should win
-    'E:\\SC\\TECH-PREVIEW\\Game.log': 50
+    [path.join(base, 'LIVE', 'Game.log')]: 100,
+    [path.join(base, 'HOTFIX', 'Game.log')]: 500,
+    [path.join(base, 'TECH-PREVIEW', 'Game.log')]: 50
   };
   const statSync = (f) => { if (f in mtimes) return { mtimeMs: mtimes[f] }; throw new Error('ENOENT'); };
-  const r = resolveLogFile({ bases: ['E:\\SC'], statSync });
+  const r = resolveLogFile({ bases: [base], statSync });
   assert.strictEqual(r.source, 'auto-latest');
   assert.strictEqual(r.channel, 'HOTFIX');
 });

@@ -2,7 +2,7 @@
 
 const { test } = require('node:test');
 const assert = require('node:assert');
-const StarCitizenService = require('../app/server');
+const StarCitizenService = require('../../services/LiveRelay');
 
 test('service constructs with mission stub and starts STOPPED', () => {
   const s = new StarCitizenService({ discord: { enable: false } });

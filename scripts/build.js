@@ -1,41 +1,22 @@
 'use strict';
 
-require('@babel/register');
+/**
+ * Prepare browser assets for Electron packaging.
+ * Copies the live dashboard to assets/index.html (production fallback).
+ * The running app prefers the LiveRelay HTTP server for live data.
+ */
 
-const React = require('react');
-const ReactDOM = require('react-dom');
-const ReactDOMServer = require('react-dom/server');
-const webpack = require('webpack');
+const fs = require('fs');
+const path = require('path');
 
-// Settings
-const settings = require('../settings/local');
+const root = path.join(__dirname, '..');
+const src = path.join(root, 'assets', 'dashboard.html');
+const dest = path.join(root, 'assets', 'index.html');
 
-// Fabric HTTP Types
-const Compiler = require('@fabric/http/types/compiler');
-// const webpackConfig = require('../webpack.config');
-
-// Components
-const Interface = require('../components/Interface');
-
-// Program Body
-async function main (input = {}) {
-  const site = new Interface(input);
-  const compiler = new Compiler({
-    document: site,
-    // webpack: webpackConfig || {},
-    ...input
-  });
-
-  await compiler.compileTo('assets/index.html');
-
-  return {
-    site: site.id
-  };
+if (!fs.existsSync(src)) {
+  console.error('[BUILD]', 'Missing assets/dashboard.html');
+  process.exit(1);
 }
 
-// Run Program
-main(settings).catch((exception) => {
-  console.error('[BUILD:SITE]', '[EXCEPTION]', exception);
-}).then((output) => {
-  console.log('[BUILD:SITE]', '[OUTPUT]', output);
-});
+fs.copyFileSync(src, dest);
+console.log('[BUILD]', 'Wrote assets/index.html from dashboard.html');

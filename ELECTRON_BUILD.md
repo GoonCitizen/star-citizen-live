@@ -3,43 +3,81 @@ This project includes Electron support for building a Windows desktop applicatio
 
 ## Prerequisites
 
-1. Install dependencies:
+1. Install dependencies (requires **Electron ≥ 43** for macOS 26 / Apple Silicon):
    ```bash
    npm install
+   ```
+   If `node_modules/electron/dist` is missing after install, run:
+   ```bash
+   node node_modules/electron/install.js
    ```
 
 2. (Optional) Create `settings/local.js` from `settings/example.js` and configure your settings.
 
 ## Development
 
-Run the Electron app in development mode:
+Run the desktop app (relay + **same** dashboard as `npm start`):
+
+```bash
+npm run start:desktop:dev
+```
+
+Or run the relay only (browser at http://localhost:3041/):
+
+```bash
+npm start
+```
+
+Legacy alias:
 
 ```bash
 npm run electron:dev
 ```
 
 This will:
-- Start the Star Citizen service on port 3041 (or configured port)
-- Open the Electron window with DevTools
-- Load the UI from the local server
+- Start the live relay on port 3041 (or the next free port if busy)
+- Open the Electron window with DevTools (dev mode)
+- Load the dashboard from the local relay (`GET /`) — `assets/dashboard.html`
 
-## Building Windows Installer
+**Note:** Some environments set `ELECTRON_RUN_AS_NODE=1`, which breaks Electron
+(`require('electron')` returns a path string). `npm run start:desktop` goes through
+`scripts/electron.js`, which clears that flag on every platform.
 
-### Build the Windows Installer
+## Production installers
+
+### Windows (NSIS)
+
+```bash
+npm run build:installer:win
+```
+
+Output: `dist/Star Citizen Live Setup x.x.x.exe`
+
+### Debian (.deb)
+
+Build on Linux (or a Linux CI runner):
+
+```bash
+npm run build:installer:deb
+```
+
+Output: `dist/star-citizen-live_x.x.x_amd64.deb` (name may vary by electron-builder version)
+
+### Both platforms
+
+```bash
+npm run build:installers
+```
+
+Each target runs `npm run build:browser` first (copies `assets/dashboard.html` → `assets/index.html`).
+
+## Building Windows Installer (legacy script name)
 
 ```bash
 npm run build:win:installer
 ```
 
-This will:
-1. Build the browser bundle (`npm run build:browser`)
-2. Create a Windows NSIS installer in the `dist/` directory
-
-### Build All Platforms
-
-```bash
-npm run build:electron
-```
+Same as `build:installer:win`.
 
 ## Output
 
@@ -56,20 +94,35 @@ The Windows installer includes:
 
 ## Application Structure
 
-- `main.js` - Electron main process (starts service and creates window)
-- `preload.js` - Preload script for secure IPC communication
-- The Star Citizen service runs as a local HTTP server
-- The Electron window loads the UI from the local server or built HTML
+- `main.js` — Electron main process (starts `services/LiveRelay.js`, opens dashboard window)
+- `preload.js` — Preload script for secure IPC communication
+- `services/LiveRelay.js` — Fabric-free relay (REST + live dashboard at `/`)
+- `assets/dashboard.html` — Dashboard UI served by the relay and loaded in Electron
 
 ## Troubleshooting
 
+### `exited with signal SIGSEGV` / `SIGTRAP`
+Electron **28** (and other pre-Tahoe builds) crash during Chromium init on
+**macOS 26 (Tahoe) arm64**. This project pins **Electron 43+**. Fix:
+
+```bash
+npm install
+node node_modules/electron/install.js   # if dist/ is missing
+npm run start:desktop
+```
+
+### `app.whenReady is not a function`
+Your shell has `ELECTRON_RUN_AS_NODE=1`. Use `npm run start:desktop` (via
+`scripts/electron.js`), which clears that flag.
+
 ### Service fails to start
-- Check that port 3041 (or your configured port) is not in use
+- Check that port 3041 (or your configured port) is not in use — the desktop
+  app will try the next free port automatically
 - Verify `settings/local.js` exists and is properly configured
 
 ### Window doesn't load
 - Check the console for errors
-- Verify the service started successfully
+- Verify the service started successfully (`G00N CITIZEN listening on http://127.0.0.1:…`)
 - In development mode, ensure the build completed: `npm run build:browser`
 
 ### Build fails

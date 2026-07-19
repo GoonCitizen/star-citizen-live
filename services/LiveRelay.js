@@ -5,10 +5,10 @@
  *
  * Boots with ZERO external dependencies - only Node.js built-ins (http, crypto,
  * events, fs, readline) plus global fetch. No @fabric/hub, no SSH git deps, no
- * 400 MB install. `node app/server.js` just works.
+ * 400 MB install. `node services/LiveRelay.js` just works.
  *
  * Features: in-memory collections, REST endpoints, live log tailing (read-only,
- * optional) AND offline replay, real Game.log event parsing (app/parser.js),
+ * optional) AND offline replay, real Game.log event parsing (functions/parser.js),
  * optional Discord webhook posting, and the mission/contract seam.
  *
  * It edits NOTHING in the Star Citizen installation - the log is only ever read.
@@ -18,10 +18,11 @@ const http = require('http');
 const crypto = require('crypto');
 const EventEmitter = require('events');
 const fs = require('fs');
+const path = require('path');
 const readline = require('readline');
 
-const { parseLine, shipName, parseSessionInfo, missionType, isNPC, missionFaction } = require('./parser');
-const { resolveLogFile, channelFromPath } = require('./locate');
+const { parseLine, shipName, parseSessionInfo, missionType, isNPC, missionFaction } = require('../functions/parser');
+const { resolveLogFile, channelFromPath } = require('../functions/locate');
 
 // Lines worth surfacing in the monitor - combat/death hints AND mission/objective
 // activity. Includes wording the parser may not recognize yet, so we can keep
@@ -83,7 +84,7 @@ class StarCitizenService extends EventEmitter {
   _loadHistory () {
     const empty = { missions: [], deaths: [], sessions: [], heat: {}, players: [], meta: {} };
     try {
-      const f = this.settings.historyFile || require('path').join(__dirname, '..', 'stores', 'history.json');
+      const f = this.settings.historyFile || path.join(__dirname, '..', 'stores', 'history.json');
       if (fs.existsSync(f)) return Object.assign(empty, JSON.parse(fs.readFileSync(f, 'utf8')));
     } catch (e) { console.error('[STAR-CITIZEN] history load failed:', e.message); }
     return empty;
@@ -180,35 +181,39 @@ class StarCitizenService extends EventEmitter {
   async _handle (req, res) {
     const base = '/services/star-citizen';
     const url = new URL(req.url, `http://localhost:${this.settings.port}`);
-    const path = url.pathname;
+    const pathname = url.pathname;
     const send = (code, obj) => { res.writeHead(code, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(obj, null, 2)); };
     const body = async () => { const c = []; for await (const ch of req) c.push(ch); return c.length ? JSON.parse(Buffer.concat(c).toString()) : {}; };
 
     try {
       // Live monitor web UI (read-only dashboard).
-      if (req.method === 'GET' && (path === '/' || path === `${base}/ui`)) {
+      if (req.method === 'GET' && (pathname === '/' || pathname === `${base}/ui`)) {
         let html;
-        try { html = this._uiHtml || (this._uiHtml = fs.readFileSync(require('path').join(__dirname, 'ui.html'), 'utf8')); }
-        catch (_) { html = '<h1>Star Citizen Live</h1><p>UI file missing (app/ui.html).</p>'; }
+        try {
+          const uiPath = path.join(__dirname, '..', 'assets', 'dashboard.html');
+          html = this._uiHtml || (this._uiHtml = fs.readFileSync(uiPath, 'utf8'));
+        } catch (_) {
+          html = '<h1>G00N Citizen</h1><p>UI file missing (assets/dashboard.html).</p>';
+        }
         res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
         return res.end(html);
       }
       // Grouped missions (by MissionId), objectives joined in.
-      if (req.method === 'GET' && path === `${base}/missiongroups`) {
+      if (req.method === 'GET' && pathname === `${base}/missiongroups`) {
         return send(200, { type: 'Collection', data: this.missionGroups });
       }
       // Combat progress inferred from mission objectives (proxy for kills).
-      if (req.method === 'GET' && path === `${base}/combat`) {
+      if (req.method === 'GET' && pathname === `${base}/combat`) {
         return send(200, { type: 'Collection', data: this.combatlog });
       }
       // Analytics: compact merged dataset (backfilled history + live session) for
       // the "Analyze" dashboard tab. The client slices it by month/year + pilot +
       // mission type + outcome. Local-player today; same shape serves org-wide (M4).
-      if (req.method === 'GET' && path === `${base}/analytics`) {
+      if (req.method === 'GET' && pathname === `${base}/analytics`) {
         return send(200, this._analyticsDataset());
       }
       // Snapshot for the monitor UI: counts + recent + combat candidates (newest first).
-      if (req.method === 'GET' && path === `${base}/monitor`) {
+      if (req.method === 'GET' && pathname === `${base}/monitor`) {
         const limit = Math.min(parseInt(url.searchParams.get('limit'), 10) || 250, 1000);
         const newest = (arr) => arr.slice(-limit).reverse();
         return send(200, {
@@ -229,7 +234,7 @@ class StarCitizenService extends EventEmitter {
           flagged: newest(this.flagged)
         });
       }
-      if (req.method === 'GET' && path === base) {
+      if (req.method === 'GET' && pathname === base) {
         return send(200, { type: 'StarCitizen', data: {
           status: this.status, startedAt: this.state.startedAt, channel: this.channel, session: this.session, sessions: this.sessions.length,
           activities: this.activities.length, players: this.players.length, logins: this.logins.length,
@@ -240,7 +245,7 @@ class StarCitizenService extends EventEmitter {
       }
       const collections = { activities: () => this.activities, players: () => this.players, logins: () => this.logins, vehicles: () => this.vehicles, kills: () => this.kills, incaps: () => this.incaps, deaths: () => this.deaths, missionlog: () => this.missionlog, notifications: () => this.notifications, messages: () => this.logs };
       for (const [name, getter] of Object.entries(collections)) {
-        if (path === `${base}/${name}`) {
+        if (pathname === `${base}/${name}`) {
           if (req.method === 'GET') return send(200, { type: 'Collection', data: getter() });
           if (req.method === 'POST' && name !== 'messages' && name !== 'logins' && name !== 'notifications' && name !== 'incaps' && name !== 'deaths') {
             const data = await body();
@@ -256,7 +261,7 @@ class StarCitizenService extends EventEmitter {
           }
         }
       }
-      if (path === `${base}/missions`) {
+      if (pathname === `${base}/missions`) {
         if (req.method === 'GET') return send(200, { type: 'Collection', data: this.missions });
         if (req.method === 'POST') {
           if (!this.missionManager) return send(503, { error: 'Mission system not available' });
@@ -264,7 +269,7 @@ class StarCitizenService extends EventEmitter {
           catch (e) { return send(e.code === 'FORBIDDEN' ? 403 : 400, { error: e.message }); }
         }
       }
-      const mMatch = path.match(new RegExp(`^${base}/missions/([^/]+)$`));
+      const mMatch = pathname.match(new RegExp(`^${base}/missions/([^/]+)$`));
       if (mMatch && req.method === 'GET') {
         if (!this.missionManager) return send(503, { error: 'Mission system not available' });
         const m = this.missionManager.getMission(mMatch[1]);
@@ -280,31 +285,31 @@ class StarCitizenService extends EventEmitter {
         catch (e) { return send(e.code === 'FORBIDDEN' ? 403 : /not found/i.test(e.message) ? 404 : 400, { error: e.message }); }
       };
       // Read-only lists.
-      if (req.method === 'GET' && path === `${base}/applications`) return send(200, { type: 'Collection', data: reg ? reg.applications : [] });
-      if (req.method === 'GET' && path === `${base}/claims`) return send(200, { type: 'Collection', data: reg ? reg.claims : [] });
-      if (req.method === 'GET' && path === `${base}/validations`) return send(200, { type: 'Collection', data: reg ? reg.validations : [] });
-      if (req.method === 'GET' && path === `${base}/audit`) return send(200, { type: 'Collection', data: reg ? reg.audit : [] });
+      if (req.method === 'GET' && pathname === `${base}/applications`) return send(200, { type: 'Collection', data: reg ? reg.applications : [] });
+      if (req.method === 'GET' && pathname === `${base}/claims`) return send(200, { type: 'Collection', data: reg ? reg.claims : [] });
+      if (req.method === 'GET' && pathname === `${base}/validations`) return send(200, { type: 'Collection', data: reg ? reg.validations : [] });
+      if (req.method === 'GET' && pathname === `${base}/audit`) return send(200, { type: 'Collection', data: reg ? reg.audit : [] });
       // Mission sub-resources and actions.
       let mr;
-      if ((mr = path.match(new RegExp(`^${base}/missions/([^/]+)/applications$`))) && req.method === 'GET')
+      if ((mr = pathname.match(new RegExp(`^${base}/missions/([^/]+)/applications$`))) && req.method === 'GET')
         return send(200, { type: 'Collection', data: reg ? reg.getMissionApplications(mr[1]) : [] });
-      if ((mr = path.match(new RegExp(`^${base}/missions/([^/]+)/cancel$`))) && req.method === 'POST') {
+      if ((mr = pathname.match(new RegExp(`^${base}/missions/([^/]+)/cancel$`))) && req.method === 'POST') {
         const d = await body(); return run(() => reg.cancelMission(Object.assign({ missionId: mr[1] }, d)), 'Mission');
       }
-      if ((mr = path.match(new RegExp(`^${base}/missions/([^/]+)/apply$`))) && req.method === 'POST') {
+      if ((mr = pathname.match(new RegExp(`^${base}/missions/([^/]+)/apply$`))) && req.method === 'POST') {
         const d = await body(); return run(() => reg.applyToMission(Object.assign({ missionId: mr[1] }, d)), 'Application');
       }
-      if ((mr = path.match(new RegExp(`^${base}/missions/([^/]+)/claim$`))) && req.method === 'POST') {
+      if ((mr = pathname.match(new RegExp(`^${base}/missions/([^/]+)/claim$`))) && req.method === 'POST') {
         const d = await body(); return run(() => reg.submitClaim(Object.assign({ missionId: mr[1] }, d)), 'Claim');
       }
-      if ((mr = path.match(new RegExp(`^${base}/applications/([^/]+)/decision$`))) && req.method === 'POST') {
+      if ((mr = pathname.match(new RegExp(`^${base}/applications/([^/]+)/decision$`))) && req.method === 'POST') {
         const d = await body(); return run(() => reg.decideApplication(Object.assign({ applicationId: mr[1] }, d)), 'Application');
       }
-      if ((mr = path.match(new RegExp(`^${base}/claims/([^/]+)/validate$`))) && req.method === 'POST') {
+      if ((mr = pathname.match(new RegExp(`^${base}/claims/([^/]+)/validate$`))) && req.method === 'POST') {
         const d = await body(); return run(() => reg.validateClaim(Object.assign({ claimId: mr[1] }, d)), 'Validation');
       }
 
-      return send(404, { error: 'Not found', path });
+      return send(404, { error: 'Not found', path: pathname });
     } catch (e) {
       return send(500, { error: e.message });
     }
@@ -610,7 +615,10 @@ class StarCitizenService extends EventEmitter {
     this.state.status = 'STOPPING';
     if (this._pollTimer) { clearTimeout(this._pollTimer); this._pollTimer = null; }
     if (this.missionManager) await this.missionManager.stop();
-    if (this.server) await new Promise((r) => this.server.close(r));
+    if (this.server) {
+      await new Promise((r) => this.server.close(r));
+      this.server = null;
+    }
     this.state.status = 'STOPPED';
     this.emit('stopped');
     return this;

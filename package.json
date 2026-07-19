@@ -4,29 +4,38 @@
   "description": "Fabric connectivity for the Star Citizen universe with Discord integration.",
   "main": "main.js",
   "exports": {
-    ".": "./app/server.js",
-    "./parser": "./app/parser.js",
+    ".": "./services/LiveRelay.js",
+    "./parser": "./functions/parser.js",
+    "./locate": "./functions/locate.js",
     "./types/Mission": "./types/Mission.js"
   },
   "scripts": {
     "backfill": "node scripts/backfill.js",
     "build:browser": "node scripts/build.js",
     "build:electron": "npm run build:browser && electron-builder",
-    "build:win:installer": "npm run build:browser && electron-builder --win --publish never",
+    "build:installer:deb": "npm run build:browser && electron-builder --linux deb --publish never",
+    "build:installer:win": "npm run build:browser && electron-builder --win nsis --publish never",
+    "build:installers": "npm run build:browser && electron-builder --win nsis --linux deb --publish never",
+    "build:win:installer": "npm run build:installer:win",
     "build:win": "npm run build:browser && electron-builder --win",
     "build": "npm run make:api && npm run build:browser",
     "coverage": "c8 npm test",
-    "electron:dev": "electron . --dev",
-    "electron": "electron .",
+    "electron:dev": "node scripts/desktop.js . --dev",
+    "electron": "node scripts/desktop.js .",
     "make:api": "jsdoc2md --configure jsdoc.json --files types/*.js services/*.js README.md > API.md",
     "replay": "node scripts/replay.js",
     "report:install": "rm -rf node_modules && echo \"\n\" > package-lock.json && echo \"$ npm i\" > reports/install.log && npm i >> reports/install.log",
     "report:todo": "grep --exclude package.json --exclude-dir=.env --exclude-dir=.git --exclude-dir=_book --exclude-dir=stores --exclude-dir=assets --exclude-dir=node_modules --exclude-dir=reports --exclude-dir=coverage --exclude-dir=docs --exclude-dir=libraries -rEI \"TODO|FIXME\" . | sed 's/\\([^:]*:\\)[ ]*/\\1 /' > reports/TODO.txt",
-    "start:browser": "node app/server.js",
-    "start:fabric": "node scripts/node.js   # DEPRECATED original Fabric-based entry (kept for reference)",
-    "start": "node scripts/node.js",
-    "test:browser": "node --test test/*.test.js",
-    "test": "mocha tests"
+    "start:browser": "node services/LiveRelay.js",
+    "start:desktop:dev": "node scripts/desktop.js . --dev",
+    "start:desktop": "node scripts/desktop.js .",
+    "start:fabric": "node scripts/node.js",
+    "start:relay": "node services/LiveRelay.js",
+    "start": "node services/LiveRelay.js",
+    "test:browser": "node --test tests/relay/*.test.js",
+    "test:fabric": "mocha tests",
+    "test:relay": "node --test tests/relay/*.test.js",
+    "test": "node --test tests/relay/*.test.js"
   },
   "repository": {
     "type": "git",
@@ -62,8 +71,8 @@
   },
   "devDependencies": {
     "c8": "=7.11.3",
-    "electron": "=28.0.0",
-    "electron-builder": "=24.9.1",
+    "electron": "^43.1.1",
+    "electron-builder": "^26.15.3",
     "jsdoc-to-markdown": "=9.0.5",
     "mocha": "=10.8.2"
   },
@@ -103,6 +112,22 @@
       "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true
+    },
+    "linux": {
+      "target": [
+        "deb"
+      ],
+      "category": "Game",
+      "maintainer": "Fabric Labs <support@fabric.pub>",
+      "synopsis": "Live Star Citizen log relay and org dashboard",
+      "description": "G00N Citizen desktop app: read-only Game.log monitoring, live dashboard, mission register, and optional Discord relay."
+    },
+    "deb": {
+      "depends": [
+        "libnotify4",
+        "libxtst6",
+        "libnss3"
+      ]
     }
   }
 }

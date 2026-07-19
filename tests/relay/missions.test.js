@@ -2,7 +2,7 @@
 
 const { test } = require('node:test');
 const assert = require('node:assert');
-const MissionManager = require('../services/MissionManager');
+const MissionManager = require('../../services/MissionManager');
 
 function freshOfficerless () { return new MissionManager(); }                 // bootstrap (permissive)
 

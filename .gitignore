@@ -11,11 +11,12 @@ settings/auth.txt
 *.log
 logs/
 # ...but keep committed test fixtures (a tiny sample combat log)
-!test/fixtures/
-!test/fixtures/*.log
+!tests/relay/fixtures/
+!tests/relay/fixtures/*.log
 
-# Stores
-stores/
+# Stores (runtime data — keep register.js source tracked)
+stores/*
+!stores/register.js
 
 # Test coverage
 coverage/

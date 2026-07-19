@@ -3,7 +3,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
 const http = require('http');
-const StarCitizenService = require('../app/server');
+const StarCitizenService = require('../../services/LiveRelay');
 
 let PORT;   // assigned after the server binds an ephemeral port (avoids clashes)
 const BASE = '/services/star-citizen';
