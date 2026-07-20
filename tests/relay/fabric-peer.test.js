@@ -149,13 +149,20 @@ test('Fabric peer: MissionBroadcast and chat converge between two relays', async
     assert.strictEqual(created.status, 200, JSON.stringify(created.body));
     const missionId = created.body.data.id;
 
+    // Create alone must relay MissionCreated (register upsert, no offer).
+    await waitFor(() => nodeB.missionManager.getMission(missionId));
+    assert.strictEqual(
+      nodeB._listMissionBroadcasts({ pendingOnly: true }).filter((o) => o.missionId === missionId).length,
+      0,
+      'MissionCreated must not create a pending Accept/Ignore offer'
+    );
+
     const broadcast = await request(httpA, 'POST', `${BASE}/missions/${missionId}/broadcast`, { scope: 'global' });
     assert.strictEqual(broadcast.status, 200, JSON.stringify(broadcast.body));
     assert.strictEqual(broadcast.body.data.scope, 'global');
 
-    await waitFor(() => nodeB.missionManager.getMission(missionId));
-    const offers = nodeB._listMissionBroadcasts({ pendingOnly: true });
-    assert.ok(offers.some((o) => o.missionId === missionId && o.status === 'pending'));
+    await waitFor(() => nodeB._listMissionBroadcasts({ pendingOnly: true })
+      .some((o) => o.missionId === missionId && o.status === 'pending'));
 
     // Chat A → B
     const chat = await request(httpA, 'POST', `${BASE}/chat/messages`, {
@@ -305,6 +312,11 @@ test('Fabric peer: star topology A→hub→B chat and MissionBroadcast', async (
     });
     assert.strictEqual(created.status, 200, JSON.stringify(created.body));
     const missionId = created.body.data.id;
+
+    // Create relays through the hub to B (MissionCreated — register only).
+    await waitFor(() => nodeB.missionManager.getMission(missionId));
+    assert.ok(hub.missionManager.getMission(missionId), 'hub should ingest MissionCreated');
+
     const broadcast = await request(httpA, 'POST', `${BASE}/missions/${missionId}/broadcast`, { scope: 'global' });
     assert.strictEqual(broadcast.status, 200, JSON.stringify(broadcast.body));
 

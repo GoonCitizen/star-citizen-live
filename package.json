@@ -38,7 +38,7 @@
     "test:browser": "NODE_ENV=test node --test tests/relay/*.test.js",
     "test:fabric": "mocha tests",
     "test:relay": "NODE_ENV=test node --test tests/relay/*.test.js",
-    "test": "NODE_ENV=test node --test tests/relay/*.test.js"
+    "test": "npm run test:fabric && npm run test:relay && npm run test:browser"
   },
   "repository": {
     "type": "git",

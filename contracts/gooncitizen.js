@@ -27,7 +27,9 @@ const GOONCITIZEN_CONTRACT_VERSION = 1;
 const GOONCITIZEN_CONTRACT_DEFINITION = Object.freeze({
   name: 'GoonCitizen',
   version: GOONCITIZEN_CONTRACT_VERSION,
-  // Message `type` values carried inside CONTRACT_MESSAGE for this namespace.
+  // Message `type` values frozen into the contract Actor id. Additional app
+  // types (e.g. MissionCreated) may still ride CONTRACT_MESSAGE without
+  // changing this list — bumping it would move the network namespace.
   messageTypes: Object.freeze(['MissionBroadcast', 'SCEventBatch']),
   // ContractProposal purposes (escrow / payout acceptance) carried for this contract.
   proposalTypes: Object.freeze(['MissionEscrow', 'MissionPayout']),

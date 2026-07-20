@@ -5,7 +5,8 @@
  *
  * Replaces HTTPS batch uplink / chat pull with signed Fabric wire Messages:
  *   - P2P_CHAT_MESSAGE  (Peer auto-relays)
- *   - GenericMessage MissionBroadcast / SCEventBatch (app types; hub must relay)
+ *   - CONTRACT_MESSAGE  MissionCreated / MissionBroadcast / SCEventBatch
+ *     (namespaced by the GoonCitizen contract id; Peer auto-relays)
  *
  * Lazy-requires Peer/Message so memory-only unit tests stay light.
  */
@@ -17,7 +18,9 @@ const { gooncitizenContractId, gooncitizenContractDefinition } = require('../con
 
 const DEFAULT_SEED = 'relay.goon.vc:7777';
 // App `type` values carried inside the GoonCitizen CONTRACT_MESSAGE namespace.
-const APP_RELAY_TYPES = new Set(['MissionBroadcast', 'SCEventBatch']);
+// MissionCreated is handled at ingest even if omitted from the genesis
+// messageTypes list (that list is frozen into the contract Actor id).
+const APP_RELAY_TYPES = new Set(['MissionCreated', 'MissionBroadcast', 'SCEventBatch']);
 
 /**
  * True when `value` looks like a Fabric peer address (`host:port`).
@@ -67,7 +70,7 @@ function normalizeFabricAddress (value, { migrate = false } = {}) {
  * itself (with wire-hash dedup), so no monkey-patched fan-out is needed.
  *
  * @param {Object} peer Fabric Peer instance
- * @param {Object} handlers { onMissionBroadcast, onEventBatch, onChat?, onProposal? }
+ * @param {Object} handlers { onMissionCreated?, onMissionBroadcast, onEventBatch, onChat?, onProposal? }
  * @param {{ relay?: boolean }} [opts]
  */
 function attachAppHandlers (peer, handlers = {}, _opts = {}) {
@@ -98,7 +101,9 @@ function attachAppHandlers (peer, handlers = {}, _opts = {}) {
     const signer = ev.signer || actorPubkey(body) || null;
     const meta = { origin: ev.origin, wireMessage: null, msg: body, signer };
     try {
-      if (appType === 'MissionBroadcast' && typeof handlers.onMissionBroadcast === 'function') {
+      if (appType === 'MissionCreated' && typeof handlers.onMissionCreated === 'function') {
+        handlers.onMissionCreated(object, signer, meta);
+      } else if (appType === 'MissionBroadcast' && typeof handlers.onMissionBroadcast === 'function') {
         handlers.onMissionBroadcast(object, signer, meta);
       } else if (appType === 'SCEventBatch' && typeof handlers.onEventBatch === 'function') {
         handlers.onEventBatch(object, signer, meta);
@@ -279,6 +284,12 @@ class FabricNetwork extends EventEmitter {
     }
 
     attachAppHandlers(peer, {
+      onMissionCreated: (object, source, meta) => {
+        this.emit('missionCreated', { object, source, meta });
+        if (this._handlers && typeof this._handlers.onMissionCreated === 'function') {
+          this._handlers.onMissionCreated(object, source, meta);
+        }
+      },
       onMissionBroadcast: (object, source, meta) => {
         this.emit('missionBroadcast', { object, source, meta });
         if (this._handlers && typeof this._handlers.onMissionBroadcast === 'function') {
@@ -405,6 +416,16 @@ class FabricNetwork extends EventEmitter {
       }
     };
     return this._signAndRelay('P2P_CHAT_MESSAGE', body);
+  }
+
+  /**
+   * Publish a newly created mission as a namespaced `CONTRACT_MESSAGE`
+   * (`type: MissionCreated`). Peers upsert the register entry; no Accept/Ignore
+   * offer is created (use {@link #publishMissionBroadcast} for that).
+   * @param {Object} payload { mission, createdAt?, handle? }
+   */
+  publishMissionCreated (payload) {
+    return this._publishContractMessage('MissionCreated', Object.assign({}, payload));
   }
 
   /**

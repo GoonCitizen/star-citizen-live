@@ -598,6 +598,42 @@ class StarCitizenService extends EventEmitter {
     return { id, created: !existed };
   }
 
+  /** Snapshot fields shared on MissionCreated / MissionBroadcast wire payloads. */
+  _missionWireSnapshot (m) {
+    if (!m) return null;
+    return {
+      id: m.id,
+      title: m.title,
+      type: m.type,
+      description: m.description,
+      reward: m.reward,
+      groupId: m.groupId,
+      authorities: m.authorities,
+      createdBy: m.createdBy,
+      createdAt: m.createdAt,
+      status: m.status,
+      outOfGame: m.outOfGame,
+      deadline: m.deadline,
+      location: m.location
+    };
+  }
+
+  /**
+   * Receive a peer mission creation: upsert the register only (no Accept/Ignore
+   * offer). Idempotent via missionManager.ingestRemote.
+   */
+  _ingestMissionCreated (source, data = {}) {
+    if (!this.missionManager) {
+      throw Object.assign(new Error('Mission system not available'), { code: 'BAD_COLLECTION' });
+    }
+    const mission = data.mission || data;
+    if (!mission || !mission.id) {
+      throw Object.assign(new Error('missioncreated requires mission.id'), { code: 'BAD_EVENT' });
+    }
+    const ingested = this.missionManager.ingestRemote(Object.assign({}, mission, { source }));
+    return { id: mission.id, created: !!ingested.created, mission: ingested.mission };
+  }
+
   /**
    * Receive a peer mission broadcast: upsert the mission register entry and
    * keep a pending offer for the UI (desktop notify + Accept / Ignore).
@@ -692,7 +728,29 @@ class StarCitizenService extends EventEmitter {
   }
 
   /**
-   * Publish a mission offer over Fabric (MissionBroadcast GenericMessage).
+   * Best-effort: publish a MissionCreated CONTRACT_MESSAGE so peers upsert the
+   * mission into their register. No-op when Fabric/identity is unavailable
+   * (local-only create still succeeds).
+   * @param {Object} mission
+   */
+  async publishMissionCreated (mission) {
+    if (!mission || !mission.id) return null;
+    if (!this._identity) return null;
+    await this._ensureFabric();
+    if (!this.fabricNetwork || !this.fabricNetwork.ready) return null;
+    const payload = {
+      '@type': 'MissionCreated',
+      missionId: mission.id,
+      createdAt: mission.createdAt || new Date().toISOString(),
+      handle: this._nickname || this._sessionHandle || null,
+      mission: this._missionWireSnapshot(mission)
+    };
+    this.fabricNetwork.publishMissionCreated(payload);
+    return payload;
+  }
+
+  /**
+   * Publish a mission offer over Fabric (MissionBroadcast CONTRACT_MESSAGE).
    * Creator-only; open missions only. Scope defaults to group when the mission
    * has a groupId, else network-wide (`global` — all connected Fabric peers).
    * Group scope is membership-filtered on receive (group + subgroups).
@@ -735,21 +793,7 @@ class StarCitizenService extends EventEmitter {
       scope,
       groupId: scope === 'group' ? groupId : null,
       handle: this._nickname || this._sessionHandle || null,
-      mission: {
-        id: m.id,
-        title: m.title,
-        type: m.type,
-        description: m.description,
-        reward: m.reward,
-        groupId: m.groupId,
-        authorities: m.authorities,
-        createdBy: m.createdBy,
-        createdAt: m.createdAt,
-        status: m.status,
-        outOfGame: m.outOfGame,
-        deadline: m.deadline,
-        location: m.location
-      }
+      mission: this._missionWireSnapshot(m)
     };
     this.fabricNetwork.publishMissionBroadcast(payload);
     const st = this.fabricNetwork.status();
@@ -1214,10 +1258,12 @@ class StarCitizenService extends EventEmitter {
         }
       }
       // Missions shared to a group are visible to its members only (hosted mode).
+      // Membership spans the group tree (group + subgroups), matching the
+      // broadcast receive filter and _listMissionBroadcasts.
       const visible = (m) => {
         if (!m) return false;
         if (!serverMode || !m.groupId) return true;
-        return !!(viewer && gm && gm.isMember(m.groupId, viewer));
+        return !!(viewer && gm && gm.isInGroupTree(m.groupId, viewer));
       };
       if (pathname === `${base}/missions`) {
         if (req.method === 'GET') return send(200, { type: 'Collection', data: this.missions.filter(visible) });
@@ -1230,8 +1276,13 @@ class StarCitizenService extends EventEmitter {
             if (!gm || !gm.getGroup(d.groupId)) return send(404, { error: 'Group not found' });
             if (!gm.isMember(d.groupId, creator)) return send(403, { error: 'forbidden: not a member of the target group' });
           }
-          try { return send(200, { type: 'Mission', data: await this.missionManager.createMission(Object.assign({}, d, { createdBy: creator })) }); }
-          catch (e) { return send(e.code === 'FORBIDDEN' ? 403 : 400, { error: e.message }); }
+          try {
+            const mission = await this.missionManager.createMission(Object.assign({}, d, { createdBy: creator }));
+            // Best-effort mesh share: peers upsert the mission. Explicit
+            // Broadcast still creates Accept/Ignore offers.
+            this.publishMissionCreated(mission).catch((e) => this.emit('error', e));
+            return send(200, { type: 'Mission', data: mission });
+          } catch (e) { return send(e.code === 'FORBIDDEN' ? 403 : 400, { error: e.message }); }
         }
       }
       const mMatch = pathname.match(new RegExp(`^${base}/missions/([^/]+)$`));
@@ -1751,6 +1802,15 @@ class StarCitizenService extends EventEmitter {
       return resolveSignerPubkey(source, actor);
     };
     return {
+      onMissionCreated: (object, source, meta) => {
+        const actor = meta && meta.msg && meta.msg.actor;
+        const resolved = actorId(source, actor);
+        if (!resolved) return;
+        try {
+          this._ingestMissionCreated(resolved, object || {});
+          this.emit('ingest', { source: resolved, received: 1, created: 1, via: 'fabric' });
+        } catch (e) { this.emit('error', e); }
+      },
       onMissionBroadcast: (object, source, meta) => {
         const actor = meta && meta.msg && meta.msg.actor;
         const resolved = actorId(source, actor);

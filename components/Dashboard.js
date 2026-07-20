@@ -1240,21 +1240,6 @@ class Dashboard extends React.Component {
         React.createElement('div', { className: 'row' },
           React.createElement('h1', null, '🛰️ GoonCitizen'),
           React.createElement('span', { className: 'pill ' + (this.state.online ? 'on' : 'off') }, this.state.status),
-          (window.electronAPI && window.electronAPI.identity)
-            ? React.createElement('button', {
-              className: 'pill idchip ' + (this.state.identityPubkey ? 'on' : 'off'),
-              title: this.state.identityPubkey
-                ? ((this.state.nickname ? this.state.nickname + ' · ' : '') +
-                  this.state.identityPubkey +
-                  ' — click to manage identity (nickname, lock, backup)')
-                : (this.state.identityExists ? 'identity locked — click to unlock or manage' : 'identity — click to manage'),
-              onClick: () => this.setState({ showIdentity: true })
-            }, this.state.identityPubkey
-              ? ('🔑 ' + (this.state.nickname
-                ? (this.state.nickname + ' · ' + this.state.identityPubkey.slice(0, 8) + '…')
-                : (this.state.identityPubkey.slice(0, 8) + '…')))
-              : (this.state.identityExists ? '🔒 locked' : '🔑 identity'))
-            : null,
           // Compact stat strip — the full breakdown lives on the Live/Analyze tabs.
           React.createElement('div', { className: 'counts' },
             React.createElement('span', {
@@ -1266,10 +1251,7 @@ class Dashboard extends React.Component {
             }, 'deaths ', React.createElement('b', null, c.deaths)),
             React.createElement('span', {
               title: `distinct players · ${c.logins} login event${c.logins === 1 ? '' : 's'} · ${c.vehicles} vehicles seen`
-            }, 'players ', React.createElement('b', null, c.players)),
-            React.createElement('span', {
-              title: `${c.flagged} flagged activity lines`
-            }, 'lines ', React.createElement('b', null, Number(c.logs || 0).toLocaleString()))
+            }, 'players ', React.createElement('b', null, c.players))
           ),
           React.createElement('div', { className: 'ctrl' },
             React.createElement('span', { title: 'game build / version' }, this.state.build),
@@ -1296,6 +1278,21 @@ class Dashboard extends React.Component {
                 this.state.notifyPending > 99 ? '99+' : this.state.notifyPending)
               : null
             ),
+            (window.electronAPI && window.electronAPI.identity)
+              ? React.createElement('button', {
+                className: 'pill idchip ' + (this.state.identityPubkey ? 'on' : 'off'),
+                title: this.state.identityPubkey
+                  ? ((this.state.nickname ? this.state.nickname + ' · ' : '') +
+                    this.state.identityPubkey +
+                    ' — click to manage identity (nickname, lock, backup)')
+                  : (this.state.identityExists ? 'identity locked — click to unlock or manage' : 'identity — click to manage'),
+                onClick: () => this.setState({ showIdentity: true })
+              }, this.state.identityPubkey
+                ? ('🔑 ' + (this.state.nickname
+                  ? (this.state.nickname + ' · ' + this.state.identityPubkey.slice(0, 8) + '…')
+                  : (this.state.identityPubkey.slice(0, 8) + '…')))
+                : (this.state.identityExists ? '🔒 locked' : '🔑 identity'))
+              : null,
             React.createElement('button', {
               type: 'button',
               className: 'gear',

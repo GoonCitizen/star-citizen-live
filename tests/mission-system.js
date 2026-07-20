@@ -94,12 +94,15 @@ describe('@fabric/star-citizen-live Mission System', function () {
         type: 'bounty',
         reward: 25000,
         contract: { type: 'single' },
-        issuer: 'test',
+        createdBy: 'test',
         expiresAt: Date.now() + 10000
       });
 
-      assert(!mission.isMultisig());
-      assert.strictEqual(mission.getRequiredSignatures(), 1);
+      // createMission returns a plain register record (not a Mission class instance).
+      assert.strictEqual(mission.contract.type, 'single');
+      const typed = new Mission(mission);
+      assert(!typed.isMultisig());
+      assert.strictEqual(typed.getRequiredSignatures(), 1);
     });
 
     it('should support multisig missions', async function () {
@@ -112,12 +115,15 @@ describe('@fabric/star-citizen-live Mission System', function () {
           requiredSignatures: 3,
           authorizedSigners: ['key1', 'key2', 'key3']
         },
-        issuer: 'test',
+        createdBy: 'test',
         expiresAt: Date.now() + 10000
       });
 
-      assert(mission.isMultisig());
-      assert.strictEqual(mission.getRequiredSignatures(), 3);
+      assert.strictEqual(mission.contract.type, 'multisig');
+      assert.strictEqual(mission.contract.requiredSignatures, 3);
+      const typed = new Mission(mission);
+      assert(typed.isMultisig());
+      assert.strictEqual(typed.getRequiredSignatures(), 3);
     });
   });
 
@@ -182,14 +188,20 @@ describe('@fabric/star-citizen-live Mission System', function () {
 
   describe('Service Lifecycle', function () {
     it('should start successfully', async function () {
-      await manager.start();
-      assert.strictEqual(manager.state.status, 'STARTED');
+      let ready = false;
+      manager.once('ready', () => { ready = true; });
+      const ret = await manager.start();
+      assert.strictEqual(ret, manager);
+      assert(ready, 'ready event was not emitted');
     });
 
     it('should stop successfully', async function () {
+      let stopped = false;
+      manager.once('stopped', () => { stopped = true; });
       await manager.start();
-      await manager.stop();
-      assert.strictEqual(manager.state.status, 'STOPPED');
+      const ret = await manager.stop();
+      assert.strictEqual(ret, manager);
+      assert(stopped, 'stopped event was not emitted');
     });
   });
 });

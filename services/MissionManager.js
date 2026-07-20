@@ -219,6 +219,154 @@ class MissionManager extends EventEmitter {
     return { mission, created: true };
   }
 
+  // ---- remote lifecycle ingest (peer-to-peer register convergence) ----
+  // These apply register mutations that arrived over Fabric. Authorization is
+  // verified by the transport layer (LiveRelay: signed envelope + role checks)
+  // BEFORE calling these; here we apply idempotently and record the same
+  // hash-chained audit every replica keeps. No re-publish happens from ingest.
+
+  /** Upsert a remote application (self-authored by the applicant). Idempotent by id. */
+  ingestApplication (app = {}) {
+    if (!app || !app.id || !app.missionId) throw new Error('application id + missionId required');
+    if (this.store.get('applications', app.id)) return { created: false };
+    const m = this.getMission(app.missionId);
+    if (!m) return { created: false, skipped: 'mission-unknown' };
+    const rec = {
+      id: String(app.id),
+      missionId: String(app.missionId),
+      applicantId: String(app.applicantId || 'unknown'),
+      message: app.message || '',
+      status: 'pending',
+      createdAt: app.createdAt || new Date().toISOString(),
+      source: 'remote'
+    };
+    this.store.put('applications', rec.id, rec);
+    this._audit(rec.applicantId, 'application.submit', 'application', rec.id, m.title);
+    this.emit('application:ingested', rec);
+    return { created: true, application: rec };
+  }
+
+  /** Apply a remote officer/authority decision on an application. Idempotent. */
+  ingestApplicationDecision (data = {}) {
+    const app = this.store.get('applications', data.applicationId);
+    if (!app) return { created: false, skipped: 'application-unknown' };
+    if (app.status !== 'pending') return { created: false };
+    const m = this.getMission(app.missionId);
+    if (!m) return { created: false, skipped: 'mission-unknown' };
+    app.decidedBy = data.officerId != null ? String(data.officerId) : null;
+    app.decidedAt = data.decidedAt || new Date().toISOString();
+    if (data.decision === 'accept') {
+      app.status = 'accepted';
+      if (m.status === 'open') {
+        m.status = 'assigned';
+        m.assigneeId = app.applicantId;
+        this.store.put('missions', m.id, m);
+      }
+      this.store.put('applications', app.id, app);
+      this._audit(data.officerId, 'application.accept', 'application', app.id, m.title);
+      this.emit('application:accepted', app);
+    } else if (data.decision === 'reject') {
+      app.status = 'rejected';
+      app.reason = data.reason || null;
+      this.store.put('applications', app.id, app);
+      this._audit(data.officerId, 'application.reject', 'application', app.id, data.reason || '');
+      this.emit('application:rejected', app);
+    } else {
+      return { created: false, skipped: 'bad-decision' };
+    }
+    return { created: true, application: app };
+  }
+
+  /** Upsert a remote completion claim (self-authored by the assignee). Idempotent. */
+  ingestClaim (claim = {}) {
+    if (!claim || !claim.id || !claim.missionId) throw new Error('claim id + missionId required');
+    if (this.store.get('claims', claim.id)) return { created: false };
+    const m = this.getMission(claim.missionId);
+    if (!m) return { created: false, skipped: 'mission-unknown' };
+    const rec = {
+      id: String(claim.id),
+      missionId: String(claim.missionId),
+      claimantId: String(claim.claimantId || 'unknown'),
+      note: claim.note || '',
+      evidence: Array.isArray(claim.evidence) ? claim.evidence : [],
+      status: 'pending',
+      claimedAt: claim.claimedAt || new Date().toISOString(),
+      source: 'remote'
+    };
+    this.store.put('claims', rec.id, rec);
+    this._audit(rec.claimantId, 'claim.submit', 'claim', rec.id, m.title);
+    this.emit('claim:submitted', rec);
+    return { created: true, claim: rec };
+  }
+
+  /**
+   * Apply a remote claim validation. When the mission has an authorities set
+   * and the decision is approve, the k-of-n Schnorr acceptance is re-verified
+   * here (defense in depth) and preserved in the audit authorization. Idempotent.
+   */
+  ingestValidation (data = {}) {
+    const claim = this.store.get('claims', data.claimId);
+    if (!claim) return { created: false, skipped: 'claim-unknown' };
+    if (claim.status !== 'pending') return { created: false };
+    const m = this.getMission(claim.missionId);
+    if (!m) return { created: false, skipped: 'mission-unknown' };
+    const hasAuthorities = !!(m.authorities && m.authorities.keys && m.authorities.keys.length);
+    let authorization = null;
+    if (data.decision === 'approve' && hasAuthorities) {
+      const signatures = data.authorization && data.authorization.signatures;
+      if (!this.verifyAcceptance(m, claim, signatures)) {
+        return { created: false, skipped: 'acceptance-unverified' };
+      }
+      authorization = { message: this.acceptanceMessage(m, claim), signatures };
+    }
+    const validation = {
+      id: data.id || this._id('validation'),
+      claimId: claim.id,
+      missionId: m.id,
+      officerId: data.officerId != null ? String(data.officerId) : null,
+      decision: data.decision,
+      note: data.note || '',
+      validatedAt: data.validatedAt || new Date().toISOString(),
+      source: 'remote'
+    };
+    if (authorization) validation.authorization = authorization;
+    if (data.decision === 'approve') {
+      claim.status = 'validated';
+      m.status = 'completed';
+      m.completedAt = validation.validatedAt;
+      this.store.put('claims', claim.id, claim);
+      this.store.put('missions', m.id, m);
+      this.store.put('validations', validation.id, validation);
+      this._audit(validation.officerId, 'claim.validate', 'claim', claim.id, 'approved', authorization);
+      this.emit('claim:validated', validation);
+      this.emit('mission:completed', m);
+      if (m.escrow) this.emit('payout:unlocked', { mission: m, claim, validation });
+    } else if (data.decision === 'reject') {
+      claim.status = 'rejected';
+      this.store.put('claims', claim.id, claim);
+      this.store.put('validations', validation.id, validation);
+      this._audit(validation.officerId, 'claim.validate', 'claim', claim.id, 'rejected');
+      this.emit('claim:rejected', validation);
+    } else {
+      return { created: false, skipped: 'bad-decision' };
+    }
+    return { created: true, validation };
+  }
+
+  /** Apply a remote mission cancel. Idempotent. */
+  ingestCancel (data = {}) {
+    const m = this.getMission(data.missionId);
+    if (!m) return { created: false, skipped: 'mission-unknown' };
+    if (m.status !== 'open' && m.status !== 'assigned') return { created: false };
+    m.status = 'cancelled';
+    m.cancelledAt = data.cancelledAt || new Date().toISOString();
+    if (data.reason) m.cancelReason = data.reason;
+    this.store.put('missions', m.id, m);
+    this._audit(data.officerId, 'mission.cancel', 'mission', m.id, data.reason || '');
+    this.emit('mission:cancelled', m);
+    return { created: true, mission: m };
+  }
+
   /** Normalize the authorities field: `{ keys: [pubkey…], threshold }` or null. */
   _normalizeAuthorities (input, creator) {
     const PUBKEY_RE = /^0[23][0-9a-f]{64}$/;
