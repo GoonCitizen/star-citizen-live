@@ -1,16 +1,14 @@
 'use strict';
 
-// Persisted runtime settings — the desktop/relay counterpart of the Hub's
-// settings under `stores/hub`. Plain JSON on disk at
-// `stores/gooncitizen/settings.json` (CLI) or
-// `<userData>/stores/gooncitizen/settings.json` (desktop).
-// Only allowlisted keys are persisted, so the file stays a small, auditable
-// operator config (never secrets like the identity key).
-
-const fs = require('fs');
-const path = require('path');
-
-const FILENAME = 'settings.json';
+// Operator settings on the Fabric Store — the desktop/relay counterpart of the
+// Hub's settings under `stores/hub`. Settings are records in the `settings`
+// collection of the shared register Store (`types/Store.js` → `@fabric/core`
+// LevelDB at `stores/gooncitizen/register`). The application never writes a
+// settings JSON file; a legacy `settings.json` is imported once by the Store
+// on start and then retired (renamed `.migrated`).
+//
+// Only allowlisted keys are persisted, so the collection stays a small,
+// auditable operator config (never secrets like the identity key).
 
 // Operator-editable keys (mirrors the Hub's allowlisted-settings approach).
 const ALLOWED_KEYS = [
@@ -20,51 +18,45 @@ const ALLOWED_KEYS = [
   'uplinkIntervalMs',
   'discordWebhook',
   'openAtLogin',
-  'identityAutoLockMinutes' // 0 = off; default 30 (mirrors Hub identity lock prefs)
+  'identityAutoLockMinutes', // 0 = off; default 30 (mirrors Hub identity lock prefs)
+  'snapshotsEnabled',        // periodic screen snapshots (opt-in; desktop only)
+  'snapshotIntervalSeconds', // capture cadence (default 10, min 2)
+  'snapshotAutoPurge',       // delete oldest snapshots beyond the disk cap (default true)
+  'snapshotMaxMB'            // disk cap for the snapshot library (default 256 MB)
 ];
 
-function settingsPath (dir) {
-  return path.join(dir, FILENAME);
-}
-
 /**
- * Load persisted settings (unknown keys dropped).
- * @param {String} dir Directory containing settings.json.
- * @returns {Object} Settings object ({} when absent/corrupt).
+ * Load persisted settings from the Fabric Store (unknown keys dropped).
+ * Synchronous after `store.start()` — the Store keeps collections in memory.
+ * @param {import('../types/Store').Store} store Shared register Store.
+ * @returns {Object} Settings object ({} when store absent or empty).
  */
-function loadSettings (dir) {
-  try {
-    const raw = JSON.parse(fs.readFileSync(settingsPath(dir), 'utf8'));
-    const out = {};
-    for (const key of ALLOWED_KEYS) {
-      if (raw[key] !== undefined) out[key] = raw[key];
-    }
-    return out;
-  } catch (_) {
-    return {};
+function loadSettings (store) {
+  const out = {};
+  if (!store) return out;
+  for (const key of ALLOWED_KEYS) {
+    const record = store.get('settings', key);
+    if (record && record.value !== undefined && record.value !== null) out[key] = record.value;
   }
+  return out;
 }
 
 /**
- * Persist one setting. Returns the full updated settings object.
- * @param {String} dir Directory for settings.json (created if missing).
+ * Persist one setting into the Fabric Store. Returns the full updated
+ * settings object. `null`/`undefined` clears the setting.
+ * @param {import('../types/Store').Store} store Shared register Store.
  * @param {String} key Allowlisted setting name.
  * @param {*} value JSON-serializable value (undefined/null removes it).
  */
-function putSetting (dir, key, value) {
+function putSetting (store, key, value) {
   if (!ALLOWED_KEYS.includes(key)) throw new Error(`unknown setting: ${key}`);
-  const current = loadSettings(dir);
-  if (value === undefined || value === null) delete current[key];
-  else current[key] = value;
-  fs.mkdirSync(dir, { recursive: true });
-  fs.writeFileSync(settingsPath(dir), JSON.stringify(current, null, 2) + '\n');
-  return current;
+  if (!store) throw new Error('settings store required');
+  store.put('settings', key, { id: key, value: value === undefined ? null : value });
+  return loadSettings(store);
 }
 
 module.exports = {
-  FILENAME,
   ALLOWED_KEYS,
-  settingsPath,
   loadSettings,
   putSetting
 };

@@ -10,6 +10,7 @@ const React = require('react');
 const Onboarding = require('./Onboarding');
 const Identity = require('./Identity');
 const Groups = require('./Groups');
+const Library = require('./Library');
 const Peers = require('./Peers');
 const Settings = require('./Settings');
 
@@ -18,6 +19,7 @@ const TABS = [
   ['home', 'Home'],
   ['live', 'Live feed'],
   ['analyze', 'Analyze'],
+  ['library', 'Library'],
   ['groups', 'Groups'],
   ['peers', 'Peers']
 ];
@@ -98,6 +100,26 @@ const CSS = `
   .mc .d{font-size:11px;color:var(--muted);margin-top:2px}
   .lbr{display:grid;grid-template-columns:1fr 72px 86px 56px;gap:8px;align-items:center;padding:6px 8px;font-size:12.5px;border-radius:6px}
   .lbr.click{cursor:pointer}.lbr.click:hover{background:var(--panel2)}
+  .line.rulehit{background:rgba(59,130,246,.10);box-shadow:inset 3px 0 0 var(--accent)}
+  .logwarn{background:rgba(210,153,34,.12);color:var(--warn);border-radius:7px;margin:10px 14px 0;
+    padding:9px 12px;font-size:12.5px}
+  .lognav{display:flex;gap:8px;align-items:center;padding:8px 14px;border-bottom:1px solid var(--line)}
+  .lognav .sub{color:var(--muted);font-size:12px;flex:1;text-align:center;font-variant-numeric:tabular-nums}
+  .logbrowse{font-family:'Cascadia Code',Consolas,monospace;font-size:11.5px;line-height:1.5;max-height:44vh}
+  .logline{padding:0 14px;white-space:pre-wrap;word-break:break-all;border-bottom:1px solid #171c23}
+  .logline.rulehit{background:rgba(59,130,246,.14);box-shadow:inset 3px 0 0 var(--accent)}
+  .reparse{display:flex;gap:10px;align-items:center;flex-wrap:wrap;padding:10px 14px;border-top:1px solid var(--line)}
+  .reparse .sub{color:var(--muted);font-size:12px}
+  .rpkinds{display:flex;gap:6px;flex-wrap:wrap;width:100%}
+  .rules{padding:6px 0;overflow:auto;max-height:44vh}
+  .rule{display:grid;grid-template-columns:64px 250px 1fr 92px;gap:10px;align-items:center;
+    padding:6px 14px;border-bottom:1px solid #20262f;font-size:12.5px}
+  .rule.head{color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:.4px;border-bottom:1px solid var(--line)}
+  .rule.on{background:rgba(59,130,246,.07)}
+  .rule .rkind{font-weight:600;word-break:break-word}
+  .rule .rpat{font-family:'Cascadia Code',Consolas,monospace;font-size:11px;color:var(--muted);
+    white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  @media(max-width:900px){.rule{grid-template-columns:56px 1fr 80px}.rule .rpat{display:none}}
   .home-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(250px,1fr));gap:12px;padding:14px}
   .home-card{background:var(--panel2);border:1px solid var(--line);border-radius:10px;padding:16px;
     text-align:left;cursor:pointer;color:var(--text);display:grid;gap:8px;align-content:start}
@@ -224,7 +246,14 @@ class Dashboard extends React.Component {
       identityLocked: false,
       identityExists: false,
       showSettings: false,
-      showIdentity: false
+      showIdentity: false,
+      // Game.log visibility + rules + re-parse
+      loginfo: null,
+      reparse: null,
+      rules: [],
+      activeRules: new Set(), // rule ids toggled for highlighting
+      logSlice: null,         // { start, end, size, text } from the raw browser
+      logBrowserOpen: false
     };
     this._timer = null;
     this._copiedTimers = {};
@@ -233,6 +262,7 @@ class Dashboard extends React.Component {
 
   componentDidMount () {
     this.poll();
+    this.fetchRules();
     this._timer = setInterval(() => {
       if (this.state.auto) this.poll();
     }, 2000);
@@ -281,11 +311,56 @@ class Dashboard extends React.Component {
         flagged: d.flagged || [],
         recent: d.recent || [],
         missions: d.missions || [],
-        kills: d.kills || []
+        kills: d.kills || [],
+        loginfo: d.loginfo || null,
+        reparse: d.reparse || null
       });
     } catch (_) {
       this.setState({ status: 'OFFLINE', online: false });
     }
+  }
+
+  fetchRules () {
+    fetch('/services/star-citizen/rules')
+      .then((r) => r.json())
+      .then((j) => {
+        const rules = j.data || [];
+        // All patterns highlight by default; the table toggles them off.
+        this.setState({ rules, activeRules: new Set(rules.map((r) => r.id)) });
+      })
+      .catch(() => {});
+  }
+
+  toggleRule (id) {
+    const next = new Set(this.state.activeRules);
+    if (next.has(id)) next.delete(id); else next.add(id);
+    this.setState({ activeRules: next });
+  }
+
+  /** Compiled regexes for the currently toggled rules (highlighting). */
+  activeRegexes () {
+    const out = [];
+    for (const rule of this.state.rules) {
+      if (!this.state.activeRules.has(rule.id)) continue;
+      try { out.push(new RegExp(rule.pattern, rule.flags || '')); } catch (_) { /* bad pattern */ }
+    }
+    return out;
+  }
+
+  async fetchLogSlice (start) {
+    try {
+      const q = start === undefined ? 'start=end' : `start=${start}`;
+      const r = await fetch(`/services/star-citizen/logslice?${q}&bytes=65536`);
+      if (!r.ok) throw new Error((await r.json()).error || `HTTP ${r.status}`);
+      const j = await r.json();
+      this.setState({ logSlice: j.data, logBrowserOpen: true });
+    } catch (e) {
+      this.setState({ logSlice: { error: e.message }, logBrowserOpen: true });
+    }
+  }
+
+  async startReparse () {
+    try { await fetch('/services/star-citizen/reparse', { method: 'POST' }); this.poll(); } catch (_) { /* offline */ }
   }
 
   fetchAnalytics () {
@@ -364,10 +439,11 @@ class Dashboard extends React.Component {
   }
 
   // ---- render helpers ----
-  renderLine (ev, kws, idx) {
+  renderLine (ev, kws, idx, regexes) {
     const [cls, label] = badge(ev);
     const copyKey = 'copy_' + idx;
-    return React.createElement('div', { className: 'line', key: idx },
+    const hit = regexes && regexes.length && regexes.some((re) => re.test(ev.raw));
+    return React.createElement('div', { className: 'line' + (hit ? ' rulehit' : ''), key: idx },
       React.createElement('span', { className: 'time' }, shortTime(ev.timestamp)),
       React.createElement('span', { className: 'badge ' + cls }, label),
       React.createElement('span', { className: 'raw', dangerouslySetInnerHTML: { __html: highlight(ev.raw, kws) } }),
@@ -381,7 +457,8 @@ class Dashboard extends React.Component {
 
   renderFeed (items, kws, empty) {
     if (!items.length) return React.createElement('div', { className: 'empty' }, empty || 'nothing yet');
-    return items.map((ev, i) => this.renderLine(ev, kws, i));
+    const regexes = this.activeRegexes();
+    return items.map((ev, i) => this.renderLine(ev, kws, i, regexes));
   }
 
   renderKills () {
@@ -838,6 +915,112 @@ class Dashboard extends React.Component {
     );
   }
 
+  renderLogPanel () {
+    const info = this.state.loginfo;
+    const rp = this.state.reparse;
+    const slice = this.state.logSlice;
+    const regexes = this.activeRegexes();
+    const fmt = (b) => (b >= 1048576 ? (b / 1048576).toFixed(1) + ' MB' : Math.round(b / 1024) + ' KB');
+
+    const sliceLines = (slice && slice.text)
+      ? slice.text.split('\n').slice(slice.start > 0 ? 1 : 0) // drop the partial first line mid-file
+      : [];
+
+    return React.createElement('section', { className: 'panel full' },
+      React.createElement('h2', null, '🗂 Game.log ',
+        React.createElement('span', { className: 'sub' },
+          info
+            ? (info.exists
+              ? `${info.path} — ${fmt(info.size)} · ${info.channel || '?'} · touched ${shortTime(info.mtime)}`
+              : (info.path ? `${info.path} — NOT FOUND` : 'no Game.log located — set the path in Settings ⚙ or SC_LOGFILE'))
+            : 'locating…'),
+        React.createElement('button', {
+          className: 'btn', type: 'button',
+          disabled: !(info && info.exists),
+          onClick: () => (this.state.logBrowserOpen
+            ? this.setState({ logBrowserOpen: false, logSlice: null })
+            : this.fetchLogSlice())
+        }, this.state.logBrowserOpen ? 'Close browser' : 'Browse raw log')
+      ),
+      info && info.path && !info.exists
+        ? React.createElement('div', { className: 'logwarn' },
+          '⚠ The configured Game.log is not visible — check the path in Settings ⚙, or that the game has started at least once.')
+        : null,
+      this.state.logBrowserOpen && slice
+        ? React.createElement(React.Fragment, null,
+          React.createElement('div', { className: 'lognav' },
+            React.createElement('button', { className: 'btn', disabled: !slice.start, onClick: () => this.fetchLogSlice(0) }, '⇤ oldest'),
+            React.createElement('button', { className: 'btn', disabled: !slice.start, onClick: () => this.fetchLogSlice(Math.max(0, slice.start - 65536)) }, '← older'),
+            React.createElement('span', { className: 'sub' },
+              slice.error ? slice.error : `bytes ${Number(slice.start).toLocaleString()}–${Number(slice.end).toLocaleString()} of ${Number(slice.size).toLocaleString()}`),
+            React.createElement('button', { className: 'btn', disabled: slice.end >= slice.size, onClick: () => this.fetchLogSlice(slice.end) }, 'newer →'),
+            React.createElement('button', { className: 'btn', onClick: () => this.fetchLogSlice() }, 'newest ⇥')
+          ),
+          React.createElement('div', { className: 'feed logbrowse' },
+            sliceLines.map((line, i) => React.createElement('div', {
+              className: 'logline' + (regexes.length && regexes.some((re) => re.test(line)) ? ' rulehit' : ''),
+              key: i
+            }, line || ' '))
+          )
+        )
+        : null,
+      React.createElement('div', { className: 'reparse' },
+        React.createElement('button', {
+          className: 'btn', type: 'button',
+          disabled: !!(rp && rp.status === 'running'),
+          onClick: () => this.startReparse()
+        }, rp && rp.status === 'running' ? 'Re-parsing…' : '⟲ Re-parse history (oldest → newest)'),
+        rp && rp.status !== 'idle'
+          ? React.createElement('span', { className: 'sub' },
+            rp.status === 'running'
+              ? `file ${rp.fileIndex}/${rp.files} (${rp.currentFile || '…'}) · ${Number(rp.lines).toLocaleString()} lines · ${Number(rp.entries).toLocaleString()} entries`
+              : rp.status === 'done'
+                ? `done — ${rp.files} files · ${Number(rp.lines).toLocaleString()} lines · ${Number(rp.entries).toLocaleString()} entries · digest ${String(rp.digest).slice(0, 16)}…`
+                : `error: ${rp.error}`)
+          : React.createElement('span', { className: 'sub' },
+            'counts every line across all logbackups; each entry gets a deterministic Fabric message id, chained into one reproducible digest'),
+        rp && rp.status === 'done' && rp.byKind
+          ? React.createElement('div', { className: 'rpkinds' },
+            Object.entries(rp.byKind).sort((a, b) => b[1] - a[1]).map(([kind, n]) =>
+              React.createElement('span', { className: 'chip on', key: kind }, `${kind} ${Number(n).toLocaleString()}`))
+          )
+          : null
+      )
+    );
+  }
+
+  renderRulesPanel () {
+    if (!this.state.rules.length) return null;
+    return React.createElement('section', { className: 'panel full' },
+      React.createElement('h2', null, '🧩 Parser rules ',
+        React.createElement('span', { className: 'sub' },
+          '— the configured regular expressions, all highlighting by default. Toggle any off to declutter the live feeds and raw log browser.'),
+        this.state.activeRules.size
+          ? React.createElement('button', { className: 'btn', onClick: () => this.setState({ activeRules: new Set() }) }, 'Clear highlights')
+          : React.createElement('button', { className: 'btn', onClick: () => this.setState({ activeRules: new Set(this.state.rules.map((r) => r.id)) }) }, 'Enable all')
+      ),
+      React.createElement('div', { className: 'rules' },
+        React.createElement('div', { className: 'rule head' },
+          React.createElement('span', null, ''),
+          React.createElement('span', null, 'event'),
+          React.createElement('span', null, 'pattern'),
+          React.createElement('span', null, 'status')
+        ),
+        this.state.rules.map((r) => React.createElement('div', { className: 'rule' + (this.state.activeRules.has(r.id) ? ' on' : ''), key: r.id },
+          React.createElement('button', {
+            className: 'chip' + (this.state.activeRules.has(r.id) ? ' on' : ''),
+            title: 'highlight lines matching this rule',
+            onClick: () => this.toggleRule(r.id)
+          }, this.state.activeRules.has(r.id) ? '● on' : '○ off'),
+          React.createElement('span', { className: 'rkind' }, r.kind,
+            r.tag ? React.createElement('span', { className: 'mid' }, ' <' + r.tag + '>') : null),
+          React.createElement('code', { className: 'rpat', title: r.pattern }, r.pattern),
+          React.createElement('span', { className: 'badge ' + (r.verified ? 'b-good' : 'b-warn') }, r.verified ? 'VERIFIED' : 'UNVERIFIED')
+        ))
+      )
+    );
+  }
+
   renderLive () {
     const kws = keywordsFrom(this.state.filter);
     let flagged = this.state.flagged.filter((ev) => matches(ev.raw, kws));
@@ -850,6 +1033,8 @@ class Dashboard extends React.Component {
       ' · ● ' + (ms.active || 0) + ' active';
 
     return React.createElement('main', null,
+      this.renderLogPanel(),
+      this.renderRulesPanel(),
       React.createElement('section', { className: 'panel full' },
         React.createElement('h2', null, '⭐ Mission & combat activity ',
           React.createElement('span', { className: 'sub' }, '— objectives, contracts & any combat lines. Hit Copy all to send me new formats.'),
@@ -899,6 +1084,8 @@ class Dashboard extends React.Component {
         `${c.missions || 0} missions · ${c.deaths || 0} deaths this session`],
       ['analyze', '📊 Analyze', 'Activity analytics across your backloaded history and the live session — heatmap, outcomes, pilots.',
         'sliced by month, pilot, mission type'],
+      ['library', '📸 Library', 'Periodic reduced-size snapshots of your play sessions — browsable history, ready for image analysis.',
+        'opt-in · configurable interval · auto-purge'],
       ['groups', '👥 Groups', 'Member-created squads with k-of-n Schnorr decisions. Share a public group page; others apply to join.',
         'pages at /groups/:id (or a custom URL)'],
       ['peers', '🌐 Peers', 'Fabric Network peer management — push your signed event batches to org hubs like goon.vc.',
@@ -929,6 +1116,7 @@ class Dashboard extends React.Component {
     switch (this.state.tab) {
       case 'live': return this.renderLive();
       case 'analyze': return this.renderAnalyze();
+      case 'library': return React.createElement(Library, null);
       case 'groups': return React.createElement(Groups, { identityPubkey: this.state.identityPubkey });
       case 'peers': return React.createElement(Peers, null);
       default: return this.renderHome();
@@ -971,17 +1159,21 @@ class Dashboard extends React.Component {
               ? '🔑 ' + this.state.identityPubkey.slice(0, 8) + '…'
               : (this.state.identityExists ? '🔒 locked' : '🔑 identity'))
             : null,
+          // Compact stat strip — the full breakdown lives on the Live/Analyze tabs.
           React.createElement('div', { className: 'counts' },
-            React.createElement('span', { className: 'k' }, 'kills ', React.createElement('b', null, c.kills)),
-            React.createElement('span', { className: 'k', title: 'combat objectives progressed — inferred from missions (kills are not logged directly)' }, 'combat ', React.createElement('b', null, c.combat)),
-            React.createElement('span', { className: 'k', title: "local-player deaths — corpse-recovery signal (kills aren't logged on current builds)" }, 'deaths ', React.createElement('b', null, c.deaths)),
-            React.createElement('span', { className: 'k', title: 'player incapacitations (revivable downs)' }, 'downs ', React.createElement('b', null, c.incaps)),
-            React.createElement('span', null, 'sessions ', React.createElement('b', null, this.state.sessions.length)),
-            React.createElement('span', null, 'missions ', React.createElement('b', null, c.missions)),
-            React.createElement('span', { title: 'distinct players · ' + c.logins + ' login event' + (c.logins === 1 ? '' : 's') }, 'players ', React.createElement('b', null, c.players)),
-            React.createElement('span', null, 'vehicles ', React.createElement('b', null, c.vehicles)),
-            React.createElement('span', null, 'activity ', React.createElement('b', null, c.flagged)),
-            React.createElement('span', null, 'lines ', React.createElement('b', null, Number(c.logs || 0).toLocaleString()))
+            React.createElement('span', {
+              title: `accepted this session · ${c.combat} combat objectives · ${this.state.sessions.length} game sessions`
+            }, 'missions ', React.createElement('b', null, c.missions)),
+            React.createElement('span', {
+              className: 'k',
+              title: `${c.kills} logged kills · ${c.incaps} downs — deaths use the corpse-recovery signal`
+            }, 'deaths ', React.createElement('b', null, c.deaths)),
+            React.createElement('span', {
+              title: `distinct players · ${c.logins} login event${c.logins === 1 ? '' : 's'} · ${c.vehicles} vehicles seen`
+            }, 'players ', React.createElement('b', null, c.players)),
+            React.createElement('span', {
+              title: `${c.flagged} flagged activity lines`
+            }, 'lines ', React.createElement('b', null, Number(c.logs || 0).toLocaleString()))
           ),
           React.createElement('div', { className: 'ctrl' },
             React.createElement('span', { title: 'game build / version' }, this.state.build),

@@ -23,7 +23,9 @@ const path = require('path');
 
 const COLLECTIONS = [
   'missions', 'applications', 'claims', 'validations', 'audit',
-  'groups', 'groupapplications', 'groupaudit'
+  'groups', 'groupapplications', 'groupaudit',
+  'settings', // operator settings records { id: key, value } (functions/settingsStore.js)
+  'snapshots' // screenshot metadata { id, ts, file, bytes, width, height } (services/SnapshotManager.js)
 ];
 
 class Store {
@@ -53,6 +55,9 @@ class Store {
 
     // Import legacy per-collection JSON files (pre–Fabric Store) once.
     this._migrateLegacyJson();
+    // Pick up a legacy operator settings.json from the store root (merged
+    // key-by-key after Level loads, so existing Store values win).
+    const legacySettings = this._takeLegacySettingsJson();
 
     const FabricStore = require('@fabric/core/types/store');
     this._fabric = new FabricStore({
@@ -67,7 +72,19 @@ class Store {
       this.data[name] = await this._loadCollection(name);
     }
 
+    if (legacySettings) {
+      let changed = false;
+      for (const [key, value] of Object.entries(legacySettings)) {
+        if (this.data.settings[key] === undefined) {
+          this.data.settings[key] = { id: key, value };
+          changed = true;
+        }
+      }
+      if (changed) this._persist('settings');
+    }
+
     this._started = true;
+    await this.flush();
     return this;
   }
 
@@ -102,6 +119,30 @@ class Store {
         }
         fs.renameSync(file, `${file}.migrated`);
       } catch (_) { /* leave file for a later attempt */ }
+    }
+  }
+
+  /**
+   * One-time pickup of the pre-Fabric-Store operator `settings.json` that
+   * lived next to the register dir (e.g. `stores/gooncitizen/settings.json`).
+   * Returns the raw object (or null) and retires the file; the caller merges
+   * keys into the `settings` collection after Level has loaded.
+   * @returns {Object|null}
+   */
+  _takeLegacySettingsJson () {
+    if (!this.path) return null;
+    const file = path.join(path.dirname(this.path), 'settings.json');
+    if (!fs.existsSync(file)) return null;
+    try {
+      const raw = JSON.parse(fs.readFileSync(file, 'utf8'));
+      fs.renameSync(file, `${file}.migrated`);
+      if (raw && typeof raw === 'object' && !Array.isArray(raw)) {
+        console.log(`[STORE] importing legacy settings.json into Fabric store (${file}.migrated)`);
+        return raw;
+      }
+      return null;
+    } catch (_) {
+      return null; // leave the file for a later attempt
     }
   }
 
@@ -145,6 +186,15 @@ class Store {
     this._col(name)[id] = record;
     this._persist(name);
     return record;
+  }
+
+  /** Remove one record from a collection. Returns true when it existed. */
+  del (name, id) {
+    const col = this._col(name);
+    if (col[id] === undefined) return false;
+    delete col[id];
+    this._persist(name);
+    return true;
   }
 }
 

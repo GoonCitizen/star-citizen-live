@@ -22,7 +22,7 @@ const fs = require('fs');
 const path = require('path');
 const readline = require('readline');
 
-const { parseLine, shipName, parseSessionInfo, missionType, isNPC, missionFaction } = require('../functions/parser');
+const { parseLine, RULES, shipName, parseSessionInfo, missionType, isNPC, missionFaction } = require('../functions/parser');
 const { channelFromPath } = require('../functions/locate');
 const settingsStore = require('../functions/settingsStore');
 
@@ -63,7 +63,8 @@ class StarCitizenService extends EventEmitter {
       discord: { enable: false, webhook: null, announceKills: true, announcePlayerJoins: true, announceActivities: false, announceMissions: false, announceCombat: false, announceIncaps: false },
       missions: { enable: true },
       uplink: { enable: false, url: null, intervalMs: 5000 },
-      settingsDir: null // dir for persisted operator settings (settings.json) + peer list
+      settingsDir: null, // Hub-style named store root (stores/gooncitizen); register defaults beneath it
+      store: null // optional pre-started types/Store instance (Electron main / scripts/node.js)
     }, settings);
     this.settings.discord = Object.assign({ enable: false, webhook: null, announceKills: true, announcePlayerJoins: true, announceActivities: false, announceMissions: false, announceCombat: false, announceIncaps: false }, settings.discord || {});
     this.settings.uplink = Object.assign({ enable: false, url: null, intervalMs: 5000 }, settings.uplink || {});
@@ -93,10 +94,8 @@ class StarCitizenService extends EventEmitter {
 
     // Peers: remote hubs (e.g. goon.vc) that receive this relay's signed
     // event batches — the desktop counterpart of the Hub's AddPeer/RemovePeer.
-    // Loaded from the persisted operator settings; managed via REST.
-    const persisted = this.settings.settingsDir ? settingsStore.loadSettings(this.settings.settingsDir) : {};
-    this.peers = (Array.isArray(persisted.peers) ? persisted.peers : []).map((p) => Object.assign({ enabled: true }, p));
-    if (persisted.uplinkIntervalMs) this.settings.uplink.intervalMs = persisted.uplinkIntervalMs;
+    // Loaded from the Fabric Store settings in start(); managed via REST.
+    this.peers = [];
 
     // Safety net: a stray 'error' (e.g. the game rotating Game.log) must never
     // crash the process. Without a listener, EventEmitter throws on 'error'.
@@ -106,11 +105,18 @@ class StarCitizenService extends EventEmitter {
     const GroupManager = require('../services/GroupManager');
     const { Store } = require('../types/Store');
 
-    // Shared Fabric Store for missions + groups. Persists under the Hub-style
-    // named store (`stores/gooncitizen/register`) unless overridden. Null → memory (tests).
-    const registerDir = this._resolveRegisterPath();
-    this.registerStore = new Store({ path: registerDir });
-    if (registerDir) console.log(`[STAR-CITIZEN] register store: ${registerDir}`);
+    // Shared Fabric Store — the ONLY internal storage (missions, groups,
+    // operator settings). Persists under the Hub-style named store
+    // (`stores/gooncitizen/register`) unless overridden. Null → memory (tests).
+    // An already-started Store may be injected (Electron main / scripts/node.js).
+    if (this.settings.store) {
+      this.registerStore = this.settings.store;
+      this._loadPersistedSettings(); // injected store is already started
+    } else {
+      const registerDir = this._resolveRegisterPath();
+      this.registerStore = new Store({ path: registerDir });
+      if (registerDir) console.log(`[STAR-CITIZEN] register store: ${registerDir}`);
+    }
 
     this.missionManager = (this.settings.missions && this.settings.missions.enable)
       ? new MissionManager(Object.assign({}, this.settings.missions, { store: this.registerStore }))
@@ -126,6 +132,15 @@ class StarCitizenService extends EventEmitter {
     this.groupManager = groupSettings.enable !== false ? new GroupManager(groupSettings) : null;
     if (this.missionManager && this.groupManager) this.missionManager.groupManager = this.groupManager;
 
+    // Periodic screen snapshots (opt-in; Electron injects the capture fn via
+    // setSnapshotCapture). Images under <store root>/snapshots; metadata in
+    // the Fabric Store. Idle in hosted server mode and pure-browser sessions.
+    const SnapshotManager = require('../services/SnapshotManager');
+    this.snapshotManager = new SnapshotManager({
+      store: this.registerStore,
+      dir: this.settings.settingsDir ? path.join(this.settings.settingsDir, 'snapshots') : null
+    });
+
     // Bearer sessions issued by POST …/auth (Schnorr login challenge).
     this._sessions = {};
 
@@ -140,7 +155,148 @@ class StarCitizenService extends EventEmitter {
 
     this.history = this._loadHistory();   // compact backfill of past logs (Analyze tab)
 
+    // Deterministic historical re-parse job (oldest log forward). Idle until
+    // POST …/reparse; progress + result exposed on the monitor payload.
+    this._reparse = { status: 'idle' };
+
     if (this.settings.discord.enable) this._wireDiscord();
+  }
+
+  /** Where the live Game.log is and whether it is actually visible right now. */
+  _logInfo () {
+    const file = this.settings.logfile;
+    const info = { path: file || null, channel: this.channel || null, exists: false, size: 0, mtime: null };
+    if (file) {
+      try {
+        const st = fs.statSync(file);
+        info.exists = true;
+        info.size = st.size;
+        info.mtime = st.mtime.toISOString();
+      } catch (_) { /* not found / unreadable */ }
+    }
+    return info;
+  }
+
+  /**
+   * Re-parse every locatable log (game logbackups + corpus + the live log),
+   * OLDEST FIRST. Counts lines and per-kind statistics and derives a
+   * deterministic Fabric message id for each parsed entry:
+   *   id     = sha256(canonical JSON of { type: 'GoonCitizenLogEvent', payload })
+   *   digest = sha256(digest + id)   — a chain over all entries, so two runs
+   * over the same corpus yield the same digest. Read-only; does not mutate
+   * the live collections (the register stays the source of truth, D-005).
+   */
+  async _runReparse () {
+    if (this._reparse.status === 'running') return this._reparse;
+    const crypto = require('crypto');
+    const readlineLib = require('readline');
+    const { canonicalStringify } = identityLib();
+    const { defaultDirs, findLogs } = require('../scripts/backfill');
+    const sha256hex = (s) => crypto.createHash('sha256').update(s).digest('hex');
+
+    // Collect candidate files: backup dirs + the live log; oldest first by mtime.
+    // settings.reparse.dirs overrides the auto-detected locations (tests / custom corpora).
+    const dirs = (this.settings.reparse && Array.isArray(this.settings.reparse.dirs))
+      ? this.settings.reparse.dirs
+      : defaultDirs();
+    const seen = new Set();
+    const files = [];
+    for (const dir of dirs) for (const f of findLogs(dir)) { if (!seen.has(f)) { seen.add(f); files.push(f); } }
+    if (this.settings.logfile && !seen.has(this.settings.logfile) && fs.existsSync(this.settings.logfile)) {
+      files.push(this.settings.logfile);
+    }
+    const dated = files
+      .map((f) => { try { return { f, mtime: fs.statSync(f).mtimeMs }; } catch (_) { return null; } })
+      .filter(Boolean)
+      .sort((a, b) => a.mtime - b.mtime); // oldest log forward
+
+    const job = this._reparse = {
+      status: 'running',
+      files: dated.length,
+      fileIndex: 0,
+      currentFile: null,
+      lines: 0,
+      entries: 0,
+      byKind: {},
+      digest: '0'.repeat(64),
+      startedAt: new Date().toISOString(),
+      finishedAt: null,
+      error: null
+    };
+    this.emit('reparse:started', { files: dated.length });
+
+    (async () => {
+      try {
+        for (const { f } of dated) {
+          job.fileIndex += 1;
+          job.currentFile = path.basename(f);
+          await new Promise((resolve) => {
+            const rl = readlineLib.createInterface({ input: fs.createReadStream(f), crlfDelay: Infinity });
+            rl.on('line', (line) => {
+              job.lines += 1;
+              const ev = parseLine(line);
+              if (ev.kind === 'log:raw' || ev.kind === 'log:notice') return;
+              job.entries += 1;
+              job.byKind[ev.kind] = (job.byKind[ev.kind] || 0) + 1;
+              // Deterministic Fabric message per entry (content-derived only).
+              const { raw, ...payload } = ev;
+              const messageId = sha256hex(canonicalStringify({ type: 'GoonCitizenLogEvent', payload }));
+              job.digest = sha256hex(job.digest + messageId);
+            });
+            rl.on('close', resolve);
+            rl.on('error', resolve); // unreadable file: skip, keep going
+          });
+        }
+        job.status = 'done';
+      } catch (error) {
+        job.status = 'error';
+        job.error = error.message || String(error);
+      }
+      job.currentFile = null;
+      job.finishedAt = new Date().toISOString();
+      this.emit('reparse:finished', job);
+    })();
+
+    return job;
+  }
+
+  /**
+   * Apply operator settings persisted in the Fabric Store (peers, uplink
+   * cadence). Called after the Store has started so the collections are live.
+   */
+  _loadPersistedSettings () {
+    const persisted = settingsStore.loadSettings(this.registerStore);
+    if (!this.peers.length && Array.isArray(persisted.peers)) {
+      this.peers = persisted.peers.map((p) => Object.assign({ enabled: true }, p));
+    }
+    if (persisted.uplinkIntervalMs) this.settings.uplink.intervalMs = persisted.uplinkIntervalMs;
+    this._applySnapshotSettings(persisted);
+  }
+
+  /** Map persisted snapshot* settings onto the SnapshotManager (live). */
+  _applySnapshotSettings (persisted) {
+    if (!this.snapshotManager) return;
+    this.snapshotManager.configure({
+      enabled: persisted.snapshotsEnabled !== undefined ? persisted.snapshotsEnabled : undefined,
+      intervalMs: persisted.snapshotIntervalSeconds !== undefined ? Number(persisted.snapshotIntervalSeconds) * 1000 : undefined,
+      autoPurge: persisted.snapshotAutoPurge !== undefined ? persisted.snapshotAutoPurge : undefined,
+      maxBytes: persisted.snapshotMaxMB !== undefined ? Number(persisted.snapshotMaxMB) * 1024 * 1024 : undefined
+    });
+  }
+
+  /**
+   * Provide the platform screen-capture function (Electron main). While set
+   * and snapshots are enabled, the manager captures on its interval.
+   * @param {Function|null} fn async () => ({ buffer, width, height }).
+   */
+  setSnapshotCapture (fn) {
+    if (this.snapshotManager) this.snapshotManager.setCapture(fn);
+  }
+
+  /** Persist the peer roster into the Fabric Store (runtime fields stripped). */
+  _persistPeers () {
+    if (!this.registerStore || !this.registerStore.persistent) return;
+    settingsStore.putSetting(this.registerStore, 'peers', this.peers.map(({ lastSeen, lastError, ...p }) => p));
   }
 
   /**
@@ -397,6 +553,21 @@ class StarCitizenService extends EventEmitter {
         res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
         return res.end(html);
       }
+      // Parser rules — the configured regular expressions, for the dashboard's
+      // rules table (toggle-to-highlight in the live log browser).
+      if (req.method === 'GET' && pathname === `${base}/rules`) {
+        return send(200, {
+          type: 'Collection',
+          data: RULES.map((r, i) => ({
+            id: `rule-${i}`,
+            kind: r.kind,
+            tag: r.tag || null,
+            pattern: r.test.source,
+            flags: r.test.flags || '',
+            verified: r.verified !== false
+          }))
+        });
+      }
       // Grouped missions (by MissionId), objectives joined in.
       if (req.method === 'GET' && pathname === `${base}/missiongroups`) {
         return send(200, { type: 'Collection', data: this.missionGroups });
@@ -417,6 +588,7 @@ class StarCitizenService extends EventEmitter {
         const newest = (arr) => arr.slice(-limit).reverse();
         return send(200, {
           status: this.status, startedAt: this.state.startedAt, now: new Date().toISOString(),
+          loginfo: this._logInfo(), reparse: this._reparse,
           channel: this.channel, session: this.session, sessions: this.sessions,
           missions: this.missionGroups,
           missionStats: this.missionStats(),
@@ -447,13 +619,13 @@ class StarCitizenService extends EventEmitter {
       // AddPeer/RemovePeer/ListPeers semantics over REST. Disabled in hosted
       // server mode — goon.vc settings belong to the Hub's own settings API.
       if (this.settings.mode !== 'server') {
-        const settingsDir = this.settings.settingsDir;
+        const store = this.registerStore;
+        const editable = !!(store && store.persistent);
         if (req.method === 'GET' && pathname === '/settings') {
-          const persisted = settingsDir ? settingsStore.loadSettings(settingsDir) : {};
           return send(200, {
             success: true,
-            settings: persisted,
-            editable: !!settingsDir,
+            settings: settingsStore.loadSettings(store),
+            editable,
             allowedKeys: settingsStore.ALLOWED_KEYS,
             runtime: {
               logfile: this.settings.logfile,
@@ -462,20 +634,22 @@ class StarCitizenService extends EventEmitter {
               mode: this.settings.mode,
               identity: this._identity ? this._identity.pubkey : null,
               uplinkActive: !!this._uplinkTimer,
-              uplinkQueued: this._uplinkQueue.length
+              uplinkQueued: this._uplinkQueue.length,
+              snapshots: this.snapshotManager ? this.snapshotManager.stats() : null
             }
           });
         }
         let sMatch;
         if ((sMatch = pathname.match(/^\/settings\/([a-zA-Z]+)$/)) && req.method === 'PUT') {
-          if (!settingsDir) return send(400, { error: 'No settings directory configured (settingsDir)' });
+          if (!editable) return send(400, { error: 'No persistent store configured (settingsDir)' });
           const d = await body();
           try {
-            const updated = settingsStore.putSetting(settingsDir, sMatch[1], d.value);
+            const updated = settingsStore.putSetting(store, sMatch[1], d.value);
             // Live-applicable settings take effect immediately; the rest on restart.
             let requiresRestart = ['logfile', 'channel', 'discordWebhook'].includes(sMatch[1]);
             if (sMatch[1] === 'peers') { this.peers = (updated.peers || []).map((p) => Object.assign({ enabled: true }, p)); this._refreshUplink(); requiresRestart = false; }
             if (sMatch[1] === 'uplinkIntervalMs') { this.settings.uplink.intervalMs = updated.uplinkIntervalMs || 5000; requiresRestart = false; }
+            if (sMatch[1].startsWith('snapshot')) { this._applySnapshotSettings(updated); requiresRestart = false; }
             return send(200, { success: true, settings: updated, requiresRestart });
           } catch (e) { return send(400, { error: e.message }); }
         }
@@ -487,7 +661,7 @@ class StarCitizenService extends EventEmitter {
             if (this.peers.some((p) => p.url === d.url)) return send(400, { error: 'peer already exists' });
             const peer = { id: idFor(d.url), url: d.url.replace(/\/$/, ''), label: d.label || null, enabled: d.enabled !== false };
             this.peers.push(peer);
-            if (settingsDir) settingsStore.putSetting(settingsDir, 'peers', this.peers.map(({ lastSeen, lastError, ...p }) => p));
+            this._persistPeers();
             this._refreshUplink();
             this.emit('peer:added', peer);
             return send(200, { type: 'Peer', data: peer });
@@ -499,7 +673,7 @@ class StarCitizenService extends EventEmitter {
           if (!peer) return send(404, { error: 'Peer not found' });
           if (req.method === 'DELETE') {
             this.peers = this.peers.filter((p) => p.id !== peer.id);
-            if (settingsDir) settingsStore.putSetting(settingsDir, 'peers', this.peers.map(({ lastSeen, lastError, ...p }) => p));
+            this._persistPeers();
             this._refreshUplink();
             this.emit('peer:removed', peer);
             return send(200, { success: true });
@@ -508,10 +682,61 @@ class StarCitizenService extends EventEmitter {
             const d = await body();
             if (d.enabled !== undefined) peer.enabled = !!d.enabled;
             if (d.label !== undefined) peer.label = d.label || null;
-            if (settingsDir) settingsStore.putSetting(settingsDir, 'peers', this.peers.map(({ lastSeen, lastError, ...p }) => p));
+            this._persistPeers();
             this._refreshUplink();
             return send(200, { type: 'Peer', data: peer });
           }
+        }
+
+        // ---- Game.log visibility: info, raw browsing, deterministic re-parse ----
+        if (req.method === 'GET' && pathname === `${base}/loginfo`) {
+          return send(200, { type: 'LogInfo', data: this._logInfo() });
+        }
+        // Browse the raw log by byte window (the file can be hundreds of MB —
+        // never read it whole). Client pages with start offsets.
+        if (req.method === 'GET' && pathname === `${base}/logslice`) {
+          const info = this._logInfo();
+          if (!info.exists) return send(404, { error: 'Game.log not found — set the path in Settings or SC_LOGFILE' });
+          const bytes = Math.min(Math.max(parseInt(url.searchParams.get('bytes'), 10) || 65536, 1024), 512 * 1024);
+          let start = url.searchParams.get('start');
+          start = start === null || start === 'end' ? Math.max(0, info.size - bytes) : Math.max(0, parseInt(start, 10) || 0);
+          const end = Math.min(info.size, start + bytes);
+          const text = await new Promise((resolve, reject) => {
+            const chunks = [];
+            fs.createReadStream(info.path, { start, end: Math.max(start, end - 1) })
+              .on('data', (c) => chunks.push(c))
+              .on('end', () => resolve(Buffer.concat(chunks).toString('utf8')))
+              .on('error', reject);
+          });
+          return send(200, { type: 'LogSlice', data: { start, end, size: info.size, text } });
+        }
+        if (req.method === 'POST' && pathname === `${base}/reparse`) {
+          const job = await this._runReparse();
+          return send(200, { type: 'Reparse', data: job });
+        }
+        if (req.method === 'GET' && pathname === `${base}/reparse`) {
+          return send(200, { type: 'Reparse', data: this._reparse });
+        }
+
+        // ---- Snapshot library (periodic screen captures; LOCAL relay only) ----
+        const sm = this.snapshotManager;
+        if (sm && pathname === `${base}/snapshots`) {
+          if (req.method === 'GET') {
+            const limit = parseInt(url.searchParams.get('limit'), 10) || 200;
+            const before = url.searchParams.get('before') || null;
+            return send(200, { type: 'Collection', data: sm.list({ limit, before }), stats: sm.stats() });
+          }
+          if (req.method === 'DELETE') {
+            const removed = sm.purgeAll();
+            return send(200, { success: true, removed });
+          }
+        }
+        let snapMatch;
+        if (sm && (snapMatch = pathname.match(new RegExp(`^${base}/snapshots/([^/]+)/image$`))) && req.method === 'GET') {
+          const file = sm.imagePath(snapMatch[1]);
+          if (!file) return send(404, { error: 'Snapshot not found' });
+          res.writeHead(200, { 'Content-Type': 'image/jpeg', 'Cache-Control': 'max-age=31536000, immutable' });
+          return fs.createReadStream(file).pipe(res);
         }
       }
 
@@ -1190,12 +1415,15 @@ class StarCitizenService extends EventEmitter {
   async start () {
     this.state.status = 'STARTING';
     if (this.registerStore) await this.registerStore.start();
+    this._loadPersistedSettings(); // peers + uplink cadence from the Fabric Store
     if (this.missionManager) await this.missionManager.start();
     if (this.groupManager) await this.groupManager.start();
     const serverMode = this.settings.mode === 'server';
     // Seed FIRST (replays history), then start the live poller at the current
     // end-of-file so we only stream genuinely new lines and don't double-read.
-    if (!serverMode && this.settings.seed) {
+    // A seed pointing at a not-yet-written log (default location) is skipped;
+    // the poller below tails it the moment the game creates it.
+    if (!serverMode && this.settings.seed && fs.existsSync(this.settings.seed)) {
       try { const n = await this.replayLog(this.settings.seed); console.log(`[STAR-CITIZEN] seeded ${n} lines from ${this.settings.seed}`); }
       catch (e) { this.emit('error', e); }
     }
@@ -1216,6 +1444,7 @@ class StarCitizenService extends EventEmitter {
   async stop () {
     this.state.status = 'STOPPING';
     if (this._pollTimer) { clearTimeout(this._pollTimer); this._pollTimer = null; }
+    if (this.snapshotManager) this.snapshotManager.stop();
     this._stopUplink();
     if (this.missionManager) await this.missionManager.stop();
     if (this.groupManager) await this.groupManager.stop();

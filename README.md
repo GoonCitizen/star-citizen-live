@@ -65,7 +65,7 @@ Configuration is via environment variables (preferred for secrets) or an optiona
 | `SC_SEED` | Pre-fill the monitor from a different log on start. |
 | `DISCORD_WEBHOOK_URL` | Enable Discord posting (optional). |
 | `SC_OFFICERS` | Comma-separated officer allowlist for the mission register. |
-| `SC_REGISTER_DIR` | Persist missions/groups via `@fabric/core` Store (LevelDB). Default: `stores/gooncitizen/register`. |
+| `SC_REGISTER_DIR` | Fabric Store (LevelDB) for all internal storage — missions, groups, settings. Default: `stores/gooncitizen/register`. |
 | `SC_SETTINGS_DIR` | Named Fabric store root (like Hub `stores/hub`). Default: `stores/gooncitizen`. |
 
 **Never commit secrets.** `settings/local.js`, `settings/auth.txt`, and `.env` are

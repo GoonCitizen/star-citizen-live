@@ -81,8 +81,10 @@ npm run build:installers  # Windows x64 + Debian x64 + macOS
 
 - `npm start` → `scripts/node.js` → `services/LiveRelay.js`. Auto-detects the SC
   install across drives/channels and tails the freshest `Game.log` (read-only).
-- Store root: **`stores/gooncitizen/`** (settings.json + `register/` LevelDB) —
-  same shape as Hub `stores/hub`. Type code: `types/Store.js`.
+- Store root: **`stores/gooncitizen/`** — same shape as Hub `stores/hub`. All
+  internal storage (missions, groups, operator settings) lives in the
+  **`register/` Fabric Store** (LevelDB); no JSON files are written by the app.
+  Type code: `types/Store.js`.
 - Dashboard home lists features along the top: Live, Analyze, Groups, Peers.
 
 ### Environment variables (config; secrets via env only)
@@ -93,8 +95,15 @@ npm run build:installers  # Windows x64 + Debian x64 + macOS
 | `SC_SEED` | Pre-fill the monitor from a different log on start. |
 | `DISCORD_WEBHOOK_URL` | Enable Discord posting (optional). |
 | `SC_OFFICERS` | Comma-separated officer allowlist for the mission register. |
-| `SC_REGISTER_DIR` | Persist the mission/group register via Fabric Store (LevelDB). Default: `stores/gooncitizen/register` (CLI) / `<userData>/stores/gooncitizen/register` (desktop). |
-| `SC_SETTINGS_DIR` | Named Fabric store root (settings.json + register/). Default: `stores/gooncitizen`. |
+| `SC_REGISTER_DIR` | Fabric Store (LevelDB) for ALL internal storage — missions, groups, operator settings. Default: `stores/gooncitizen/register` (CLI) / `<userData>/stores/gooncitizen/register` (desktop). |
+| `SC_SETTINGS_DIR` | Named Fabric store root. Default: `stores/gooncitizen`. |
+
+Snapshot settings (Settings ⚙ → Snapshots; stored in the Fabric Store, applied
+live): `snapshotsEnabled` (opt-in, default off), `snapshotIntervalSeconds`
+(default 10, min 2), `snapshotAutoPurge` (default on), `snapshotMaxMB` (default
+256). Reduced-size JPEGs live under `stores/gooncitizen/snapshots/`; metadata in
+the Store `snapshots` collection; browse them on the dashboard **Library** tab.
+Capture requires the desktop app (screenshot-desktop + nativeImage downscale).
 
 Settings can also come from `settings/local.js` (copy `settings/example.js`).
 **Never commit secrets** — `settings/local.js`, `settings/auth.txt`, and `.env`

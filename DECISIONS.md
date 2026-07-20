@@ -12,11 +12,15 @@ with the **Fabric Network** using the **Fabric Protocol** (amends the "no Fabric
 framing of D-002 — the heavyweight transport stays out, but conventions, types,
 and network integration come in):
 1. **Types in `types/`, data in `stores/`** — code never lives in `stores/`.
-   `types/Store.js` is the register persistence type (backed by
+   `types/Store.js` is the persistence type (backed by
    `@fabric/core/types/store`, LevelDB). The named Fabric store root is
    `stores/gooncitizen/` (CLI) / `<userData>/stores/gooncitizen/` (desktop) —
-   the counterpart of the Hub's `stores/hub` — holding `settings.json` and
-   the `register/` LevelDB.
+   the counterpart of the Hub's `stores/hub`. **All internal storage goes
+   through the Fabric Store** (`register/` LevelDB): missions, groups, AND
+   operator settings (a `settings` collection —
+   `functions/settingsStore.js`). The application never writes a settings
+   JSON file; a legacy `settings.json` is imported once on Store start and
+   retired as `.migrated`.
 2. **Hub features come forward** — capabilities proven in `hub.fabric.pub` are
    progressively adopted: peer management is a top-level dashboard feature
    (`components/Peers.js`, Hub-compatible `GET|POST /peers` +

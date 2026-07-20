@@ -19,6 +19,7 @@ const Onboarding = require('../components/Onboarding');
 const Identity = require('../components/Identity');
 const Groups = require('../components/Groups');
 const GroupPage = require('../components/GroupPage');
+const Library = require('../components/Library');
 const Peers = require('../components/Peers');
 const Settings = require('../components/Settings');
 
@@ -50,6 +51,7 @@ ${Onboarding.CSS}
 ${Identity.CSS}
 ${Groups.CSS}
 ${GroupPage.CSS}
+${Library.CSS}
 ${Peers.CSS}
 ${Settings.CSS}
 </style>

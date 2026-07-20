@@ -44,9 +44,10 @@ test('forced channel restricts the search', () => {
   assert.strictEqual(r.channel, 'PTU');
 });
 
-test('returns none when nothing is found', () => {
+test('falls back to the default RSI install location when nothing is found', () => {
   const statSync = () => { throw new Error('ENOENT'); };
   const r = resolveLogFile({ bases: ['E:\\SC'], statSync });
-  assert.strictEqual(r.source, 'none');
-  assert.strictEqual(r.file, null);
+  assert.strictEqual(r.source, 'default');
+  assert.strictEqual(r.file, 'C:\\Program Files\\Roberts Space Industries\\StarCitizen\\LIVE\\Game.log');
+  assert.strictEqual(r.channel, 'LIVE');
 });

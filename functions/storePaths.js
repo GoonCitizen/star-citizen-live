@@ -5,11 +5,12 @@
  * `stores/hub`. Layout (data only; code lives in `types/`):
  *
  *   stores/gooncitizen/
- *     settings.json     operator settings (peers, logfile, …)
- *     register/         LevelDB for missions + groups (`types/Store`)
+ *     register/         Fabric Store (LevelDB) — ALL internal storage:
+ *                       missions, groups, operator settings (`types/Store`)
  *
  * Migrates once from the older flat layout (`stores/register`,
- * `stores/settings.json`) when present.
+ * `stores/settings.json`); a staged legacy `settings.json` in the root is
+ * imported into the Store's `settings` collection on next start and retired.
  */
 
 const fs = require('fs');

@@ -60,19 +60,33 @@ function servicePort () {
   return Number(process.env.PORT) || settings.http?.port || settings.port || 3041;
 }
 
-/** Map settings/local.js + persisted userData settings (+ env) into LiveRelay options. */
-function buildRelaySettings (port) {
-  // Hub-style named store under userData (counterpart of Hub's stores/hub).
+// The app's Fabric Store — ALL internal storage (settings, missions, groups).
+// Opened once at startup; injected into LiveRelay; used by IPC handlers.
+let appStore = null;
+
+/** Open (or re-open) the shared Fabric Store under the Hub-style named root. */
+async function openAppStore () {
   const appStoreRoot = storeRoot(path.join(app.getPath('userData'), 'stores'));
-  // Also pick up a one-time migrate from the old flat userData/settings.json.
+  // One-time migrate of the old flat userData/settings.json into the store root,
+  // where types/Store imports it into the `settings` collection and retires it.
   try {
     const legacy = path.join(app.getPath('userData'), 'settings.json');
     const next = path.join(appStoreRoot, 'settings.json');
     if (fs.existsSync(legacy) && !fs.existsSync(next)) fs.renameSync(legacy, next);
   } catch (_) { /* best effort */ }
+  if (!appStore) {
+    const { Store } = require('./types/Store');
+    appStore = new Store({ path: process.env.SC_REGISTER_DIR || registerPath(appStoreRoot) });
+  }
+  await appStore.start(); // idempotent; re-opens after a service restart
+  return { appStoreRoot, store: appStore };
+}
 
-  // Priority: env > persisted settings.json (store root) > settings/local.js > auto.
-  const persisted = settingsStore.loadSettings(appStoreRoot);
+/** Map settings/local.js + Fabric Store settings (+ env) into LiveRelay options. */
+function buildRelaySettings (port) {
+  const appStoreRoot = storeRoot(path.join(app.getPath('userData'), 'stores'));
+  // Priority: env > Fabric Store settings > settings/local.js > auto.
+  const persisted = settingsStore.loadSettings(appStore);
   const explicit = process.env.SC_LOGFILE || persisted.logfile || settings.logfile || null;
   const channel = process.env.SC_CHANNEL || persisted.channel || settings.channel || null;
   const resolved = resolveLogFile({ explicit, channel });
@@ -84,7 +98,11 @@ function buildRelaySettings (port) {
     port,
     logfile: resolved.file,
     channel: resolved.channel || channel || null,
-    seed: process.env.SC_SEED != null ? process.env.SC_SEED : (settings.seed !== undefined ? settings.seed : resolved.file),
+    seed: process.env.SC_SEED != null
+      ? process.env.SC_SEED
+      : (settings.seed !== undefined
+        ? settings.seed
+        : (resolved.file && fs.existsSync(resolved.file) ? resolved.file : null)),
     discord: {
       enable: !!(discordIn.enable && webhook),
       webhook,
@@ -97,7 +115,6 @@ function buildRelaySettings (port) {
     },
     missions: Object.assign({
       enable: true,
-      dir: process.env.SC_REGISTER_DIR || settings.missions?.dir || registerPath(appStoreRoot),
       officers: process.env.SC_OFFICERS
         ? process.env.SC_OFFICERS.split(',').map((s) => s.trim()).filter(Boolean)
         : (Array.isArray(settings.missions?.officers) ? settings.missions.officers.map(String) : [])
@@ -106,7 +123,8 @@ function buildRelaySettings (port) {
       enable: !!(process.env.SC_UPLINK_URL || settings.uplink?.url),
       url: process.env.SC_UPLINK_URL || settings.uplink?.url || null
     }, settings.uplink || {}),
-    settingsDir: appStoreRoot
+    settingsDir: appStoreRoot,
+    store: appStore // shared, already-started Fabric Store
   };
 }
 
@@ -192,7 +210,7 @@ function openAtLoginEnabled () {
 
 /** Enable launch at OS login for installed builds (and opt-in via settings). */
 function configureAutoLaunch () {
-  const persisted = settingsStore.loadSettings(app.getPath('userData'));
+  const persisted = settingsStore.loadSettings(appStore); // {} until the store opens
   const forceOff = process.env.SC_OPEN_AT_LOGIN === '0' || persisted.openAtLogin === false || settings.openAtLogin === false;
   const forceOn = process.env.SC_OPEN_AT_LOGIN === '1' || persisted.openAtLogin === true || settings.openAtLogin === true;
   const enable = forceOn || (!forceOff && app.isPackaged);
@@ -352,6 +370,7 @@ async function startService () {
   const candidates = [preferred, preferred + 1, preferred + 2, 0];
 
   console.log('[ELECTRON]', '[STATUS]', `Starting ${BRAND_NAME} relay...`);
+  await openAppStore(); // Fabric Store first — settings live there
 
   let lastError = null;
   for (const port of candidates) {
@@ -410,10 +429,12 @@ async function stopService () {
 if (gotLock) {
   app.whenReady().then(async () => {
     try {
+      await openAppStore(); // settings come from the Fabric Store
       configureAutoLaunch();
       createTray();
       await startService();
       applyIdentityToService();
+      applySnapshotCaptureToService();
       createWindow(activePort || servicePort());
     } catch (error) {
       console.error('[ELECTRON]', '[ERROR]', 'Startup failed:', error);
@@ -462,7 +483,7 @@ function identityDir () {
 }
 
 function identityAutoLockMinutes () {
-  const persisted = settingsStore.loadSettings(storeRoot(path.join(app.getPath('userData'), 'stores')));
+  const persisted = settingsStore.loadSettings(appStore);
   const v = persisted.identityAutoLockMinutes;
   if (v === 0) return 0;
   const n = Math.floor(Number(v));
@@ -475,6 +496,38 @@ function applyIdentityToService () {
   if (starCitizenService && typeof starCitizenService.setIdentity === 'function') {
     starCitizenService.setIdentity(unlockedIdentity);
   }
+}
+
+// --- Snapshots (periodic reduced-size screen captures) ---------------------
+
+const SNAPSHOT_TARGET_WIDTH = 640; // small enough for cheap storage, big enough for OCR/analysis
+const SNAPSHOT_JPEG_QUALITY = 60;
+
+/**
+ * Wire the platform capture function into the relay's SnapshotManager.
+ * Captures the primary display via screenshot-desktop, downscales with
+ * Electron's nativeImage, and hands back a JPEG buffer + dimensions.
+ * The manager itself decides *when* to capture (opt-in setting + interval).
+ */
+function applySnapshotCaptureToService () {
+  if (!starCitizenService || typeof starCitizenService.setSnapshotCapture !== 'function') return;
+  let screenshot = null;
+  try {
+    screenshot = require('screenshot-desktop');
+  } catch (error) {
+    console.warn('[ELECTRON]', '[WARNING]', 'screenshot-desktop unavailable — snapshots disabled:', error.message);
+    return;
+  }
+  starCitizenService.setSnapshotCapture(async () => {
+    const png = await screenshot({ format: 'png' });
+    let image = nativeImage.createFromBuffer(png);
+    if (image.isEmpty()) throw new Error('screen capture produced an empty image');
+    if (image.getSize().width > SNAPSHOT_TARGET_WIDTH) {
+      image = image.resize({ width: SNAPSHOT_TARGET_WIDTH });
+    }
+    const { width, height } = image.getSize();
+    return { buffer: image.toJPEG(SNAPSHOT_JPEG_QUALITY), width, height };
+  });
 }
 
 /** Notify the renderer that lock state changed (header chip, modals). */
@@ -634,8 +687,8 @@ ipcMain.handle('identity:set-autolock', (_e, { minutes } = {}) => {
   const n = Math.floor(Number(minutes));
   if (!Number.isFinite(n) || n < 0) return { error: 'minutes must be a non-negative number' };
   try {
-    const dir = storeRoot(path.join(app.getPath('userData'), 'stores'));
-    settingsStore.putSetting(dir, 'identityAutoLockMinutes', Math.min(24 * 60, n));
+    if (!appStore) return { error: 'Store not ready yet — try again in a moment.' };
+    settingsStore.putSetting(appStore, 'identityAutoLockMinutes', Math.min(24 * 60, n));
     armIdentityAutoLock();
     return identitySummary();
   } catch (error) {
@@ -675,6 +728,7 @@ ipcMain.handle('restart-service', async () => {
   await stopService();
   await startService();
   applyIdentityToService();
+  applySnapshotCaptureToService();
   if (mainWindow && activePort) {
     await mainWindow.loadURL(`http://127.0.0.1:${activePort}/`);
   }

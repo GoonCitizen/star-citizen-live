@@ -55,6 +55,10 @@ class Settings extends React.Component {
       logfile: '',
       channel: '',
       discordWebhook: '',
+      snapshotsEnabled: false,
+      snapshotIntervalSeconds: 10,
+      snapshotAutoPurge: true,
+      snapshotMaxMB: 256,
       peerCount: 0,
       busy: false
     };
@@ -80,6 +84,10 @@ class Settings extends React.Component {
         logfile: s.logfile || '',
         channel: s.channel || '',
         discordWebhook: s.discordWebhook || '',
+        snapshotsEnabled: !!s.snapshotsEnabled,
+        snapshotIntervalSeconds: s.snapshotIntervalSeconds || 10,
+        snapshotAutoPurge: s.snapshotAutoPurge !== false,
+        snapshotMaxMB: s.snapshotMaxMB || 256,
         peerCount: Array.isArray(peersRes.data) ? peersRes.data.length : 0
       });
     } catch (e) {
@@ -106,6 +114,24 @@ class Settings extends React.Component {
       await this.put('channel', this.state.channel.trim() || null);
       await this.put('discordWebhook', this.state.discordWebhook.trim() || null);
       this.setState({ busy: false, requiresRestart: true });
+      await this.load();
+    } catch (e) {
+      this.setState({ busy: false, error: e.message });
+    }
+  }
+
+  /** Snapshot settings apply live (no relay restart). */
+  async saveSnapshots () {
+    if (this.state.busy || !this.state.editable) return;
+    this.setState({ busy: true, error: null });
+    try {
+      const interval = Math.max(2, Math.floor(Number(this.state.snapshotIntervalSeconds) || 10));
+      const maxMB = Math.max(16, Math.floor(Number(this.state.snapshotMaxMB) || 256));
+      await this.put('snapshotsEnabled', !!this.state.snapshotsEnabled);
+      await this.put('snapshotIntervalSeconds', interval);
+      await this.put('snapshotAutoPurge', !!this.state.snapshotAutoPurge);
+      await this.put('snapshotMaxMB', maxMB);
+      this.setState({ busy: false, snapshotIntervalSeconds: interval, snapshotMaxMB: maxMB });
       await this.load();
     } catch (e) {
       this.setState({ busy: false, error: e.message });
@@ -160,6 +186,55 @@ class Settings extends React.Component {
                   (window.electronAPI && window.electronAPI.restartService)
                     ? React.createElement('button', { className: 'st-btn ghost', style: { marginLeft: 8, padding: '3px 10px', fontSize: 11 }, onClick: () => this.restart() }, 'Restart relay now')
                     : 'Restart the relay to apply.')
+                : null
+            ),
+
+            React.createElement('div', { className: 'st-sec' },
+              React.createElement('h3', null, 'Snapshots'),
+              React.createElement('div', { className: 'd' },
+                'Opt-in periodic screen captures while you play — stored reduced-size in the Library for later image analysis. Desktop app only; applies live.'),
+              React.createElement('label', { style: { display: 'flex', gap: 8, alignItems: 'center', fontSize: 13, cursor: 'pointer', marginBottom: 10 } },
+                React.createElement('input', {
+                  type: 'checkbox',
+                  checked: this.state.snapshotsEnabled,
+                  onChange: (e) => this.setState({ snapshotsEnabled: e.target.checked })
+                }),
+                'Capture snapshots of my screen while GoonCitizen runs'
+              ),
+              React.createElement('div', { className: 'st-row', style: { flexWrap: 'wrap' } },
+                React.createElement('label', { style: { fontSize: 12, color: 'var(--muted)', display: 'flex', gap: 6, alignItems: 'center' } },
+                  'every',
+                  React.createElement('input', {
+                    type: 'number', min: 2, max: 3600, value: this.state.snapshotIntervalSeconds,
+                    style: { width: 70, background: 'var(--bg)', border: '1px solid var(--line)', color: 'var(--text)', borderRadius: 7, padding: '6px 8px' },
+                    onChange: (e) => this.setState({ snapshotIntervalSeconds: e.target.value })
+                  }),
+                  'seconds'
+                ),
+                React.createElement('label', { style: { fontSize: 12, color: 'var(--muted)', display: 'flex', gap: 6, alignItems: 'center' } },
+                  React.createElement('input', {
+                    type: 'checkbox',
+                    checked: this.state.snapshotAutoPurge,
+                    onChange: (e) => this.setState({ snapshotAutoPurge: e.target.checked })
+                  }),
+                  'auto-purge oldest beyond'
+                ),
+                React.createElement('label', { style: { fontSize: 12, color: 'var(--muted)', display: 'flex', gap: 6, alignItems: 'center' } },
+                  React.createElement('input', {
+                    type: 'number', min: 16, max: 65536, value: this.state.snapshotMaxMB,
+                    style: { width: 80, background: 'var(--bg)', border: '1px solid var(--line)', color: 'var(--text)', borderRadius: 7, padding: '6px 8px' },
+                    onChange: (e) => this.setState({ snapshotMaxMB: e.target.value })
+                  }),
+                  'MB'
+                ),
+                React.createElement('button', { className: 'st-btn', disabled: !this.state.editable || this.state.busy, onClick: () => this.saveSnapshots() }, 'Apply')
+              ),
+              rt.snapshots
+                ? React.createElement('div', { style: { fontSize: 11.5, color: 'var(--muted)', marginTop: 8 } },
+                  `${rt.snapshots.count} stored · ${(rt.snapshots.bytes / (1024 * 1024)).toFixed(1)} MB`,
+                  rt.snapshots.enabled && !rt.snapshots.available ? ' · capture needs the desktop app' : '',
+                  rt.snapshots.lastError ? ` · last error: ${rt.snapshots.lastError}` : '',
+                  ' · view in the Library tab')
                 : null
             ),
 

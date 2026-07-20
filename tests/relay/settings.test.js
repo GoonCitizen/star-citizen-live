@@ -9,6 +9,7 @@ const path = require('path');
 
 const LiveRelay = require('../../services/LiveRelay');
 const settingsStore = require('../../functions/settingsStore');
+const { Store } = require('../../types/Store');
 const { createIdentity } = require('../../functions/identity');
 
 function request (port, method, reqPath, payload) {
@@ -28,20 +29,47 @@ function tmpDir () {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'sc-settings-'));
 }
 
-test('settingsStore round-trips allowlisted keys and rejects unknown ones', () => {
+test('settingsStore round-trips allowlisted keys on the Fabric Store and rejects unknown ones', async () => {
   const dir = tmpDir();
-  settingsStore.putSetting(dir, 'logfile', 'C:/Games/SC/LIVE/Game.log');
-  settingsStore.putSetting(dir, 'peers', [{ id: 'x', url: 'https://goon.vc' }]);
-  const loaded = settingsStore.loadSettings(dir);
+  const registerDir = path.join(dir, 'register');
+  const store = new Store({ path: registerDir });
+  await store.start();
+
+  settingsStore.putSetting(store, 'logfile', 'C:/Games/SC/LIVE/Game.log');
+  settingsStore.putSetting(store, 'peers', [{ id: 'x', url: 'https://goon.vc' }]);
+  const loaded = settingsStore.loadSettings(store);
   assert.strictEqual(loaded.logfile, 'C:/Games/SC/LIVE/Game.log');
   assert.strictEqual(loaded.peers.length, 1);
-  assert.throws(() => settingsStore.putSetting(dir, 'evil', 1), /unknown setting/);
+  assert.throws(() => settingsStore.putSetting(store, 'evil', 1), /unknown setting/);
 
-  settingsStore.putSetting(dir, 'identityAutoLockMinutes', 15);
-  assert.strictEqual(settingsStore.loadSettings(dir).identityAutoLockMinutes, 15);
+  settingsStore.putSetting(store, 'identityAutoLockMinutes', 15);
+  assert.strictEqual(settingsStore.loadSettings(store).identityAutoLockMinutes, 15);
   // null removes
-  settingsStore.putSetting(dir, 'logfile', null);
-  assert.strictEqual(settingsStore.loadSettings(dir).logfile, undefined);
+  settingsStore.putSetting(store, 'logfile', null);
+  assert.strictEqual(settingsStore.loadSettings(store).logfile, undefined);
+  await store.stop();
+
+  // Values survive a Store reopen (LevelDB, not a JSON file on disk).
+  assert.ok(!fs.existsSync(path.join(dir, 'settings.json')), 'no settings.json is written');
+  const reopened = new Store({ path: registerDir });
+  await reopened.start();
+  assert.strictEqual(settingsStore.loadSettings(reopened).identityAutoLockMinutes, 15);
+  assert.strictEqual(settingsStore.loadSettings(reopened).logfile, undefined);
+  await reopened.stop();
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test('legacy settings.json is imported into the Fabric Store once, then retired', async () => {
+  const dir = tmpDir();
+  fs.writeFileSync(path.join(dir, 'settings.json'), JSON.stringify({ logfile: '/legacy/Game.log', evil: 1 }) + '\n');
+
+  const store = new Store({ path: path.join(dir, 'register') });
+  await store.start();
+  assert.strictEqual(settingsStore.loadSettings(store).logfile, '/legacy/Game.log');
+  assert.ok(!fs.existsSync(path.join(dir, 'settings.json')), 'legacy file retired');
+  assert.ok(fs.existsSync(path.join(dir, 'settings.json.migrated')), 'renamed .migrated');
+  await store.stop();
+  fs.rmSync(dir, { recursive: true, force: true });
 });
 
 test('GET /settings and PUT /settings/:name persist and flag restarts', async () => {
@@ -59,7 +87,8 @@ test('GET /settings and PUT /settings/:name persist and flag restarts', async ()
     const put = await request(port, 'PUT', '/settings/logfile', { value: '/tmp/Game.log' });
     assert.strictEqual(put.status, 200);
     assert.strictEqual(put.body.requiresRestart, true, 'log path applies on restart');
-    assert.strictEqual(settingsStore.loadSettings(dir).logfile, '/tmp/Game.log');
+    assert.strictEqual(settingsStore.loadSettings(svc.registerStore).logfile, '/tmp/Game.log');
+    assert.ok(!fs.existsSync(path.join(dir, 'settings.json')), 'settings are in the Fabric Store, not JSON');
 
     const bad = await request(port, 'PUT', '/settings/nonsense', { value: 1 });
     assert.strictEqual(bad.status, 400);
@@ -82,7 +111,7 @@ test('peer management: add, toggle, remove — persisted and live-applied', asyn
     const badUrl = await request(port, 'POST', '/peers', { url: 'ftp://nope' });
     assert.strictEqual(badUrl.status, 400);
 
-    assert.strictEqual(settingsStore.loadSettings(dir).peers.length, 1, 'persisted');
+    assert.strictEqual(settingsStore.loadSettings(svc.registerStore).peers.length, 1, 'persisted');
 
     const toggled = await request(port, 'POST', `/peers/${id}`, { enabled: false });
     assert.strictEqual(toggled.body.data.enabled, false);
@@ -93,9 +122,32 @@ test('peer management: add, toggle, remove — persisted and live-applied', asyn
 
     const removed = await request(port, 'DELETE', `/peers/${id}`);
     assert.strictEqual(removed.status, 200);
-    assert.strictEqual(settingsStore.loadSettings(dir).peers.length, 0);
+    assert.strictEqual(settingsStore.loadSettings(svc.registerStore).peers.length, 0);
     assert.strictEqual((await request(port, 'GET', '/peers')).body.data.length, 0);
   } finally { await svc.stop(); }
+});
+
+test('peers persist across relay restarts via the Fabric Store', async () => {
+  const dir = tmpDir();
+  const boot = async () => {
+    const svc = new LiveRelay({ port: 0, settingsDir: dir, missions: { enable: false } });
+    await svc.start();
+    return svc;
+  };
+
+  const first = await boot();
+  try {
+    const added = await request(first.server.address().port, 'POST', '/peers', { url: 'https://goon.vc', label: 'org hub' });
+    assert.strictEqual(added.status, 200);
+  } finally { await first.stop(); }
+
+  const second = await boot();
+  try {
+    const peers = (await request(second.server.address().port, 'GET', '/peers')).body.data;
+    assert.strictEqual(peers.length, 1, 'peer reloaded from the Fabric Store');
+    assert.strictEqual(peers[0].url, 'https://goon.vc');
+  } finally { await second.stop(); }
+  fs.rmSync(dir, { recursive: true, force: true });
 });
 
 test('settings/peers API is not exposed in hosted server mode', async () => {
