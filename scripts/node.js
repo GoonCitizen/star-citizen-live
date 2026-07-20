@@ -86,7 +86,10 @@ async function relaySettings () {
       officers: csv(process.env.SC_OFFICERS)
     },
     discord: { enable: !!webhook, webhook },
-    uplink: { enable: !!process.env.SC_UPLINK_URL, url: process.env.SC_UPLINK_URL || null }
+    uplink: { enable: !!process.env.SC_UPLINK_URL, url: process.env.SC_UPLINK_URL || null },
+    // Wallet: ledger mode by default (auditable obligations, no bitcoind);
+    // supply settings.payouts.rpc for on-chain regtest/signet escrow.
+    payouts: { enable: true, ledger: true, network: process.env.SC_BTC_NETWORK || 'regtest' }
   };
 }
 

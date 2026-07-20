@@ -14,7 +14,7 @@ if (!electron || typeof electron !== 'object' || !electron.app) {
   process.exit(1);
 }
 
-const { app, BrowserWindow, Tray, Menu, nativeImage, ipcMain, shell } = electron;
+const { app, BrowserWindow, Tray, Menu, nativeImage, ipcMain, shell, Notification } = electron;
 const path = require('path');
 const fs = require('fs');
 const http = require('http');
@@ -51,6 +51,10 @@ const gotLock = app.requestSingleInstanceLock();
 if (!gotLock) {
   app.quit();
 } else {
+  // Windows toast notifications need a stable AppUserModelID.
+  if (process.platform === 'win32' && app.setAppUserModelId) {
+    app.setAppUserModelId('vc.goon.desktop');
+  }
   app.on('second-instance', () => {
     showMainWindow();
   });
@@ -123,6 +127,8 @@ function buildRelaySettings (port) {
       enable: !!(process.env.SC_UPLINK_URL || settings.uplink?.url),
       url: process.env.SC_UPLINK_URL || settings.uplink?.url || null
     }, settings.uplink || {}),
+    // Wallet: ledger mode unless settings/local.js supplies a bitcoind rpc.
+    payouts: Object.assign({ enable: true, ledger: true, network: 'regtest' }, settings.payouts || {}),
     settingsDir: appStoreRoot,
     store: appStore // shared, already-started Fabric Store
   };
@@ -629,6 +635,22 @@ ipcMain.handle('identity:sign-envelope', (_e, payload) => {
   }
 });
 
+// Raw BIP340 Schnorr over message bytes — used for k-of-n authority
+// acceptances (mission completion approval / group decisions), where every
+// signer signs the same canonical message.
+ipcMain.handle('identity:sign-message', (_e, { message } = {}) => {
+  if (!unlockedIdentity) return { error: 'Identity is locked.' };
+  if (typeof message !== 'string' || !message.length) return { error: 'message string required' };
+  try {
+    const key = identityLib.keyFromIdentity(unlockedIdentity);
+    const signature = Buffer.from(key.signSchnorr(Buffer.from(message))).toString('hex');
+    armIdentityAutoLock();
+    return { pubkey: key.pubkey, signature };
+  } catch (error) {
+    return { error: error.message || String(error) };
+  }
+});
+
 ipcMain.handle('identity:lock', () => {
   lockIdentity();
   return { unlocked: false };
@@ -722,6 +744,21 @@ ipcMain.handle('get-service-status', () => {
 ipcMain.handle('set-open-at-login', (_e, enabled) => {
   setOpenAtLogin(!!enabled);
   return { openAtLogin: openAtLoginEnabled() };
+});
+
+ipcMain.handle('notify:show', (_e, { title, body } = {}) => {
+  if (!Notification || !Notification.isSupported()) return { ok: false, reason: 'unsupported' };
+  const n = new Notification({
+    title: String(title || BRAND_NAME),
+    body: String(body || ''),
+    silent: false
+  });
+  n.on('click', () => {
+    showMainWindow();
+    if (mainWindow) mainWindow.focus();
+  });
+  n.show();
+  return { ok: true };
 });
 
 ipcMain.handle('restart-service', async () => {

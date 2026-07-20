@@ -66,6 +66,34 @@ class PayoutManager extends EventEmitter {
   }
 
   /**
+   * Derive the k-of-n P2WSH multisig address for an arbitrary key set —
+   * used for GROUP wallets (the group's roster + threshold) as well as
+   * mission escrows. Sorted keys make the address deterministic across
+   * every member's relay.
+   * @param {Array<String>} keys Compressed secp256k1 pubkeys.
+   * @param {Number} threshold Signatures required to spend.
+   * @returns {{ address, redeemScript?, descriptor?, keys, threshold, network, mode }}
+   */
+  async multisigAddress (keys, threshold = 1) {
+    if (!Array.isArray(keys) || !keys.length) throw new Error('keys required');
+    for (const k of keys) {
+      if (!PUBKEY_RE.test(k)) throw new Error(`not a compressed secp256k1 pubkey: ${k}`);
+    }
+    const sorted = [...new Set(keys)].sort();
+    const k = Math.max(1, Math.min(Number(threshold) || 1, sorted.length));
+    const base = { keys: sorted, threshold: k, network: this.settings.network, mode: this.mode };
+    if (this.mode === 'ledger') {
+      return Object.assign(base, { address: null, note: 'ledger mode — connect a bitcoind RPC to derive addresses' });
+    }
+    const result = await this.settings.rpc('createmultisig', [k, sorted, 'bech32']);
+    return Object.assign(base, {
+      address: result.address,
+      redeemScript: result.redeemScript,
+      descriptor: result.descriptor || null
+    });
+  }
+
+  /**
    * Create the escrow record for a mission from its authorities set.
    * BITCOIN mode derives a k-of-n P2WSH address; LEDGER mode records the
    * obligation only.

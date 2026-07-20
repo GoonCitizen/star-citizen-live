@@ -19,10 +19,15 @@ const ALLOWED_KEYS = [
   'discordWebhook',
   'openAtLogin',
   'identityAutoLockMinutes', // 0 = off; default 30 (mirrors Hub identity lock prefs)
+  'shareLogsGlobal',         // push parsed log events to peer hubs for org aggregation (default true)
   'snapshotsEnabled',        // periodic screen snapshots (opt-in; desktop only)
   'snapshotIntervalSeconds', // capture cadence (default 10, min 2)
   'snapshotAutoPurge',       // delete oldest snapshots beyond the disk cap (default true)
-  'snapshotMaxMB'            // disk cap for the snapshot library (default 256 MB)
+  'snapshotMaxMB',           // disk cap for the snapshot library (default 256 MB)
+  'notifyDesktop',           // master toggle for desktop/OS notifications (default true)
+  'notifyChatGlobal',        // notify on new global chat messages (default true)
+  'notifyChatGroups',        // notify on new group chat messages (default true)
+  'notifyWhenFocused'        // also notify while the app window is focused (default false)
 ];
 
 /**

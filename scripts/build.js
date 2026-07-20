@@ -17,11 +17,15 @@ const dest = path.join(root, 'assets', 'index.html');
 const Dashboard = require('../components/Dashboard');
 const Onboarding = require('../components/Onboarding');
 const Identity = require('../components/Identity');
+const Chat = require('../components/Chat');
+const GlobalChatDock = require('../components/GlobalChatDock');
 const Groups = require('../components/Groups');
 const GroupPage = require('../components/GroupPage');
 const Library = require('../components/Library');
+const Missions = require('../components/Missions');
 const Peers = require('../components/Peers');
 const Settings = require('../components/Settings');
+const Wallet = require('../components/Wallet');
 
 async function main () {
   const result = await esbuild.build({
@@ -49,11 +53,15 @@ async function main () {
 ${Dashboard.CSS}
 ${Onboarding.CSS}
 ${Identity.CSS}
+${Chat.CSS}
+${GlobalChatDock.CSS}
 ${Groups.CSS}
 ${GroupPage.CSS}
 ${Library.CSS}
+${Missions.CSS}
 ${Peers.CSS}
 ${Settings.CSS}
+${Wallet.CSS}
 </style>
 </head>
 <body>

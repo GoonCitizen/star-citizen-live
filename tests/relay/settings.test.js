@@ -59,6 +59,26 @@ test('settingsStore round-trips allowlisted keys on the Fabric Store and rejects
   fs.rmSync(dir, { recursive: true, force: true });
 });
 
+test('desktop notification settings round-trip on the Fabric Store', async () => {
+  const dir = tmpDir();
+  const store = new Store({ path: path.join(dir, 'register') });
+  await store.start();
+  for (const key of ['notifyDesktop', 'notifyChatGlobal', 'notifyChatGroups', 'notifyWhenFocused']) {
+    assert.ok(settingsStore.ALLOWED_KEYS.includes(key), key);
+  }
+  settingsStore.putSetting(store, 'notifyDesktop', false);
+  settingsStore.putSetting(store, 'notifyChatGlobal', true);
+  settingsStore.putSetting(store, 'notifyChatGroups', false);
+  settingsStore.putSetting(store, 'notifyWhenFocused', true);
+  const loaded = settingsStore.loadSettings(store);
+  assert.strictEqual(loaded.notifyDesktop, false);
+  assert.strictEqual(loaded.notifyChatGlobal, true);
+  assert.strictEqual(loaded.notifyChatGroups, false);
+  assert.strictEqual(loaded.notifyWhenFocused, true);
+  await store.stop();
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
 test('legacy settings.json is imported into the Fabric Store once, then retired', async () => {
   const dir = tmpDir();
   fs.writeFileSync(path.join(dir, 'settings.json'), JSON.stringify({ logfile: '/legacy/Game.log', evil: 1 }) + '\n');
@@ -97,7 +117,7 @@ test('GET /settings and PUT /settings/:name persist and flag restarts', async ()
 
 test('peer management: add, toggle, remove — persisted and live-applied', async () => {
   const dir = tmpDir();
-  const svc = new LiveRelay({ port: 0, settingsDir: dir, missions: { enable: false } });
+  const svc = new LiveRelay({ port: 0, settingsDir: dir, missions: { enable: false }, peers: [] });
   await svc.start();
   const port = svc.server.address().port;
   try {
@@ -130,7 +150,7 @@ test('peer management: add, toggle, remove — persisted and live-applied', asyn
 test('peers persist across relay restarts via the Fabric Store', async () => {
   const dir = tmpDir();
   const boot = async () => {
-    const svc = new LiveRelay({ port: 0, settingsDir: dir, missions: { enable: false } });
+    const svc = new LiveRelay({ port: 0, settingsDir: dir, missions: { enable: false }, peers: [] });
     await svc.start();
     return svc;
   };
@@ -170,7 +190,7 @@ test('multi-peer uplink: batch lands on every enabled peer; retry only when all 
   const portB = serverB.server.address().port;
 
   const dir = tmpDir();
-  const client = new LiveRelay({ port: 0, settingsDir: dir, missions: { enable: false }, uplink: { intervalMs: 60000 } });
+  const client = new LiveRelay({ port: 0, settingsDir: dir, missions: { enable: false }, uplink: { intervalMs: 60000 }, peers: [] });
   await client.start();
   const clientPort = client.server.address().port;
   try {

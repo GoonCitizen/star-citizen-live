@@ -85,7 +85,28 @@ npm run build:installers  # Windows x64 + Debian x64 + macOS
   internal storage (missions, groups, operator settings) lives in the
   **`register/` Fabric Store** (LevelDB); no JSON files are written by the app.
   Type code: `types/Store.js`.
-- Dashboard home lists features along the top: Live, Analyze, Groups, Peers.
+- Dashboard home lists features along the top: Live, Analyze, Missions,
+  Wallet, Library, Chat, Groups, Peers. Chat uses Hub message types
+  (`ChatMessage` records, carried as `P2P_CHAT_MESSAGE` events in the signed
+  uplink): a `global` channel plus a `group:<id>` channel per group
+  (members-only in hosted mode). Local posts push to peer hubs via the batch
+  uplink; remote messages arrive via ingest and an authenticated peer pull
+  (`services/ChatManager.js`). The dedicated Chat tab remains; **global chat
+  is also always available** via a floating dock on other tabs
+  (`components/GlobalChatDock.js`). Desktop notifications for new chat
+  messages are controlled in Settings (`notifyDesktop`, `notifyChatGlobal`,
+  `notifyChatGroups`, `notifyWhenFocused`) and shown via Electron IPC or the
+  browser Notification API.
+- **Wallet / missions:** group k-of-n P2WSH multisig (`GET …/groups/:id/wallet`,
+  deterministic via sorted member keys), mission rewards escrowed to the
+  authorities' multisig, submit-completion (claim) → approve-completion
+  (BIP340 Schnorr over the acceptance message) → escrow `payable` → payout
+  PSBT. Ledger mode by default; `settings.payouts.rpc` connects bitcoind
+  (regtest/signet; mainnet refused per D-008).
+- **Peers:** `https://relay.goon.vc` is seeded as the default peer on first
+  boot (removable; a saved empty list is respected). The `shareLogsGlobal`
+  setting (default on) gates pushing parsed log events to peers for org-wide
+  aggregation; chat is unaffected by the toggle.
 
 ### Environment variables (config; secrets via env only)
 | Var | Purpose |

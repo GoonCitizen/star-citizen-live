@@ -9,6 +9,7 @@
  */
 
 const React = require('react');
+const { showDesktopNotification, ensureNotifyPermission } = require('../functions/desktopNotify');
 
 const CSS = `
   .st-overlay{position:fixed;inset:0;z-index:40;background:rgba(8,10,14,.7);
@@ -59,6 +60,11 @@ class Settings extends React.Component {
       snapshotIntervalSeconds: 10,
       snapshotAutoPurge: true,
       snapshotMaxMB: 256,
+      shareLogsGlobal: true,
+      notifyDesktop: true,
+      notifyChatGlobal: true,
+      notifyChatGroups: true,
+      notifyWhenFocused: false,
       peerCount: 0,
       busy: false
     };
@@ -88,11 +94,40 @@ class Settings extends React.Component {
         snapshotIntervalSeconds: s.snapshotIntervalSeconds || 10,
         snapshotAutoPurge: s.snapshotAutoPurge !== false,
         snapshotMaxMB: s.snapshotMaxMB || 256,
+        shareLogsGlobal: s.shareLogsGlobal !== false,
+        notifyDesktop: s.notifyDesktop !== false,
+        notifyChatGlobal: s.notifyChatGlobal !== false,
+        notifyChatGroups: s.notifyChatGroups !== false,
+        notifyWhenFocused: !!s.notifyWhenFocused,
         peerCount: Array.isArray(peersRes.data) ? peersRes.data.length : 0
       });
     } catch (e) {
       this.setState({ loading: false, error: e.message });
     }
+  }
+
+  async putNotify (key, value) {
+    this.setState({ [key]: value, error: null });
+    try {
+      await this.put(key, value);
+    } catch (err) {
+      this.setState({ error: err.message });
+    }
+  }
+
+  async testNotify () {
+    const perm = await ensureNotifyPermission();
+    if (perm === 'denied' || perm === 'unsupported') {
+      this.setState({ error: perm === 'unsupported'
+        ? 'Desktop notifications are not available in this environment'
+        : 'Notification permission denied — enable it in your OS / browser settings' });
+      return;
+    }
+    const ok = await showDesktopNotification({
+      title: 'GoonCitizen',
+      body: 'Desktop notifications are working.'
+    });
+    if (!ok) this.setState({ error: 'Could not show a test notification' });
   }
 
   async put (name, value) {
@@ -239,9 +274,71 @@ class Settings extends React.Component {
             ),
 
             React.createElement('div', { className: 'st-sec' },
+              React.createElement('h3', null, 'Desktop notifications'),
+              React.createElement('div', { className: 'd' },
+                'OS notifications for new chat messages. The global chat dock stays available on every tab; the Chat page still covers all channels.'),
+              React.createElement('label', { style: { display: 'flex', gap: 8, alignItems: 'center', fontSize: 13, cursor: 'pointer', marginBottom: 8 } },
+                React.createElement('input', {
+                  type: 'checkbox',
+                  checked: this.state.notifyDesktop,
+                  disabled: !this.state.editable || this.state.busy,
+                  onChange: (e) => this.putNotify('notifyDesktop', e.target.checked)
+                }),
+                'Enable desktop notifications'
+              ),
+              React.createElement('label', { style: { display: 'flex', gap: 8, alignItems: 'center', fontSize: 13, cursor: 'pointer', marginBottom: 8 } },
+                React.createElement('input', {
+                  type: 'checkbox',
+                  checked: this.state.notifyChatGlobal,
+                  disabled: !this.state.editable || this.state.busy || !this.state.notifyDesktop,
+                  onChange: (e) => this.putNotify('notifyChatGlobal', e.target.checked)
+                }),
+                'Global chat messages'
+              ),
+              React.createElement('label', { style: { display: 'flex', gap: 8, alignItems: 'center', fontSize: 13, cursor: 'pointer', marginBottom: 8 } },
+                React.createElement('input', {
+                  type: 'checkbox',
+                  checked: this.state.notifyChatGroups,
+                  disabled: !this.state.editable || this.state.busy || !this.state.notifyDesktop,
+                  onChange: (e) => this.putNotify('notifyChatGroups', e.target.checked)
+                }),
+                'Group chat messages'
+              ),
+              React.createElement('label', { style: { display: 'flex', gap: 8, alignItems: 'center', fontSize: 13, cursor: 'pointer', marginBottom: 10 } },
+                React.createElement('input', {
+                  type: 'checkbox',
+                  checked: this.state.notifyWhenFocused,
+                  disabled: !this.state.editable || this.state.busy || !this.state.notifyDesktop,
+                  onChange: (e) => this.putNotify('notifyWhenFocused', e.target.checked)
+                }),
+                'Notify even when this window is focused'
+              ),
+              React.createElement('div', { className: 'st-row' },
+                React.createElement('button', {
+                  className: 'st-btn ghost',
+                  disabled: this.state.busy,
+                  onClick: () => this.testNotify()
+                }, 'Send test notification')
+              )
+            ),
+
+            React.createElement('div', { className: 'st-sec' },
               React.createElement('h3', null, 'Fabric Network'),
               React.createElement('div', { className: 'd' },
-                'Peer hubs (e.g. goon.vc) are managed on the Peers tab — add them there to push Schnorr-signed event batches over the Fabric Protocol.'),
+                'Peer hubs (relay.goon.vc is seeded by default) receive your Schnorr-signed event batches over the Fabric Protocol — manage them on the Peers tab.'),
+              React.createElement('label', { style: { display: 'flex', gap: 8, alignItems: 'center', fontSize: 13, cursor: 'pointer', marginBottom: 10 } },
+                React.createElement('input', {
+                  type: 'checkbox',
+                  checked: this.state.shareLogsGlobal,
+                  disabled: !this.state.editable || this.state.busy,
+                  onChange: async (e) => {
+                    const value = e.target.checked;
+                    this.setState({ shareLogsGlobal: value });
+                    try { await this.put('shareLogsGlobal', value); } catch (err) { this.setState({ error: err.message }); }
+                  }
+                }),
+                'Share logs to global — push my parsed game events to the org\'s central relay for aggregation'
+              ),
               React.createElement('div', { className: 'st-row' },
                 React.createElement('span', { style: { fontSize: 12.5, color: 'var(--muted)' } },
                   this.state.peerCount

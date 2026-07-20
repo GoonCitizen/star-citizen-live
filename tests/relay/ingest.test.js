@@ -154,6 +154,7 @@ test('uplink pushes signed batches that a server-mode instance accepts', async (
   const client = new LiveRelay({
     port: 0,
     missions: { enable: false },
+    peers: [],
     uplink: { enable: true, url: `http://127.0.0.1:${port}`, intervalMs: 60000 }
   });
   await client.start();

@@ -48,7 +48,12 @@ function identityLib () {
 }
 
 // Collections a remote relay may push into via the signed batch endpoint.
-const INGEST_COLLECTIONS = ['activities', 'players', 'vehicles', 'kills', 'deaths', 'incaps', 'missionlog'];
+// 'chatmessages' carries Hub-style ChatMessage records (P2P_CHAT_MESSAGE wire events).
+const INGEST_COLLECTIONS = ['activities', 'players', 'vehicles', 'kills', 'deaths', 'incaps', 'missionlog', 'chatmessages'];
+
+// The org's central relay — seeded as the default peer on first boot so log
+// aggregation and chat work out of the box (removable in Peers).
+const DEFAULT_PEER_URL = 'https://relay.goon.vc';
 
 class StarCitizenService extends EventEmitter {
   constructor (settings = {}) {
@@ -131,6 +136,14 @@ class StarCitizenService extends EventEmitter {
     );
     this.groupManager = groupSettings.enable !== false ? new GroupManager(groupSettings) : null;
     if (this.missionManager && this.groupManager) this.missionManager.groupManager = this.groupManager;
+
+    // Chat: Hub-style ChatMessage records — global channel + one per group.
+    // Local posts ride the signed uplink to peers; remote messages arrive via
+    // the batch ingest and periodic peer pull (idempotent content ids).
+    const ChatManager = require('../services/ChatManager');
+    this.chatManager = new ChatManager({ store: this.registerStore, groupManager: this.groupManager });
+    this._chatSince = {};      // `${peerUrl}|${channel}` → last pulled ts
+    this._peerSessions = {};   // peerUrl → { token, expiresAt } (chat pull auth)
 
     // Periodic screen snapshots (opt-in; Electron injects the capture fn via
     // setSnapshotCapture). Images under <store root>/snapshots; metadata in
@@ -268,8 +281,18 @@ class StarCitizenService extends EventEmitter {
     const persisted = settingsStore.loadSettings(this.registerStore);
     if (!this.peers.length && Array.isArray(persisted.peers)) {
       this.peers = persisted.peers.map((p) => Object.assign({ enabled: true }, p));
+    } else if (!this.peers.length && persisted.peers === undefined && this.settings.mode !== 'server') {
+      // First boot (peers never configured): seed the org's central relay.
+      // A user-saved empty list stays empty — removal is respected. Tests and
+      // custom deployments override the seed via settings.peers.
+      const seeds = this.settings.peers !== undefined
+        ? this.settings.peers
+        : [{ url: DEFAULT_PEER_URL, label: 'goon.vc central relay' }];
+      this.peers = (seeds || []).map((p) => Object.assign({ id: idFor(p.url), enabled: true }, p));
     }
     if (persisted.uplinkIntervalMs) this.settings.uplink.intervalMs = persisted.uplinkIntervalMs;
+    // Sharing parsed log events with peer hubs (org aggregation): default ON.
+    this._shareLogsGlobal = persisted.shareLogsGlobal !== false;
     this._applySnapshotSettings(persisted);
   }
 
@@ -518,6 +541,9 @@ class StarCitizenService extends EventEmitter {
       player.source = player.source || source;
       return { id: player.id, created: false };
     }
+    if (collection === 'chatmessages') {
+      return this.chatManager.ingest(source, data);
+    }
     const { canonicalStringify } = identityLib();
     const id = idFor(canonicalStringify({ source, collection, data }));
     const existed = !!this.state[collection][id];
@@ -649,7 +675,9 @@ class StarCitizenService extends EventEmitter {
             let requiresRestart = ['logfile', 'channel', 'discordWebhook'].includes(sMatch[1]);
             if (sMatch[1] === 'peers') { this.peers = (updated.peers || []).map((p) => Object.assign({ enabled: true }, p)); this._refreshUplink(); requiresRestart = false; }
             if (sMatch[1] === 'uplinkIntervalMs') { this.settings.uplink.intervalMs = updated.uplinkIntervalMs || 5000; requiresRestart = false; }
+            if (sMatch[1] === 'shareLogsGlobal') { this._shareLogsGlobal = updated.shareLogsGlobal !== false; requiresRestart = false; }
             if (sMatch[1].startsWith('snapshot')) { this._applySnapshotSettings(updated); requiresRestart = false; }
+            if (sMatch[1].startsWith('notify')) { requiresRestart = false; }
             return send(200, { success: true, settings: updated, requiresRestart });
           } catch (e) { return send(400, { error: e.message }); }
         }
@@ -757,6 +785,58 @@ class StarCitizenService extends EventEmitter {
         if (serverMode && !viewer) { send(401, { error: 'Authentication required (POST …/auth with a signed login envelope)' }); return false; }
         return true;
       };
+
+      // ---- Chat (Hub ChatMessage types: global + group:<id> channels) ----
+      const cm = this.chatManager;
+      if (cm && req.method === 'GET' && pathname === `${base}/chat/channels`) {
+        return send(200, { type: 'Collection', data: cm.channelsFor(viewer, { enforceMembership: serverMode }) });
+      }
+      if (cm && pathname === `${base}/chat/messages`) {
+        if (req.method === 'GET') {
+          const channel = url.searchParams.get('channel') || 'global';
+          if (!cm.canAccess(channel, viewer, { enforceMembership: serverMode })) {
+            return send(403, { error: 'forbidden: not a member of this channel' });
+          }
+          const since = url.searchParams.get('since') || null;
+          const limit = parseInt(url.searchParams.get('limit'), 10) || 200;
+          return send(200, { type: 'Collection', data: cm.list(channel, { since, limit }) });
+        }
+        if (req.method === 'POST') {
+          const d = await body();
+          try {
+            let record;
+            if (serverMode) {
+              // Hosted: a Schnorr-signed envelope is the message of record —
+              // { pubkey, payload: { channel, body, ts, handle? }, signature }.
+              const check = this._checkEnvelope(d);
+              if (!check.ok) return send(check.code, { error: check.error });
+              const p = d.payload || {};
+              if (!cm.canAccess(p.channel || 'global', d.pubkey, { enforceMembership: true })) {
+                return send(403, { error: 'forbidden: not a member of this channel' });
+              }
+              record = cm.post({ channel: p.channel, body: p.body, ts: p.ts, handle: p.handle, author: d.pubkey });
+            } else {
+              // Local relay: author is the unlocked identity (or session pubkey).
+              const author = viewer || (this._identity && this._identity.pubkey) || d.author || null;
+              if (!author) return send(401, { error: 'Unlock your identity to chat' });
+              record = cm.post({
+                channel: d.channel,
+                body: d.body,
+                handle: d.handle || this._sessionHandle || null,
+                author
+              });
+              // Ride the signed uplink so the org (goon.vc) converges; the
+              // server re-verifies author === batch signer.
+              if (this._identity && this._identity.pubkey === record.author) {
+                this._uplinkQueue.push({ collection: 'chatmessages', data: record });
+              }
+            }
+            return send(200, { type: 'ChatMessage', data: record });
+          } catch (e) {
+            return send(/forbidden/i.test(e.message) ? 403 : 400, { error: e.message });
+          }
+        }
+      }
       if (pathname === `${base}/groups`) {
         if (!gm) return send(503, { error: 'Group system not available' });
         if (req.method === 'GET') {
@@ -967,8 +1047,48 @@ class StarCitizenService extends EventEmitter {
         const d = await body(); return run(() => reg.validateClaim(Object.assign({}, d, { claimId: mr[1], officerId: this._actor(req, d.officerId) })), 'Validation');
       }
 
-      // ---- Bitcoin escrow / payouts ----
+      // ---- Bitcoin wallet (Hub components brought forward; group multisig) ----
       const pm = this.payoutManager;
+      if (req.method === 'GET' && pathname === `${base}/wallet`) {
+        const escrows = (this.missionManager ? this.missionManager.missions : [])
+          .filter((m) => m.escrow)
+          .map((m) => ({
+            missionId: m.id,
+            title: m.title,
+            status: m.status,
+            escrow: m.escrow
+          }));
+        return send(200, {
+          type: 'Wallet',
+          data: {
+            mode: pm ? pm.mode : 'disabled',
+            network: pm ? pm.settings.network : null,
+            feeSats: pm ? pm.settings.feeSats : null,
+            escrows
+          }
+        });
+      }
+      let wMatch;
+      if ((wMatch = pathname.match(new RegExp(`^${base}/groups/([^/]+)/wallet$`))) && req.method === 'GET') {
+        if (!gm) return send(503, { error: 'Group system not available' });
+        const group = gm.findGroup(wMatch[1]);
+        if (!group) return send(404, { error: 'Group not found' });
+        if (serverMode && !(viewer && group.includes(viewer))) {
+          return send(403, { error: 'forbidden: members only' });
+        }
+        if (!pm) {
+          return send(200, {
+            type: 'GroupWallet',
+            data: { groupId: group.id, keys: [...group.members].sort(), threshold: group.threshold, mode: 'disabled', address: null, note: 'configure payouts (bitcoind RPC) to derive addresses' }
+          });
+        }
+        try {
+          const wallet = await pm.multisigAddress(group.members, group.threshold);
+          return send(200, { type: 'GroupWallet', data: Object.assign({ groupId: group.id }, wallet) });
+        } catch (e) { return send(400, { error: e.message }); }
+      }
+
+      // ---- Bitcoin escrow / payouts ----
       const escrowMission = (id) => {
         const m = reg ? reg.getMission(id) : null;
         if (!m || !visible(m)) return null;
@@ -1337,8 +1457,10 @@ class StarCitizenService extends EventEmitter {
     this._uplinkQueue = this._uplinkQueue || [];
     if (!this._uplinkWired) {
       this._uplinkWired = true;
+      // Log events push only while "share logs to global" is on; chat is
+      // queued separately and is unaffected by the toggle.
       const queue = (collection) => (ev) => {
-        if (!this._identity) return;
+        if (!this._identity || this._shareLogsGlobal === false) return;
         this._uplinkQueue.push({ collection, data: ev });
         if (this._uplinkQueue.length > 5000) this._uplinkQueue.shift();
       };
@@ -1348,18 +1470,91 @@ class StarCitizenService extends EventEmitter {
       this.on('vehicle:destroy', queue('vehicles'));
       this.on('mission:event', queue('missionlog'));
       this.on('player:join', (p) => {
-        if (!this._identity) return;
+        if (!this._identity || this._shareLogsGlobal === false) return;
         this._uplinkQueue.push({ collection: 'players', data: { name: p.name, timestamp: p.lastSeen } });
       });
     }
     const interval = this.settings.uplink.intervalMs || 5000;
-    this._uplinkTimer = setInterval(() => { this._flushUplink().catch((e) => this.emit('error', e)); }, interval);
+    this._uplinkTimer = setInterval(() => {
+      this._flushUplink().catch((e) => this.emit('error', e));
+      this._syncChatFromPeers().catch((e) => this.emit('error', e));
+    }, interval);
     if (this._uplinkTimer.unref) this._uplinkTimer.unref();
     console.log(`[STAR-CITIZEN] uplink active -> ${this._uplinkTargets().join(', ')}`);
   }
 
   _stopUplink () {
     if (this._uplinkTimer) { clearInterval(this._uplinkTimer); this._uplinkTimer = null; }
+  }
+
+  /**
+   * Authenticate against a peer hub with the unlocked identity (Schnorr
+   * login) and cache the Bearer session for chat pulls.
+   * @returns {Promise<String|null>} Session token, or null.
+   */
+  async _peerSession (url) {
+    if (!this._identity || typeof fetch !== 'function') return null;
+    const cached = this._peerSessions[url];
+    if (cached && cached.expiresAt > Date.now() + 60000) return cached.token;
+    try {
+      const envelope = identityLib().signEnvelope(this._identity, { intent: 'login', ts: new Date().toISOString() });
+      const res = await fetch(`${url.replace(/\/$/, '')}/services/star-citizen/auth`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(envelope)
+      });
+      if (!res.ok) return null;
+      const json = await res.json();
+      this._peerSessions[url] = {
+        token: json.data.token,
+        expiresAt: Date.parse(json.data.expiresAt) || (Date.now() + 3600000)
+      };
+      return json.data.token;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /**
+   * Pull new chat from every enabled peer: the global channel always, plus
+   * the group channels the unlocked identity belongs to (authenticated with
+   * a signed login session on the peer). Merging is idempotent — ids are
+   * content-derived, so re-pulls and multi-peer overlap are no-ops.
+   */
+  async _syncChatFromPeers () {
+    if (!this.chatManager || typeof fetch !== 'function') return;
+    const targets = this._uplinkTargets();
+    if (!targets.length) return;
+
+    const channels = ['global'];
+    if (this._identity && this.groupManager) {
+      for (const g of this.groupManager.groupsFor(this._identity.pubkey)) channels.push('group:' + g.id);
+    }
+
+    for (const url of targets) {
+      for (const channel of channels) {
+        const key = `${url}|${channel}`;
+        try {
+          const headers = {};
+          if (channel !== 'global') {
+            const token = await this._peerSession(url);
+            if (!token) continue;
+            headers.Authorization = `Bearer ${token}`;
+          }
+          const q = new URLSearchParams({ channel, limit: '200' });
+          if (this._chatSince[key]) q.set('since', this._chatSince[key]);
+          const res = await fetch(`${url.replace(/\/$/, '')}/services/star-citizen/chat/messages?${q}`, { headers });
+          if (!res.ok) continue;
+          const json = await res.json();
+          for (const m of (json.data || [])) {
+            try {
+              this.chatManager.post({ channel: m.channel, body: m.body, author: m.author, handle: m.handle, ts: m.ts, source: m.source || url });
+              if (m.ts > (this._chatSince[key] || '')) this._chatSince[key] = m.ts;
+            } catch (_) { /* channel unknown locally — skip */ }
+          }
+        } catch (_) { /* peer unreachable — retry next tick */ }
+      }
+    }
   }
 
   /**

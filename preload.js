@@ -18,6 +18,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     restore: (opts) => ipcRenderer.invoke('identity:restore', opts),
     unlock: (password) => ipcRenderer.invoke('identity:unlock', { password }),
     signEnvelope: (payload) => ipcRenderer.invoke('identity:sign-envelope', payload),
+    signMessage: (message) => ipcRenderer.invoke('identity:sign-message', { message }),
     lock: () => ipcRenderer.invoke('identity:lock'),
     reveal: (password) => ipcRenderer.invoke('identity:reveal', { password }),
     exportBackup: (password) => ipcRenderer.invoke('identity:export-backup', { password }),
@@ -30,6 +31,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
       return () => ipcRenderer.removeListener('identity:changed', listener);
     }
   },
+  notify: (payload) => ipcRenderer.invoke('notify:show', payload || {}),
   platform: process.platform,
   versions: {
     node: process.versions.node,

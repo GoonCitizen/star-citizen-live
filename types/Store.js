@@ -25,7 +25,8 @@ const COLLECTIONS = [
   'missions', 'applications', 'claims', 'validations', 'audit',
   'groups', 'groupapplications', 'groupaudit',
   'settings', // operator settings records { id: key, value } (functions/settingsStore.js)
-  'snapshots' // screenshot metadata { id, ts, file, bytes, width, height } (services/SnapshotManager.js)
+  'snapshots', // screenshot metadata { id, ts, file, bytes, width, height } (services/SnapshotManager.js)
+  'chatmessages' // Hub-style ChatMessage records (services/ChatManager.js)
 ];
 
 class Store {

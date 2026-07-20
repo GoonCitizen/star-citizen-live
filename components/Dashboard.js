@@ -9,17 +9,24 @@
 const React = require('react');
 const Onboarding = require('./Onboarding');
 const Identity = require('./Identity');
+const Chat = require('./Chat');
+const GlobalChatDock = require('./GlobalChatDock');
 const Groups = require('./Groups');
 const Library = require('./Library');
+const Missions = require('./Missions');
 const Peers = require('./Peers');
 const Settings = require('./Settings');
+const Wallet = require('./Wallet');
 
 // Top-level features, listed along the top of the dashboard (Hub-style).
 const TABS = [
   ['home', 'Home'],
   ['live', 'Live feed'],
   ['analyze', 'Analyze'],
+  ['missions', 'Missions'],
+  ['wallet', 'Wallet'],
   ['library', 'Library'],
+  ['chat', 'Chat'],
   ['groups', 'Groups'],
   ['peers', 'Peers']
 ];
@@ -121,6 +128,8 @@ const CSS = `
     white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   @media(max-width:900px){.rule{grid-template-columns:56px 1fr 80px}.rule .rpat{display:none}}
   .home-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(250px,1fr));gap:12px;padding:14px}
+  .tab-badge{display:inline-block;background:var(--accent);color:#fff;border-radius:999px;font-size:10.5px;
+    font-weight:700;min-width:16px;padding:0 5px;margin-left:6px;line-height:16px;vertical-align:text-top}
   .home-card{background:var(--panel2);border:1px solid var(--line);border-radius:10px;padding:16px;
     text-align:left;cursor:pointer;color:var(--text);display:grid;gap:8px;align-content:start}
   .home-card:hover{border-color:var(--accent)}
@@ -247,6 +256,7 @@ class Dashboard extends React.Component {
       identityExists: false,
       showSettings: false,
       showIdentity: false,
+      chatUnread: 0,
       // Game.log visibility + rules + re-parse
       loginfo: null,
       reparse: null,
@@ -1086,6 +1096,12 @@ class Dashboard extends React.Component {
         'sliced by month, pilot, mission type'],
       ['library', '📸 Library', 'Periodic reduced-size snapshots of your play sessions — browsable history, ready for image analysis.',
         'opt-in · configurable interval · auto-purge'],
+      ['missions', '⭐ Missions', 'Post contracts with Bitcoin rewards — submit completion, authorities approve with Schnorr signatures, coins unlock.',
+        'k-of-n approval · escrowed sats'],
+      ['wallet', '₿ Wallet', 'Group multisig addresses and mission escrows — deterministic k-of-n P2WSH from each group\'s roster.',
+        'ledger or bitcoind · regtest first'],
+      ['chat', '💬 Chat', 'Org chat with Hub message types — a global channel plus a dedicated channel for every group.',
+        'ChatMessage · signed · synced via your peers'],
       ['groups', '👥 Groups', 'Member-created squads with k-of-n Schnorr decisions. Share a public group page; others apply to join.',
         'pages at /groups/:id (or a custom URL)'],
       ['peers', '🌐 Peers', 'Fabric Network peer management — push your signed event batches to org hubs like goon.vc.',
@@ -1116,7 +1132,10 @@ class Dashboard extends React.Component {
     switch (this.state.tab) {
       case 'live': return this.renderLive();
       case 'analyze': return this.renderAnalyze();
+      case 'missions': return React.createElement(Missions, { identityPubkey: this.state.identityPubkey });
+      case 'wallet': return React.createElement(Wallet, null);
       case 'library': return React.createElement(Library, null);
+      case 'chat': return React.createElement(Chat, { identityPubkey: this.state.identityPubkey });
       case 'groups': return React.createElement(Groups, { identityPubkey: this.state.identityPubkey });
       case 'peers': return React.createElement(Peers, null);
       default: return this.renderHome();
@@ -1200,7 +1219,13 @@ class Dashboard extends React.Component {
             type: 'button',
             className: 'tab ' + (this.state.tab === key ? 'on' : ''),
             onClick: () => this.showTab(key)
-          }, label)),
+          },
+          label,
+          (key === 'chat' && this.state.chatUnread)
+            ? React.createElement('span', { className: 'tab-badge' },
+              this.state.chatUnread > 99 ? '99+' : this.state.chatUnread)
+            : null
+          )),
           this.state.tab === 'analyze'
             ? React.createElement('span', { className: 'sub', style: { color: 'var(--muted)', fontSize: 12 } }, scope)
             : null
@@ -1224,7 +1249,14 @@ class Dashboard extends React.Component {
           )
           : null
       ),
-      this.renderTab()
+      this.renderTab(),
+      React.createElement(GlobalChatDock, {
+        identityPubkey: this.state.identityPubkey,
+        hide: this.state.tab === 'chat',
+        onUnread: (n) => {
+          if (n !== this.state.chatUnread) this.setState({ chatUnread: n });
+        }
+      })
     );
   }
 }
