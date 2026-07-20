@@ -21,7 +21,7 @@
 const fs = require('fs');
 const path = require('path');
 const readline = require('readline');
-const { parseLine, missionType, missionFaction } = require('../app/parser');
+const { parseLine, missionType, missionFaction } = require('../functions/parser');
 
 const STORE = path.join(__dirname, '..', 'stores', 'history.json');
 

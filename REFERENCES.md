@@ -1,5 +1,4 @@
 # Reference Projects — reuse catalog
-
 A living list of Star Citizen open-source projects with **code, patterns, data, or
 tooling** we can draw on for this project's goals (log relay → Discord/API, mission
 register + officer validation, mission-type classification, player-down/combat

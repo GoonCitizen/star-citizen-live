@@ -1,5 +1,4 @@
 # Solution Brief — Permafleet Mission Register & Live Relay
-
 > **Audience:** product owner / org leadership (non-technical).
 > **Purpose:** explain *what* we're building, what it does for members and officers,
 > what it needs to run, and what's realistic vs. aspirational. Plain English.

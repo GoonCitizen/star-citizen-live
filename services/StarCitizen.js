@@ -44,9 +44,10 @@ class StarCitizen extends Hub {
     super(settings);
 
     // Settings
+    // (also sane defaults)
     this.settings = merge({}, this.settings, {
       authority: 'https://sensemaker.io',
-      logfile: 'C:/Program Files/Roberts Space Industries/StarCitizen/LIVE/Game.log',
+      logfile: '/Users/eric/game.log',
       discord: {
         enable: false,
         webhook: null,
@@ -77,6 +78,7 @@ class StarCitizen extends Hub {
 
     // HTTP Server Routes
     // Note: Hub/Fabric HTTP expects 'route' key, not 'path'
+    // TODO: consolidate into @fabric/http where appropriate
     this.routes = [
       // TODO: prefix with /services/star-citizen only when imported as library
       { method: 'GET', route: '/services/star-citizen', handler: this.handleGenericRequest.bind(this) },
@@ -110,6 +112,7 @@ class StarCitizen extends Hub {
     // Initialize Mission Manager
     if (this.settings.missions && this.settings.missions.enable) {
       this.missionManager = new MissionManager(this.settings.missions);
+      // TODO: streamline
       this._wireMissionManager();
     }
 

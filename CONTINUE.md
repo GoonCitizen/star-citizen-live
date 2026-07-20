@@ -1,6 +1,5 @@
 # How to continue this project
-
-A quick-start so anyone (including future-you) can pick this up. Plain steps.
+A quick-start so anyone (including future-you) can pick this up.  Plain steps.
 
 ## Run the M1 service right now (no install needed)
 

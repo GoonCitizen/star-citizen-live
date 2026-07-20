@@ -11,6 +11,37 @@ const { contextBridge, ipcRenderer } = require('electron');
 contextBridge.exposeInMainWorld('electronAPI', {
   getServiceStatus: () => ipcRenderer.invoke('get-service-status'),
   restartService: () => ipcRenderer.invoke('restart-service'),
+  setOpenAtLogin: (enabled) => ipcRenderer.invoke('set-open-at-login', enabled),
+  identity: {
+    get: () => ipcRenderer.invoke('identity:get'),
+    create: (password) => ipcRenderer.invoke('identity:create', { password }),
+    restore: (opts) => ipcRenderer.invoke('identity:restore', opts),
+    unlock: (password) => ipcRenderer.invoke('identity:unlock', { password }),
+    signEnvelope: (payload) => ipcRenderer.invoke('identity:sign-envelope', payload),
+    signMessage: (message) => ipcRenderer.invoke('identity:sign-message', { message }),
+    lock: () => ipcRenderer.invoke('identity:lock'),
+    reveal: (password) => ipcRenderer.invoke('identity:reveal', { password }),
+    exportBackup: (password) => ipcRenderer.invoke('identity:export-backup', { password }),
+    importBackup: (backup, password, replace) => ipcRenderer.invoke('identity:import-backup', { backup, password, replace }),
+    setAutoLock: (minutes) => ipcRenderer.invoke('identity:set-autolock', { minutes }),
+    forget: (confirm) => ipcRenderer.invoke('identity:forget', { confirm: !!confirm }),
+    onChanged: (handler) => {
+      const listener = (_e, summary) => handler(summary);
+      ipcRenderer.on('identity:changed', listener);
+      return () => ipcRenderer.removeListener('identity:changed', listener);
+    }
+  },
+  notify: (payload) => ipcRenderer.invoke('notify:show', payload || {}),
+  onNotifyAction: (handler) => {
+    const listener = (_e, data) => handler(data);
+    ipcRenderer.on('notify:action', listener);
+    return () => ipcRenderer.removeListener('notify:action', listener);
+  },
+  onNotifyClick: (handler) => {
+    const listener = (_e, data) => handler(data);
+    ipcRenderer.on('notify:click', listener);
+    return () => ipcRenderer.removeListener('notify:click', listener);
+  },
   platform: process.platform,
   versions: {
     node: process.versions.node,

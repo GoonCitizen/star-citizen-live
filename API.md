@@ -1,16 +1,8 @@
-> ⚠️ **STALE — legacy Fabric API.** This file is auto-generated JSDoc for the
-> **original Fabric-based code** (`StarCitizen ⇐ Hub`, `Mission ⇐ Entity`,
-> `MissionApplication`) that this fork **removed** (see `DECISIONS.md` → D-002).
-> It does **not** describe the current Fabric-free service. There is no longer a
-> generator script for it.
->
-> **For the real, current REST API and architecture, see `AGENTS.md` §4** (and
-> `README.md` → REST API). This file is retained only for historical reference
-> during the migration.
-
 ## Classes
 
 <dl>
+<dt><a href="#Group">Group</a></dt>
+<dd></dd>
 <dt><a href="#Mission">Mission</a> ⇐ <code>Entity</code></dt>
 <dd><p>Represents a Mission in the Star Citizen universe.
 Missions can be accepted by signing with secp256k1 or Musig2 multisig.</p>
@@ -18,6 +10,8 @@ Missions can be accepted by signing with secp256k1 or Musig2 multisig.</p>
 <dt><a href="#MissionApplication">MissionApplication</a> ⇐ <code>Entity</code></dt>
 <dd><p>Represents an application to accept a Mission.</p>
 </dd>
+<dt><a href="#Store">Store</a></dt>
+<dd></dd>
 <dt><a href="#MissionManager">MissionManager</a></dt>
 <dd><p>Mission Manager service.
 Handles mission lifecycle, applications, and cryptographic verification.
@@ -26,6 +20,91 @@ Supports both single secp256k1 signatures and Musig2 multisig.</p>
 <dt><a href="#StarCitizen">StarCitizen</a> ⇐ <code>Hub</code></dt>
 <dd><p>Core service for Star Citizen.
 Provides a Fabric-compatible declarative API with Discord integration.</p>
+</dd>
+</dl>
+
+## Constants
+
+<dl>
+<dt><a href="#crypto">crypto</a></dt>
+<dd><p>Group — a member-created org unit backed by a k-of-n Schnorr multisig.</p>
+<p>Members are identified by their compressed secp256k1 public keys (the same
+actor ids the identity onboarding produces). Threshold decisions (mission
+acceptance, payout release) are verified with the standard Fabric
+<a href="Federation">Federation</a> k-of-n Schnorr verification (BIP340).</p>
+<p>Pages: <code>/groups/:id</code> by default, or <code>/groups/:slug</code> when a custom slug is set.
+Visibility: <code>private</code> (members only) or <code>public</code> (shareable join page).</p>
+</dd>
+<dt><a href="#fs">fs</a></dt>
+<dd><p>Store — keyed-collection persistence for the mission register + groups.</p>
+<p>Follows the Fabric convention: the <em>type</em> lives in <code>types/</code>, the <em>data</em>
+lives under the named store root <code>stores/gooncitizen/</code> (like the Hub&#39;s
+<code>stores/hub</code>). The register LevelDB is <code>stores/gooncitizen/register</code>.</p>
+<p>Surface (sync): get / all / count / put — same as the original M5 seam so
+MissionManager and GroupManager stay simple.</p>
+<p>Persistence: when <code>path</code> (or legacy <code>dir</code>) is set, collections are kept in an
+{@link <a href="https://github.com/FabricLabs/fabric/blob/master/types/store.js">https://github.com/FabricLabs/fabric/blob/master/types/store.js</a></p>
+</dd>
+<dt><a href="#crypto">crypto</a></dt>
+<dd><p>GroupManager — member-created groups with k-of-n Schnorr multisig,
+public/private visibility, custom page slugs, and join applications.</p>
+<p>Group pages live at <code>/groups/:id</code> (or <code>/groups/:slug</code> when a custom slug
+is set). Public groups can be shared; visitors apply to join; the creator
+accepts or rejects. Private groups are members-only.</p>
+<p>Persistence: uses <code>types/Store.js</code> → <code>@fabric/core</code> LevelDB under
+<code>stores/gooncitizen/register</code> (Hub-style named store root).</p>
+</dd>
+<dt><a href="#http">http</a></dt>
+<dd><p>Star Citizen Live - Fabric-free service (M1 skeleton + M3 parser).</p>
+<p>Boots with ZERO external dependencies - only Node.js built-ins (http, crypto,
+events, fs, readline) plus global fetch (identity/group crypto loads lazily).
+This file is the SERVICE DEFINITION only — the server entry that boots it
+from the environment is <code>scripts/node.js</code> (<code>npm start</code>).</p>
+<p>Features: in-memory collections, REST endpoints, live log tailing (read-only,
+optional) AND offline replay, real Game.log event parsing (functions/parser.js),
+optional Discord webhook posting, and the mission/contract seam.</p>
+<p>It edits NOTHING in the Star Citizen installation - the log is only ever read.</p>
+</dd>
+<dt><a href="#crypto">crypto</a></dt>
+<dd><p>MissionManager — the org mission register (M5.1).</p>
+<p>Implements D-005: a centralized, OFFICER-VALIDATED register. Lifecycle:
+  open --apply--&gt; (applications) --officer accept--&gt; assigned
+       --claim(assignee)--&gt; (claim) --officer validate(approve)--&gt; completed
+                                      --officer validate(reject)--&gt; back to assigned
+  open|assigned --officer cancel--&gt; cancelled</p>
+<p>Every mutation appends a hash-chained AuditEntry (tamper-evident; M6 adds
+officer signatures over each entry). Backed by types/Store.js (in-memory
+or <code>@fabric/core</code> Store / LevelDB under <code>stores/</code> when a path is configured).
+Keeps the method names/events the rest of the code already uses
+(createMission/getMission/missions, start/stop) so nothing else breaks.</p>
+<p>Officer model: settings.officers is an allowlist of actor ids. If EMPTY, the
+register runs in permissive &quot;bootstrap&quot; mode (everyone is an officer) so it is
+usable before roles are wired (REST/Discord auth lands in M5.2/M5.3).</p>
+</dd>
+<dt><a href="#EventEmitter">EventEmitter</a></dt>
+<dd><p>PayoutManager — Bitcoin-unlocked mission rewards.</p>
+<p>A mission&#39;s reward can be escrowed on-chain in a k-of-n multisig address
+built from the mission&#39;s AUTHORITY pubkeys (the same keys whose Schnorr
+signatures accept the completion claim). Flow:</p>
+<ol>
+<li>createEscrow(mission)   -&gt; k-of-n P2WSH address (bitcoind createmultisig)</li>
+<li>(creator funds address) -&gt; checkFunding() confirms via scantxoutset</li>
+<li>claim accepted (k-of-n Schnorr on the acceptance message, MissionManager)
+-&gt; &#39;payout:unlocked&#39; -&gt; escrow status &#39;payable&#39;</li>
+<li>buildPayout()           -&gt; PSBT paying the claimant (authorities sign
+                       with their own wallets — keys never touch
+                       the server)</li>
+<li>broadcastPayout(hex)    -&gt; sendrawtransaction</li>
+</ol>
+<p>Modes:</p>
+<ul>
+<li>LEDGER (no rpc): the obligation + authorization are recorded and
+auditable; settlement happens out-of-band.</li>
+<li>BITCOIN (rpc provided): full on-chain flow. Mainnet is refused unless
+<code>allowMainnet: true</code> — regtest/signet first, by decision.</li>
+</ul>
+<p><code>rpc</code> is any <code>(method, params) =&gt; Promise&lt;result&gt;</code> — on goon.vc it wraps
+the Hub&#39;s managed bitcoind (<code>@fabric/core</code> Bitcoin <code>_makeRPCRequest</code>).</p>
 </dd>
 </dl>
 
@@ -173,6 +252,111 @@ Stops monitoring the game log and stops HTTP server if running.
 **Kind**: instance method of [<code>StarCitizenAPI</code>](#StarCitizenAPI)  
 **Returns**: [<code>Promise.&lt;StarCitizenAPI&gt;</code>](#StarCitizenAPI) - Returns this for chaining  
 **Emits**: <code>event:stopped When service is fully stopped</code>  
+<a name="Group"></a>
+
+## Group
+**Kind**: global class  
+
+* [Group](#Group)
+    * [new Group(data)](#new_Group_new)
+    * _instance_
+        * [.pathKey()](#Group+pathKey)
+        * [.pagePath()](#Group+pagePath)
+        * [.includes()](#Group+includes) ⇒ <code>Boolean</code>
+        * [.validate()](#Group+validate)
+        * [.commitment()](#Group+commitment)
+        * [.federation()](#Group+federation)
+        * [.verifyMultiSignature(multiSig, [threshold])](#Group+verifyMultiSignature) ⇒ <code>Boolean</code>
+        * [.toJSON()](#Group+toJSON)
+        * [.toPublicJSON()](#Group+toPublicJSON)
+    * _static_
+        * [.normalizeSlug()](#Group.normalizeSlug)
+
+<a name="new_Group_new"></a>
+
+### new Group(data)
+
+| Param | Type | Default | Description |
+| --- | --- | --- | --- |
+| data | <code>Object</code> |  | Group data. |
+| data.id | <code>String</code> |  | Group id. |
+| data.name | <code>String</code> |  | Display name. |
+| data.creator | <code>String</code> |  | Creator pubkey (hex). |
+| data.members | <code>Array.&lt;String&gt;</code> |  | Member pubkeys (hex). |
+| [data.threshold] | <code>Number</code> | <code>1</code> | Signatures required for group decisions. |
+| [data.visibility] | <code>String</code> | <code>private</code> | `public` | `private`. |
+| [data.slug] | <code>String</code> \| <code>null</code> |  | Optional custom URL slug (else use id). |
+| [data.createdAt] | <code>String</code> |  | ISO timestamp. |
+
+<a name="Group+pathKey"></a>
+
+### group.pathKey()
+Path segment for the group page: custom slug or id.
+
+**Kind**: instance method of [<code>Group</code>](#Group)  
+<a name="Group+pagePath"></a>
+
+### group.pagePath()
+Absolute path for the group page (`/groups/...`).
+
+**Kind**: instance method of [<code>Group</code>](#Group)  
+<a name="Group+includes"></a>
+
+### group.includes() ⇒ <code>Boolean</code>
+**Kind**: instance method of [<code>Group</code>](#Group)  
+**Returns**: <code>Boolean</code> - True when `pubkey` is a member of this group.  
+<a name="Group+validate"></a>
+
+### group.validate()
+Validate shape: pubkeys well-formed, threshold achievable.
+
+**Kind**: instance method of [<code>Group</code>](#Group)  
+<a name="Group+commitment"></a>
+
+### group.commitment()
+Deterministic commitment over the group's identity-defining fields.
+
+**Kind**: instance method of [<code>Group</code>](#Group)  
+<a name="Group+federation"></a>
+
+### group.federation()
+Lazily build the Fabric Federation for this member set.
+
+**Kind**: instance method of [<code>Group</code>](#Group)  
+<a name="Group+verifyMultiSignature"></a>
+
+### group.verifyMultiSignature(multiSig, [threshold]) ⇒ <code>Boolean</code>
+Verify a k-of-n multisignature against this group's roster + threshold.
+Signers sign the raw message bytes with BIP340 Schnorr (Fabric
+`Key.signSchnorr`); non-member signatures do not count.
+
+**Kind**: instance method of [<code>Group</code>](#Group)  
+**Returns**: <code>Boolean</code> - True when at least `threshold` member signatures verify.  
+
+| Param | Type | Description |
+| --- | --- | --- |
+| multiSig | <code>Object</code> | `{ message, signatures: { [pubkey]: sigHexOrBuffer } }`. |
+| [threshold] | <code>Number</code> | Override (defaults to the group threshold). |
+
+<a name="Group+toJSON"></a>
+
+### group.toJSON()
+Full JSON for members / authenticated managers.
+
+**Kind**: instance method of [<code>Group</code>](#Group)  
+<a name="Group+toPublicJSON"></a>
+
+### group.toPublicJSON()
+Public summary for share pages (no full member list — only count).
+Safe for unauthenticated GET when visibility is public.
+
+**Kind**: instance method of [<code>Group</code>](#Group)  
+<a name="Group.normalizeSlug"></a>
+
+### Group.normalizeSlug()
+Normalize a custom URL slug (lowercase, hyphenated) or return null.
+
+**Kind**: static method of [<code>Group</code>](#Group)  
 <a name="Mission"></a>
 
 ## Mission ⇐ <code>Entity</code>
@@ -312,8 +496,7 @@ Create a MissionApplication instance.
 | --- | --- | --- |
 | data | <code>Object</code> | Application data. |
 | data.missionId | <code>String</code> | Mission ID being applied to. |
-| data.applicantId | <code>String</code> | Applicant's player ID. |
-| data.publicKey | <code>String</code> | Applicant's public key (secp256k1). |
+| data.applicantId | <code>String</code> | Combined public key (hex). Single secp256k1   or Musig2-aggregated key — same opaque format as any other public key in the   system; not a separate player/handle identity. |
 | data.signature | <code>String</code> | Application signature. |
 | [data.message] | <code>String</code> | Optional message from applicant. |
 | data.status | <code>String</code> | Application status ('pending', 'approved', 'rejected'). |
@@ -368,6 +551,39 @@ Convert application to JSON.
 
 **Kind**: instance method of [<code>MissionApplication</code>](#MissionApplication)  
 **Returns**: <code>Object</code> - Application data.  
+<a name="Store"></a>
+
+## Store
+**Kind**: global class  
+
+* [Store](#Store)
+    * [new Store([opts])](#new_Store_new)
+    * [.start()](#Store+start)
+    * [.flush()](#Store+flush)
+
+<a name="new_Store_new"></a>
+
+### new Store([opts])
+
+| Param | Type | Description |
+| --- | --- | --- |
+| [opts] | <code>Object</code> |  |
+| [opts.path] | <code>String</code> \| <code>null</code> | LevelDB path for `@fabric/core` Store. |
+| [opts.dir] | <code>String</code> \| <code>null</code> | Alias for `path` (legacy register API). |
+
+<a name="Store+start"></a>
+
+### store.start()
+Open the Fabric Store (if configured) and load collections into memory.
+Idempotent — safe when MissionManager and GroupManager share one instance.
+
+**Kind**: instance method of [<code>Store</code>](#Store)  
+<a name="Store+flush"></a>
+
+### store.flush()
+Flush pending Level writes (also called from stop).
+
+**Kind**: instance method of [<code>Store</code>](#Store)  
 <a name="MissionManager"></a>
 
 ## MissionManager
@@ -380,7 +596,11 @@ Supports both single secp256k1 signatures and Musig2 multisig.
 * [MissionManager](#MissionManager)
     * [new MissionManager([settings])](#new_MissionManager_new)
     * [.createMission(data)](#MissionManager+createMission) ⇒ [<code>Mission</code>](#Mission)
+    * [._normalizeAuthorities()](#MissionManager+_normalizeAuthorities)
     * [.getMission(missionId)](#MissionManager+getMission) ⇒ [<code>Mission</code>](#Mission) \| <code>null</code>
+    * [.getMissionApplications(missionId)](#MissionManager+getMissionApplications) ⇒ [<code>Array.&lt;MissionApplication&gt;</code>](#MissionApplication)
+    * [.acceptanceMessage(mission, claim)](#MissionManager+acceptanceMessage) ⇒ <code>String</code>
+    * [.verifyAcceptance()](#MissionManager+verifyAcceptance) ⇒ <code>Boolean</code>
     * [.submitApplication(applicationData)](#MissionManager+submitApplication) ⇒ [<code>Promise.&lt;MissionApplication&gt;</code>](#MissionApplication)
     * [.verifySignature(message, signature, publicKey, [multisigData])](#MissionManager+verifySignature) ⇒ <code>Promise.&lt;Boolean&gt;</code>
     * [.verifySecp256k1Signature(message, signature, publicKey)](#MissionManager+verifySecp256k1Signature) ⇒ <code>Boolean</code>
@@ -389,7 +609,6 @@ Supports both single secp256k1 signatures and Musig2 multisig.
     * [.rejectApplication(applicationId, reason)](#MissionManager+rejectApplication) ⇒ [<code>Promise.&lt;MissionApplication&gt;</code>](#MissionApplication)
     * [.completeMission(missionId, completionData)](#MissionManager+completeMission) ⇒ [<code>Promise.&lt;Mission&gt;</code>](#Mission)
     * [.failMission(missionId, reason)](#MissionManager+failMission) ⇒ [<code>Promise.&lt;Mission&gt;</code>](#Mission)
-    * [.getMissionApplications(missionId)](#MissionManager+getMissionApplications) ⇒ [<code>Array.&lt;MissionApplication&gt;</code>](#MissionApplication)
     * [.getApplicantApplications(applicantId)](#MissionManager+getApplicantApplications) ⇒ [<code>Array.&lt;MissionApplication&gt;</code>](#MissionApplication)
 
 <a name="new_MissionManager_new"></a>
@@ -414,6 +633,12 @@ Create a new mission.
 | --- | --- | --- |
 | data | <code>Object</code> | Mission data. |
 
+<a name="MissionManager+_normalizeAuthorities"></a>
+
+### missionManager.\_normalizeAuthorities()
+Normalize the authorities field: `{ keys: [pubkey…], threshold }` or null.
+
+**Kind**: instance method of [<code>MissionManager</code>](#MissionManager)  
 <a name="MissionManager+getMission"></a>
 
 ### missionManager.getMission(missionId) ⇒ [<code>Mission</code>](#Mission) \| <code>null</code>
@@ -426,6 +651,40 @@ Get a mission by ID.
 | --- | --- | --- |
 | missionId | <code>String</code> | Mission ID. |
 
+<a name="MissionManager+getMissionApplications"></a>
+
+### missionManager.getMissionApplications(missionId) ⇒ [<code>Array.&lt;MissionApplication&gt;</code>](#MissionApplication)
+Get applications for a mission.
+
+**Kind**: instance method of [<code>MissionManager</code>](#MissionManager)  
+**Returns**: [<code>Array.&lt;MissionApplication&gt;</code>](#MissionApplication) - Mission applications.  
+
+| Param | Type | Description |
+| --- | --- | --- |
+| missionId | <code>String</code> | Mission ID. |
+
+<a name="MissionManager+acceptanceMessage"></a>
+
+### missionManager.acceptanceMessage(mission, claim) ⇒ <code>String</code>
+Deterministic message the mission's authorities must sign to accept a
+completion claim (and release any escrowed payout).
+
+**Kind**: instance method of [<code>MissionManager</code>](#MissionManager)  
+**Returns**: <code>String</code> - Canonical acceptance message.  
+
+| Param | Type | Description |
+| --- | --- | --- |
+| mission | <code>Object</code> | Mission record. |
+| claim | <code>Object</code> | Claim record. |
+
+<a name="MissionManager+verifyAcceptance"></a>
+
+### missionManager.verifyAcceptance() ⇒ <code>Boolean</code>
+Verify a k-of-n acceptance against the mission's authorities set.
+Signers sign `acceptanceMessage(mission, claim)` bytes with BIP340
+Schnorr; only authority pubkeys count.
+
+**Kind**: instance method of [<code>MissionManager</code>](#MissionManager)  
 <a name="MissionManager+submitApplication"></a>
 
 ### missionManager.submitApplication(applicationData) ⇒ [<code>Promise.&lt;MissionApplication&gt;</code>](#MissionApplication)
@@ -438,8 +697,7 @@ Submit an application to accept a mission.
 | --- | --- | --- |
 | applicationData | <code>Object</code> | Application data. |
 | applicationData.missionId | <code>String</code> | Mission ID. |
-| applicationData.applicantId | <code>String</code> | Applicant ID. |
-| applicationData.publicKey | <code>String</code> | Applicant's public key. |
+| applicationData.applicantId | <code>String</code> | Combined public key (hex). |
 | applicationData.signature | <code>String</code> | Application signature. |
 | [applicationData.multisigData] | <code>Object</code> | Musig2 data if applicable. |
 
@@ -537,18 +795,6 @@ Fail a mission.
 | missionId | <code>String</code> | Mission ID. |
 | reason | <code>String</code> | Failure reason. |
 
-<a name="MissionManager+getMissionApplications"></a>
-
-### missionManager.getMissionApplications(missionId) ⇒ [<code>Array.&lt;MissionApplication&gt;</code>](#MissionApplication)
-Get applications for a mission.
-
-**Kind**: instance method of [<code>MissionManager</code>](#MissionManager)  
-**Returns**: [<code>Array.&lt;MissionApplication&gt;</code>](#MissionApplication) - Mission applications.  
-
-| Param | Type | Description |
-| --- | --- | --- |
-| missionId | <code>String</code> | Mission ID. |
-
 <a name="MissionManager+getApplicantApplications"></a>
 
 ### missionManager.getApplicantApplications(applicantId) ⇒ [<code>Array.&lt;MissionApplication&gt;</code>](#MissionApplication)
@@ -559,7 +805,7 @@ Get applications by applicant.
 
 | Param | Type | Description |
 | --- | --- | --- |
-| applicantId | <code>String</code> | Applicant ID. |
+| applicantId | <code>String</code> | Combined public key (hex). |
 
 <a name="StarCitizen"></a>
 
@@ -584,6 +830,7 @@ Provides a Fabric-compatible declarative API with Discord integration.
 * [StarCitizen](#StarCitizen) ⇐ <code>Hub</code>
     * [new StarCitizen([settings])](#new_StarCitizen_new)
     * [.postToDiscord(payload)](#StarCitizen+postToDiscord) ⇒ <code>Promise.&lt;Response&gt;</code>
+    * [.getUIConfig()](#StarCitizen+getUIConfig) ⇒ <code>Object</code> \| <code>null</code>
 
 <a name="new_StarCitizen_new"></a>
 
@@ -613,6 +860,129 @@ Post a message to Discord via webhook.
 | --- | --- | --- |
 | payload | <code>Object</code> | The Discord webhook payload. |
 
+<a name="StarCitizen+getUIConfig"></a>
+
+### starCitizen.getUIConfig() ⇒ <code>Object</code> \| <code>null</code>
+Get UI component configuration for Sensemaker integration.
+Services can override this method to declare their UI components.
+
+**Kind**: instance method of [<code>StarCitizen</code>](#StarCitizen)  
+**Returns**: <code>Object</code> \| <code>null</code> - UI component configuration or null  
+<a name="crypto"></a>
+
+## crypto
+Group — a member-created org unit backed by a k-of-n Schnorr multisig.
+
+Members are identified by their compressed secp256k1 public keys (the same
+actor ids the identity onboarding produces). Threshold decisions (mission
+acceptance, payout release) are verified with the standard Fabric
+[Federation](Federation) k-of-n Schnorr verification (BIP340).
+
+Pages: `/groups/:id` by default, or `/groups/:slug` when a custom slug is set.
+Visibility: `private` (members only) or `public` (shareable join page).
+
+**Kind**: global constant  
+<a name="fs"></a>
+
+## fs
+Store — keyed-collection persistence for the mission register + groups.
+
+Follows the Fabric convention: the *type* lives in `types/`, the *data*
+lives under the named store root `stores/gooncitizen/` (like the Hub's
+`stores/hub`). The register LevelDB is `stores/gooncitizen/register`.
+
+Surface (sync): get / all / count / put — same as the original M5 seam so
+MissionManager and GroupManager stay simple.
+
+Persistence: when `path` (or legacy `dir`) is set, collections are kept in an
+{@link https://github.com/FabricLabs/fabric/blob/master/types/store.js
+
+**Kind**: global constant  
+**Fabric/core**: Store} (LevelDB). Memory-only when path is null (tests).
+
+Call `await store.start()` before reads that must see prior sessions, and
+`await store.stop()` on shutdown so pending writes flush.  
+<a name="crypto"></a>
+
+## crypto
+GroupManager — member-created groups with k-of-n Schnorr multisig,
+public/private visibility, custom page slugs, and join applications.
+
+Group pages live at `/groups/:id` (or `/groups/:slug` when a custom slug
+is set). Public groups can be shared; visitors apply to join; the creator
+accepts or rejects. Private groups are members-only.
+
+Persistence: uses `types/Store.js` → `@fabric/core` LevelDB under
+`stores/gooncitizen/register` (Hub-style named store root).
+
+**Kind**: global constant  
+<a name="http"></a>
+
+## http
+Star Citizen Live - Fabric-free service (M1 skeleton + M3 parser).
+
+Boots with ZERO external dependencies - only Node.js built-ins (http, crypto,
+events, fs, readline) plus global fetch (identity/group crypto loads lazily).
+This file is the SERVICE DEFINITION only — the server entry that boots it
+from the environment is `scripts/node.js` (`npm start`).
+
+Features: in-memory collections, REST endpoints, live log tailing (read-only,
+optional) AND offline replay, real Game.log event parsing (functions/parser.js),
+optional Discord webhook posting, and the mission/contract seam.
+
+It edits NOTHING in the Star Citizen installation - the log is only ever read.
+
+**Kind**: global constant  
+<a name="crypto"></a>
+
+## crypto
+MissionManager — the org mission register (M5.1).
+
+Implements D-005: a centralized, OFFICER-VALIDATED register. Lifecycle:
+  open --apply--> (applications) --officer accept--> assigned
+       --claim(assignee)--> (claim) --officer validate(approve)--> completed
+                                      --officer validate(reject)--> back to assigned
+  open|assigned --officer cancel--> cancelled
+
+Every mutation appends a hash-chained AuditEntry (tamper-evident; M6 adds
+officer signatures over each entry). Backed by types/Store.js (in-memory
+or `@fabric/core` Store / LevelDB under `stores/` when a path is configured).
+Keeps the method names/events the rest of the code already uses
+(createMission/getMission/missions, start/stop) so nothing else breaks.
+
+Officer model: settings.officers is an allowlist of actor ids. If EMPTY, the
+register runs in permissive "bootstrap" mode (everyone is an officer) so it is
+usable before roles are wired (REST/Discord auth lands in M5.2/M5.3).
+
+**Kind**: global constant  
+<a name="EventEmitter"></a>
+
+## EventEmitter
+PayoutManager — Bitcoin-unlocked mission rewards.
+
+A mission's reward can be escrowed on-chain in a k-of-n multisig address
+built from the mission's AUTHORITY pubkeys (the same keys whose Schnorr
+signatures accept the completion claim). Flow:
+
+  1. createEscrow(mission)   -> k-of-n P2WSH address (bitcoind createmultisig)
+  2. (creator funds address) -> checkFunding() confirms via scantxoutset
+  3. claim accepted (k-of-n Schnorr on the acceptance message, MissionManager)
+     -> 'payout:unlocked' -> escrow status 'payable'
+  4. buildPayout()           -> PSBT paying the claimant (authorities sign
+                                with their own wallets — keys never touch
+                                the server)
+  5. broadcastPayout(hex)    -> sendrawtransaction
+
+Modes:
+  - LEDGER (no rpc): the obligation + authorization are recorded and
+    auditable; settlement happens out-of-band.
+  - BITCOIN (rpc provided): full on-chain flow. Mainnet is refused unless
+    `allowMainnet: true` — regtest/signet first, by decision.
+
+`rpc` is any `(method, params) => Promise<result>` — on goon.vc it wraps
+the Hub's managed bitcoind (`@fabric/core` Bitcoin `_makeRPCRequest`).
+
+**Kind**: global constant  
 <a name="StarCitizenActivity"></a>
 
 ## StarCitizenActivity : <code>Object</code>

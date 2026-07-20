@@ -4,29 +4,41 @@
   "description": "Fabric connectivity for the Star Citizen universe with Discord integration.",
   "main": "main.js",
   "exports": {
-    ".": "./app/server.js",
-    "./parser": "./app/parser.js",
-    "./types/Mission": "./types/Mission.js"
+    ".": "./services/LiveRelay.js",
+    "./parser": "./functions/parser.js",
+    "./locate": "./functions/locate.js",
+    "./services/FabricNetwork": "./services/FabricNetwork.js",
+    "./types/Mission": "./types/Mission.js",
+    "./types/Store": "./types/Store.js",
+    "./components/Dashboard": "./components/Dashboard.js"
   },
   "scripts": {
     "backfill": "node scripts/backfill.js",
     "build:browser": "node scripts/build.js",
-    "build:electron": "npm run build:browser && electron-builder",
-    "build:win:installer": "npm run build:browser && electron-builder --win --publish never",
-    "build:win": "npm run build:browser && electron-builder --win",
+    "build:desktop": "npm run build:browser && electron-builder build --publish never",
+    "build:desktop:dir": "npm run build:browser && electron-builder --dir",
+    "build:installer:deb": "npm run build:browser && electron-builder --linux --publish never",
+    "build:installer:win": "npm run build:browser && electron-builder --win --publish never",
+    "build:installers": "npm run build:browser && electron-builder --win --linux --mac --publish never",
     "build": "npm run make:api && npm run build:browser",
     "coverage": "c8 npm test",
-    "electron:dev": "electron . --dev",
-    "electron": "electron .",
+    "desktop:dev": "node scripts/desktop.js . --dev",
+    "desktop": "node scripts/desktop.js .",
     "make:api": "jsdoc2md --configure jsdoc.json --files types/*.js services/*.js README.md > API.md",
     "replay": "node scripts/replay.js",
     "report:install": "rm -rf node_modules && echo \"\n\" > package-lock.json && echo \"$ npm i\" > reports/install.log && npm i >> reports/install.log",
     "report:todo": "grep --exclude package.json --exclude-dir=.env --exclude-dir=.git --exclude-dir=_book --exclude-dir=stores --exclude-dir=assets --exclude-dir=node_modules --exclude-dir=reports --exclude-dir=coverage --exclude-dir=docs --exclude-dir=libraries -rEI \"TODO|FIXME\" . | sed 's/\\([^:]*:\\)[ ]*/\\1 /' > reports/TODO.txt",
-    "start:browser": "node app/server.js",
-    "start:fabric": "node scripts/node.js   # DEPRECATED original Fabric-based entry (kept for reference)",
+    "start:browser": "node scripts/node.js",
+    "start:desktop:dev": "node scripts/desktop.js . --dev",
+    "start:desktop": "node scripts/desktop.js .",
+    "start:fabric": "node scripts/fabric.js",
+    "start:relay": "node scripts/node.js",
+    "start:server": "SC_MODE=server node scripts/node.js",
     "start": "node scripts/node.js",
-    "test:browser": "node --test test/*.test.js",
-    "test": "mocha tests"
+    "test:browser": "NODE_ENV=test node --test tests/relay/*.test.js",
+    "test:fabric": "mocha tests",
+    "test:relay": "NODE_ENV=test node --test tests/relay/*.test.js",
+    "test": "npm run test:fabric && npm run test:relay && npm run test:browser"
   },
   "repository": {
     "type": "git",
@@ -53,27 +65,33 @@
   },
   "homepage": "https://github.com/GoonCitizen/star-citizen-live#readme",
   "dependencies": {
-    "@fabric/hub": "FabricLabs/hub.fabric.pub#feature/sensemaker",
+    "@fabric/hub": "FabricLabs/hub.fabric.pub#feature/rsi",
     "cross-fetch": "=4.0.0",
+    "ecpair": "=3.0.1",
     "lodash.merge": "=4.6.2",
     "screenshot-desktop": "=1.15.1",
     "tail": "=2.2.6"
   },
   "devDependencies": {
-    "electron": "=28.0.0",
-    "electron-builder": "=24.9.1",
+    "c8": "=7.11.3",
+    "electron": "^43.1.1",
+    "electron-builder": "^26.15.3",
+    "esbuild": "^0.25.12",
     "jsdoc-to-markdown": "=9.0.5",
-    "mocha": "=10.8.2",
-    "c8": "=7.11.3"
+    "mocha": "=10.8.2"
   },
   "build": {
-    "appId": "com.rsi.star-citizen-live",
-    "productName": "Star Citizen Live",
+    "appId": "vc.goon.desktop",
+    "productName": "GoonCitizen",
+    "executableName": "GoonCitizen",
+    "icon": "assets/icon.png",
     "directories": {
       "output": "dist"
     },
+    "npmRebuild": false,
     "files": [
       "**/*",
+      "!**/node_modules/@fabric/core/build/**",
       "!**/node_modules/*/{CHANGELOG.md,README.md,README,readme.md,readme}",
       "!**/node_modules/*/{test,__tests__,tests,powered-test,example,examples}",
       "!**/node_modules/*.d.ts",
@@ -86,6 +104,13 @@
       "!**/{appveyor.yml,.travis.yml,circle.yml}",
       "!**/{npm-debug.log,yarn.lock,.yarn-integrity,.yarn-metadata.json}"
     ],
+    "mac": {
+      "category": "public.app-category.games",
+      "target": [
+        "dmg",
+        "zip"
+      ]
+    },
     "win": {
       "target": [
         {
@@ -95,13 +120,39 @@
           ]
         }
       ],
-      "publisherName": "RSI"
+      "signtoolOptions": {
+        "publisherName": "GoonCitizen"
+      }
     },
     "nsis": {
       "oneClick": false,
       "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true
+    },
+    "linux": {
+      "target": [
+        {
+          "target": "deb",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "artifactName": "gooncitizen_${version}_${arch}.${ext}",
+      "category": "Game",
+      "maintainer": "Fabric Labs <support@fabric.pub>",
+      "synopsis": "GoonCitizen — Star Citizen log relay and org dashboard",
+      "description": "GoonCitizen desktop app: read-only Game.log monitoring, live dashboard, mission register, and optional Discord relay.",
+      "executableName": "GoonCitizen"
+    },
+    "deb": {
+      "packageName": "gooncitizen",
+      "depends": [
+        "libnotify4",
+        "libxtst6",
+        "libnss3"
+      ]
     }
   }
 }

@@ -1,5 +1,4 @@
 # Project Review & AI Collaboration Log
-
 Shared, async channel between the **product owner (Neorion)**, **Claude Code**, and
 **OpenAI Codex**. Read `AGENTS.md` §10 first — it defines the rules. **The owner
 controls all development; agents propose only and never merge to `main`.**

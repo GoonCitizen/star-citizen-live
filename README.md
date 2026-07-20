@@ -1,6 +1,5 @@
 # Star Citizen Live
-
-A **zero-dependency Node.js service** that watches the Star Citizen `Game.log`
+A ~~**zero-dependency Node.js service**~~ that watches the Star Citizen `Game.log`
 file (read-only) and relays gameplay — logins, missions/objectives,
 combat-progress, player-downs, and (on older game builds) kills — to a **live web
 dashboard**, an optional **Discord webhook**, and a small **REST API**. On top of
@@ -66,7 +65,8 @@ Configuration is via environment variables (preferred for secrets) or an optiona
 | `SC_SEED` | Pre-fill the monitor from a different log on start. |
 | `DISCORD_WEBHOOK_URL` | Enable Discord posting (optional). |
 | `SC_OFFICERS` | Comma-separated officer allowlist for the mission register. |
-| `SC_REGISTER_DIR` | Persist the mission register to disk (default: in-memory). |
+| `SC_REGISTER_DIR` | Fabric Store (LevelDB) for all internal storage — missions, groups, settings. Default: `stores/gooncitizen/register`. |
+| `SC_SETTINGS_DIR` | Named Fabric store root (like Hub `stores/hub`). Default: `stores/gooncitizen`. |
 
 **Never commit secrets.** `settings/local.js`, `settings/auth.txt`, and `.env` are
 gitignored. To enable Discord, create a webhook (Server Settings → Integrations →

@@ -19,13 +19,19 @@ const path = require('path');
 const KNOWN_CHANNELS = ['HOTFIX', 'EPTU', 'PTU', 'TECH-PREVIEW', 'LIVE'];
 
 // Common sub-paths under a drive root where "...\StarCitizen" can live.
+// The RSI launcher's default install goes first so ties favour it.
 const INSTALL_SUBDIRS = [
-  'Roberts Space Industries\\StarCitizen',
   'Program Files\\Roberts Space Industries\\StarCitizen',
+  'Roberts Space Industries\\StarCitizen',
   'Program Files (x86)\\Roberts Space Industries\\StarCitizen',
   'Games\\Roberts Space Industries\\StarCitizen',
   'Games\\StarCitizen\\Roberts Space Industries\\StarCitizen'
 ];
+
+// The RSI launcher's default install location. When auto-detect finds nothing,
+// we still point the tailer here so the log is picked up the moment the game
+// writes it (the poller retries until the file exists).
+const DEFAULT_LOGFILE = 'C:\\Program Files\\Roberts Space Industries\\StarCitizen\\LIVE\\Game.log';
 
 // TODO (packaging / Linux): this only scans Windows drive letters. The Linux
 // build (members playing SC via Proton/Wine) must add prefix-based detection,
@@ -71,8 +77,10 @@ function channelFromPath (p) {
 
 /**
  * Resolve the best Game.log. Returns { file, channel, source } where source is
- * 'explicit' | 'channel' | 'auto-latest' | 'none'. statSync/existsSync are
- * injectable for testing.
+ * 'explicit' | 'channel' | 'auto-latest' | 'default'. When no install is
+ * detected we fall back to the RSI launcher's DEFAULT location so the relay
+ * tails it as soon as the file exists. statSync/existsSync are injectable
+ * for testing.
  */
 function resolveLogFile ({ explicit, channel, bases, statSync = fs.statSync, existsSync = fs.existsSync } = {}) {
   if (explicit) return { file: explicit, channel: channelFromPath(explicit), source: 'explicit' };
@@ -89,7 +97,7 @@ function resolveLogFile ({ explicit, channel, bases, statSync = fs.statSync, exi
     if (!best || st.mtimeMs > best.mtimeMs) best = { file: c.file, channel: c.channel, mtimeMs: st.mtimeMs };
   }
   if (best) return { file: best.file, channel: best.channel, source: channel ? 'channel' : 'auto-latest' };
-  return { file: null, channel: null, source: 'none' };
+  return { file: DEFAULT_LOGFILE, channel: 'LIVE', source: 'default' };
 }
 
-module.exports = { resolveLogFile, candidateLogs, channelFromPath, installBases, KNOWN_CHANNELS, INSTALL_SUBDIRS };
+module.exports = { resolveLogFile, candidateLogs, channelFromPath, installBases, KNOWN_CHANNELS, INSTALL_SUBDIRS, DEFAULT_LOGFILE };

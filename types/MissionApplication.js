@@ -13,8 +13,9 @@ class MissionApplication extends Entity {
    * Create a MissionApplication instance.
    * @param {Object} data - Application data.
    * @param {String} data.missionId - Mission ID being applied to.
-   * @param {String} data.applicantId - Applicant's player ID.
-   * @param {String} data.publicKey - Applicant's public key (secp256k1).
+   * @param {String} data.applicantId - Combined public key (hex). Single secp256k1
+   *   or Musig2-aggregated key — same opaque format as any other public key in the
+   *   system; not a separate player/handle identity.
    * @param {String} data.signature - Application signature.
    * @param {String} [data.message] - Optional message from applicant.
    * @param {String} data.status - Application status ('pending', 'approved', 'rejected').
@@ -31,7 +32,6 @@ class MissionApplication extends Entity {
     this._id = data._id || data.id;
     this.missionId = data.missionId;
     this.applicantId = data.applicantId;
-    this.publicKey = data.publicKey;
     this.signature = data.signature;
     this.message = data.message || '';
     this.status = data.status || 'pending';
@@ -91,7 +91,6 @@ class MissionApplication extends Entity {
       id: this.id,
       missionId: this.missionId,
       applicantId: this.applicantId,
-      publicKey: this.publicKey,
       signature: this.signature,
       message: this.message,
       status: this.status,

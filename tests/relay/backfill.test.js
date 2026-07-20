@@ -3,7 +3,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
 const path = require('node:path');
-const { ingestFiles, toStore } = require('../scripts/backfill');
+const { ingestFiles, toStore } = require('../../scripts/backfill');
 
 test('backfill ingests a log into compact aggregates (missions, deaths, heat, pilots)', async () => {
   const acc = await ingestFiles([path.join(__dirname, 'fixtures', 'sample-missions.log')]);

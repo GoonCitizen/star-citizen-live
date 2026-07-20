@@ -3,15 +3,26 @@
   "agents": {},
   "collections": {
     "documents": {},
-    "people": {}
+    "contracts": {},
+    "messages": {},
+    "chain": {}
   },
   "counts": {
     "documents": 0,
-    "people": 0
+    "messages": 0
   },
   "services": {
-    "bitcoin": {
-      "balance": 0
+    "bitcoin": {},
+    "payjoin": {
+      "available": false,
+      "sessions": 0
+    },
+    "peering": {
+      "available": false
+    },
+    "challenge": {
+      "available": false,
+      "count": 0
     }
   },
   "activities": {},

@@ -1,6 +1,13 @@
-./README.md: # Generate TODO report
+./PROGRESS.md: Lutris prefixes) — `app/locate.js` currently scans Windows drives only (see TODO there).
 ./components/Interface.js: <fabric-container id='react-application'>{/* TODO: render string here */}</fabric-container>
+./REFERENCES.md: ### E. Linux / packaging  *(our cross-platform packaging + Proton path TODO)*
+./REFERENCES.md: | [starcitizen-lug/lug-helper](https://github.com/starcitizen-lug/lug-helper) | Shell | **idea/data** | 692★ Linux installer — **knows the Proton/Wine `Game.log` paths** our Linux relay needs (locate.js TODO). |
+./functions/locate.js: // TODO (packaging / Linux): this only scans Windows drive letters. The Linux
+./functions/parser.js: // TODO (UNVERIFIED): quantum:travel removed - 'Quantum' appears in ~15k lines
+./AGENTS.md: | `app/locate.js` | `resolveLogFile()` — auto-detects install/channel by scanning drives × known sub-paths × channels, picks the freshest log. **Windows-only today** (Proton/Wine detection is a TODO for the Linux relay). |
+./REVIEW.md: 6. **Packaging plan** — `app/locate.js` Windows-only TODO; the cross-platform
 ./services/StarCitizen.js: // TODO: render GoonCitizen/goon.vc static site / import / upgrade it to use this tool
 ./services/StarCitizen.js: // TODO: prefix with /services/star-citizen only when imported as library
 ./services/StarCitizen.js: // TODO: match GN API as much as possible
 ./services/StarCitizen.js: // TODO: implement log replay functionality
+./services/MissionManager.js: // TODO: replace with @fabric/core

@@ -1,7 +1,144 @@
 # Decisions Log (ADRs)
-
 Plain-English record of the *why* behind key choices, so anyone joining later
 understands the direction. Newest at the top.
+
+---
+
+## D-010 — Fabric Peer is the peering transport (HTTPS uplink retired)
+**Date:** 2026-07-20 · **Status:** Adopted
+
+**Decision:** All GoonCitizen ↔ org-hub peer traffic uses the Fabric
+AMP/`Message` protocol over TCP/NOISE — not HTTP(S) batch uplink or chat pull.
+
+1. **Local Fabric Peer** — each GoonCitizen node starts `@fabric/core` Peer
+   listening on **port 7777** (`settings/local.js` → `fabric.port`, optional
+   Fabric Store `fabricPort`). Identity unlock supplies the Peer key material.
+2. **Default seed** — `relay.goon.vc:7777` (replaces `https://relay.goon.vc`).
+   Peers UI / REST accept `host:port` only.
+3. **Wire types** — chat uses `P2P_CHAT_MESSAGE` (Peer auto-relays);
+   mission offers use GenericMessage `@type: MissionBroadcast` (optional
+   `scope: 'global'|'group'` + `groupId`); log/event batches use
+   GenericMessage `SCEventBatch`. Local dashboard HTTP (`:3041`) stays for UI/API only.
+4. **Group-scoped broadcasts** — hub still relays; receivers **filter on
+   membership in the group tree** (`isInGroupTree`: direct member or member
+   of a nested subgroup). Same idea as `group:<id>` chat. Non-members do not
+   get a pending offer. Hosted register may retain offers and filter
+   list-by-viewer. **Groups** (not a single "org") are the multi-install
+   sharing boundary; optional `parentId` nests subgroups.
+5. **Star relay (goon.vc)** — Peer does not auto-relay arbitrary GenericMessage
+   app types; goon.vc attaches handlers that `relayFrom` MissionBroadcast /
+   SCEventBatch and ingest into the mounted LiveRelay.
+
+**Why:** D-009 brought Fabric conventions back; HTTPS uplink was a temporary
+bridge. Real Peer transport matches hub.fabric.pub, enables signed wire frames
+end-to-end, and removes pull-sync race/auth complexity for chat.
+
+**Consequences / guardrails:**
+- `shareLogsGlobal` still gates **log** event publish only; chat + mission
+  broadcasts always publish when the Fabric peer is up.
+- HTTP `POST …/events` may remain on hosted mode for tests/legacy; production
+  peering path is Fabric.
+- Do not reintroduce https peer URLs in the Peers UI.
+
+---
+
+## D-009 — Align with Fabric conventions; integrate with the Fabric Network
+**Date:** 2026-07-19 · **Status:** Adopted
+
+**Decision:** GoonCitizen follows the Fabric project conventions and integrates
+with the **Fabric Network** using the **Fabric Protocol** (amends the "no Fabric"
+framing of D-002 — the heavyweight transport stays out, but conventions, types,
+and network integration come in):
+1. **Types in `types/`, data in `stores/`** — code never lives in `stores/`.
+   `types/Store.js` is the persistence type (backed by
+   `@fabric/core/types/store`, LevelDB). The named Fabric store root is
+   `stores/gooncitizen/` (CLI) / `<userData>/stores/gooncitizen/` (desktop) —
+   the counterpart of the Hub's `stores/hub`. **All internal storage goes
+   through the Fabric Store** (`register/` LevelDB): missions, groups, AND
+   operator settings (a `settings` collection —
+   `functions/settingsStore.js`). The application never writes a settings
+   JSON file; a legacy `settings.json` is imported once on Store start and
+   retired as `.migrated`.
+2. **Hub features come forward** — capabilities proven in `hub.fabric.pub` are
+   progressively adopted: peer management is a top-level dashboard feature
+   (`components/Peers.js`, Hub-compatible `GET|POST /peers` +
+   `POST|DELETE /peers/:id`); settings mirror the Hub's `GET /settings` /
+   `PUT /settings/:name` shapes; **identity safety follows the Hub's
+   IdentityManager model** (`components/Identity.js`): idle auto-lock
+   (default 30 min, signing re-arms), password re-verification before seed
+   reveal or backup export, hidden-by-default secrets with copy gated on
+   reveal, password-sealed backup export/import, and typed confirmation
+   before forget. The plaintext key lives only in Electron main-process
+   memory; the renderer sees signatures, never secrets. More (documents,
+   activity stream) can follow.
+3. **Dashboard = home page** — the UI opens on a Home tab listing the feature
+   set (Live feed, Analyze, Groups, Peers) along the top, Hub-style, with
+   hash-synced navigation (`/#live`, `/#groups`, …).
+4. **Scripts follow Fabric naming** — `npm run desktop`, `build:desktop`,
+   `build:desktop:dir` match `@fabric/hub`; installers target **Windows x64 +
+   Debian x64** (primary — most players run Windows) plus a macOS build.
+
+**Why:** the org's hub (goon.vc) *is* a Fabric Hub; matching its conventions
+means shared muscle memory, shared code paths (identity, Schnorr envelopes,
+Store), and a clean path to full Fabric Network participation instead of a
+parallel bespoke stack.
+
+**Consequences / guardrails:**
+- D-002's core lesson stands: the local relay must keep working standalone —
+  Fabric crypto/persistence load lazily and memory-only mode remains for tests.
+- `stores/` stays gitignored (data only, no code).
+- New top-level features should land as Hub-style components + REST surfaces so
+  they can later be driven over the Fabric Protocol (wire `Message`s) without
+  redesign.
+
+---
+
+## D-008 — Player identities, goon.vc hub, multisig groups, Bitcoin-unlocked payouts
+**Date:** 2026-07-19 · **Status:** Adopted (implemented; deploy pending)
+
+**Decision:** Four connected capabilities land together:
+1. **First-run identity** — the desktop app onboards each player with a BIP39
+   keypair (`functions/identity.js`, `components/Onboarding.js`). The encrypted
+   key lives in Electron `userData`; the compressed secp256k1 pubkey is the
+   player's actor id. Keys never leave the client.
+2. **goon.vc hub** — the separate `goon.vc` repo (a Fabric Hub) mounts this
+   project's API at `/services/star-citizen` via `LiveRelay.apiHandler()` in
+   `mode: 'server'` (no log tailing, no dashboard). Installed clients push
+   **Schnorr-signed event batches** (`POST …/events`); unsigned writes are
+   rejected in hosted mode, and every stored event carries its `source` pubkey.
+   Ingest is idempotent by content id (DESIGN-event-convergence.md).
+3. **Groups** — any member may create a group (`types/Group.js`,
+   `services/GroupManager.js`): a pubkey roster + k-of-n threshold, verified
+   with the standard Fabric `Federation` BIP340 Schnorr multisignature.
+   Missions carrying a `groupId` are served **only to that group's members**
+   (Schnorr login → Bearer session, `POST …/auth`).
+4. **Bitcoin-unlocked completion** — missions may carry an `authorities` set
+   (pubkeys + threshold; defaults to the creator). Approving a completion claim
+   requires k-of-n Schnorr signatures over a canonical acceptance message; the
+   signed authorization is embedded in the audit chain (this delivers M6's
+   signed audit). With an escrow attached, acceptance flips it to `payable`:
+   `services/PayoutManager.js` derives a k-of-n multisig address from the
+   authority keys (bitcoind `createmultisig`), verifies funding
+   (`scantxoutset`), builds the payout PSBT for the authorities to sign
+   client-side, and broadcasts the signed tx. **Mainnet is refused** unless
+   explicitly overridden — regtest/signet until the flow is proven. Missions
+   without funding use a ledger-only obligation.
+
+**Why:** the org needs multi-player visibility (one machine's log is not the
+org), authenticated contribution (signing proves authorship — D-004's honest
+limit stands), member-run groups without granting server-side roles, and a
+reward mechanism whose settlement does not depend on trusting the server.
+
+**Consequences / guardrails:**
+- Amends D-002/D-004: signed identity + multisig return **as optional modules**
+  — the local relay still runs standalone with zero external deps and no
+  identity (crypto loads lazily). D-005 holds: humans (creator/authorities)
+  validate completion; the log remains supporting evidence only.
+- The server stores only pubkeys, signatures, and events — never private keys.
+- The legacy officer allowlist still governs missions without an authorities
+  set (backward compatible with M5).
+- Deploy artifacts live in `goon.vc/deploy/` + `goon.vc/DEPLOY.md` (systemd,
+  Caddy TLS, env template). Actual VPS deployment is the remaining step.
 
 ---
 

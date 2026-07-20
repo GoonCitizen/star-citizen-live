@@ -16,7 +16,7 @@ const { test } = require('node:test');
 const assert = require('node:assert');
 const fs = require('fs');
 const path = require('path');
-const StarCitizenService = require('../app/server');
+const StarCitizenService = require('../../services/LiveRelay');
 
 function walk (dir) {
   let out = [];
