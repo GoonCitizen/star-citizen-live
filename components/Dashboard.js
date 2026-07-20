@@ -10,6 +10,7 @@ const React = require('react');
 const Onboarding = require('./Onboarding');
 const Identity = require('./Identity');
 const FabricLoginModal = require('./FabricLoginModal');
+const SiteLogin = require('./SiteLogin');
 const Chat = require('./Chat');
 const GlobalChatDock = require('./GlobalChatDock');
 const MissionBroadcastBanner = require('./MissionBroadcastBanner');
@@ -1306,7 +1307,7 @@ class Dashboard extends React.Component {
                   ? (this.state.nickname + ' · ' + this.state.identityPubkey.slice(0, 8) + '…')
                   : (this.state.identityPubkey.slice(0, 8) + '…')))
                 : (this.state.identityExists ? '🔒 locked' : '🔑 identity'))
-              : null,
+              : React.createElement(SiteLogin, null),
             React.createElement('button', {
               type: 'button',
               className: 'gear',

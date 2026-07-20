@@ -160,9 +160,13 @@ Group a Hub-compatible convergent policy.
 **client-signed** Fabric login session. GoonCitizen desktop and Fabric Passport
 are interchangeable signers for the same challenge.
 
+When **LiveRelay** is the public HTTP origin (`SC_MODE=server` on
+`relay.goon.vc`), it hosts this contract itself
+(`functions/fabricSiteLogin.js`) — not only when embedded under a Fabric Hub.
+
 1. **Site** — `POST /sessions` `{ origin }` creates a pending challenge and
    returns `protocolUrl` (`fabric://login?sessionId=…&hub=…`) plus
-   `acceptsClientSignature: true` (Hub `fabricDesktopAuth`).
+   `acceptsClientSignature: true`.
 2. **Desktop** — GoonCitizen registers as a `fabric:` handler, fetches the
    pending session, shows an in-app approval modal, BIP340-signs with the
    unlocked player identity, and `POST`s
@@ -170,8 +174,11 @@ are interchangeable signers for the same challenge.
    `/sessions/:id/signatures`.
 3. **Passport** — pages `postMessage` `FABRIC_SITE_LOGIN_REQUEST`; the
    extension popup approves and POSTs the same body.
-4. **Hub self-sign** (empty body on `POST …/signatures`) remains for linking a
-   browser to a **Hub node** identity — distinct from player login.
+4. **Hub self-sign** (empty body on `POST …/signatures`) remains a **Hub-only**
+   path for linking a browser to a Hub node identity. LiveRelay rejects empty
+   bodies and accepts **client-signed** completions only; a successful sign-in
+   also issues a Bearer token (`delegationToken`) usable as
+   `Authorization: Bearer …` for hosted API auth.
 
 **Why:** Hub’s original desktop login used the Hub root key (node link). Orgs
 need players to prove *their* key on web surfaces; desktop and extension must

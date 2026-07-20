@@ -130,10 +130,14 @@ npm run build:installers  # Windows x64 + Debian x64 + macOS
   HTTPS uplink. `shareLogsGlobal` (default on) gates pushing parsed log events
   (`SCEventBatch`) only; chat and mission broadcasts always publish when the
   peer is up.
-- **Site login (D-011):** desktop registers the **`fabric:`** protocol and
-  completes **client-signed** Hub sessions (`fabric://login?sessionId&hub`)
-  with the unlocked player key — interchangeable with Fabric Passport on the
-  same `/sessions` REST contract (see `components/FabricLoginModal.js`).
+- **Site login (D-011):** LiveRelay hosts Hub-compatible **`/sessions`**
+  (`functions/fabricSiteLogin.js`) so `relay.goon.vc` (or any
+  `SC_MODE=server` deploy) can sign players in without a separate Hub HTTP
+  front. Desktop registers **`fabric:`** and completes client-signed sessions
+  (`fabric://login?sessionId&hub`) with the unlocked player key —
+  interchangeable with Fabric Passport (`components/FabricLoginModal.js`).
+  Browser monitor (non-Electron) uses `components/SiteLogin.js`. Successful
+  completion issues a Bearer `delegationToken` for hosted API auth.
 - **Device link (D-013):** mutual Schnorr attestation with separate seeds —
   `fabric://link?sessionId&hub` opens an in-app approve modal; peer Fabric id
   is stored under settings `linkedDevices` (see `DECISIONS.md` D-013).

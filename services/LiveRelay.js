@@ -178,8 +178,11 @@ class StarCitizenService extends EventEmitter {
       dir: this.settings.settingsDir ? path.join(this.settings.settingsDir, 'snapshots') : null
     });
 
-    // Bearer sessions issued by POST …/auth (Schnorr login challenge).
+    // Bearer sessions issued by POST …/auth (Schnorr login challenge)
+    // or by client-signed Fabric site login (POST /sessions/…/signatures).
     this._sessions = {};
+    // Pending Fabric site-login challenges (D-011) — Passport / GoonCitizen.
+    this._siteLoginSessions = null;
 
     // Bitcoin payouts: escrow mission rewards in authority multisig addresses.
     // settings.payouts = { enable, network, rpc, allowMainnet, feeSats }.
@@ -686,6 +689,13 @@ class StarCitizenService extends EventEmitter {
     const base = '/services/star-citizen';
     return async (req, res) => {
       const pathname = new URL(req.url, 'http://localhost').pathname;
+      // Fabric site login (D-011) lives at the HTTP root so Passport / desktop
+      // can use the same /sessions contract as Hub when this service is the
+      // public origin (relay.goon.vc).
+      if (pathname === '/sessions' || pathname.startsWith('/sessions/')) {
+        await this._handle(req, res);
+        return true;
+      }
       if (pathname !== base && !pathname.startsWith(`${base}/`)) return false;
       await this._handle(req, res);
       return true;
@@ -1088,8 +1098,14 @@ class StarCitizenService extends EventEmitter {
     };
 
     try {
-      // SPA shell — dashboard at / and dedicated group pages at /groups/:id (or :slug).
-      if (req.method === 'GET' && (pathname === '/' || pathname === `${base}/ui` || pathname === '/groups' || /^\/groups\/[^/]+$/.test(pathname))) {
+      // Fabric site login (D-011) — Passport / GoonCitizen client-signed sessions.
+      const { tryHandleSiteLogin } = require('../functions/fabricSiteLogin');
+      const siteLogin = await tryHandleSiteLogin(this, req, res, pathname, body);
+      if (siteLogin === true) return;
+      // GET /sessions → same dashboard (header SiteLogin buttons).
+      const serveSpa = siteLogin === 'spa' ||
+        (req.method === 'GET' && (pathname === '/' || pathname === `${base}/ui` || pathname === '/groups' || /^\/groups\/[^/]+$/.test(pathname)));
+      if (serveSpa) {
         let html;
         try {
           const uiPath = path.join(__dirname, '..', 'assets', 'index.html');
