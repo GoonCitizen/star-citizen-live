@@ -7,6 +7,7 @@
     ".": "./services/LiveRelay.js",
     "./parser": "./functions/parser.js",
     "./locate": "./functions/locate.js",
+    "./services/FabricNetwork": "./services/FabricNetwork.js",
     "./types/Mission": "./types/Mission.js",
     "./types/Store": "./types/Store.js",
     "./components/Dashboard": "./components/Dashboard.js"
@@ -34,10 +35,10 @@
     "start:relay": "node scripts/node.js",
     "start:server": "SC_MODE=server node scripts/node.js",
     "start": "node scripts/node.js",
-    "test:browser": "node --test tests/relay/*.test.js",
+    "test:browser": "NODE_ENV=test node --test tests/relay/*.test.js",
     "test:fabric": "mocha tests",
-    "test:relay": "node --test tests/relay/*.test.js",
-    "test": "node --test tests/relay/*.test.js"
+    "test:relay": "NODE_ENV=test node --test tests/relay/*.test.js",
+    "test": "NODE_ENV=test node --test tests/relay/*.test.js"
   },
   "repository": {
     "type": "git",

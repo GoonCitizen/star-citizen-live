@@ -129,60 +129,92 @@ test('hosted chat: signed envelope required, group channels members-only', async
   } finally { await svc.stop(); }
 });
 
-// ---- Two-relay sync: local → hub (uplink push) and hub → local (pull) ----
+// ---- Two-relay sync over Fabric Peer (P2P_CHAT_MESSAGE) ----
 
-test('chat converges between a local relay and a hub: push up, pull down', async () => {
+function sleep (ms) { return new Promise((r) => setTimeout(r, ms)); }
+async function waitFor (fn, { timeoutMs = 15000, intervalMs = 100 } = {}) {
+  const start = Date.now();
+  while (Date.now() - start < timeoutMs) {
+    const v = await fn();
+    if (v) return v;
+    await sleep(intervalMs);
+  }
+  throw new Error('waitFor timeout');
+}
+
+test('chat converges between two Fabric peers (bidirectional)', async () => {
   const alice = createIdentity(); const bob = createIdentity();
+  const portA = 21000 + Math.floor(Math.random() * 3000);
+  const portB = portA + 11;
+  const dirA = fs.mkdtempSync(path.join(os.tmpdir(), 'sc-chat-a-'));
+  const dirB = fs.mkdtempSync(path.join(os.tmpdir(), 'sc-chat-b-'));
 
-  const hub = new LiveRelay({ port: 0, mode: 'server', missions: { enable: false } });
+  const hub = new LiveRelay({
+    port: 0,
+    missions: { enable: false },
+    settingsDir: dirB,
+    peers: [],
+    fabric: { enable: true, listen: true, port: portB, peers: [], peersDb: null, relayAppMessages: true }
+  });
   await hub.start();
   const hubPort = hub.server.address().port;
+  hub.setIdentity(bob);
+  await waitFor(() => hub.fabricNetwork && hub.fabricNetwork.ready);
 
-  const local = new LiveRelay({ port: 0, missions: { enable: false }, uplink: { intervalMs: 60000 }, peers: [] });
+  const local = new LiveRelay({
+    port: 0,
+    missions: { enable: false },
+    settingsDir: dirA,
+    peers: [{ address: `127.0.0.1:${portB}`, enabled: true }],
+    fabric: { enable: true, listen: true, port: portA, peers: [], peersDb: null }
+  });
   await local.start();
   const localPort = local.server.address().port;
   try {
-    // Same group exists on both nodes (deterministic id), Alice + Bob members.
     const groupData = { id: 'group-shared-1', name: 'Shared Wing', members: [alice.pubkey, bob.pubkey], threshold: 1 };
     await hub.groupManager.createGroup(groupData, alice.pubkey);
     await local.groupManager.createGroup(groupData, alice.pubkey);
     const groupChannel = 'group:group-shared-1';
 
-    await request(localPort, 'POST', '/peers', { url: `http://127.0.0.1:${hubPort}` });
     local.setIdentity(alice);
+    await waitFor(() => local.fabricNetwork && local.fabricNetwork.ready);
+    await waitFor(() => (
+      local.fabricNetwork.status().fabricConnected >= 1 ||
+      hub.fabricNetwork.status().fabricConnected >= 1
+    ));
 
-    // Alice posts locally (global + group) — plain POST, author = identity.
     const g1 = await request(localPort, 'POST', `${BASE}/chat/messages`, { channel: 'global', body: 'hello from the relay' });
     assert.strictEqual(g1.status, 200);
     assert.strictEqual(g1.body.data.author, alice.pubkey);
     await request(localPort, 'POST', `${BASE}/chat/messages`, { channel: groupChannel, body: 'wing check-in' });
 
-    // Push up: the signed batch delivers both to the hub.
-    await local._flushUplink();
-    const hubGlobal = await request(hubPort, 'GET', `${BASE}/chat/messages?channel=global`);
-    assert.strictEqual(hubGlobal.body.data.length, 1);
-    assert.strictEqual(hubGlobal.body.data[0].body, 'hello from the relay');
-    assert.strictEqual(hubGlobal.body.data[0].author, alice.pubkey);
+    await waitFor(() => hub.chatManager.list('global').some((m) => m.body === 'hello from the relay'));
+    await waitFor(() => hub.chatManager.list(groupChannel).some((m) => m.body === 'wing check-in'));
 
-    // Bob posts on the hub (signed envelope, member of the group).
-    const bobEnv = signEnvelope(bob, { channel: groupChannel, body: 'reporting in', ts: new Date().toISOString() });
-    assert.strictEqual((await request(hubPort, 'POST', `${BASE}/chat/messages`, bobEnv)).status, 200);
-    const bobGlobalEnv = signEnvelope(bob, { channel: 'global', body: 'evening all', ts: new Date().toISOString() });
-    await request(hubPort, 'POST', `${BASE}/chat/messages`, bobGlobalEnv);
+    // Bob posts on the hub; Alice's peer receives over Fabric.
+    // Hub must know Alice's listen address to dial back (star is one-way until then).
+    await request(hubPort, 'POST', '/peers', { address: `127.0.0.1:${portA}` });
+    await waitFor(() => hub.fabricNetwork.status().fabricConnected >= 1);
 
-    // Pull down: the local relay syncs global AND its member group channel.
-    await local._syncChatFromPeers();
+    const bobPost = await request(hubPort, 'POST', `${BASE}/chat/messages`, {
+      channel: groupChannel,
+      body: 'reporting in'
+    });
+    assert.strictEqual(bobPost.status, 200, JSON.stringify(bobPost.body));
+    await request(hubPort, 'POST', `${BASE}/chat/messages`, { channel: 'global', body: 'evening all' });
+
+    await waitFor(() => local.chatManager.list('global').some((m) => m.body === 'evening all'));
+    await waitFor(() => local.chatManager.list(groupChannel).some((m) => m.body === 'reporting in'));
+
     const localGlobal = await request(localPort, 'GET', `${BASE}/chat/messages?channel=global`);
     assert.deepStrictEqual(localGlobal.body.data.map((m) => m.body).sort(), ['evening all', 'hello from the relay']);
     const localGroup = await request(localPort, 'GET', `${BASE}/chat/messages?channel=${encodeURIComponent(groupChannel)}`);
     assert.deepStrictEqual(localGroup.body.data.map((m) => m.body).sort(), ['reporting in', 'wing check-in']);
-
-    // Re-sync is idempotent — no duplicates.
-    await local._syncChatFromPeers();
-    assert.strictEqual((await request(localPort, 'GET', `${BASE}/chat/messages?channel=global`)).body.data.length, 2);
   } finally {
     await local.stop();
     await hub.stop();
+    fs.rmSync(dirA, { recursive: true, force: true });
+    fs.rmSync(dirB, { recursive: true, force: true });
   }
 });
 

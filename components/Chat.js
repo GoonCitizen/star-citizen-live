@@ -4,9 +4,9 @@
  * Chat — org chat brought forward from the Hub (ChatMessage types).
  *
  * Channel list on the left: Global plus a dedicated channel per group.
- * Messages sync through the relay: local posts are Schnorr-attributed to
- * your identity and ride the signed uplink to org hubs (goon.vc); remote
- * messages arrive via the batch ingest and peer pull.
+ * Messages sync over the Fabric Peer: local posts are Schnorr-attributed to
+ * your identity and published as `P2P_CHAT_MESSAGE` wire Messages; remote
+ * messages arrive via the Peer ingest handlers (D-010).
  *
  * Global chat is also always available via `GlobalChatDock` on other tabs;
  * this page remains the full channel browser (global + groups).

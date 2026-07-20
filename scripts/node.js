@@ -87,6 +87,11 @@ async function relaySettings () {
     },
     discord: { enable: !!webhook, webhook },
     uplink: { enable: !!process.env.SC_UPLINK_URL, url: process.env.SC_UPLINK_URL || null },
+    fabric: {
+      enable: process.env.SC_FABRIC === '0' ? false : true,
+      listen: true,
+      port: Number(process.env.FABRIC_PORT) || 7777
+    },
     // Wallet: ledger mode by default (auditable obligations, no bitcoind);
     // supply settings.payouts.rpc for on-chain regtest/signet escrow.
     payouts: { enable: true, ledger: true, network: process.env.SC_BTC_NETWORK || 'regtest' }

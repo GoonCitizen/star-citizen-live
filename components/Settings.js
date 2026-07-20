@@ -379,7 +379,7 @@ class Settings extends React.Component {
             React.createElement('div', { className: 'st-sec' },
               React.createElement('h3', null, 'Fabric Network'),
               React.createElement('div', { className: 'd' },
-                'Peer hubs (relay.goon.vc is seeded by default) receive your Schnorr-signed event batches over the Fabric Protocol — manage them on the Peers tab.'),
+                'Fabric peers (relay.goon.vc:7777 is seeded by default) receive your signed wire Messages over TCP/NOISE — manage them on the Peers tab.'),
               React.createElement('label', { style: { display: 'flex', gap: 8, alignItems: 'center', fontSize: 13, cursor: 'pointer', marginBottom: 10 } },
                 React.createElement('input', {
                   type: 'checkbox',

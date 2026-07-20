@@ -5,8 +5,8 @@
  *
  * Message types follow hub.fabric.pub conventions:
  *   - stored records are `@type: 'ChatMessage'` (the Hub's WebSocket
- *     broadcast type), carried between nodes as `P2P_CHAT_MESSAGE` events
- *     inside the existing Schnorr-signed batch uplink.
+ *     broadcast type), carried between nodes as Fabric `P2P_CHAT_MESSAGE`
+ *     wire Messages (D-010).
  *
  * Channels:
  *   - `global`            — org-wide chat, readable by everyone on the node
@@ -139,7 +139,9 @@ class ChatManager extends EventEmitter {
     if (!data || !data.body || !data.author || !data.ts) {
       throw Object.assign(new Error('chat event requires author, body and ts'), { code: 'BAD_EVENT' });
     }
-    if (data.author !== source) {
+    // Fabric wire authors are often x-only; identities use compressed pubkeys.
+    const { pubkeysMatch } = require('../functions/identity');
+    if (!pubkeysMatch(data.author, source)) {
       throw Object.assign(new Error('chat author must match the batch signer'), { code: 'FORBIDDEN' });
     }
     const before = this.store.get('chatmessages', ChatManager.idOf(data));

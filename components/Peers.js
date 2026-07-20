@@ -3,14 +3,15 @@
 /**
  * Peers — Fabric Network peer management (top-level feature).
  *
- * Brought forward from the Hub's PeerList: list, add, enable/disable, and
- * remove peers. Peers are remote hubs (e.g. https://goon.vc) that receive
- * this relay's Schnorr-signed event batches over the Fabric Protocol while
- * the local identity is unlocked. Uses the relay's Hub-compatible REST
- * surface (`GET|POST /peers`, `POST|DELETE /peers/:id`).
+ * Peers are Fabric `host:port` addresses (AMP/Message over TCP/NOISE). The
+ * default seed is `relay.goon.vc:7777`. Local dashboard HTTP on :3041 is UI
+ * only — not the peering transport. Uses Hub-compatible REST (`GET|POST /peers`,
+ * `POST|DELETE /peers/:id`).
  */
 
 const React = require('react');
+
+const FABRIC_ADDR = /^[a-zA-Z0-9._-]+:\d{1,5}$/;
 
 const CSS = `
   .pr-wrap{max-width:860px;margin:0 auto;padding:18px;display:grid;gap:16px}
@@ -86,14 +87,14 @@ class Peers extends React.Component {
   }
 
   async addPeer () {
-    const url = this.state.newPeerUrl.trim();
-    if (!/^https?:\/\//.test(url) || this.state.busy) return;
+    const address = this.state.newPeerUrl.trim();
+    if (!FABRIC_ADDR.test(address) || this.state.busy) return;
     this.setState({ busy: true, error: null });
     try {
       const res = await fetch('/peers', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ url, label: this.state.newPeerLabel.trim() || null })
+        body: JSON.stringify({ address, label: this.state.newPeerLabel.trim() || null })
       });
       const json = await res.json();
       if (!res.ok) throw new Error(json.error || `HTTP ${res.status}`);
@@ -135,19 +136,26 @@ class Peers extends React.Component {
   render () {
     const rt = this.state.runtime;
     const unlocked = !!rt.identity;
+    const fabricReady = !!rt.fabricReady;
+    const listenPort = rt.fabricListenPort || 7777;
     return React.createElement('div', { className: 'pr-wrap' },
       React.createElement('div', { className: 'pr-panel' },
         React.createElement('h2', null, 'Fabric Network'),
         React.createElement('div', { className: 'body' },
           React.createElement('div', { className: 'pr-hint' },
-            'GoonCitizen integrates with the Fabric Network using the Fabric Protocol. ',
-            'Peers below receive this relay\'s Schnorr-signed event batches; delivery is ',
-            'idempotent, so multiple peers are safe.'),
+            'GoonCitizen peers over the Fabric Protocol (TCP/NOISE on port ',
+            String(listenPort),
+            '). Chat, mission broadcasts, and shared log events travel as signed ',
+            'wire Messages — the local dashboard HTTP port is UI only.'),
           React.createElement('div', { className: 'pr-id', style: { marginTop: 10 } },
             React.createElement('span', { className: 'pr-tag ' + (unlocked ? 'on' : 'off') }, unlocked ? 'identity unlocked' : 'identity locked'),
-            unlocked ? React.createElement('code', null, rt.identity) : React.createElement('span', null, 'unlock your identity to start pushing'),
+            unlocked ? React.createElement('code', null, rt.fabricPeerId || rt.identity) : React.createElement('span', null, 'unlock your identity to start the Fabric peer'),
+            React.createElement('span', { className: 'pr-tag ' + (fabricReady ? 'on' : 'off') },
+              fabricReady
+                ? `listening :${listenPort} · ${rt.fabricConnected || 0} connected`
+                : 'peer idle'),
             React.createElement('span', { className: 'pr-tag ' + (rt.uplinkActive ? 'on' : 'off') },
-              rt.uplinkActive ? `uplink active · ${rt.uplinkQueued || 0} queued` : 'uplink idle')
+              rt.uplinkActive ? `event queue · ${rt.uplinkQueued || 0}` : 'event queue idle')
           )
         )
       ),
@@ -160,24 +168,24 @@ class Peers extends React.Component {
             : (this.state.peers.length
               ? this.state.peers.map((p) => React.createElement('div', { className: 'pr-peer', key: p.id },
                 React.createElement('div', { className: 'u' },
-                  React.createElement('div', { className: 'url' }, (p.label ? p.label + ' — ' : '') + p.url),
+                  React.createElement('div', { className: 'url' }, (p.label ? p.label + ' — ' : '') + (p.address || p.url)),
                   React.createElement('div', { className: 'meta' },
                     p.enabled === false
                       ? 'disabled'
                       : (p.lastError
                         ? React.createElement('span', { className: 'err' }, 'error: ' + p.lastError)
                         : (p.lastSeen
-                          ? React.createElement('span', { className: 'ok' }, 'last push ' + String(p.lastSeen).slice(11, 19))
-                          : 'no pushes yet'))
+                          ? React.createElement('span', { className: 'ok' }, 'last activity ' + String(p.lastSeen).slice(11, 19))
+                          : 'no activity yet'))
                   )
                 ),
                 React.createElement('button', { className: 'pr-btn ghost', style: { padding: '4px 10px', fontSize: 11 }, disabled: this.state.busy, onClick: () => this.togglePeer(p) }, p.enabled === false ? 'Enable' : 'Disable'),
                 React.createElement('button', { className: 'pr-btn danger', disabled: this.state.busy, onClick: () => this.removePeer(p) }, 'Remove')
               ))
-              : React.createElement('div', { className: 'pr-hint' }, 'No peers configured — add a hub below (e.g. https://goon.vc) to share your events with the org.')),
+              : React.createElement('div', { className: 'pr-hint' }, 'No peers configured — add a Fabric address below (e.g. relay.goon.vc:7777) to join the org mesh.')),
           React.createElement('div', { className: 'pr-row' },
             React.createElement('input', {
-              type: 'text', value: this.state.newPeerUrl, placeholder: 'https://goon.vc',
+              type: 'text', value: this.state.newPeerUrl, placeholder: 'relay.goon.vc:7777',
               style: { flex: 2 },
               onChange: (e) => this.setState({ newPeerUrl: e.target.value })
             }),
@@ -188,7 +196,7 @@ class Peers extends React.Component {
             }),
             React.createElement('button', {
               className: 'pr-btn',
-              disabled: !/^https?:\/\//.test(this.state.newPeerUrl.trim()) || this.state.busy,
+              disabled: !FABRIC_ADDR.test(this.state.newPeerUrl.trim()) || this.state.busy,
               onClick: () => this.addPeer()
             }, 'Add peer')
           )

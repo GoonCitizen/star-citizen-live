@@ -190,6 +190,44 @@ function verifyEnvelope (envelope) {
   }
 }
 
+/**
+ * X-only (32-byte) hex form of a secp256k1 pubkey. Accepts compressed (33-byte
+ * 02/03…) or already-x-only hex — Fabric wire authors are often x-only while
+ * GoonCitizen identities use compressed `Key.pubkey`.
+ * @param {*} hex
+ * @returns {string|null}
+ */
+function pubkeyXOnly (hex) {
+  const s = String(hex || '').toLowerCase().replace(/^0x/, '');
+  if (/^0[23][0-9a-f]{64}$/.test(s)) return s.slice(2);
+  if (/^[0-9a-f]{64}$/.test(s)) return s;
+  return null;
+}
+
+/**
+ * True when two pubkey hex strings refer to the same key (compressed or x-only).
+ * @param {*} a
+ * @param {*} b
+ * @returns {boolean}
+ */
+function pubkeysMatch (a, b) {
+  const xa = pubkeyXOnly(a);
+  const xb = pubkeyXOnly(b);
+  return !!(xa && xb && xa === xb);
+}
+
+/**
+ * Prefer a compressed actor pubkey when it matches the wire signer (x-only).
+ * @param {string|null} signerHex Wire signer from Message verification
+ * @param {Object|null} actor Message actor { publicKey|pubkey|id }
+ * @returns {string|null}
+ */
+function resolveSignerPubkey (signerHex, actor) {
+  const candidate = actor && (actor.publicKey || actor.pubkey || actor.id);
+  if (candidate && (!signerHex || pubkeysMatch(candidate, signerHex))) return String(candidate);
+  return signerHex ? String(signerHex) : (candidate ? String(candidate) : null);
+}
+
 module.exports = {
   canonicalStringify,
   payloadDigest,
@@ -199,5 +237,8 @@ module.exports = {
   encryptIdentity,
   decryptIdentity,
   signEnvelope,
-  verifyEnvelope
+  verifyEnvelope,
+  pubkeyXOnly,
+  pubkeysMatch,
+  resolveSignerPubkey
 };

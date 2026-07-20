@@ -14,7 +14,8 @@
 const ALLOWED_KEYS = [
   'logfile',    // explicit Game.log path (null = auto-detect)
   'channel',    // forced SC channel (LIVE/PTU/EPTU/HOTFIX/TECH-PREVIEW)
-  'peers',      // [{ id, url, label, enabled }] — remote hubs receiving signed events
+  'peers',      // [{ id, address, label, enabled }] — Fabric host:port peers
+  'fabricPort', // local Fabric Peer listen port (default 7777)
   'uplinkIntervalMs',
   'discordWebhook',
   'openAtLogin',

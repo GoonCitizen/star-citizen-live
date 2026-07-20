@@ -15,10 +15,17 @@ module.exports = {
   // Path to Star Citizen game log file
   logfile: 'C:/Program Files/Roberts Space Industries/StarCitizen/LIVE/Game.log',
 
-  // HTTP Server Configuration
+  // HTTP Server Configuration (local dashboard / REST — not the peering transport)
   http: {
     enable: true,
     port: 3041
+  },
+
+  // Fabric P2P peering (AMP/Message over TCP/NOISE). Default seed is the org relay.
+  fabric: {
+    listen: true,
+    port: 7777,
+    peers: ['relay.goon.vc:7777']
   },
 
   // Discord Integration

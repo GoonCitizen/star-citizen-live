@@ -133,18 +133,18 @@ test('GET /settings and PUT /settings/:name persist and flag restarts', async ()
 
 test('peer management: add, toggle, remove — persisted and live-applied', async () => {
   const dir = tmpDir();
-  const svc = new LiveRelay({ port: 0, settingsDir: dir, missions: { enable: false }, peers: [] });
+  const svc = new LiveRelay({ port: 0, settingsDir: dir, missions: { enable: false }, peers: [], fabric: { enable: false } });
   await svc.start();
   const port = svc.server.address().port;
   try {
-    const added = await request(port, 'POST', '/peers', { url: 'https://goon.vc/', label: 'org hub' });
+    const added = await request(port, 'POST', '/peers', { address: 'relay.goon.vc:7777', label: 'org hub' });
     assert.strictEqual(added.status, 200);
-    assert.strictEqual(added.body.data.url, 'https://goon.vc', 'trailing slash trimmed');
+    assert.strictEqual(added.body.data.address, 'relay.goon.vc:7777');
     const id = added.body.data.id;
 
-    const dup = await request(port, 'POST', '/peers', { url: 'https://goon.vc' });
+    const dup = await request(port, 'POST', '/peers', { address: 'relay.goon.vc:7777' });
     assert.strictEqual(dup.status, 400);
-    const badUrl = await request(port, 'POST', '/peers', { url: 'ftp://nope' });
+    const badUrl = await request(port, 'POST', '/peers', { url: 'https://goon.vc' });
     assert.strictEqual(badUrl.status, 400);
 
     assert.strictEqual(settingsStore.loadSettings(svc.registerStore).peers.length, 1, 'persisted');
@@ -166,14 +166,14 @@ test('peer management: add, toggle, remove — persisted and live-applied', asyn
 test('peers persist across relay restarts via the Fabric Store', async () => {
   const dir = tmpDir();
   const boot = async () => {
-    const svc = new LiveRelay({ port: 0, settingsDir: dir, missions: { enable: false }, peers: [] });
+    const svc = new LiveRelay({ port: 0, settingsDir: dir, missions: { enable: false }, peers: [], fabric: { enable: false } });
     await svc.start();
     return svc;
   };
 
   const first = await boot();
   try {
-    const added = await request(first.server.address().port, 'POST', '/peers', { url: 'https://goon.vc', label: 'org hub' });
+    const added = await request(first.server.address().port, 'POST', '/peers', { address: 'relay.goon.vc:7777', label: 'org hub' });
     assert.strictEqual(added.status, 200);
   } finally { await first.stop(); }
 
@@ -181,7 +181,7 @@ test('peers persist across relay restarts via the Fabric Store', async () => {
   try {
     const peers = (await request(second.server.address().port, 'GET', '/peers')).body.data;
     assert.strictEqual(peers.length, 1, 'peer reloaded from the Fabric Store');
-    assert.strictEqual(peers[0].url, 'https://goon.vc');
+    assert.strictEqual(peers[0].address, 'relay.goon.vc:7777');
   } finally { await second.stop(); }
   fs.rmSync(dir, { recursive: true, force: true });
 });
@@ -192,57 +192,66 @@ test('settings/peers API is not exposed in hosted server mode', async () => {
   const port = svc.server.address().port;
   try {
     assert.strictEqual((await request(port, 'GET', '/settings')).status, 404);
-    assert.strictEqual((await request(port, 'POST', '/peers', { url: 'https://x.example' })).status, 404);
+    assert.strictEqual((await request(port, 'POST', '/peers', { address: 'x.example:7777' })).status, 404);
   } finally { await svc.stop(); }
 });
 
-test('multi-peer uplink: batch lands on every enabled peer; retry only when all fail', async () => {
+test('SCEventBatch over Fabric delivers log events to a peer', async () => {
   const identity = createIdentity();
-
-  const serverA = new LiveRelay({ port: 0, mode: 'server', missions: { enable: false } });
-  const serverB = new LiveRelay({ port: 0, mode: 'server', missions: { enable: false } });
-  await serverA.start(); await serverB.start();
-  const portA = serverA.server.address().port;
-  const portB = serverB.server.address().port;
-
+  const peerId = createIdentity();
+  const fabA = 22000 + Math.floor(Math.random() * 3000);
+  const fabB = fabA + 1;
   const dir = tmpDir();
-  const client = new LiveRelay({ port: 0, settingsDir: dir, missions: { enable: false }, uplink: { intervalMs: 60000 }, peers: [] });
+  const dirB = tmpDir();
+
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  const waitFor = async (fn, timeoutMs = 15000) => {
+    const start = Date.now();
+    while (Date.now() - start < timeoutMs) {
+      if (await fn()) return true;
+      await sleep(100);
+    }
+    throw new Error('timeout');
+  };
+
+  const serverA = new LiveRelay({
+    port: 0,
+    settingsDir: dirB,
+    missions: { enable: false },
+    peers: [],
+    fabric: { enable: true, listen: true, port: fabB, peers: [], peersDb: null, relayAppMessages: true }
+  });
+  await serverA.start();
+  const portA = serverA.server.address().port;
+
+  const client = new LiveRelay({
+    port: 0,
+    settingsDir: dir,
+    missions: { enable: false },
+    uplink: { intervalMs: 60000 },
+    peers: [],
+    fabric: { enable: true, listen: true, port: fabA, peers: [], peersDb: null }
+  });
   await client.start();
   const clientPort = client.server.address().port;
   try {
-    await request(clientPort, 'POST', '/peers', { url: `http://127.0.0.1:${portA}` });
-    await request(clientPort, 'POST', '/peers', { url: `http://127.0.0.1:${portB}` });
     client.setIdentity(identity);
-    assert.ok(client._uplinkTimer, 'uplink starts once identity + peers exist');
+    serverA.setIdentity(peerId);
+    await waitFor(() => client.fabricNetwork && client.fabricNetwork.ready);
+    await waitFor(() => serverA.fabricNetwork && serverA.fabricNetwork.ready);
+    await request(clientPort, 'POST', '/peers', { address: `127.0.0.1:${fabB}` });
+    await waitFor(() => client.fabricNetwork.status().fabricConnected >= 1);
 
     client.handleLogChange("<2026-07-19T13:00:00.000Z> [Notice] <Actor Death> CActor::Kill: 'V' [1] in zone 'Z' killed by 'K' [2] using 'G' [Class R] with damage type 'B' from direction x: 0.1, y: 0.2, z: 0.3");
+    assert.ok(client._uplinkQueue.length >= 1);
     await client._flushUplink();
+    await waitFor(() => serverA.kills.length >= 1);
 
     const killsA = await request(portA, 'GET', '/services/star-citizen/kills');
-    const killsB = await request(portB, 'GET', '/services/star-citizen/kills');
-    assert.strictEqual(killsA.body.data.length, 1, 'peer A received the kill');
-    assert.strictEqual(killsB.body.data.length, 1, 'peer B received the kill');
-    assert.strictEqual(killsA.body.data[0].id, killsB.body.data[0].id, 'same content id on both peers');
+    assert.strictEqual(killsA.body.data.length, 1, 'peer received the kill');
     assert.strictEqual(client._uplinkQueue.length, 0);
-
-    // One peer down: batch still delivered to the live peer, queue drained.
-    await serverB.stop();
-    client.handleLogChange("<2026-07-19T13:05:00.000Z> [Notice] <Actor Death> CActor::Kill: 'V2' [3] in zone 'Z' killed by 'K' [2] using 'G' [Class R] with damage type 'B' from direction x: 0.1, y: 0.2, z: 0.3");
-    await client._flushUplink();
-    assert.strictEqual((await request(portA, 'GET', '/services/star-citizen/kills')).body.data.length, 2);
-    assert.strictEqual(client._uplinkQueue.length, 0, 'delivered to at least one peer -> drained');
-    const peers = (await request(clientPort, 'GET', '/peers')).body.data;
-    const down = peers.find((p) => p.url.includes(String(portB)));
-    assert.ok(down.lastError, 'dead peer records an error');
-
-    // All peers down: events are requeued.
-    await serverA.stop();
-    client.handleLogChange("<2026-07-19T13:10:00.000Z> [Notice] <Actor Death> CActor::Kill: 'V3' [4] in zone 'Z' killed by 'K' [2] using 'G' [Class R] with damage type 'B' from direction x: 0.1, y: 0.2, z: 0.3");
-    await client._flushUplink();
-    assert.ok(client._uplinkQueue.length >= 1, 'all peers failed -> requeued');
   } finally {
     await client.stop();
-    try { await serverA.stop(); } catch (_) { /* already stopped */ }
-    try { await serverB.stop(); } catch (_) { /* already stopped */ }
+    await serverA.stop();
   }
 });

@@ -35,19 +35,19 @@ function fakeRpc () {
   };
 }
 
-test('default peer: relay.goon.vc is seeded on first boot; removal is respected', async () => {
-  const svc = new LiveRelay({ port: 0, missions: { enable: false } });
+test('default peer: relay.goon.vc:7777 is seeded on first boot; removal is respected', async () => {
+  const svc = new LiveRelay({ port: 0, missions: { enable: false }, fabric: { enable: false } });
   await svc.start();
   const port = svc.server.address().port;
   try {
     const peers = (await request(port, 'GET', '/peers')).body.data;
     assert.strictEqual(peers.length, 1);
-    assert.strictEqual(peers[0].url, 'https://relay.goon.vc');
+    assert.strictEqual(peers[0].address, 'relay.goon.vc:7777');
     assert.strictEqual(peers[0].enabled, true);
   } finally { await svc.stop(); }
 
   // Explicit peers override suppresses the seed (tests / custom deployments).
-  const clean = new LiveRelay({ port: 0, missions: { enable: false }, peers: [] });
+  const clean = new LiveRelay({ port: 0, missions: { enable: false }, peers: [], fabric: { enable: false } });
   await clean.start();
   try {
     assert.strictEqual((await request(clean.server.address().port, 'GET', '/peers')).body.data.length, 0);
@@ -60,11 +60,20 @@ test('shareLogsGlobal gates the event uplink but not chat', async () => {
   const path = require('path');
   const identity = createIdentity();
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'sc-wallet-'));
-  const svc = new LiveRelay({ port: 0, settingsDir: dir, missions: { enable: false }, peers: [{ url: 'http://127.0.0.1:1' }], uplink: { intervalMs: 3600000 } });
+  const svc = new LiveRelay({
+    port: 0,
+    settingsDir: dir,
+    missions: { enable: false },
+    peers: [{ address: '127.0.0.1:1' }],
+    uplink: { intervalMs: 3600000 },
+    fabric: { enable: false }
+  });
   await svc.start();
   const port = svc.server.address().port;
   try {
     svc.setIdentity(identity);
+    // Wire log→queue listeners without starting a real Fabric peer.
+    svc._startFabricFlush();
     const KILL = "<2026-07-19T13:00:00.000Z> [Notice] <Actor Death> CActor::Kill: 'V' [1] in zone 'Z' killed by 'K' [2] using 'G' [Class R] with damage type 'B' from direction x: 0.1, y: 0.2, z: 0.3";
 
     // Default: sharing on → events queue.
@@ -79,10 +88,12 @@ test('shareLogsGlobal gates the event uplink but not chat', async () => {
     svc.handleLogChange(KILL.replace('13:00:00', '13:05:00'));
     assert.strictEqual(svc._uplinkQueue.filter((e) => e.collection === 'kills').length, 0, 'no events while sharing off');
 
-    // Chat still rides the uplink regardless of the toggle.
+    // Chat is not gated by shareLogsGlobal (publishes over Fabric when enabled;
+    // with fabric disabled it still posts locally without entering the log queue).
     const chat = await request(port, 'POST', `${BASE}/chat/messages`, { channel: 'global', body: 'still chatting' });
     assert.strictEqual(chat.status, 200);
-    assert.ok(svc._uplinkQueue.some((e) => e.collection === 'chatmessages'), 'chat queued while log sharing off');
+    assert.strictEqual(chat.body.data.body, 'still chatting');
+    assert.strictEqual(svc._uplinkQueue.filter((e) => e.collection === 'chatmessages').length, 0);
   } finally {
     await svc.stop();
     require('fs').rmSync(dir, { recursive: true, force: true });

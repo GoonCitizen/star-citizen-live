@@ -127,6 +127,12 @@ function buildRelaySettings (port) {
       enable: !!(process.env.SC_UPLINK_URL || settings.uplink?.url),
       url: process.env.SC_UPLINK_URL || settings.uplink?.url || null
     }, settings.uplink || {}),
+    fabric: Object.assign({
+      enable: true,
+      listen: true,
+      port: Number(process.env.FABRIC_PORT || settings.fabric?.port) || 7777,
+      peers: Array.isArray(settings.fabric?.peers) ? settings.fabric.peers : null
+    }, settings.fabric || {}),
     // Wallet: ledger mode unless settings/local.js supplies a bitcoind rpc.
     payouts: Object.assign({ enable: true, ledger: true, network: 'regtest' }, settings.payouts || {}),
     settingsDir: appStoreRoot,

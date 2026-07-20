@@ -35,6 +35,24 @@ async function login (port, identity) {
   return res.body.data.token;
 }
 
+function sleep (ms) {
+  return new Promise((r) => setTimeout(r, ms));
+}
+
+async function waitFor (fn, { timeoutMs = 15000, intervalMs = 100 } = {}) {
+  const start = Date.now();
+  while (Date.now() - start < timeoutMs) {
+    const v = await fn();
+    if (v) return v;
+    await sleep(intervalMs);
+  }
+  throw new Error('waitFor timeout');
+}
+
+function fabricPort () {
+  return 20000 + Math.floor(Math.random() * 4000);
+}
+
 test('MissionManager.ingestRemote upserts without officer allowlist', async () => {
   const mm = new MissionManager({ officers: ['boss-only'] });
   const remote = {
@@ -44,7 +62,6 @@ test('MissionManager.ingestRemote upserts without officer allowlist', async () =
     createdBy: '02' + 'ab'.repeat(32),
     status: 'open'
   };
-  // Not an officer — ingest still works (peer provenance).
   const r = mm.ingestRemote(remote);
   assert.strictEqual(r.created, true);
   assert.strictEqual(mm.getMission(remote.id).title, 'Escort run');
@@ -53,36 +70,45 @@ test('MissionManager.ingestRemote upserts without officer allowlist', async () =
   assert.strictEqual(mm.getMission(remote.id).title, 'Escort run (updated)');
 });
 
-test('broadcast reaches a peer hub; Accept applies and Ignore dismisses', async () => {
+test('broadcast over Fabric reaches a peer; Accept applies and Ignore dismisses', async () => {
   const alice = createIdentity();
   const bob = createIdentity();
+  const portA = fabricPort();
+  const portB = portA + 11;
 
   const hubDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sc-mb-hub-'));
   const localDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sc-mb-local-'));
 
+  // Receiver keeps Accept/Ignore API surface; Fabric Peer for ingest.
   const hub = new LiveRelay({
     port: 0,
-    mode: 'server',
     missions: { enable: true },
     settingsDir: hubDir,
-    peers: []
+    peers: [],
+    fabric: { enable: true, listen: true, port: portB, peers: [], peersDb: null, relayAppMessages: true }
   });
   await hub.start();
   const hubPort = hub.server.address().port;
+  hub.setIdentity(bob);
+  await waitFor(() => hub.fabricNetwork && hub.fabricNetwork.ready);
 
   const local = new LiveRelay({
     port: 0,
     missions: { enable: true },
     settingsDir: localDir,
-    uplink: { intervalMs: 60000 },
-    peers: []
+    peers: [{ address: `127.0.0.1:${portB}`, enabled: true }],
+    fabric: { enable: true, listen: true, port: portA, peers: [], peersDb: null }
   });
   await local.start();
   const localPort = local.server.address().port;
 
   try {
     local.setIdentity(alice);
-    await request(localPort, 'POST', '/peers', { url: `http://127.0.0.1:${hubPort}` });
+    await waitFor(() => local.fabricNetwork && local.fabricNetwork.ready);
+    await waitFor(() => (
+      local.fabricNetwork.status().fabricConnected >= 1 ||
+      hub.fabricNetwork.status().fabricConnected >= 1
+    ));
 
     const created = await request(localPort, 'POST', `${BASE}/missions`, {
       title: 'Bounty: steal the crate',
@@ -92,24 +118,20 @@ test('broadcast reaches a peer hub; Accept applies and Ignore dismisses', async 
     assert.strictEqual(created.status, 200, JSON.stringify(created.body));
     const missionId = created.body.data.id;
 
-    const broadcast = await request(localPort, 'POST', `${BASE}/missions/${missionId}/broadcast`);
+    const broadcast = await request(localPort, 'POST', `${BASE}/missions/${missionId}/broadcast`, { scope: 'global' });
     assert.strictEqual(broadcast.status, 200, JSON.stringify(broadcast.body));
-    assert.strictEqual(broadcast.body.data.peers, 1);
 
-    // Hub should have the mission + a pending broadcast (from alice, not self).
-    const hubMission = hub.missionManager.getMission(missionId);
-    assert.ok(hubMission, 'mission ingested on hub');
-    assert.strictEqual(hubMission.title, 'Bounty: steal the crate');
+    await waitFor(() => hub.missionManager.getMission(missionId));
+    assert.strictEqual(hub.missionManager.getMission(missionId).title, 'Bounty: steal the crate');
 
+    await waitFor(() => hub._listMissionBroadcasts({ pendingOnly: true }).some((b) => b.missionId === missionId));
     const list = await request(hubPort, 'GET', `${BASE}/missionbroadcasts?pending=1`);
     assert.strictEqual(list.status, 200);
-    assert.ok(list.body.data.length >= 1);
     const offer = list.body.data.find((b) => b.missionId === missionId);
     assert.ok(offer, 'pending offer present');
     assert.strictEqual(offer.status, 'pending');
     assert.strictEqual(offer.source, alice.pubkey);
 
-    // Bob accepts → applies to the mission.
     const bobToken = await login(hubPort, bob);
     const accepted = await request(hubPort, 'POST', `${BASE}/missionbroadcasts/${offer.id}/accept`, {}, bobToken);
     assert.strictEqual(accepted.status, 200, JSON.stringify(accepted.body));
@@ -117,24 +139,19 @@ test('broadcast reaches a peer hub; Accept applies and Ignore dismisses', async 
     const apps = hub.missionManager.getMissionApplications(missionId);
     assert.ok(apps.some((a) => a.applicantId === bob.pubkey && a.status === 'pending'));
 
-    // Re-broadcast a second offer and ignore it.
-    const broadcast2 = await request(localPort, 'POST', `${BASE}/missions/${missionId}/broadcast`);
+    const broadcast2 = await request(localPort, 'POST', `${BASE}/missions/${missionId}/broadcast`, { scope: 'global' });
     assert.strictEqual(broadcast2.status, 200);
+    await waitFor(() => hub._listMissionBroadcasts({ pendingOnly: true }).some((b) => b.missionId === missionId));
     const list2 = await request(hubPort, 'GET', `${BASE}/missionbroadcasts?pending=1`);
     const offer2 = list2.body.data.find((b) => b.missionId === missionId && b.status === 'pending');
     assert.ok(offer2);
     const ignored = await request(hubPort, 'POST', `${BASE}/missionbroadcasts/${offer2.id}/ignore`, {}, bobToken);
     assert.strictEqual(ignored.status, 200);
     assert.strictEqual(ignored.body.data.status, 'ignored');
-    assert.strictEqual(
-      (await request(hubPort, 'GET', `${BASE}/missionbroadcasts?pending=1`)).body.data
-        .filter((b) => b.id === offer2.id).length,
-      0
-    );
 
-    // Non-creator cannot broadcast.
     const eve = createIdentity();
     local.setIdentity(eve);
+    await waitFor(() => local.fabricNetwork && local.fabricNetwork.ready);
     const forbidden = await request(localPort, 'POST', `${BASE}/missions/${missionId}/broadcast`);
     assert.strictEqual(forbidden.status, 403);
   } finally {

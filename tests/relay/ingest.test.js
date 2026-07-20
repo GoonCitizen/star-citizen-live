@@ -147,32 +147,28 @@ test('server mode does not tail logs and skips seeding', async () => {
   } finally { await svc.stop(); }
 });
 
-test('uplink pushes signed batches that a server-mode instance accepts', async () => {
+test('hosted HTTP ingest still accepts Schnorr-signed event batches (legacy/tests)', async () => {
   const identity = createIdentity();
   const { svc: server, port } = await startServer({ ingest: { allowedKeys: [identity.pubkey] } });
-
-  const client = new LiveRelay({
-    port: 0,
-    missions: { enable: false },
-    peers: [],
-    uplink: { enable: true, url: `http://127.0.0.1:${port}`, intervalMs: 60000 }
-  });
-  await client.start();
-  client.setIdentity(identity);
   try {
-    // Simulate a parsed kill line reaching the local relay.
-    client.handleLogChange("<2026-07-19T12:00:00.000Z> [Notice] <Actor Death> CActor::Kill: 'Victim' [123] in zone 'Zone' killed by 'Killer' [456] using 'Gun' [Class Rifle] with damage type 'Bullet' from direction x: 0.1, y: 0.2, z: 0.3");
-    assert.ok(client._uplinkQueue.length >= 1, 'event queued for uplink');
-
-    const result = await client._flushUplink();
-    assert.ok(result, 'flush returned a result');
-    assert.ok(result.created >= 1, 'server created the pushed event');
-    assert.strictEqual(client._uplinkQueue.length, 0, 'queue drained');
+    const events = [{
+      collection: 'kills',
+      data: {
+        victim: 'Victim',
+        killer: 'Killer',
+        weapon: 'Gun',
+        zone: 'Zone',
+        timestamp: '2026-07-19T12:00:00.000Z'
+      }
+    }];
+    const envelope = signEnvelope(identity, { events, sentAt: new Date().toISOString() });
+    const posted = await request(port, 'POST', `${BASE}/events`, envelope);
+    assert.strictEqual(posted.status, 200, JSON.stringify(posted.body));
+    assert.ok(posted.body.created >= 1);
 
     const kills = await request(port, 'GET', `${BASE}/kills`);
     assert.strictEqual(kills.body.data[0].source, identity.pubkey);
   } finally {
-    await client.stop();
     await server.stop();
   }
 });

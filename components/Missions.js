@@ -251,12 +251,28 @@ class Missions extends React.Component {
       React.createElement('div', { className: 'mi-meta' }, m.id + (m.assigneeId ? ` · assignee ${m.assigneeId.slice(0, 12)}…` : '')),
       React.createElement('div', { className: 'mi-row' },
         m.status === 'open' && isCreator
-          ? React.createElement('button', {
-            className: 'mi-btn ghost',
-            disabled: this.state.busy,
-            title: 'Re-notify peer hubs that this mission is open (desktop Accept / Ignore on receive)',
-            onClick: () => this.act(() => this.post(`/missions/${m.id}/broadcast`), 'Broadcast sent to peers.')
-          }, '📡 Broadcast')
+          ? React.createElement(React.Fragment, { key: 'bcast' },
+            React.createElement('button', {
+              className: 'mi-btn ghost',
+              disabled: this.state.busy,
+              title: 'Notify all Fabric peers (org-wide) that this mission is open',
+              onClick: () => this.act(
+                () => this.post(`/missions/${m.id}/broadcast`, { scope: 'global' }),
+                'Broadcast sent org-wide.'
+              )
+            }, 'Broadcast org-wide'),
+            m.groupId
+              ? React.createElement('button', {
+                className: 'mi-btn ghost',
+                disabled: this.state.busy,
+                title: 'Notify only members of this mission\'s group (hub still relays; non-members filter on receive)',
+                onClick: () => this.act(
+                  () => this.post(`/missions/${m.id}/broadcast`, { scope: 'group', groupId: m.groupId }),
+                  'Broadcast sent to group members.'
+                )
+              }, 'Broadcast to group')
+              : null
+          )
           : null,
         m.status === 'open' && me && !isCreator && !applied
           ? React.createElement('button', { className: 'mi-btn ghost', disabled: this.state.busy, onClick: () => this.act(() => this.post(`/missions/${m.id}/apply`, { applicantId: me }), 'Applied.') }, 'Apply')

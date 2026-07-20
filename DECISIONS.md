@@ -4,6 +4,41 @@ understands the direction. Newest at the top.
 
 ---
 
+## D-010 — Fabric Peer is the peering transport (HTTPS uplink retired)
+**Date:** 2026-07-20 · **Status:** Adopted
+
+**Decision:** All GoonCitizen ↔ org-hub peer traffic uses the Fabric
+AMP/`Message` protocol over TCP/NOISE — not HTTP(S) batch uplink or chat pull.
+
+1. **Local Fabric Peer** — each GoonCitizen node starts `@fabric/core` Peer
+   listening on **port 7777** (`settings/local.js` → `fabric.port`, optional
+   Fabric Store `fabricPort`). Identity unlock supplies the Peer key material.
+2. **Default seed** — `relay.goon.vc:7777` (replaces `https://relay.goon.vc`).
+   Peers UI / REST accept `host:port` only.
+3. **Wire types** — chat uses `P2P_CHAT_MESSAGE` (Peer auto-relays);
+   mission offers use GenericMessage `@type: MissionBroadcast` (optional
+   `scope: 'global'|'group'` + `groupId`); log/event batches use
+   GenericMessage `SCEventBatch`. Local dashboard HTTP (`:3041`) stays for UI/API only.
+4. **Group-scoped broadcasts** — hub still relays; receivers **filter on
+   membership** (same model as `group:<id>` chat). Non-members do not get a
+   pending offer. Hosted register may retain offers and filter list-by-viewer.
+5. **Star relay (goon.vc)** — Peer does not auto-relay arbitrary GenericMessage
+   app types; goon.vc attaches handlers that `relayFrom` MissionBroadcast /
+   SCEventBatch and ingest into the mounted LiveRelay.
+
+**Why:** D-009 brought Fabric conventions back; HTTPS uplink was a temporary
+bridge. Real Peer transport matches hub.fabric.pub, enables signed wire frames
+end-to-end, and removes pull-sync race/auth complexity for chat.
+
+**Consequences / guardrails:**
+- `shareLogsGlobal` still gates **log** event publish only; chat + mission
+  broadcasts always publish when the Fabric peer is up.
+- HTTP `POST …/events` may remain on hosted mode for tests/legacy; production
+  peering path is Fabric.
+- Do not reintroduce https peer URLs in the Peers UI.
+
+---
+
 ## D-009 — Align with Fabric conventions; integrate with the Fabric Network
 **Date:** 2026-07-19 · **Status:** Adopted
 
