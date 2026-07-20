@@ -1,1 +1,52 @@
-node_modules
+# Dependencies
+node_modules/
+package-lock.json
+
+# Environment / secrets — never commit these
+.env
+settings/local.js
+settings/auth.txt
+
+# Logs
+*.log
+logs/
+# ...but keep committed test fixtures (a tiny sample combat log)
+!tests/relay/fixtures/
+!tests/relay/fixtures/*.log
+
+# Stores (runtime data — keep register.js source tracked)
+stores/*
+!stores/register.js
+
+# Test coverage
+coverage/
+.nyc_output/
+reports/coverage/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Local AI assistant config (machine-specific)
+.claude/
+
+# Build
+dist/
+build/
+
+# Temporary
+tmp/
+temp/
+*.tmp
+
+# Solution-brief build: keep the source scripts, drop generated images
+# (node_modules is already ignored above)
+reports/brief/*.png
+reports/brief/*.svg
