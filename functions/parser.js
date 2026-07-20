@@ -126,8 +126,156 @@ const RULES = [
     // General HUD notification - zone/jurisdiction/tutorial "what's going on"
     // messages with an all-zero (absent) MissionId. NOT a mission item.
     kind: 'hud:notification', tag: 'SHUDEvent_OnNotification',
-    test: /Added notification "([^"]*)"/,
+    test: /Added notification "([^"]*)/,
     fields: (m) => ({ text: m[1] })
+  },
+  {
+    // Mission objective lifecycle from push updates (4.9.0 LIVE observed).
+    kind: 'mission:objective:state', tag: 'ObjectiveUpserted',
+    test: /mission_id ([0-9a-fA-F-]+) - objective_id ([0-9a-fA-F-]+) - state ([A-Z_]+) - created (\d+) - flags=([^\[]+)/,
+    fields: (m) => ({ missionId: m[1], objectiveId: m[2], state: m[3], created: m[4], flags: m[5].trim() })
+  },
+  {
+    // Follow-up HUD item update; message text can be split across lines in some
+    // party/social notifications, so we capture what is present on this line.
+    kind: 'hud:notification:update', tag: 'UpdateNotificationItem',
+    test: /Notification "([^"]*)/,
+    fields: (m) => ({ text: m[1] })
+  },
+  {
+    kind: 'inventory:attachment', tag: 'AttachmentReceived',
+    test: /Player\[([^\]]+)\] Attachment\[([^,\]]+),\s*([^,\]]+),\s*(\d+)\] Status\[([^\]]+)\] Port\[([^\]]+)\]/,
+    fields: (m) => ({ player: m[1], itemId: m[2], itemClass: m[3], entityId: m[4], status: m[5], port: m[6] })
+  },
+  {
+    kind: 'inventory:query:start', tag: 'Query Inventory',
+    test: /Request\[(\d+)\]\s+Inventory\[([^\]]+)\]/,
+    fields: (m) => ({ requestId: m[1], inventory: m[2] })
+  },
+  {
+    kind: 'inventory:query:elapsed', tag: 'Query Inventory',
+    test: /Request\[(\d+)\]\s+Elapsed\[([0-9.]+)\].*AsyncQueryInventoryData/,
+    fields: (m) => ({ requestId: m[1], elapsed: m[2] })
+  },
+  {
+    kind: 'inventory:query:api-elapsed', tag: 'Query Inventory',
+    test: /Elapsed\[([0-9.]+)\] for IInventoryAPI::AsyncQueryInventory/,
+    fields: (m) => ({ elapsed: m[1] })
+  },
+  {
+    kind: 'inventory:request', tag: 'InventoryManagementRequest',
+    test: /(?:Attempting queuing of |Queued )Request\[(\d+)\] Type\[([^\]]+)\] for '([^']+)' \[(\d+)\]/,
+    fields: (m) => ({ requestId: m[1], requestType: m[2], player: m[3], playerId: m[4] })
+  },
+  {
+    kind: 'inventory:request:processing', tag: 'InventoryManagementRequest',
+    test: /Processing Request\[(\d+)\] Type\[([^\]]+)\] for '([^']+)' \[(\d+)\]/,
+    fields: (m) => ({ requestId: m[1], requestType: m[2], player: m[3], playerId: m[4] })
+  },
+  {
+    kind: 'inventory:personal', tag: 'Request Personal Inventory Data',
+    test: /Inventory data Request\[(\d+)\] (sent|completed) for Player\[([^\]]+)\](?: Result\[([^\]]+)\])?/,
+    fields: (m) => ({ requestId: m[1], phase: m[2], player: m[3], result: m[4] || null })
+  },
+  {
+    kind: 'inventory:token', tag: 'Inventory Token Flow',
+    test: /Requesting access token for User\[([^,\]]+),\s*(\d+)\] on Inventory\[([^,\]]+),\s*(\d+)\]/,
+    fields: (m) => ({ action: 'request', player: m[1], playerId: m[2], inventoryName: m[3], inventoryId: m[4] })
+  },
+  {
+    kind: 'inventory:token', tag: 'Inventory Token Flow',
+    test: /Relinquishing access token\[granted:\s*(\d+)\] for User\[(\d+)\] on Entity\[([^,\]]+),\s*(\d+)\]/,
+    fields: (m) => ({ action: 'relinquish', granted: m[1], playerId: m[2], entityName: m[3], entityId: m[4] })
+  },
+  {
+    kind: 'inventory:move:add', tag: 'Add Inventory Management Move',
+    test: /New request\[(\d+)\] Player\[([^\]]+)\] Type\[([^\]]+)\] SourceInventory\[([^\]]+)\] TargetInventory\[([^\]]+)\]/,
+    fields: (m) => ({ requestId: m[1], player: m[2], requestType: m[3], sourceInventory: m[4], targetInventory: m[5] })
+  },
+  {
+    kind: 'inventory:request:completed', tag: 'Inventory Request Completed',
+    test: /Request\[(\d+)\] Player\[([^\]]+)\] Result\[([^\]]+)\] Elapsed\[([0-9.]+)\] PendingMoves\[(\d+)\]/,
+    fields: (m) => ({ requestId: m[1], player: m[2], result: m[3], elapsed: m[4], pendingMoves: m[5] })
+  },
+  {
+    kind: 'inventory:access:terminate', tag: 'Request Terminate Access To Inventory',
+    test: /Player\[([^\]]+)\] terminating access to \[([^\]]+)\]/,
+    fields: (m) => ({ player: m[1], inventory: m[2] })
+  },
+  {
+    kind: 'inventory:ui:remove', tag: 'Remove Inventory Container UI',
+    test: /Player\[([^\]]+)\] inventory \[([^\]]+)\] removed from UI/,
+    fields: (m) => ({ player: m[1], inventory: m[2] })
+  },
+  {
+    kind: 'inventory:player:request:complete', tag: 'Player Inventory Request Complete',
+    test: /Request\[(\d+)\] for '([^']+)' \[(\d+)\] Type\[([^\]]+)\] Result\[([^\]]+)\]/,
+    fields: (m) => ({ requestId: m[1], player: m[2], playerId: m[3], requestType: m[4], result: m[5] })
+  },
+  {
+    kind: 'vehicle:list:request', tag: 'OnRequestFetchVehicles',
+    test: /Fetching player vehicle list/,
+    fields: () => ({ phase: 'fetch' })
+  },
+  {
+    kind: 'vehicle:list:request', tag: 'OnRequestFetchVehicles',
+    test: /Querying (location|hangar) inventory for player \[(\d+)\] at location \[(\d+)\]/,
+    fields: (m) => ({ phase: 'query-inventory', scope: m[1], playerId: m[2], locationId: m[3] })
+  },
+  {
+    kind: 'vehicle:list:result', tag: 'VehicleListQuery',
+    test: /player (\d+) completed\. Retrieved (\d+) entitlements out of (\d+) vehicules/,
+    fields: (m) => ({ playerId: m[1], entitlements: m[2], total: m[3] })
+  },
+  {
+    kind: 'social:group-cache', tag: 'Update group cache',
+    test: /^(Start|Success)\b/,
+    fields: (m) => ({ phase: m[1].toLowerCase() })
+  },
+  {
+    kind: 'social:player-instance', tag: 'Get player instance info',
+    test: /player (\d+)/,
+    fields: (m) => ({ playerId: m[1] })
+  },
+  {
+    kind: 'comms:connection', tag: 'Connection Flow',
+    test: /Update bubble (created|removed).*for ([^[]+) \[(\d+)\].*partner ([^[]+) \[(\d+)\]/,
+    fields: (m) => ({ action: m[1], player: m[2].trim(), playerId: m[3], partner: m[4].trim(), partnerId: m[5] })
+  },
+  {
+    kind: 'grpc:stream:start', tag: 'Stream started',
+    test: /Result:\s*([A-Z]+)\(([-\d]+)\)/,
+    fields: (m) => ({ result: m[1], code: m[2] })
+  },
+  {
+    kind: 'grpc:channel:create', tag: 'CreateChannel',
+    test: /for '([^']+)' to endpoint ([^\s]+) \(transport security: (\d+)\)/,
+    fields: (m) => ({ service: m[1], endpoint: m[2], transportSecurity: m[3] })
+  },
+  {
+    kind: 'grpc:channel:reuse', tag: 'ReuseChannel',
+    test: /for '([^']+)' to endpoint ([^\s]+) \(transport security: (\d+)\)/,
+    fields: (m) => ({ service: m[1], endpoint: m[2], transportSecurity: m[3] })
+  },
+  {
+    kind: 'session:channel:connected', tag: 'Channel Connection Complete',
+    test: /map="([^"]+)".*gamerules="([^"]+)".*hostType="([^"]+)".*nickname="([^"]+)".*playerGEID=(\d+)/,
+    fields: (m) => ({ map: m[1], gameRules: m[2], hostType: m[3], nickname: m[4], playerGeid: m[5] })
+  },
+  {
+    kind: 'session:universe:register', tag: 'RegisterUniverseHierarchy_Begin',
+    test: /nodeCount="(\d+)".*commonDataPrecached="([^"]+)"/,
+    fields: (m) => ({ phase: 'begin', nodeCount: m[1], commonDataPrecached: m[2] })
+  },
+  {
+    kind: 'session:universe:register', tag: 'RegisterUniverseHierarchy_Mid',
+    test: /$/,
+    fields: () => ({ phase: 'mid' })
+  },
+  {
+    kind: 'session:universe:register', tag: 'RegisterUniverseHierarchy_End',
+    test: /$/,
+    fields: () => ({ phase: 'end' })
   },
 
   // --- CLIENT-INVOLVED COMBAT (parser format VERIFIED on real logs; but see VERSION

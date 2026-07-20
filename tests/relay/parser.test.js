@@ -113,6 +113,15 @@ test('detects mission marker (missionId -> generator name)', () => {
   assert.strictEqual(r.generator, 'FoxwellEnforcement_Generator');
 });
 
+test('detects objective state upsert events', () => {
+  const line = '<2026-07-20T03:56:44.384Z> [Notice] <ObjectiveUpserted> Received ObjectiveUpserted push message for: mission_id a81a8e50-ebf2-4dd5-9543-7fbb072d560e - objective_id 8a4c3ec2-b4f3-79db-de03-24b25141d2ad - state MISSION_OBJECTIVE_STATE_INPROGRESS - created 1 - flags=Hidden|HiddenInUI|ShowInLog| [Team_GameServices][Missions]';
+  const r = parseLine(line);
+  assert.strictEqual(r.kind, 'mission:objective:state');
+  assert.strictEqual(r.missionId, 'a81a8e50-ebf2-4dd5-9543-7fbb072d560e');
+  assert.strictEqual(r.objectiveId, '8a4c3ec2-b4f3-79db-de03-24b25141d2ad');
+  assert.strictEqual(r.state, 'MISSION_OBJECTIVE_STATE_INPROGRESS');
+});
+
 test('classifies mission types from real generator codenames', () => {
   assert.strictEqual(missionType('BountyHuntersGuild_KIllShip'), 'Bounty');
   assert.strictEqual(missionType('FoxwellEnforcement_Patrol'), 'Mercenary/Defense');
@@ -154,6 +163,64 @@ test('detects player incapacitation (down) — VERIFIED in 4.7.0 logs', () => {
   const r = parseLine(line);
   assert.strictEqual(r.kind, 'player:incap');
   assert.ok(r.text.startsWith('Incapacitated:'));
+});
+
+test('detects update notifications for HUD stream updates', () => {
+  const line = '<2026-07-20T03:56:50.397Z> [Notice] <UpdateNotificationItem> Notification "New Objective: Search for bounty\'s current location." [29], Action: Next [Team_CoreGameplayFeatures][Missions][Comms]';
+  const r = parseLine(line);
+  assert.strictEqual(r.kind, 'hud:notification:update');
+  assert.ok(r.text.startsWith('New Objective: Search for bounty'));
+});
+
+test('detects inventory events from live 4.9.0 lines', () => {
+  const a = parseLine('<2026-07-20T03:28:39.594Z> [Notice] <AttachmentReceived> Player[ChairmanPoW] Attachment[body_01_noMagicPocket_200000000218, body_01_noMagicPocket, 200000000218] Status[persistent] Port[Body_ItemPort] Elapsed[65.056007] [Team_CoreGameplayFeatures][Inventory]');
+  assert.strictEqual(a.kind, 'inventory:attachment');
+  assert.strictEqual(a.player, 'ChairmanPoW');
+  assert.strictEqual(a.port, 'Body_ItemPort');
+
+  const q = parseLine('<2026-07-20T03:33:41.306Z> [Notice] <Query Inventory> Request[0] Elapsed[0.127477] for AsyncQueryInventoryData. [Team_CoreGameplayFeatures][Inventory]');
+  assert.strictEqual(q.kind, 'inventory:query:elapsed');
+  assert.strictEqual(q.requestId, '0');
+
+  const c = parseLine('<2026-07-20T03:33:58.760Z> [Notice] <Inventory Request Completed> Request[1] Player[ChairmanPoW] Result[succeed] Elapsed[17.586262] PendingMoves[4] [Team_CoreGameplayFeatures][Inventory]');
+  assert.strictEqual(c.kind, 'inventory:request:completed');
+  assert.strictEqual(c.result, 'succeed');
+
+  const p = parseLine('<2026-07-20T03:33:58.764Z> [Notice] <InventoryManagementRequest> Processing Request[2] Type[QueryInventory] for \'ChairmanPoW\' [204741503152] Source Inventory[INVALID] Target Inventory[INVALID] CanLockQueue[No] DependentRequest[4294967295] [Team_CoreGameplayFeatures][Inventory]');
+  assert.strictEqual(p.kind, 'inventory:request:processing');
+  assert.strictEqual(p.requestId, '2');
+
+  const qe = parseLine('<2026-07-20T03:33:58.849Z> [Notice] <Query Inventory> Elapsed[0.085431] for IInventoryAPI::AsyncQueryInventory. [Team_CoreGameplayFeatures][Inventory]');
+  assert.strictEqual(qe.kind, 'inventory:query:api-elapsed');
+  assert.strictEqual(qe.elapsed, '0.085431');
+
+  const tr = parseLine('<2026-07-20T03:53:04.300Z> [Notice] <Request Terminate Access To Inventory> Player[ChairmanPoW] terminating access to [718275320038:Container:0] [Team_CoreGameplayFeatures][Inventory]');
+  assert.strictEqual(tr.kind, 'inventory:access:terminate');
+  assert.strictEqual(tr.inventory, '718275320038:Container:0');
+});
+
+test('detects vehicle list request/result events', () => {
+  const req = parseLine('<2026-07-20T03:38:57.734Z> [Notice] <OnRequestFetchVehicles> Querying hangar inventory for player [204741503152] at location [3170699229] [Team_GameServices][ASOP][Entitlement][Insurance]');
+  assert.strictEqual(req.kind, 'vehicle:list:request');
+  assert.strictEqual(req.scope, 'hangar');
+
+  const res = parseLine('<2026-07-20T03:55:54.993Z> [Notice] <VehicleListQuery> Fetching vehicle list for player 204741503152 completed. Retrieved 2 entitlements out of 2 vehicules. [Team_GameServices][ASOP][Entitlement][Insurance]');
+  assert.strictEqual(res.kind, 'vehicle:list:result');
+  assert.strictEqual(res.entitlements, '2');
+});
+
+test('detects social/comms/grpc channel events', () => {
+  const social = parseLine('<2026-07-20T03:28:08.788Z> [Notice] <Update group cache> Success [Team_GameServices][Social]');
+  assert.strictEqual(social.kind, 'social:group-cache');
+  assert.strictEqual(social.phase, 'success');
+
+  const comms = parseLine('<2026-07-20T03:57:32.668Z> [Notice] <Connection Flow> CSCCommsComponent::DoEstablishCommunicationCommon: Update bubble created for communication connection \'840707700\' on channel \'0\' for ChairmanPoW [204741503152] to track their communication partner AImodule_ATC_NewBabbageATC01_718424511860 [718424511860] [Team_CoreGameplayFeatures][Comms]');
+  assert.strictEqual(comms.kind, 'comms:connection');
+  assert.strictEqual(comms.action, 'created');
+
+  const grpc = parseLine('<2026-07-20T03:27:51.658Z> [Notice] <CreateChannel> Opening channel for \'sc.external.services.configuration.v1.ConfigService\' to endpoint pub-sc-alpha-490-12232306.test1.cloudimperiumgames.com:443 (transport security: 1) [Team_OnlineTech][gRPC]');
+  assert.strictEqual(grpc.kind, 'grpc:channel:create');
+  assert.strictEqual(grpc.transportSecurity, '1');
 });
 
 // --- VERIFIED current-build death + mission-lifecycle (real 4.7-4.8 logs, 2026-06) ---
