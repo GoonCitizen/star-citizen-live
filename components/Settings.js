@@ -5,7 +5,7 @@
  *
  * Mirrors the Hub's settings surface (`GET /settings`, `PUT /settings/:name`).
  * Peer management lives on the top-level Peers tab (`components/Peers.js`),
- * matching the Hub's PeerList as a first-class feature.
+ * revealed via the "Advanced mode" toggle here (client-only preference).
  */
 
 const React = require('react');
@@ -377,9 +377,27 @@ class Settings extends React.Component {
             ),
 
             React.createElement('div', { className: 'st-sec' },
+              React.createElement('h3', null, 'Advanced mode'),
+              React.createElement('div', { className: 'd' },
+                'Reveal advanced features. Enables the Peers tab for direct Fabric Network peer management. Stored in this browser.'),
+              React.createElement('label', { style: { display: 'flex', gap: 8, alignItems: 'center', fontSize: 13, cursor: 'pointer' } },
+                React.createElement('input', {
+                  type: 'checkbox',
+                  checked: !!this.props.advancedMode,
+                  onChange: (e) => {
+                    if (typeof this.props.onAdvancedModeChange === 'function') {
+                      this.props.onAdvancedModeChange(e.target.checked);
+                    }
+                  }
+                }),
+                'Enable advanced mode (show Peer management)'
+              )
+            ),
+
+            React.createElement('div', { className: 'st-sec' },
               React.createElement('h3', null, 'Fabric Network'),
               React.createElement('div', { className: 'd' },
-                'Fabric peers (relay.goon.vc:7777 is seeded by default) receive your signed wire Messages over TCP/NOISE — manage them on the Peers tab.'),
+                'Fabric peers (relay.goon.vc:7777 is seeded by default) receive your signed wire Messages over TCP/NOISE. Enable Advanced mode to manage them on the Peers tab.'),
               React.createElement('label', { style: { display: 'flex', gap: 8, alignItems: 'center', fontSize: 13, cursor: 'pointer', marginBottom: 10 } },
                 React.createElement('input', {
                   type: 'checkbox',
@@ -398,13 +416,15 @@ class Settings extends React.Component {
                   this.state.peerCount
                     ? `${this.state.peerCount} peer${this.state.peerCount === 1 ? '' : 's'} configured`
                     : 'no peers configured'),
-                React.createElement('button', {
-                  className: 'st-btn ghost',
-                  onClick: () => {
-                    this.props.onClose();
-                    window.location.hash = 'peers';
-                  }
-                }, 'Open Peers')
+                this.props.advancedMode
+                  ? React.createElement('button', {
+                    className: 'st-btn ghost',
+                    onClick: () => {
+                      this.props.onClose();
+                      window.location.hash = 'peers';
+                    }
+                  }, 'Open Peers')
+                  : React.createElement('span', { style: { fontSize: 11.5, color: 'var(--muted)' } }, 'enable Advanced mode to manage peers')
               )
             ),
 

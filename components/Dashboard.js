@@ -20,7 +20,11 @@ const Peers = require('./Peers');
 const Settings = require('./Settings');
 const Wallet = require('./Wallet');
 
+const { FEATURES } = require('../constants');
+const featureEnabled = (key) => FEATURES[key] !== false;
+
 // Top-level features, listed along the top of the dashboard (Hub-style).
+// Feature-flagged tabs (see constants.FEATURES) are filtered out when disabled.
 const TABS = [
   ['home', 'Home'],
   ['live', 'Feed'],
@@ -31,9 +35,30 @@ const TABS = [
   ['chat', 'Chat'],
   ['groups', 'Groups'],
   ['peers', 'Peers']
-];
+].filter(([k]) => featureEnabled(k));
+// Advanced-only tabs — hidden unless "Advanced mode" is enabled in Settings.
+const ADVANCED_TABS = new Set(['peers']);
+
 // Notifications is opened from the header bell (not a primary feature tab).
 const TAB_KEYS = TABS.map(([k]) => k).concat(['notifications']);
+
+const ADVANCED_MODE_KEY = 'gooncitizen.advancedMode';
+
+function readAdvancedMode () {
+  try {
+    return (typeof localStorage !== 'undefined') && localStorage.getItem(ADVANCED_MODE_KEY) === '1';
+  } catch (_) {
+    return false;
+  }
+}
+
+function writeAdvancedMode (on) {
+  try {
+    if (typeof localStorage === 'undefined') return;
+    if (on) localStorage.setItem(ADVANCED_MODE_KEY, '1');
+    else localStorage.removeItem(ADVANCED_MODE_KEY);
+  } catch (_) { /* ignore */ }
+}
 
 const TITLE = 'GoonCitizen — Monitor';
 
@@ -230,8 +255,11 @@ class Dashboard extends React.Component {
   constructor (props) {
     super(props);
     const hashTab = (typeof window !== 'undefined' && String(window.location.hash || '').replace(/^#/, '')) || '';
+    const advancedMode = readAdvancedMode();
+    const tabAllowed = (t) => TAB_KEYS.includes(t) && (advancedMode || !ADVANCED_TABS.has(t));
     this.state = {
-      tab: TAB_KEYS.includes(hashTab) ? hashTab : 'home',
+      advancedMode,
+      tab: tabAllowed(hashTab) ? hashTab : 'home',
       status: '…',
       online: false,
       counts: {
@@ -290,7 +318,8 @@ class Dashboard extends React.Component {
     }, 2000);
     this._onHash = () => {
       const h = String(window.location.hash || '').replace(/^#/, '');
-      const tab = TAB_KEYS.includes(h) ? h : 'home';
+      const allowed = TAB_KEYS.includes(h) && (this.state.advancedMode || !ADVANCED_TABS.has(h));
+      const tab = allowed ? h : 'home';
       if (tab !== this.state.tab) this.showTab(tab, { fromHash: true });
     };
     window.addEventListener('hashchange', this._onHash);
@@ -1125,7 +1154,7 @@ class Dashboard extends React.Component {
         'pages at /groups/:id (or a custom URL)'],
       ['peers', '🌐 Peers', 'Fabric Network peer management — push your signed event batches to org hubs like goon.vc.',
         'Fabric Protocol · idempotent delivery']
-    ];
+    ].filter(([tab]) => featureEnabled(tab) && (this.state.advancedMode || !ADVANCED_TABS.has(tab)));
     return React.createElement('main', null,
       React.createElement('section', { className: 'panel full' },
         React.createElement('h2', null, '🛰️ Welcome to GoonCitizen ',
@@ -1152,14 +1181,14 @@ class Dashboard extends React.Component {
       case 'live': return this.renderLive();
       case 'analyze': return this.renderAnalyze();
       case 'missions': return React.createElement(Missions, { identityPubkey: this.state.identityPubkey });
-      case 'wallet': return React.createElement(Wallet, null);
-      case 'library': return React.createElement(Library, null);
+      case 'wallet': return featureEnabled('wallet') ? React.createElement(Wallet, null) : this.renderHome();
+      case 'library': return featureEnabled('library') ? React.createElement(Library, null) : this.renderHome();
       case 'chat': return React.createElement(Chat, {
         identityPubkey: this.state.identityPubkey,
         nickname: this.state.nickname
       });
       case 'groups': return React.createElement(Groups, { identityPubkey: this.state.identityPubkey });
-      case 'peers': return React.createElement(Peers, null);
+      case 'peers': return this.state.advancedMode ? React.createElement(Peers, null) : this.renderHome();
       case 'notifications': return React.createElement(Notifications, {
         onPendingCount: (n) => {
           if (n !== this.state.notifyPending) this.setState({ notifyPending: n });
@@ -1184,7 +1213,20 @@ class Dashboard extends React.Component {
       this.state.showSettings
         ? React.createElement(Settings, {
           onClose: () => this.setState({ showSettings: false }),
-          onNicknameChange: (n) => this.setState({ nickname: n || null })
+          onNicknameChange: (n) => this.setState({ nickname: n || null }),
+          advancedMode: this.state.advancedMode,
+          onAdvancedModeChange: (on) => {
+            writeAdvancedMode(on);
+            this.setState((s) => {
+              const next = { advancedMode: on };
+              // Leaving advanced mode while on an advanced-only tab → go home.
+              if (!on && ADVANCED_TABS.has(s.tab)) {
+                next.tab = 'home';
+                try { if (window.location.hash) history.replaceState(null, '', window.location.pathname + window.location.search); } catch (_) { /* ignore */ }
+              }
+              return next;
+            });
+          }
         })
         : null,
       this.state.showIdentity
@@ -1263,7 +1305,7 @@ class Dashboard extends React.Component {
           )
         ),
         React.createElement('div', { className: 'row', style: { marginTop: 10, gap: 8 } },
-          TABS.map(([key, label]) => React.createElement('button', {
+          TABS.filter(([key]) => this.state.advancedMode || !ADVANCED_TABS.has(key)).map(([key, label]) => React.createElement('button', {
             key,
             type: 'button',
             className: 'tab ' + (this.state.tab === key ? 'on' : ''),
