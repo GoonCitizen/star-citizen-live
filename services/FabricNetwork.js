@@ -27,7 +27,7 @@ const DEFAULT_SEED = 'relay.goon.vc:7777';
 // App `type` values carried inside the GoonCitizen CONTRACT_MESSAGE namespace.
 // MissionCreated is handled at ingest even if omitted from the genesis
 // messageTypes list (that list is frozen into the contract Actor id).
-const APP_RELAY_TYPES = new Set(['MissionCreated', 'MissionBroadcast', 'SCEventBatch']);
+const APP_RELAY_TYPES = new Set(['MissionCreated', 'MissionBroadcast', 'SCEventBatch', 'GameStateSnapshot']);
 
 /**
  * True when `value` looks like a Fabric peer address (`host:port`).
@@ -126,6 +126,8 @@ function attachAppHandlers (peer, handlers = {}, _opts = {}) {
           handlers.onMissionBroadcast(object, signer, meta);
         } else if (appType === 'SCEventBatch' && typeof handlers.onEventBatch === 'function') {
           handlers.onEventBatch(object, signer, meta);
+        } else if (appType === 'GameStateSnapshot' && typeof handlers.onGameStateSnapshot === 'function') {
+          handlers.onGameStateSnapshot(object, signer, meta);
         }
         return;
       }
@@ -483,6 +485,15 @@ class FabricNetwork extends EventEmitter {
   publishEventBatch (events, sentAt = new Date().toISOString()) {
     if (!Array.isArray(events) || !events.length) return null;
     return this._publishContractMessage(gooncitizenContractId(), 'SCEventBatch', { events, sentAt });
+  }
+
+  /**
+   * Publish a compact cumulative game-state snapshot for Hub sidechain sync.
+   * @param {Object} snapshot from functions/gooncitizenGameState.buildGameStateSnapshot
+   */
+  publishGameStateSnapshot (snapshot) {
+    if (!snapshot || typeof snapshot !== 'object') throw new Error('GameStateSnapshot required');
+    return this._publishContractMessage(gooncitizenContractId(), 'GameStateSnapshot', Object.assign({}, snapshot));
   }
 
   /**

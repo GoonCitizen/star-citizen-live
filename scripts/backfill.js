@@ -1,17 +1,14 @@
 'use strict';
 
 /**
- * Historic-log backfill.
+ * Historic-log backfill (CLI).
  *
  * Scans saved Game.log files (the game's own `logbackups`, plus any corpus under
- * ./Gamelogs) and aggregates them into a compact `stores/history.json` that the
- * dashboard's Analyze tab reads. READ-ONLY on the logs; it only writes the store.
+ * ./Gamelogs) and folds them into the durable cumulative history used by the
+ * desktop app (`stores/gooncitizen/history.json`). READ-ONLY on the logs.
  *
- * Each log is attributed to the pilot from its own "User Login Success - Handle[..]"
- * line, so a multi-pilot corpus produces a real org-wide dataset. We keep ONLY the
- * compact records the dashboard needs (ended missions, deaths, sessions, and a
- * per-month day x hour activity histogram) - never the raw lines - so memory and
- * the output file stay small even over gigabytes of logs.
+ * Prefer the desktop / `npm start` path — every startup already runs the same
+ * cursor-based sync. This CLI is for one-shot corpus imports and CI fixtures.
  *
  * Usage:
  *   npm run backfill                 # scan default locations (SC logbackups + ./Gamelogs)
@@ -22,8 +19,11 @@ const fs = require('fs');
 const path = require('path');
 const readline = require('readline');
 const { parseLine, missionType, missionFaction } = require('../functions/parser');
+const { storeRoot } = require('../functions/storePaths');
+const cumulativeHistory = require('../functions/cumulativeHistory');
 
-const STORE = path.join(__dirname, '..', 'stores', 'history.json');
+const STORE = cumulativeHistory.historyPath(storeRoot()) || path.join(__dirname, '..', 'stores', 'gooncitizen', 'history.json');
+const CURSORS = cumulativeHistory.cursorsPath(storeRoot()) || path.join(__dirname, '..', 'stores', 'gooncitizen', 'log-cursors.json');
 
 function defaultDirs () {
   const dirs = [];
@@ -52,15 +52,17 @@ function findLogs (dir) {
   return out;
 }
 
+/** @deprecated Prefer cumulativeHistory.syncFiles — kept for tests. */
 function newAcc () {
   return { missions: [], deaths: [], sessions: [], heat: {}, players: new Set(), files: 0, lines: 0 };
 }
 
+/** @deprecated Prefer cumulativeHistory.ingestFile — kept for tests. */
 function processFile (file, acc) {
   return new Promise((resolve) => {
     let handle = null;
     let sessionTs = null;
-    const gen = {};   // missionId -> generator name (for mission-type)
+    const gen = {};
     const rl = readline.createInterface({ input: fs.createReadStream(file), crlfDelay: Infinity });
     rl.on('line', (line) => {
       acc.lines++;
@@ -122,20 +124,23 @@ async function main () {
   let files = [];
   for (const d of dirs) files.push(...findLogs(d));
   files = [...new Set(files)];
-  console.log(`Found ${files.length} log files. Parsing…`);
+  console.log(`Found ${files.length} log files. Syncing into cumulative history…`);
 
-  const acc = await ingestFiles(files, (done, total, a) => {
-    console.log(`  ${done}/${total} files · ${a.missions.length} missions · ${a.deaths.length} deaths · ${a.players.size} pilots`);
+  const history = cumulativeHistory.loadHistory(STORE);
+  const cursors = cumulativeHistory.loadCursors(CURSORS);
+  const result = await cumulativeHistory.syncFiles(files, history, cursors, (done, total, h) => {
+    console.log(`  ${done}/${total} files · ${h.missions.length} missions · ${h.deaths.length} deaths · ${h.players.length} pilots`);
   });
 
-  fs.mkdirSync(path.dirname(STORE), { recursive: true });
-  fs.writeFileSync(STORE, JSON.stringify(toStore(acc, new Date().toISOString())));
+  cumulativeHistory.saveHistory(STORE, history);
+  cumulativeHistory.saveCursors(CURSORS, cursors);
+  const c = cumulativeHistory.cumulativeCounts(history);
   console.log(`\nWrote ${STORE}`);
-  console.log(`  ${acc.files} files · ${acc.lines.toLocaleString()} lines`);
-  console.log(`  ${acc.missions.length} ended missions · ${acc.deaths.length} deaths · ${acc.sessions.length} sessions`);
-  console.log(`  pilots: ${[...acc.players].join(', ') || '(none)'}`);
+  console.log(`  +${result.lines} new lines across ${result.files} files`);
+  console.log(`  ${c.missions} ended missions · ${c.deaths} deaths · ${c.sessions} sessions`);
+  console.log(`  pilots: ${(history.players || []).join(', ') || '(none)'}`);
 }
 
-module.exports = { defaultDirs, findLogs, ingestFiles, processFile, toStore, STORE };
+module.exports = { defaultDirs, findLogs, ingestFiles, processFile, toStore, STORE, CURSORS };
 
 if (require.main === module) main().catch((e) => { console.error('Backfill failed:', e.message); process.exit(1); });

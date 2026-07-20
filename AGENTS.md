@@ -6,7 +6,9 @@
 > legacy pointer to this file as well.)
 >
 > **Last reviewed against source:** branch `feature/fabric-free-m1` · 2026-07-20
-> (D-013 device-link; D-012 application namespaces; D-011 site login; D-010 Fabric P2P).
+> (D-016 contract-namespace sidechains / Hub ADR-001; D-015 sidechain/Beacon seal; D-014
+> cumulative history; D-013 device-link; D-012 application namespaces; D-011
+> site login; D-010 Fabric P2P).
 > If you change architecture, commands, or state, update **this file** and the
 > reality it describes — not a copy.
 
@@ -24,16 +26,20 @@ mutation is recorded in a **hash-chained, tamper-evident audit log**.
 
 The relay also powers an **activity-analytics dashboard** (missions, outcomes,
 deaths, sessions and an activity heatmap, sliced by pilot / mission type / month &
-year) and lets players **backload their saved logs** (`npm run backfill` over the
-game's `logbackups`) so the org can see real history, not just the live session.
+year). On every desktop/local start it **cursor-syncs** the live `Game.log` plus
+locatable `logbackups` into durable cumulative history
+(`stores/gooncitizen/history.json` — under Electron `userData` on desktop). The
+header stats and Analyze tab default to **all-time cumulative** counts (D-014);
+`npm run backfill` is an optional CLI into the same store.
 
 **One-line summary:** turn the live game log into a Discord/dashboard/API feed,
-analyse activity (incl. backloaded history), and run an officer-validated mission
-register with an auditable trail on top.
+accumulate verified play history across restarts, and run an officer-validated
+mission register with an auditable trail on top.
 
-**Core goals (do not regress — see `DECISIONS.md` D-005, D-007):** (1) the officer-
-validated mission register with an auditable trail; (2) the activity-analytics
-dashboard; (3) player log backload into shared history. New work must protect these.
+**Core goals (do not regress — see `DECISIONS.md` D-005, D-007, D-014):** (1) the
+officer-validated mission register with an auditable trail; (2) the
+activity-analytics dashboard; (3) cumulative durable log history (startup sync +
+live tail). New work must protect these.
 
 **Product context for non-technical readers:** `SOLUTION-BRIEF.md`.
 
@@ -82,10 +88,10 @@ npm run build:installers  # Windows x64 + Debian x64 + macOS
 
 - `npm start` → `scripts/node.js` → `services/LiveRelay.js`. Auto-detects the SC
   install across drives/channels and tails the freshest `Game.log` (read-only).
-- Store root: **`stores/gooncitizen/`** — same shape as Hub `stores/hub`. All
-  internal storage (missions, groups, operator settings) lives in the
-  **`register/` Fabric Store** (LevelDB); no JSON files are written by the app.
-  Type code: `types/Store.js`.
+- Store root: **`stores/gooncitizen/`** — same shape as Hub `stores/hub`. Missions,
+  groups, and operator settings live in the **`register/` Fabric Store** (LevelDB).
+  Cumulative gameplay history is **`history.json`** + **`log-cursors.json`** beside
+  it (D-014). Type code: `types/Store.js`, `functions/cumulativeHistory.js`.
 - Dashboard home lists features along the top: Live, Analyze, Missions,
   Wallet, Library, Chat, Groups, Peers. Chat uses Hub message types
   (`ChatMessage` records): **`global`** is Fabric `P2P_CHAT_MESSAGE`; each
@@ -213,10 +219,20 @@ Kept during migration; safe to ignore unless explicitly working on migration.
   dormant on the current game (only ≤4.3.0 logged them — §1).
 - **Activity-analytics dashboard** (Analyze tab): KPI strip, activity heatmap,
   outcome donut, mission-type bars, pilot leaderboard, pilot comparison; **month/
-  year add-remove slicer**; served by `GET …/analytics`.
-- **Player log backload:** `npm run backfill` (`scripts/backfill.js`) ingests saved
-  logs into a compact, gitignored `stores/history.json` (per-pilot, attributed by
-  login handle); merged with the live session in the analytics view.
+  year add-remove slicer**; served by `GET …/analytics` from **cumulative**
+  history (plus in-flight active missions). Header counts are all-time by default;
+  `counts.session` on `/monitor` is this-process only.
+- **Cumulative log history (D-014):** `functions/cumulativeHistory.js` + startup
+  `_syncCumulativeHistory()` — byte cursors in `log-cursors.json`, compact records
+  in `history.json` under the store root. Live tail and peer `SCEventBatch`
+  deaths/mission ends fold into the same store. Optional CLI: `npm run backfill`.
+- **Hub sidechain / Beacon seal (D-015 / D-016):** clients publish
+  `GameStateSnapshot`; `relay.goon.vc` aggregates into `/gooncitizen` **and**
+  `/namespaces/<gooncitizenContractId>` on Hub `sidechain/STATE` so each Beacon
+  epoch seals a public `stateDigest` + `sidechain/SNAPSHOTS` (Fabric statechain;
+  Hub ADR-001). Groups provision local `sidechains/<groupContractId>/` via
+  `functions/contractSidechain.js`. Helpers: `functions/gooncitizenGameState.js`;
+  hub sync in `goon.vc/functions/gooncitizenSidechainSync.js`.
 - Kill / vehicle-destruction parsing — **format-verified on real ≤4.3.0 logs**,
   wired to the dashboard 💀 panel + Discord, but dormant on the current game (§1).
 - Live dashboard + REST API + optional Discord webhook embeds.

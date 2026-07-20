@@ -152,6 +152,10 @@ function buildRelaySettings (port) {
     // Wallet: ledger mode unless settings/local.js supplies a bitcoind rpc.
     payouts: Object.assign({ enable: true, ledger: true, network: 'regtest' }, settings.payouts || {}),
     settingsDir: appStoreRoot,
+    // Cumulative Game.log history lives next to the Fabric store (userData),
+    // not the repo tree — survives restarts and is the Analyze default.
+    historyFile: path.join(appStoreRoot, 'history.json'),
+    cursorsFile: path.join(appStoreRoot, 'log-cursors.json'),
     store: appStore // shared, already-started Fabric Store
   };
 }

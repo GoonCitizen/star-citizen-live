@@ -4,6 +4,97 @@ understands the direction. Newest at the top.
 
 ---
 
+## D-016 — Contract-namespace sidechains under Hub Beacon
+**Date:** 2026-07-20 · **Status:** Adopted
+
+**Decision:** Follow Hub **ADR-001**
+(`hub.fabric.pub/docs/ADR-001-CONTRACT_NAMESPACE_SIDECHAINS.md`): Bitcoin L1 tips
+clock the Beacon Federation; each accepted `CONTRACT_PUBLISH` namespace gets the
+**same Statechain implementation** (`@fabric/core` Statechain / Chain family) as
+a further namespace under its parent. GoonCitizen is an application namespace
+under the Hub sidechain; Group Federation contracts are further namespaces under
+GoonCitizen the same way.
+
+1. **Publish** the frozen GoonCitizen genesis (`CONTRACT_PUBLISH`) so Hub
+   operators can Accept it into Beacon-tracked contracts.
+2. **Seal** compact game state at Hub `/gooncitizen` **and**
+   `/namespaces/<gooncitizenContractId>` (parent namespace head).
+3. **Groups** provision `stores/gooncitizen/sidechains/<groupContractId>/`
+   locally (and publish Group genesis) so further sidechains reuse the same
+   chain layout / Contract protocol — not a parallel format.
+
+**Why:** One verify path from L1 → Hub Beacon → GoonCitizen → Groups; rendezvous
+Hubs bootstrap many apps without each inventing a chain.
+
+**Consequences / guardrails:**
+- Do not bump frozen GoonCitizen genesis `messageTypes` for namespace plumbing.
+- Namespace digests are public commitments — never raw `Game.log` lines.
+- Hub federation threshold Schnorr on epochs is authoritative for the seal clock.
+
+---
+
+## D-015 — GoonCitizen game state sealed on Hub Beacon / sidechain
+**Date:** 2026-07-20 · **Status:** Adopted
+
+**Decision:** Cumulative GoonCitizen aggregation (D-014) is published into the
+Hub **logical sidechain** (`sidechain/STATE` content at `/gooncitizen`) so each
+**Beacon epoch** on `relay.goon.vc` seals a public **stateDigest** and full
+snapshot (`sidechain/SNAPSHOTS`), following Fabric **statechain** semantics
+(`@fabric/core` `docs/STATECHAIN.md`, Hub `docs/BEACON_SIDECHAIN_DESIGN_AND_ROADMAP.md`).
+
+1. **Clients** publish `GameStateSnapshot` CONTRACT_MESSAGE (and continue
+   `SCEventBatch`) when `shareLogsGlobal` is on.
+2. **relay.goon.vc** (`goon.vc` Hub) folds ingest into durable cumulative
+   history, then applies a trusted sidechain patch via
+   `Hub._applySidechainPatchesTrusted` (path policy allows `/gooncitizen`).
+3. **Beacon** already embeds `payload.sidechain { clock, stateDigest }` and
+   writes per-epoch snapshots — no parallel “game chain”; GoonCitizen rides the
+   Hub statechain.
+
+**Why:** Org-wide verified play must be publicly tip-tied and reorg-safe, not
+only local `history.json`. The Beacon is the L1 step clock; the sidechain
+document is the shared game-state head.
+
+**Consequences / guardrails:**
+- Compact snapshot only (counts, capped missions/deaths, heat, pilots) — never
+  raw Game.log lines.
+- Do not bump the frozen GoonCitizen contract Actor `messageTypes` list for
+  `GameStateSnapshot` (same pattern as `MissionCreated`).
+- Patch no-ops when `digest` is unchanged (avoid clock spam).
+
+---
+
+## D-014 — Cumulative durable Game.log history (desktop default)
+**Date:** 2026-07-20 · **Status:** Adopted
+
+**Decision:** Parsed gameplay for analytics is **cumulative and durable** on the
+desktop/local relay. Every startup runs a **cursor-based sync** over the live
+`Game.log` plus locatable `logbackups` / corpus dirs, folding new bytes into
+`stores/gooncitizen/history.json` (under Electron `userData` on desktop). Live
+tail lines continue to update that same store. The Analyze tab and the header
+stat strip show **all-time cumulative** counts by default; session-scoped
+counts remain on the monitor payload under `counts.session` for the Live feed.
+
+1. **Compact records only** — ended missions, deaths, sessions, heat, pilots
+   (never raw lines). Content-addressed ids make re-sync idempotent.
+2. **Byte cursors** — `log-cursors.json` tracks `{ size, mtimeMs }` per file so
+   restarts only read new bytes; file shrink/rotate rescans from 0.
+3. **Two planes unchanged** — mission register stays LevelDB source of truth
+   (D-005); the firehose history is attributable analytics, not officer truth.
+
+**Why:** GoonCitizen’s product shape is many installs aggregating verified play
+over time. In-memory session collections alone reset every launch and could not
+meet that bar.
+
+**Consequences / guardrails:**
+- Do not double-count: analytics reads cumulative history; live active missions
+  (no outcome yet) are the only session merge-in.
+- `npm run backfill` writes the same history path (incremental sync), not a
+  divergent repo-root file.
+- Hub/server mode does not auto-scan local Game.logs (no file on the host).
+
+---
+
 ## D-013 — Mutual device-link attestations (separate seeds)
 **Date:** 2026-07-20 · **Status:** Adopted
 

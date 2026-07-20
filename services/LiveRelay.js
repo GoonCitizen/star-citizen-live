@@ -25,6 +25,8 @@ const readline = require('readline');
 const { parseLine, RULES, shipName, parseSessionInfo, missionType, isNPC, missionFaction } = require('../functions/parser');
 const { channelFromPath } = require('../functions/locate');
 const settingsStore = require('../functions/settingsStore');
+const cumulativeHistory = require('../functions/cumulativeHistory');
+const gooncitizenGameState = require('../functions/gooncitizenGameState');
 
 // Lines worth surfacing in the monitor - combat/death hints AND mission/objective
 // activity. Includes wording the parser may not recognize yet, so we can keep
@@ -188,7 +190,15 @@ class StarCitizenService extends EventEmitter {
       if (this.missionManager) this.payoutManager.attach(this.missionManager);
     }
 
-    this.history = this._loadHistory();   // compact backfill of past logs (Analyze tab)
+    // Compact cumulative history (ended missions, deaths, sessions, heat).
+    // Durable under settingsDir/history.json; updated on startup sync + live tail.
+    this.history = this._loadHistory();
+    this._historyIndex = cumulativeHistory.indexHistory(this.history);
+    this._logCursors = this._loadLogCursors();
+    this._historyDirty = false;
+    this._historyFlushTimer = null;
+    this._historyApplyLive = false; // true only after startup sync (avoids double heat on seed)
+    this._historyGenerators = {}; // missionId → generator (for live mission:end typing)
 
     // Deterministic historical re-parse job (oldest log forward). Idle until
     // POST …/reparse; progress + result exposed on the monitor payload.
@@ -388,37 +398,213 @@ class StarCitizenService extends EventEmitter {
     return null;
   }
 
-  // Load the backfilled history aggregate (built by `npm run backfill`), if present.
-  _loadHistory () {
-    const empty = { missions: [], deaths: [], sessions: [], heat: {}, players: [], meta: {} };
-    try {
-      const f = this.settings.historyFile || path.join(__dirname, '..', 'stores', 'history.json');
-      if (fs.existsSync(f)) return Object.assign(empty, JSON.parse(fs.readFileSync(f, 'utf8')));
-    } catch (e) { console.error('[STAR-CITIZEN] history load failed:', e.message); }
-    return empty;
+  /**
+   * Durable history.json — requires settingsDir (desktop / npm start) or an
+   * explicit historyFile. Without either, cumulative state stays in-memory for
+   * the process (unit tests) and is not loaded from a shared repo path.
+   */
+  _historyFile () {
+    if (this.settings.historyFile) return this.settings.historyFile;
+    if (this.settings.settingsDir) return cumulativeHistory.historyPath(this.settings.settingsDir);
+    return null;
   }
 
-  // Merge backfilled history with the current live session into one compact dataset
-  // for the Analyze tab. Local-player today; the same shape serves shared multi-pilot history (M4).
+  _cursorsFile () {
+    if (this.settings.cursorsFile) return this.settings.cursorsFile;
+    if (this.settings.settingsDir) return cumulativeHistory.cursorsPath(this.settings.settingsDir);
+    return null;
+  }
+
+  _loadHistory () {
+    try {
+      return cumulativeHistory.loadHistory(this._historyFile());
+    } catch (e) {
+      console.error('[STAR-CITIZEN] history load failed:', e.message);
+      return cumulativeHistory.emptyHistory();
+    }
+  }
+
+  _loadLogCursors () {
+    try {
+      return cumulativeHistory.loadCursors(this._cursorsFile());
+    } catch (e) {
+      console.error('[STAR-CITIZEN] log cursors load failed:', e.message);
+      return {};
+    }
+  }
+
+  _markHistoryDirty () {
+    this._historyDirty = true;
+    if (this._historyFlushTimer || this.settings.mode === 'server') return;
+    this._historyFlushTimer = setTimeout(() => {
+      this._historyFlushTimer = null;
+      this._flushHistory();
+    }, 2000);
+    if (this._historyFlushTimer.unref) this._historyFlushTimer.unref();
+  }
+
+  _flushHistory () {
+    if (!this._historyDirty) return;
+    try {
+      cumulativeHistory.saveHistory(this._historyFile(), this.history);
+      cumulativeHistory.saveCursors(this._cursorsFile(), this._logCursors);
+      this._historyDirty = false;
+    } catch (e) {
+      console.error('[STAR-CITIZEN] history flush failed:', e.message);
+    }
+  }
+
+  /**
+   * Startup (and catch-up): fold Game.log + logbackups into durable history
+   * using byte cursors. Only new bytes are read. Does not mutate live session
+   * collections — seed/openLog still own the Live tab feed.
+   */
+  async _syncCumulativeHistory () {
+    if (this.settings.mode === 'server') return { changed: false, files: 0, lines: 0 };
+    const { defaultDirs, findLogs } = require('../scripts/backfill');
+    // Full logbackup scan only when a durable store root is configured
+    // (desktop / npm start) or tests pass explicit reparse.dirs. Bare unit
+    // tests without settingsDir only touch the explicit logfile.
+    const explicitDirs = this.settings.reparse && Array.isArray(this.settings.reparse.dirs)
+      ? this.settings.reparse.dirs
+      : null;
+    const dirs = explicitDirs || (this.settings.settingsDir ? defaultDirs() : []);
+    const seen = new Set();
+    const files = [];
+    for (const dir of dirs) {
+      for (const f of findLogs(dir)) {
+        const abs = path.resolve(f);
+        if (!seen.has(abs)) { seen.add(abs); files.push(abs); }
+      }
+    }
+    if (this.settings.logfile && fs.existsSync(this.settings.logfile)) {
+      const abs = path.resolve(this.settings.logfile);
+      if (!seen.has(abs)) files.push(abs);
+    }
+    if (!files.length) return { changed: false, files: 0, lines: 0 };
+
+    const result = await cumulativeHistory.syncFiles(
+      files,
+      this.history,
+      this._logCursors,
+      (done, total) => {
+        if (done === total || done === 1) {
+          console.log(`[STAR-CITIZEN] cumulative sync ${done}/${total} log files`);
+        }
+      }
+    );
+    this._historyIndex = result.index || cumulativeHistory.indexHistory(this.history);
+    if (result.changed || result.lines > 0) {
+      this._historyDirty = true;
+      this._flushHistory();
+    }
+    if (result.lines > 0) {
+      const c = cumulativeHistory.cumulativeCounts(this.history);
+      console.log(`[STAR-CITIZEN] cumulative history: ${c.missions} missions · ${c.deaths} deaths · ${c.players} pilots (${result.lines} new lines)`);
+    }
+    return result;
+  }
+
+  /** Fold a live (or ingested) parsed event into durable history. */
+  _applyHistoryEvent (ev, extra = {}) {
+    if (!ev) return;
+    if (!this._historyApplyLive && !extra.force) return;
+    if (ev.kind === 'mission:marker' && ev.missionId) {
+      this._historyGenerators[ev.missionId] = ev.generator;
+    }
+    const changed = cumulativeHistory.applyLiveEvent(this.history, this._historyIndex, ev, {
+      handle: extra.handle || this._sessionHandle,
+      generators: this._historyGenerators,
+      countHeat: extra.countHeat !== false
+    });
+    if (changed) {
+      this._markHistoryDirty();
+      this.emit('history:updated', { via: 'event', kind: ev.kind });
+    }
+  }
+
+  /**
+   * Compact game-state document for Hub sidechain `/gooncitizen` (beacon-sealed).
+   * @param {{ source?: string|null }} [opts]
+   */
+  buildGameStateSnapshot (opts = {}) {
+    return gooncitizenGameState.buildGameStateSnapshot(this.history, {
+      source: opts.source || (this._identity && this._identity.pubkey) || null,
+      sources: this.history && this.history._sources
+    });
+  }
+
+  /**
+   * Merge a peer GameStateSnapshot into cumulative history (hub / desktop).
+   * @returns {{ changed: Boolean, snapshot: Object|null }}
+   */
+  ingestGameStateSnapshot (source, snap) {
+    if (!snap || typeof snap !== 'object') return { changed: false, snapshot: null };
+    const changed = gooncitizenGameState.mergeSnapshotIntoHistory(
+      this.history,
+      this._historyIndex,
+      snap,
+      source || null
+    );
+    if (changed) {
+      this._markHistoryDirty();
+      this.emit('history:updated', { via: 'GameStateSnapshot', source });
+    }
+    return { changed, snapshot: this.buildGameStateSnapshot() };
+  }
+
+  /** Publish local cumulative snapshot over Fabric (shareLogsGlobal-gated). */
+  async publishGameStateSnapshot () {
+    if (!this._identity || this._shareLogsGlobal === false) return null;
+    await this._ensureFabric();
+    if (!this.fabricNetwork || !this.fabricNetwork.ready) return null;
+    const snap = this.buildGameStateSnapshot({ source: this._identity.pubkey });
+    try {
+      this.fabricNetwork.publishGameStateSnapshot(snap);
+      this.emit('gamestate:published', { digest: snap.digest, counts: snap.counts });
+      return snap;
+    } catch (e) {
+      this.emit('error', e);
+      return null;
+    }
+  }
+
+  _touchLogCursor () {
+    if (!this.settings.logfile || this.settings.mode === 'server') return;
+    try {
+      const st = fs.statSync(this.settings.logfile);
+      const key = path.resolve(this.settings.logfile);
+      this._logCursors[key] = { size: st.size, mtimeMs: st.mtimeMs };
+      this._markHistoryDirty();
+    } catch (_) { /* log gone mid-rotation */ }
+  }
+
+  // Cumulative history is the analytics source of truth. Active (not-yet-ended)
+  // missions from the live session are merged in so the current flight still shows.
   _analyticsDataset () {
-    const h = this.history || { missions: [], deaths: [], sessions: [], heat: {}, players: [], meta: {} };
+    const h = this.history || cumulativeHistory.emptyHistory();
     const me = this._sessionHandle || 'you';
-    const liveM = this.missionGroups.map((m) => ({ type: m.type, faction: missionFaction(m.generator), outcome: m.outcome, player: m.player || me, ts: m.startedAt || m.firstSeen })).filter((x) => x.ts);
-    const liveD = this.deaths.map((d) => ({ player: d.player || me, ts: d.timestamp })).filter((x) => x.ts);
-    const liveS = this.sessions.map((s) => ({ player: me, ts: s.detectedAt })).filter((x) => x.ts);
+    const liveActive = this.missionGroups
+      .filter((m) => m.startedAt && !m.outcome)
+      .map((m) => ({
+        type: m.type,
+        faction: missionFaction(m.generator),
+        outcome: null,
+        player: m.player || me,
+        ts: m.startedAt || m.firstSeen,
+        active: true
+      }))
+      .filter((x) => x.ts);
 
     const heat = Object.assign({}, h.heat);
-    for (const a of this.activities) {
-      const t = Date.parse(a.timestamp); if (Number.isNaN(t)) continue;
-      const d = new Date(t);
-      const k = (d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0')) + '|' + ((d.getDay() + 6) % 7) + '|' + d.getHours();
-      heat[k] = (heat[k] || 0) + 1;
-    }
-    const heatcells = Object.keys(heat).map((k) => { const p = k.split('|'); return { ym: p[0], d: +p[1], h: +p[2], n: heat[k] }; });
+    const heatcells = Object.keys(heat).map((k) => {
+      const p = k.split('|');
+      return { ym: p[0], d: +p[1], h: +p[2], n: heat[k] };
+    });
 
-    const missions = h.missions.concat(liveM);
-    const deaths = h.deaths.concat(liveD);
-    const sessions = (h.sessions || []).concat(liveS);
+    const missions = (h.missions || []).concat(liveActive);
+    const deaths = h.deaths || [];
+    const sessions = h.sessions || [];
     const ymOf = (s) => (typeof s === 'string' && s.length >= 7) ? s.slice(0, 7) : null;
     const months = new Set();
     missions.forEach((m) => { const y = ymOf(m.ts); if (y) months.add(y); });
@@ -428,13 +614,15 @@ class StarCitizenService extends EventEmitter {
 
     return {
       type: 'Analytics',
-      generatedAt: (h.meta && h.meta.generatedAt) || null,
+      generatedAt: (h.meta && (h.meta.lastFlushAt || h.meta.generatedAt)) || null,
+      cumulative: true,
       availableMonths: [...months].sort().reverse(),
       players,
       missions: missions.slice(-20000),
       deaths: deaths.slice(-20000),
       sessions,
-      heatcells
+      heatcells,
+      counts: cumulativeHistory.cumulativeCounts(h)
     };
   }
 
@@ -602,6 +790,22 @@ class StarCitizenService extends EventEmitter {
     if (!existed) {
       this.state[collection][id] = Object.assign({ id, source }, data);
       if (collection === 'kills') this.emit('kill', this.state[collection][id]);
+      // Fold peer-sourced gameplay into cumulative analytics (desktop + hosted hub).
+      if (collection === 'deaths' || collection === 'missionlog') {
+        const kind = data.kind || (collection === 'deaths' ? 'player:death' : null);
+        if (kind === 'player:death' || kind === 'mission:end') {
+          this._applyHistoryEvent({
+            kind,
+            timestamp: data.timestamp,
+            player: data.player,
+            bodyId: data.bodyId,
+            completionType: data.completionType || data.outcome,
+            missionId: data.missionId,
+            generator: data.generator
+          }, { countHeat: false, force: true, handle: data.player || null });
+          this.emit('history:updated', { via: 'ingest', collection });
+        }
+      }
     }
     return { id, created: !existed };
   }
@@ -929,6 +1133,7 @@ class StarCitizenService extends EventEmitter {
       if (req.method === 'GET' && pathname === `${base}/monitor`) {
         const limit = Math.min(parseInt(url.searchParams.get('limit'), 10) || 250, 1000);
         const newest = (arr) => arr.slice(-limit).reverse();
+        const cumulative = cumulativeHistory.cumulativeCounts(this.history);
         return send(200, {
           status: this.status, startedAt: this.state.startedAt, now: new Date().toISOString(),
           loginfo: this._logInfo(), reparse: this._reparse,
@@ -938,11 +1143,27 @@ class StarCitizenService extends EventEmitter {
           kills: newest(this.kills),
           deaths: newest(this.deaths),
           counts: {
-            activities: this.activities.length, players: this.players.length, logins: this.logins.length,
-            vehicles: this.vehicles.length, kills: this.kills.length, incaps: this.incaps.length, deaths: this.deaths.length,
-            missionlog: this.missionlog.length, missions: this.missionGroups.length, notifications: this.notifications.length,
-            combat: this.combatlog.length,
-            logs: this.logs.length, flagged: this.flagged.length
+            // Header / home default to cumulative (all-time local history).
+            missions: cumulative.missions,
+            deaths: cumulative.deaths,
+            players: cumulative.players,
+            sessions: cumulative.sessions,
+            completed: cumulative.completed,
+            abandoned: cumulative.abandoned,
+            failed: cumulative.failed,
+            // Session-scoped (this process / current Game.log seed + live).
+            session: {
+              activities: this.activities.length, players: this.players.length, logins: this.logins.length,
+              vehicles: this.vehicles.length, kills: this.kills.length, incaps: this.incaps.length, deaths: this.deaths.length,
+              missionlog: this.missionlog.length, missions: this.missionGroups.length, notifications: this.notifications.length,
+              combat: this.combatlog.length,
+              logs: this.logs.length, flagged: this.flagged.length
+            },
+            // Aliases kept for older UI bits that still read session fields.
+            activities: this.activities.length, kills: this.kills.length, incaps: this.incaps.length,
+            vehicles: this.vehicles.length, logins: this.logins.length,
+            missionlog: this.missionlog.length, notifications: this.notifications.length,
+            combat: this.combatlog.length, logs: this.logs.length, flagged: this.flagged.length
           },
           recent: newest(this.recent),
           flagged: newest(this.flagged)
@@ -1622,6 +1843,7 @@ class StarCitizenService extends EventEmitter {
       case 'player:login': {
         this._sessionHandle = ev.handle;
         this.recordPlayer(ev.handle, ev.timestamp);
+        this._applyHistoryEvent(ev);
         break;
       }
       case 'player:incap': {
@@ -1636,6 +1858,7 @@ class StarCitizenService extends EventEmitter {
         const d = { id, kind: ev.kind, player: this._sessionHandle || null, bodyId: ev.bodyId, timestamp: ev.timestamp };
         this.state.deaths[id] = d;
         this.emit('player:death', d);
+        this._applyHistoryEvent(ev);
         break;
       }
       case 'vehicle:destroy': {
@@ -1657,6 +1880,7 @@ class StarCitizenService extends EventEmitter {
         this._indexMission(ev);
         this.emit(ev.kind, me);
         this.emit('mission:event', me);
+        this._applyHistoryEvent(ev);
         break;
       }
       case 'hud:notification': {
@@ -1675,6 +1899,13 @@ class StarCitizenService extends EventEmitter {
         break;
       }
       default: break;
+    }
+
+    // Activity heat for other live lines (mission/death/login already applied above).
+    if (this._historyApplyLive && ev.timestamp) {
+      const folded = ev.kind === 'player:login' || ev.kind === 'player:death' ||
+        (ev.kind && ev.kind.indexOf('mission:') === 0);
+      if (!folded) this._applyHistoryEvent(ev, { countHeat: true });
     }
 
     this.emit('event', ev);       // every parsed line (used by replay tally)
@@ -1787,6 +2018,12 @@ class StarCitizenService extends EventEmitter {
         const lines = (this._partial + buf).split(/\r?\n/);
         this._partial = lines.pop();                    // hold back any incomplete final line
         for (const line of lines) { if (line.trim()) { try { this.handleLogChange(line); } catch (e) { this.emit('error', e); } } }
+        // Advance durable cursor to the last fully consumed byte (exclude partial).
+        if (this.settings.logfile) {
+          const key = path.resolve(this.settings.logfile);
+          this._logCursors[key] = { size: this._pos, mtimeMs: st.mtimeMs };
+          this._markHistoryDirty();
+        }
         this._scheduleNextPoll();
       });
     });
@@ -1935,6 +2172,21 @@ class StarCitizenService extends EventEmitter {
         for (const p of this.peers) {
           if (p.enabled !== false) { p.lastSeen = new Date().toISOString(); p.lastError = null; }
         }
+      },
+      onGameStateSnapshot: (object, source, meta) => {
+        const actor = meta && meta.msg && meta.msg.actor;
+        const resolved = actorId(source, actor);
+        if (!resolved || !object) return;
+        try {
+          const r = this.ingestGameStateSnapshot(resolved, object);
+          this.emit('ingest', {
+            source: resolved,
+            received: 1,
+            created: r.changed ? 1 : 0,
+            via: 'fabric',
+            kind: 'GameStateSnapshot'
+          });
+        } catch (e) { this.emit('error', e); }
       },
       onProposal: (payload, source) => {
         // Mission escrow / payout ContractProposals scoped to the GoonCitizen
@@ -2128,10 +2380,27 @@ class StarCitizenService extends EventEmitter {
     const interval = this.settings.uplink.intervalMs || 5000;
     this._uplinkTimer = setInterval(() => {
       this._flushUplink().catch((e) => this.emit('error', e));
+      this._maybePublishGameState().catch((e) => this.emit('error', e));
     }, interval);
     if (this._uplinkTimer.unref) this._uplinkTimer.unref();
     const seeds = this._fabricPeerAddresses();
     console.log(`[STAR-CITIZEN] fabric peering active` + (seeds.length ? ` → ${seeds.join(', ')}` : ''));
+  }
+
+  /**
+   * Periodically publish cumulative GameStateSnapshot so org hubs
+   * (relay.goon.vc) can fold analytics into the Hub sidechain / beacon seal.
+   */
+  async _maybePublishGameState () {
+    if (!this._identity || this._shareLogsGlobal === false) return null;
+    const minMs = Number(this.settings.gameStatePublishIntervalMs) || 60000;
+    const now = Date.now();
+    if (this._lastGameStatePublish && (now - this._lastGameStatePublish) < minMs) return null;
+    const h = this.history || {};
+    if (!(h.missions && h.missions.length) && !(h.deaths && h.deaths.length)) return null;
+    const snap = await this.publishGameStateSnapshot();
+    if (snap) this._lastGameStatePublish = now;
+    return snap;
   }
 
   _stopUplink () {
@@ -2342,15 +2611,26 @@ class StarCitizenService extends EventEmitter {
     if (this.missionManager) await this.missionManager.start();
     if (this.groupManager) await this.groupManager.start();
     const serverMode = this.settings.mode === 'server';
-    // Seed FIRST (replays history), then start the live poller at the current
-    // end-of-file so we only stream genuinely new lines and don't double-read.
-    // A seed pointing at a not-yet-written log (default location) is skipped;
-    // the poller below tails it the moment the game creates it.
-    if (!serverMode && this.settings.seed && fs.existsSync(this.settings.seed)) {
-      try { const n = await this.replayLog(this.settings.seed); console.log(`[STAR-CITIZEN] seeded ${n} lines from ${this.settings.seed}`); }
-      catch (e) { this.emit('error', e); }
+    // 1) Fold Game.log + logbackups into durable cumulative history (cursor-based).
+    // 2) Seed the Live tab from the current Game.log (session memory only).
+    // 3) Tail new lines; those update both session state and cumulative history.
+    if (!serverMode) {
+      try { await this._syncCumulativeHistory(); } catch (e) { this.emit('error', e); }
+      this._historyApplyLive = false;
+      if (this.settings.seed && fs.existsSync(this.settings.seed)) {
+        try {
+          const n = await this.replayLog(this.settings.seed);
+          console.log(`[STAR-CITIZEN] seeded ${n} lines from ${this.settings.seed}`);
+        } catch (e) { this.emit('error', e); }
+      }
+      this._historyApplyLive = true;
+      this.openLog();
+    } else if (this._historyFile()) {
+      // Hosted hub (relay.goon.vc): durable cumulative aggregation from peer
+      // SCEventBatch / GameStateSnapshot ingest — sealed into Hub sidechain.
+      this._historyApplyLive = true;
+      console.log(`[STAR-CITIZEN] cumulative aggregator: ${this._historyFile()}`);
     }
-    if (!serverMode) this.openLog();
     if (this.settings.listen !== false) {
       this.server = http.createServer((req, res) => this._handle(req, res));
       await new Promise((resolve) => this.server.listen(this.settings.port, resolve));
@@ -2368,6 +2648,8 @@ class StarCitizenService extends EventEmitter {
     this.state.status = 'STOPPING';
     this._stopping = true;
     if (this._pollTimer) { clearTimeout(this._pollTimer); this._pollTimer = null; }
+    if (this._historyFlushTimer) { clearTimeout(this._historyFlushTimer); this._historyFlushTimer = null; }
+    this._flushHistory();
     if (this.snapshotManager) this.snapshotManager.stop();
     // Let any in-flight fabric transition settle before tearing down.
     if (this._fabricTransition) { try { await this._fabricTransition; } catch (_) { /* logged */ } }

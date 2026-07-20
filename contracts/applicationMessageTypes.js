@@ -21,6 +21,8 @@ const FALLBACK_CONTRACT_BODY_TYPES = Object.freeze({
   MissionCreated: 'MissionCreated',
   MissionBroadcast: 'MissionBroadcast',
   SCEventBatch: 'SCEventBatch',
+  /** Cumulative analytics snapshot for Hub sidechain / beacon seal (not frozen into contract Actor id). */
+  GameStateSnapshot: 'GameStateSnapshot',
   GroupChat: 'GroupChat',
   GroupChange: 'GroupChange',
   GroupShare: 'GroupShare'

@@ -7,6 +7,8 @@
     ".": "./services/LiveRelay.js",
     "./parser": "./functions/parser.js",
     "./locate": "./functions/locate.js",
+    "./functions/gooncitizenGameState": "./functions/gooncitizenGameState.js",
+    "./functions/cumulativeHistory": "./functions/cumulativeHistory.js",
     "./services/FabricNetwork": "./services/FabricNetwork.js",
     "./types/Mission": "./types/Mission.js",
     "./types/Store": "./types/Store.js",

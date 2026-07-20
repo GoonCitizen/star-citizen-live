@@ -264,8 +264,11 @@ class Dashboard extends React.Component {
       status: '…',
       online: false,
       counts: {
+        // Cumulative (default strip) + session-scoped nested object from monitor.
         kills: 0, combat: 0, deaths: 0, incaps: 0, missions: 0,
-        players: 0, logins: 0, vehicles: 0, flagged: 0, logs: 0
+        players: 0, sessions: 0, completed: 0, abandoned: 0, failed: 0,
+        logins: 0, vehicles: 0, flagged: 0, logs: 0,
+        session: null
       },
       missionStats: {},
       sessions: [],
@@ -312,11 +315,15 @@ class Dashboard extends React.Component {
 
   componentDidMount () {
     this.poll();
+    this.fetchAnalytics(); // cumulative stats available on every tab by default
     this.fetchRules();
     this.loadNickname();
     this._timer = setInterval(() => {
       if (this.state.auto) this.poll();
     }, 2000);
+    this._analyticsTimer = setInterval(() => {
+      if (this.state.auto) this.fetchAnalytics();
+    }, 15000);
     this._onHash = () => {
       const h = String(window.location.hash || '').replace(/^#/, '');
       const allowed = TAB_KEYS.includes(h) && (this.state.advancedMode || !ADVANCED_TABS.has(h));
@@ -341,6 +348,7 @@ class Dashboard extends React.Component {
     if (this._onHash) window.removeEventListener('hashchange', this._onHash);
     if (this._identityUnsub) this._identityUnsub();
     if (this._timer) clearInterval(this._timer);
+    if (this._analyticsTimer) clearInterval(this._analyticsTimer);
     Object.values(this._copiedTimers).forEach(clearTimeout);
   }
 
@@ -811,7 +819,7 @@ class Dashboard extends React.Component {
     return React.createElement('main', { onClick: onAzClick },
       React.createElement('section', { className: 'panel full' },
         React.createElement('h2', null, '🔎 Analyze ',
-          React.createElement('span', { className: 'sub' }, '— slice your activity; every filter cross-filters all panels')
+          React.createElement('span', { className: 'sub' }, '— cumulative history (all scanned logs); every filter cross-filters all panels')
         ),
         React.createElement('div', { style: { padding: '12px 14px' } },
           React.createElement('div', { className: 'slrow' },
@@ -920,11 +928,11 @@ class Dashboard extends React.Component {
       ),
       React.createElement('section', { className: 'panel full' },
         React.createElement('h2', null, '🏅 Pilots ',
-          React.createElement('span', { className: 'sub' }, '— click a row to filter; shared history grows as peers report in (M4)')
+          React.createElement('span', { className: 'sub' }, '— click a row to filter; grows as you play and as peers share events')
         ),
         React.createElement('div', { style: { padding: '6px 14px 12px' } },
           !rows.length
-            ? React.createElement('div', { className: 'empty' }, 'no pilot activity in range yet — plays populate here; shared multi-pilot history arrives with M4')
+            ? React.createElement('div', { className: 'empty' }, 'no pilot activity in range yet — cumulative history fills as logs are scanned on startup')
             : [
               React.createElement('div', { className: 'lbr', key: 'h', style: { color: 'var(--muted)', fontSize: 11 } },
                 React.createElement('span', null, 'pilot'),
@@ -1138,11 +1146,12 @@ class Dashboard extends React.Component {
 
   renderHome () {
     const c = this.state.counts;
+    const sess = c.session || {};
     const cards = [
       ['live', '📡 Live Feed', 'Watch Game.log events as they happen — missions, objectives, combat and deaths, parsed in real time.',
-        `${c.missions || 0} missions · ${c.deaths || 0} deaths this session`],
-      ['analyze', '📊 Analyze', 'Activity analytics across your backloaded history and the live session — heatmap, outcomes, pilots.',
-        'sliced by month, pilot, mission type'],
+        `${sess.missions || 0} missions · ${sess.deaths || 0} deaths this session`],
+      ['analyze', '📊 Analyze', 'Cumulative activity across every scanned Game.log and logbackup — heatmap, outcomes, pilots.',
+        `${c.missions || 0} missions · ${c.deaths || 0} deaths all-time`],
       ['library', '📸 Library', 'Periodic reduced-size snapshots of your play sessions — browsable history, ready for image analysis.',
         'opt-in · configurable interval · auto-purge'],
       ['missions', '⭐ Missions', 'Post contracts with Bitcoin rewards — submit completion, authorities approve with Schnorr signatures, coins unlock.',
@@ -1159,7 +1168,7 @@ class Dashboard extends React.Component {
     return React.createElement('main', null,
       React.createElement('section', { className: 'panel full' },
         React.createElement('h2', null, '🛰️ Welcome to GoonCitizen ',
-          React.createElement('span', { className: 'sub' }, '— the org relay: read-only Game.log monitoring, shared history, and an officer-validated mission register on the Fabric Network.')
+          React.createElement('span', { className: 'sub' }, '— cumulative verified logs from your installs, live Game.log monitoring, and an officer-validated mission register on the Fabric Network.')
         ),
         React.createElement('div', { className: 'home-grid' },
           cards.map(([tab, title, desc, stat]) => React.createElement('button', {
@@ -1205,7 +1214,10 @@ class Dashboard extends React.Component {
     const sel = this.state.azMonths ? this.state.azMonths.size : (D ? D.availableMonths.length : 0);
     const tot = D ? D.availableMonths.length : 0;
     const np = (this.state.azPlayers && this.state.azPlayers.size) ? this.state.azPlayers.size + ' pilots' : 'all pilots';
-    const scope = D ? (sel + '/' + tot + ' months · ' + np + (D.generatedAt ? ' · history loaded' : '')) : '';
+    const scope = D
+      ? (sel + '/' + tot + ' months · ' + np + (D.cumulative || D.generatedAt ? ' · cumulative' : ''))
+      : '';
+    const sess = c.session || {};
 
     return React.createElement(React.Fragment, null,
       React.createElement(Onboarding, {
@@ -1242,17 +1254,17 @@ class Dashboard extends React.Component {
         React.createElement('div', { className: 'row' },
           React.createElement('h1', null, '🛰️ GoonCitizen'),
           React.createElement('span', { className: 'pill ' + (this.state.online ? 'on' : 'off') }, this.state.status),
-          // Compact stat strip — the full breakdown lives on the Live/Analyze tabs.
+          // Compact stat strip — cumulative by default (Analyze has the full breakdown).
           React.createElement('div', { className: 'counts' },
             React.createElement('span', {
-              title: `accepted this session · ${c.combat} combat objectives · ${this.state.sessions.length} game sessions`
+              title: `all-time ended missions · ${c.completed || 0} complete · ${c.abandoned || 0} abandoned · session now: ${sess.missions || 0}`
             }, 'missions ', React.createElement('b', null, c.missions)),
             React.createElement('span', {
               className: 'k',
-              title: `${c.kills} logged kills · ${c.incaps} downs — deaths use the corpse-recovery signal`
+              title: `all-time deaths (corpse-recovery) · session now: ${sess.deaths || 0} · ${c.kills || 0} logged kills · ${c.incaps || 0} downs`
             }, 'deaths ', React.createElement('b', null, c.deaths)),
             React.createElement('span', {
-              title: `distinct players · ${c.logins} login event${c.logins === 1 ? '' : 's'} · ${c.vehicles} vehicles seen`
+              title: `pilots in cumulative history · ${c.sessions || 0} sessions · session logins: ${sess.logins || 0}`
             }, 'players ', React.createElement('b', null, c.players))
           ),
           React.createElement('div', { className: 'ctrl' },

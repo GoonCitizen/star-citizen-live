@@ -17,11 +17,13 @@
  */
 
 const crypto = require('crypto');
+const path = require('path');
 const EventEmitter = require('events');
 
 const Group = require('../types/Group');
 const { Store } = require('../types/Store');
 const {
+  GROUP_CONTRACT_NAME,
   groupContractDefinition,
   groupContractId,
   normalizeProposedPolicy,
@@ -445,6 +447,36 @@ class GroupManager extends EventEmitter {
     json._contractDefinition = definition;
     this.store.put('groups', group.id, json);
     this._audit(creator, 'group.create', group.id, `${group.name} (${members.length} member(s), ${group.visibility}${parentId ? `, parent=${parentId}` : ''})`);
+
+    // D-016 / ADR-001: provision a local contract Statechain for the Group
+    // (same layout as Hub `sidechains/<contractId>/`).
+    try {
+      const contractSidechain = require('../functions/contractSidechain');
+      const { gooncitizenContractId } = require('../contracts/gooncitizen');
+      const registerPath = (this.store && this.store.path) || this.settings.dir || null;
+      const storeRoot = registerPath
+        ? path.dirname(registerPath)
+        : (process.env.SC_SETTINGS_DIR || path.join(process.cwd(), 'stores', 'gooncitizen'));
+      contractSidechain.ensureLocalContractChain(storeRoot, contractId, {
+        name: GROUP_CONTRACT_NAME,
+        parentContractId: gooncitizenContractId()
+      });
+      contractSidechain.publishContent(storeRoot, contractId, {
+        '@type': 'GoonCitizenGroupState',
+        groupId: id,
+        contractId,
+        meta: definition.meta || {},
+        members: members.slice(),
+        proposedPolicy: definition.proposedPolicy || null
+      }, {
+        name: GROUP_CONTRACT_NAME,
+        parentContractId: gooncitizenContractId()
+      });
+    } catch (err) {
+      this.emit('warning', '[GroupManager] contract sidechain provision failed:',
+        err && err.message ? err.message : err);
+    }
+
     const publicJson = new Group(json).toJSON();
     this.emit('group:created', publicJson, { definition });
     return publicJson;

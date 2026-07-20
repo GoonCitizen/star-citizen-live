@@ -75,10 +75,13 @@ async function relaySettings () {
     port: process.env.PORT || 3041,
     logfile: resolved.file,
     channel: resolved.channel,
-    // Pre-fill from history when the log actually exists (the default
-    // location may not have been written yet).
+    // Pre-fill the Live tab when the log actually exists (the default
+    // location may not have been written yet). Cumulative history is
+    // synced separately into settingsDir/history.json on every start.
     seed: process.env.SC_SEED || (resolved.file && fs.existsSync(resolved.file) ? resolved.file : null),
     settingsDir,
+    historyFile: path.join(settingsDir, 'history.json'),
+    cursorsFile: path.join(settingsDir, 'log-cursors.json'),
     store,
     missions: {
       enable: true,
