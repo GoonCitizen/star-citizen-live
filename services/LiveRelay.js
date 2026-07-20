@@ -4,8 +4,9 @@
  * Star Citizen Live - Fabric-free service (M1 skeleton + M3 parser).
  *
  * Boots with ZERO external dependencies - only Node.js built-ins (http, crypto,
- * events, fs, readline) plus global fetch. No @fabric/hub, no SSH git deps, no
- * 400 MB install. `node services/LiveRelay.js` just works.
+ * events, fs, readline) plus global fetch (identity/group crypto loads lazily).
+ * This file is the SERVICE DEFINITION only — the server entry that boots it
+ * from the environment is `scripts/node.js` (`npm start`).
  *
  * Features: in-memory collections, REST endpoints, live log tailing (read-only,
  * optional) AND offline replay, real Game.log event parsing (functions/parser.js),
@@ -22,7 +23,7 @@ const path = require('path');
 const readline = require('readline');
 
 const { parseLine, shipName, parseSessionInfo, missionType, isNPC, missionFaction } = require('../functions/parser');
-const { resolveLogFile, channelFromPath } = require('../functions/locate');
+const { channelFromPath } = require('../functions/locate');
 const settingsStore = require('../functions/settingsStore');
 
 // Lines worth surfacing in the monitor - combat/death hints AND mission/objective
@@ -1149,40 +1150,3 @@ class StarCitizenService extends EventEmitter {
 }
 
 module.exports = StarCitizenService;
-
-if (require.main === module) {
-  // Hosted server mode (goon.vc): API only, signed ingest, no log tailing.
-  if (process.env.SC_MODE === 'server') {
-    const svc = new StarCitizenService({
-      port: process.env.PORT || 3041,
-      mode: 'server',
-      missions: { enable: true, dir: process.env.SC_REGISTER_DIR || null, officers: (process.env.SC_OFFICERS || '').split(',').map((s) => s.trim()).filter(Boolean) },
-      ingest: { allowedKeys: (process.env.SC_ROSTER || '').split(',').map((s) => s.trim()).filter(Boolean) }
-    });
-    svc.start();
-    return;
-  }
-  // Persisted operator settings (settings.json — editable via the dashboard).
-  // Priority: env > persisted settings > auto-detect.
-  const settingsDir = process.env.SC_SETTINGS_DIR || path.join(__dirname, '..', 'stores');
-  const persisted = settingsStore.loadSettings(settingsDir);
-  // Auto-locate the active log across drives/channels (SC_LOGFILE or SC_CHANNEL override).
-  const resolved = resolveLogFile({
-    explicit: process.env.SC_LOGFILE || persisted.logfile || null,
-    channel: process.env.SC_CHANNEL || persisted.channel || null
-  });
-  if (resolved.file) console.log(`[STAR-CITIZEN] log: ${resolved.channel || '?'} channel (${resolved.source}) -> ${resolved.file}`);
-  else console.log('[STAR-CITIZEN] no Game.log found across drives/channels - set SC_LOGFILE or SC_CHANNEL');
-  const webhook = process.env.DISCORD_WEBHOOK_URL || persisted.discordWebhook || null;
-  const svc = new StarCitizenService({
-    port: process.env.PORT || 3041,
-    logfile: resolved.file,
-    channel: resolved.channel,
-    seed: process.env.SC_SEED || resolved.file,   // pre-fill from history by default
-    settingsDir,
-    missions: { enable: true, dir: process.env.SC_REGISTER_DIR || null, officers: (process.env.SC_OFFICERS || '').split(',').map((s) => s.trim()).filter(Boolean) },
-    discord: { enable: !!webhook, webhook },
-    uplink: { enable: !!process.env.SC_UPLINK_URL, url: process.env.SC_UPLINK_URL || null }
-  });
-  svc.start();
-}
