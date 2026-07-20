@@ -93,10 +93,18 @@ npm run build:installers  # Windows x64 + Debian x64 + macOS
   uplink; remote messages arrive via ingest and an authenticated peer pull
   (`services/ChatManager.js`). The dedicated Chat tab remains; **global chat
   is also always available** via a floating dock on other tabs
-  (`components/GlobalChatDock.js`). Desktop notifications for new chat
-  messages are controlled in Settings (`notifyDesktop`, `notifyChatGlobal`,
-  `notifyChatGroups`, `notifyWhenFocused`) and shown via Electron IPC or the
-  browser Notification API.
+  (`components/GlobalChatDock.js`).   Operators set an optional **nickname**
+  (Settings / Identity; Fabric Store key `nickname`) for chat display; the
+  compressed pubkey remains the actor id and is always shown beside the
+  nickname.   Mission creators can **Broadcast** an open mission to peer hubs
+  (`POST …/missions/:id/broadcast`); receivers get a pending offer with
+  desktop + in-app **Accept** (apply) / **Ignore**, gated by
+  `notifyMissionBroadcasts`. A header **notification bell** opens the
+  dedicated Notifications history page (`#notifications`). Desktop
+  notifications for chat are controlled in Settings (`notifyDesktop`,
+  `notifyChatGlobal`, `notifyChatGroups`, `notifyWhenFocused`) and shown via
+  Electron IPC or the browser Notification API. The Electron window menu bar
+  is hidden (tray + in-app chrome only).
 - **Wallet / missions:** group k-of-n P2WSH multisig (`GET …/groups/:id/wallet`,
   deterministic via sorted member keys), mission rewards escrowed to the
   authorities' multisig, submit-completion (claim) → approve-completion

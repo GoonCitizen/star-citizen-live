@@ -59,6 +59,22 @@ test('settingsStore round-trips allowlisted keys on the Fabric Store and rejects
   fs.rmSync(dir, { recursive: true, force: true });
 });
 
+test('nickname setting sanitizes and round-trips; empty clears', async () => {
+  const dir = tmpDir();
+  const store = new Store({ path: path.join(dir, 'register') });
+  await store.start();
+  assert.ok(settingsStore.ALLOWED_KEYS.includes('nickname'));
+  settingsStore.putSetting(store, 'nickname', '  Neorion  ');
+  assert.strictEqual(settingsStore.loadSettings(store).nickname, 'Neorion');
+  settingsStore.putSetting(store, 'nickname', 'x'.repeat(64));
+  assert.strictEqual(settingsStore.loadSettings(store).nickname.length, settingsStore.NICKNAME_MAX);
+  settingsStore.putSetting(store, 'nickname', '');
+  assert.strictEqual(settingsStore.loadSettings(store).nickname, undefined);
+  assert.strictEqual(settingsStore.sanitizeNickname('  a\nb  '), 'a b');
+  await store.stop();
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
 test('desktop notification settings round-trip on the Fabric Store', async () => {
   const dir = tmpDir();
   const store = new Store({ path: path.join(dir, 'register') });

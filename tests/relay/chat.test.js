@@ -3,6 +3,9 @@
 const test = require('node:test');
 const assert = require('node:assert');
 const http = require('http');
+const fs = require('fs');
+const os = require('os');
+const path = require('path');
 
 const LiveRelay = require('../../services/LiveRelay');
 const ChatManager = require('../../services/ChatManager');
@@ -180,5 +183,38 @@ test('chat converges between a local relay and a hub: push up, pull down', async
   } finally {
     await local.stop();
     await hub.stop();
+  }
+});
+
+test('local chat posts use the operator nickname; author remains the pubkey', async () => {
+  const alice = createIdentity();
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'sc-nick-'));
+  const svc = new LiveRelay({
+    port: 0,
+    missions: { enable: false },
+    settingsDir: dir,
+    peers: []
+  });
+  await svc.start();
+  const port = svc.server.address().port;
+  try {
+    svc.setIdentity(alice);
+    const put = await request(port, 'PUT', '/settings/nickname', { value: '  Neorion  ' });
+    assert.strictEqual(put.status, 200, JSON.stringify(put.body));
+    assert.strictEqual(put.body.settings.nickname, 'Neorion');
+    assert.strictEqual(svc._nickname, 'Neorion');
+
+    const posted = await request(port, 'POST', `${BASE}/chat/messages`, { channel: 'global', body: 'o7 citizens' });
+    assert.strictEqual(posted.status, 200, JSON.stringify(posted.body));
+    assert.strictEqual(posted.body.data.handle, 'Neorion');
+    assert.strictEqual(posted.body.data.author, alice.pubkey);
+
+    await request(port, 'PUT', '/settings/nickname', { value: null });
+    const cleared = await request(port, 'POST', `${BASE}/chat/messages`, { channel: 'global', body: 'anon style' });
+    assert.strictEqual(cleared.body.data.handle, null);
+    assert.strictEqual(cleared.body.data.author, alice.pubkey);
+  } finally {
+    await svc.stop();
+    fs.rmSync(dir, { recursive: true, force: true });
   }
 });

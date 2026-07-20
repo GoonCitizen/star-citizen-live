@@ -65,6 +65,8 @@ class Settings extends React.Component {
       notifyChatGlobal: true,
       notifyChatGroups: true,
       notifyWhenFocused: false,
+      notifyMissionBroadcasts: true,
+      nickname: '',
       peerCount: 0,
       busy: false
     };
@@ -99,6 +101,8 @@ class Settings extends React.Component {
         notifyChatGlobal: s.notifyChatGlobal !== false,
         notifyChatGroups: s.notifyChatGroups !== false,
         notifyWhenFocused: !!s.notifyWhenFocused,
+        notifyMissionBroadcasts: s.notifyMissionBroadcasts !== false,
+        nickname: s.nickname || '',
         peerCount: Array.isArray(peersRes.data) ? peersRes.data.length : 0
       });
     } catch (e) {
@@ -112,6 +116,21 @@ class Settings extends React.Component {
       await this.put(key, value);
     } catch (err) {
       this.setState({ error: err.message });
+    }
+  }
+
+  async saveNickname () {
+    if (!this.state.editable || this.state.busy) return;
+    this.setState({ busy: true, error: null });
+    try {
+      const json = await this.put('nickname', this.state.nickname.trim() || null);
+      const saved = (json.settings && json.settings.nickname) || '';
+      this.setState({ busy: false, nickname: saved });
+      if (typeof this.props.onNicknameChange === 'function') {
+        this.props.onNicknameChange(saved || null);
+      }
+    } catch (err) {
+      this.setState({ busy: false, error: err.message });
     }
   }
 
@@ -274,6 +293,32 @@ class Settings extends React.Component {
             ),
 
             React.createElement('div', { className: 'st-sec' },
+              React.createElement('h3', null, 'Nickname'),
+              React.createElement('div', { className: 'd' },
+                'Display name for chat. Your public key remains the real identity and is always shown next to it.'),
+              React.createElement('div', { className: 'st-row' },
+                React.createElement('input', {
+                  type: 'text',
+                  maxLength: 32,
+                  value: this.state.nickname,
+                  placeholder: 'e.g. Neorion',
+                  disabled: !this.state.editable || this.state.busy,
+                  style: {
+                    flex: 1, background: 'var(--bg)', border: '1px solid var(--line)', color: 'var(--text)',
+                    borderRadius: 7, padding: '8px 10px', fontSize: 13, minWidth: 160
+                  },
+                  onChange: (e) => this.setState({ nickname: e.target.value }),
+                  onKeyDown: (e) => { if (e.key === 'Enter') this.saveNickname(); }
+                }),
+                React.createElement('button', {
+                  className: 'st-btn',
+                  disabled: !this.state.editable || this.state.busy,
+                  onClick: () => this.saveNickname()
+                }, 'Save')
+              )
+            ),
+
+            React.createElement('div', { className: 'st-sec' },
               React.createElement('h3', null, 'Desktop notifications'),
               React.createElement('div', { className: 'd' },
                 'OS notifications for new chat messages. The global chat dock stays available on every tab; the Chat page still covers all channels.'),
@@ -304,7 +349,7 @@ class Settings extends React.Component {
                 }),
                 'Group chat messages'
               ),
-              React.createElement('label', { style: { display: 'flex', gap: 8, alignItems: 'center', fontSize: 13, cursor: 'pointer', marginBottom: 10 } },
+              React.createElement('label', { style: { display: 'flex', gap: 8, alignItems: 'center', fontSize: 13, cursor: 'pointer', marginBottom: 8 } },
                 React.createElement('input', {
                   type: 'checkbox',
                   checked: this.state.notifyWhenFocused,
@@ -312,6 +357,15 @@ class Settings extends React.Component {
                   onChange: (e) => this.putNotify('notifyWhenFocused', e.target.checked)
                 }),
                 'Notify even when this window is focused'
+              ),
+              React.createElement('label', { style: { display: 'flex', gap: 8, alignItems: 'center', fontSize: 13, cursor: 'pointer', marginBottom: 10 } },
+                React.createElement('input', {
+                  type: 'checkbox',
+                  checked: this.state.notifyMissionBroadcasts,
+                  disabled: !this.state.editable || this.state.busy || !this.state.notifyDesktop,
+                  onChange: (e) => this.putNotify('notifyMissionBroadcasts', e.target.checked)
+                }),
+                'Mission broadcasts from peers (Accept / Ignore)'
               ),
               React.createElement('div', { className: 'st-row' },
                 React.createElement('button', {

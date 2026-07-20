@@ -27,8 +27,28 @@ const ALLOWED_KEYS = [
   'notifyDesktop',           // master toggle for desktop/OS notifications (default true)
   'notifyChatGlobal',        // notify on new global chat messages (default true)
   'notifyChatGroups',        // notify on new group chat messages (default true)
-  'notifyWhenFocused'        // also notify while the app window is focused (default false)
+  'notifyWhenFocused',       // also notify while the app window is focused (default false)
+  'nickname',                // operator display name for chat (pubkey remains the actor id)
+  'notifyMissionBroadcasts'  // desktop notify when a peer broadcasts a mission (default true)
 ];
+
+const NICKNAME_MAX = 32;
+
+/**
+ * Normalize a display nickname. Empty clears it. Strips control chars;
+ * does not replace the cryptographic identity (pubkey stays authoritative).
+ * @param {*} value
+ * @returns {string|null}
+ */
+function sanitizeNickname (value) {
+  if (value === undefined || value === null || value === '') return null;
+  const s = String(value)
+    .replace(/[\u0000-\u001f\u007f]+/g, ' ')
+    .trim()
+    .replace(/\s+/g, ' ')
+    .slice(0, NICKNAME_MAX);
+  return s || null;
+}
 
 /**
  * Load persisted settings from the Fabric Store (unknown keys dropped).
@@ -56,12 +76,16 @@ function loadSettings (store) {
 function putSetting (store, key, value) {
   if (!ALLOWED_KEYS.includes(key)) throw new Error(`unknown setting: ${key}`);
   if (!store) throw new Error('settings store required');
-  store.put('settings', key, { id: key, value: value === undefined ? null : value });
+  let next = value === undefined ? null : value;
+  if (key === 'nickname') next = sanitizeNickname(next);
+  store.put('settings', key, { id: key, value: next });
   return loadSettings(store);
 }
 
 module.exports = {
   ALLOWED_KEYS,
+  NICKNAME_MAX,
+  sanitizeNickname,
   loadSettings,
   putSetting
 };

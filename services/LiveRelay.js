@@ -49,7 +49,7 @@ function identityLib () {
 
 // Collections a remote relay may push into via the signed batch endpoint.
 // 'chatmessages' carries Hub-style ChatMessage records (P2P_CHAT_MESSAGE wire events).
-const INGEST_COLLECTIONS = ['activities', 'players', 'vehicles', 'kills', 'deaths', 'incaps', 'missionlog', 'chatmessages'];
+const INGEST_COLLECTIONS = ['activities', 'players', 'vehicles', 'kills', 'deaths', 'incaps', 'missionlog', 'chatmessages', 'missionbroadcasts'];
 
 // The org's central relay — seeded as the default peer on first boot so log
 // aggregation and chat work out of the box (removable in Peers).
@@ -76,7 +76,7 @@ class StarCitizenService extends EventEmitter {
     // Signed ingest is mandatory in server mode; opt-in locally.
     this.settings.ingest = Object.assign({ requireSigned: this.settings.mode === 'server' }, settings.ingest || {});
 
-    this.state = { status: 'STOPPED', activities: {}, players: {}, logins: {}, vehicles: {}, kills: {}, incaps: {}, deaths: {}, missionlog: {}, notifications: {}, logs: {}, startedAt: null };
+    this.state = { status: 'STOPPED', activities: {}, players: {}, logins: {}, vehicles: {}, kills: {}, incaps: {}, deaths: {}, missionlog: {}, notifications: {}, missionbroadcasts: {}, logs: {}, startedAt: null };
     this.state.missionGroups = {};  // missions grouped by MissionId (built from the log)
     this.state.objectives = {};     // objective details keyed by ObjectiveId
     this.state.combatlog = {};      // combat progress inferred from mission objectives
@@ -86,6 +86,7 @@ class StarCitizenService extends EventEmitter {
     this.session = {};  // build + hardware of the current game session
     this.sessions = []; // history of game sessions (one per launch detected)
     this._sessionHandle = null; // the session's player handle (for attributing incaps)
+    this._nickname = null; // operator display name for chat (from settings.nickname)
     this._seq = 0;
     this._pos = 0;      // byte offset consumed by the live poller
     this._partial = ''; // trailing incomplete line between polls
@@ -293,6 +294,8 @@ class StarCitizenService extends EventEmitter {
     if (persisted.uplinkIntervalMs) this.settings.uplink.intervalMs = persisted.uplinkIntervalMs;
     // Sharing parsed log events with peer hubs (org aggregation): default ON.
     this._shareLogsGlobal = persisted.shareLogsGlobal !== false;
+    this._nickname = persisted.nickname || null;
+    this._notifyMissionBroadcasts = persisted.notifyMissionBroadcasts !== false;
     this._applySnapshotSettings(persisted);
   }
 
@@ -544,6 +547,9 @@ class StarCitizenService extends EventEmitter {
     if (collection === 'chatmessages') {
       return this.chatManager.ingest(source, data);
     }
+    if (collection === 'missionbroadcasts') {
+      return this._ingestMissionBroadcast(source, data);
+    }
     const { canonicalStringify } = identityLib();
     const id = idFor(canonicalStringify({ source, collection, data }));
     const existed = !!this.state[collection][id];
@@ -552,6 +558,125 @@ class StarCitizenService extends EventEmitter {
       if (collection === 'kills') this.emit('kill', this.state[collection][id]);
     }
     return { id, created: !existed };
+  }
+
+  /**
+   * Receive a peer mission broadcast: upsert the mission register entry and
+   * keep a pending offer for the UI (desktop notify + Accept / Ignore).
+   * Idempotent on (source, missionId, broadcastAt).
+   */
+  _ingestMissionBroadcast (source, data = {}) {
+    if (!this.missionManager) {
+      throw Object.assign(new Error('Mission system not available'), { code: 'BAD_COLLECTION' });
+    }
+    const mission = data.mission || data;
+    if (!mission || !mission.id) {
+      throw Object.assign(new Error('missionbroadcast requires mission.id'), { code: 'BAD_EVENT' });
+    }
+    const broadcastAt = data.broadcastAt || mission.broadcastAt || new Date().toISOString();
+    const { canonicalStringify } = identityLib();
+    const id = data.id || idFor(canonicalStringify({ source, missionId: mission.id, broadcastAt }));
+    const store = this.registerStore;
+    if (store && store.get('missionbroadcasts', id)) {
+      return { id, created: false };
+    }
+
+    const ingested = this.missionManager.ingestRemote(Object.assign({}, mission, { source }));
+    const record = {
+      '@type': 'MissionBroadcast',
+      id,
+      missionId: mission.id,
+      mission: ingested.mission,
+      source: String(source),
+      handle: data.handle || null,
+      broadcastAt,
+      receivedAt: new Date().toISOString(),
+      status: 'pending'
+    };
+    // Don't surface offers we originated (same node identity or creator).
+    const me = this._identity && this._identity.pubkey;
+    if (me && (source === me || ingested.mission.createdBy === me)) {
+      record.status = 'self';
+    }
+    if (store) store.put('missionbroadcasts', id, record);
+    else {
+      this.state.missionbroadcasts = this.state.missionbroadcasts || {};
+      this.state.missionbroadcasts[id] = record;
+    }
+    if (record.status === 'pending') this.emit('mission:broadcast', record);
+    return { id, created: true };
+  }
+
+  _listMissionBroadcasts ({ pendingOnly = false } = {}) {
+    const store = this.registerStore;
+    const all = store
+      ? store.all('missionbroadcasts')
+      : Object.values(this.state.missionbroadcasts || {});
+    const rows = all.slice().sort((a, b) => String(b.broadcastAt || '').localeCompare(String(a.broadcastAt || '')));
+    return pendingOnly ? rows.filter((r) => r.status === 'pending') : rows;
+  }
+
+  _getMissionBroadcast (id) {
+    if (this.registerStore) return this.registerStore.get('missionbroadcasts', id);
+    return (this.state.missionbroadcasts || {})[id] || null;
+  }
+
+  _putMissionBroadcast (record) {
+    if (this.registerStore) this.registerStore.put('missionbroadcasts', record.id, record);
+    else {
+      this.state.missionbroadcasts = this.state.missionbroadcasts || {};
+      this.state.missionbroadcasts[record.id] = record;
+    }
+    return record;
+  }
+
+  /**
+   * Queue a mission offer to every enabled peer and flush immediately.
+   * Creator-only; open missions only.
+   */
+  async broadcastMission (missionId, actor) {
+    if (!this.missionManager) throw Object.assign(new Error('Mission system not available'), { code: 'UNAVAILABLE' });
+    const m = this.missionManager.getMission(missionId);
+    if (!m) throw Object.assign(new Error('Mission not found'), { code: 'NOT_FOUND' });
+    if (m.status !== 'open') throw new Error(`mission is ${m.status}, not open`);
+    if (!actor || m.createdBy !== actor) {
+      const err = new Error('forbidden: only the creator can broadcast this mission');
+      err.code = 'FORBIDDEN';
+      throw err;
+    }
+    if (!this._identity || !this._uplinkTargets().length) {
+      throw new Error('Unlock your identity and configure at least one peer to broadcast');
+    }
+    const broadcastAt = new Date().toISOString();
+    const payload = {
+      '@type': 'MissionBroadcast',
+      missionId: m.id,
+      broadcastAt,
+      handle: this._nickname || this._sessionHandle || null,
+      mission: {
+        id: m.id,
+        title: m.title,
+        type: m.type,
+        description: m.description,
+        reward: m.reward,
+        groupId: m.groupId,
+        authorities: m.authorities,
+        createdBy: m.createdBy,
+        createdAt: m.createdAt,
+        status: m.status,
+        outOfGame: m.outOfGame,
+        deadline: m.deadline,
+        location: m.location
+      }
+    };
+    this._uplinkQueue.push({ collection: 'missionbroadcasts', data: payload });
+    const results = await this._flushUplink();
+    return {
+      missionId: m.id,
+      broadcastAt,
+      peers: this._uplinkTargets().length,
+      result: results
+    };
   }
 
   async _handle (req, res) {
@@ -676,6 +801,8 @@ class StarCitizenService extends EventEmitter {
             if (sMatch[1] === 'peers') { this.peers = (updated.peers || []).map((p) => Object.assign({ enabled: true }, p)); this._refreshUplink(); requiresRestart = false; }
             if (sMatch[1] === 'uplinkIntervalMs') { this.settings.uplink.intervalMs = updated.uplinkIntervalMs || 5000; requiresRestart = false; }
             if (sMatch[1] === 'shareLogsGlobal') { this._shareLogsGlobal = updated.shareLogsGlobal !== false; requiresRestart = false; }
+            if (sMatch[1] === 'nickname') { this._nickname = updated.nickname || null; requiresRestart = false; }
+            if (sMatch[1] === 'notifyMissionBroadcasts') { this._notifyMissionBroadcasts = updated.notifyMissionBroadcasts !== false; requiresRestart = false; }
             if (sMatch[1].startsWith('snapshot')) { this._applySnapshotSettings(updated); requiresRestart = false; }
             if (sMatch[1].startsWith('notify')) { requiresRestart = false; }
             return send(200, { success: true, settings: updated, requiresRestart });
@@ -822,7 +949,9 @@ class StarCitizenService extends EventEmitter {
               record = cm.post({
                 channel: d.channel,
                 body: d.body,
-                handle: d.handle || this._sessionHandle || null,
+                // Prefer an explicit handle, then the operator nickname, then
+                // the in-game session login — pubkey remains the author id.
+                handle: d.handle || this._nickname || this._sessionHandle || null,
                 author
               });
               // Ride the signed uplink so the org (goon.vc) converges; the
@@ -1033,6 +1162,52 @@ class StarCitizenService extends EventEmitter {
       if ((mr = pathname.match(new RegExp(`^${base}/missions/([^/]+)/apply$`))) && req.method === 'POST') {
         if (!requireAuth()) return;
         const d = await body(); return run(() => reg.applyToMission(Object.assign({}, d, { missionId: mr[1], applicantId: this._actor(req, d.applicantId) })), 'Application');
+      }
+      if ((mr = pathname.match(new RegExp(`^${base}/missions/([^/]+)/broadcast$`))) && req.method === 'POST') {
+        if (!requireAuth()) return;
+        const actor = this._actor(req, null) || (this._identity && this._identity.pubkey) || null;
+        try {
+          const data = await this.broadcastMission(mr[1], actor);
+          return send(200, { type: 'MissionBroadcast', data });
+        } catch (e) {
+          return send(e.code === 'FORBIDDEN' ? 403 : e.code === 'NOT_FOUND' ? 404 : 400, { error: e.message });
+        }
+      }
+      if (pathname === `${base}/missionbroadcasts` && req.method === 'GET') {
+        const pendingOnly = url.searchParams.get('pending') !== '0';
+        const persisted = settingsStore.loadSettings(this.registerStore);
+        const notifyDesktop = persisted.notifyDesktop !== false;
+        return send(200, {
+          type: 'Collection',
+          data: this._listMissionBroadcasts({ pendingOnly }),
+          notify: notifyDesktop && this._notifyMissionBroadcasts !== false
+        });
+      }
+      if ((mr = pathname.match(new RegExp(`^${base}/missionbroadcasts/([^/]+)/(accept|ignore)$`))) && req.method === 'POST') {
+        if (!requireAuth()) return;
+        const rec = this._getMissionBroadcast(mr[1]);
+        if (!rec) return send(404, { error: 'Broadcast not found' });
+        if (rec.status !== 'pending') return send(400, { error: `broadcast already ${rec.status}` });
+        const actor = this._actor(req, null) || (this._identity && this._identity.pubkey) || null;
+        if (mr[2] === 'ignore') {
+          rec.status = 'ignored';
+          rec.resolvedAt = new Date().toISOString();
+          rec.resolvedBy = actor;
+          this._putMissionBroadcast(rec);
+          return send(200, { type: 'MissionBroadcast', data: rec });
+        }
+        if (!actor) return send(401, { error: 'Unlock your identity to accept' });
+        try {
+          const app = await reg.applyToMission({ missionId: rec.missionId, applicantId: actor, message: 'via broadcast' });
+          rec.status = 'accepted';
+          rec.resolvedAt = new Date().toISOString();
+          rec.resolvedBy = actor;
+          rec.applicationId = app.id;
+          this._putMissionBroadcast(rec);
+          return send(200, { type: 'MissionBroadcast', data: rec, application: app });
+        } catch (e) {
+          return send(/not found/i.test(e.message) ? 404 : 400, { error: e.message });
+        }
       }
       if ((mr = pathname.match(new RegExp(`^${base}/missions/([^/]+)/claim$`))) && req.method === 'POST') {
         if (!requireAuth()) return;

@@ -1,0 +1,247 @@
+'use strict';
+
+/**
+ * Pending peer mission broadcasts — in-app Accept / Ignore plus desktop
+ * notifications (Electron actions on macOS when available).
+ */
+
+const React = require('react');
+const { showDesktopNotification } = require('../functions/desktopNotify');
+
+const BASE = '/services/star-citizen';
+const LS_SEEN = 'gc.missionBroadcast.seen';
+
+const CSS = `
+  .mbb-stack{position:fixed;left:16px;bottom:16px;z-index:32;display:flex;flex-direction:column;gap:10px;
+    width:min(400px,calc(100vw - 28px));pointer-events:none}
+  .mbb-card{pointer-events:auto;background:var(--panel);border:1px solid var(--line);border-radius:12px;
+    box-shadow:0 12px 40px rgba(0,0,0,.45);padding:12px 14px;display:grid;gap:8px}
+  .mbb-card h4{margin:0;font-size:13px;font-weight:650}
+  .mbb-card .sub{color:var(--muted);font-size:12px;line-height:1.45}
+  .mbb-card .meta{font-family:'Cascadia Code',Consolas,monospace;font-size:10.5px;color:var(--muted);word-break:break-all}
+  .mbb-row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+  .mbb-btn{background:var(--accent);border:none;color:#fff;border-radius:7px;padding:7px 14px;
+    font-size:12.5px;font-weight:600;cursor:pointer}
+  .mbb-btn:disabled{opacity:.45;cursor:default}
+  .mbb-btn.ghost{background:var(--panel2);border:1px solid var(--line);color:var(--text)}
+  .mbb-btn.good{background:var(--good)}
+  .mbb-err{background:rgba(248,81,73,.12);color:var(--kill);border-radius:7px;padding:6px 9px;font-size:12px}
+`;
+
+function loadSeen () {
+  try {
+    return new Set(JSON.parse(localStorage.getItem(LS_SEEN) || '[]'));
+  } catch (_) {
+    return new Set();
+  }
+}
+
+function saveSeen (set) {
+  try { localStorage.setItem(LS_SEEN, JSON.stringify(Array.from(set).slice(-100))); } catch (_) { /* ignore */ }
+}
+
+function shortKey (pk) {
+  return pk ? pk.slice(0, 8) + '…' : '?';
+}
+
+function identityBridge () {
+  return (typeof window !== 'undefined' && window.electronAPI && window.electronAPI.identity) || null;
+}
+
+class MissionBroadcastBanner extends React.Component {
+  constructor (props) {
+    super(props);
+    this.state = { pending: [], busyId: null, error: null, token: null };
+    this._timer = null;
+    this._seen = loadSeen();
+    this._bootstrapped = false;
+    this._unsubAction = null;
+  }
+
+  componentDidMount () {
+    this.ensureSession().then(() => this.tick());
+    this._timer = setInterval(() => this.tick(), 4000);
+    if (window.electronAPI && typeof window.electronAPI.onNotifyAction === 'function') {
+      this._unsubAction = window.electronAPI.onNotifyAction((data) => {
+        if (!data || data.kind !== 'missionbroadcast') return;
+        if (data.action === 'accept' || data.index === 0) this.accept(data.id);
+        else if (data.action === 'ignore' || data.index === 1) this.ignore(data.id);
+      });
+    }
+    if (window.electronAPI && typeof window.electronAPI.onNotifyClick === 'function') {
+      this._unsubClick = window.electronAPI.onNotifyClick((data) => {
+        if (data && data.kind === 'missionbroadcast' && typeof window !== 'undefined') {
+          window.location.hash = 'notifications';
+        }
+      });
+    }
+  }
+
+  componentWillUnmount () {
+    if (this._timer) clearInterval(this._timer);
+    if (this._unsubAction) this._unsubAction();
+    if (this._unsubClick) this._unsubClick();
+  }
+
+  headers () {
+    const h = { 'Content-Type': 'application/json' };
+    if (this.state.token) h.Authorization = `Bearer ${this.state.token}`;
+    return h;
+  }
+
+  async ensureSession () {
+    const b = identityBridge();
+    if (!b) return;
+    try {
+      const info = await b.get();
+      if (!info || !info.unlocked || !b.signEnvelope) return;
+      const envelope = await b.signEnvelope({ intent: 'login', ts: new Date().toISOString() });
+      if (!envelope || envelope.error) return;
+      const res = await fetch(`${BASE}/auth`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(envelope)
+      });
+      if (!res.ok) return;
+      const json = await res.json();
+      this.setState({ token: json.data.token });
+    } catch (_) { /* locked */ }
+  }
+
+  reportPending (n) {
+    if (typeof this.props.onPendingCount === 'function') this.props.onPendingCount(n);
+  }
+
+  async tick () {
+    try {
+      const res = await fetch(`${BASE}/missionbroadcasts?pending=1`).then((r) => r.json());
+      const pending = res.data || [];
+      const notifyEnabled = res.notify !== false;
+      this.setState({ pending });
+      this.reportPending(pending.length);
+
+      if (!this._bootstrapped) {
+        for (const b of pending) this._seen.add(b.id);
+        saveSeen(this._seen);
+        this._bootstrapped = true;
+        return;
+      }
+
+      if (!notifyEnabled) {
+        for (const b of pending) this._seen.add(b.id);
+        saveSeen(this._seen);
+        return;
+      }
+
+      for (const b of pending) {
+        if (this._seen.has(b.id)) continue;
+        this._seen.add(b.id);
+        const m = b.mission || {};
+        const who = b.handle || shortKey(b.source);
+        const reward = m.reward ? ` · ${Number(m.reward).toLocaleString()} sats` : '';
+        await showDesktopNotification({
+          id: b.id,
+          kind: 'missionbroadcast',
+          title: 'Mission broadcast',
+          body: `${who}: ${m.title || 'Untitled'}${reward}`,
+          actions: [
+            { id: 'accept', text: 'Accept' },
+            { id: 'ignore', text: 'Ignore' }
+          ],
+          onClick: () => {
+            if (typeof window !== 'undefined') window.location.hash = 'notifications';
+          }
+        });
+      }
+      saveSeen(this._seen);
+    } catch (_) { /* offline */ }
+  }
+
+  async accept (id) {
+    if (this.state.busyId) return;
+    this.setState({ busyId: id, error: null });
+    try {
+      if (!this.state.token) await this.ensureSession();
+      const res = await fetch(`${BASE}/missionbroadcasts/${encodeURIComponent(id)}/accept`, {
+        method: 'POST',
+        headers: this.headers(),
+        body: '{}'
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error || `HTTP ${res.status}`);
+      this.setState({ busyId: null });
+      if (typeof window !== 'undefined') window.location.hash = 'missions';
+      if (typeof this.props.onResolved === 'function') this.props.onResolved('accepted', json.data);
+      await this.tick();
+    } catch (e) {
+      this.setState({ busyId: null, error: e.message });
+    }
+  }
+
+  async ignore (id) {
+    if (this.state.busyId) return;
+    this.setState({ busyId: id, error: null });
+    try {
+      if (!this.state.token) await this.ensureSession();
+      const res = await fetch(`${BASE}/missionbroadcasts/${encodeURIComponent(id)}/ignore`, {
+        method: 'POST',
+        headers: this.headers(),
+        body: '{}'
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error || `HTTP ${res.status}`);
+      this.setState({ busyId: null });
+      if (typeof this.props.onResolved === 'function') this.props.onResolved('ignored', json.data);
+      await this.tick();
+    } catch (e) {
+      this.setState({ busyId: null, error: e.message });
+    }
+  }
+
+  render () {
+    if (this.props.hide) return null;
+    const cards = this.state.pending.slice(0, 3);
+    if (!cards.length && !this.state.error) return null;
+
+    return React.createElement('div', { className: 'mbb-stack' },
+      this.state.error ? React.createElement('div', { className: 'mbb-card' },
+        React.createElement('div', { className: 'mbb-err' }, this.state.error)
+      ) : null,
+      cards.map((b) => {
+        const m = b.mission || {};
+        return React.createElement('div', { className: 'mbb-card', key: b.id },
+          React.createElement('h4', null, '📡 Mission offer'),
+          React.createElement('div', { className: 'sub' },
+            React.createElement('b', null, m.title || 'Untitled'),
+            m.reward ? ` · ${Number(m.reward).toLocaleString()} sats` : '',
+            m.description ? React.createElement('div', null, String(m.description).slice(0, 140)) : null
+          ),
+          React.createElement('div', { className: 'meta' },
+            (b.handle || shortKey(b.source)) + ' · ' + shortKey(b.source) +
+            (m.createdBy && m.createdBy !== b.source ? ' · creator ' + shortKey(m.createdBy) : '')
+          ),
+          React.createElement('div', { className: 'mbb-row' },
+            React.createElement('button', {
+              className: 'mbb-btn good',
+              disabled: this.state.busyId === b.id,
+              onClick: () => this.accept(b.id)
+            }, this.state.busyId === b.id ? '…' : 'Accept'),
+            React.createElement('button', {
+              className: 'mbb-btn ghost',
+              disabled: this.state.busyId === b.id,
+              onClick: () => this.ignore(b.id)
+            }, 'Ignore'),
+            React.createElement('button', {
+              className: 'mbb-btn ghost',
+              onClick: () => { window.location.hash = 'missions'; }
+            }, 'View')
+          )
+        );
+      })
+    );
+  }
+}
+
+MissionBroadcastBanner.CSS = CSS;
+
+module.exports = MissionBroadcastBanner;

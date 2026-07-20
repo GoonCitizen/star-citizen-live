@@ -4,19 +4,39 @@
  * Cross-runtime desktop notifications for the dashboard.
  * Prefers Electron IPC (`window.electronAPI.notify`); falls back to the
  * browser Notification API when running in a plain browser tab.
+ *
+ * Electron may support action buttons (Accept / Ignore) — primarily on
+ * macOS. Callers should still offer in-app Accept / Ignore controls.
  */
 
 /**
- * @param {{ title: string, body?: string, onClick?: Function }} opts
+ * @param {{
+ *   title: string,
+ *   body?: string,
+ *   id?: string,
+ *   kind?: string,
+ *   actions?: Array<{ id?: string, text: string }>,
+ *   onClick?: Function
+ * }} opts
  * @returns {Promise<boolean>} true when a notification was shown
  */
 async function showDesktopNotification (opts = {}) {
   const title = String(opts.title || 'GoonCitizen');
   const body = String(opts.body || '');
+  const actions = Array.isArray(opts.actions) ? opts.actions : [];
 
   if (typeof window !== 'undefined' && window.electronAPI && typeof window.electronAPI.notify === 'function') {
     try {
-      const res = await window.electronAPI.notify({ title, body });
+      const res = await window.electronAPI.notify({
+        title,
+        body,
+        id: opts.id || null,
+        kind: opts.kind || null,
+        actions: actions.map((a) => ({
+          id: a.id || a.text,
+          text: String(a.text || a.id || 'OK')
+        }))
+      });
       return !!(res && res.ok !== false);
     } catch (_) {
       // fall through to browser API

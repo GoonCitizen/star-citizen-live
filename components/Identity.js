@@ -91,16 +91,47 @@ class Identity extends React.Component {
       importReplace: false,
       // forget
       confirmForget: false,
-      forgetText: ''
+      forgetText: '',
+      // display nickname (persisted in Fabric Store settings; not the key)
+      nickname: '',
+      nicknameBusy: false
     };
     this._unsub = null;
   }
 
   componentDidMount () {
     this.load();
+    this.loadNickname();
     const b = bridge();
     if (b && b.onChanged) {
       this._unsub = b.onChanged((summary) => this.setState({ info: summary, revealed: null }));
+    }
+  }
+
+  async loadNickname () {
+    try {
+      const res = await fetch('/settings').then((r) => r.json());
+      this.setState({ nickname: (res.settings && res.settings.nickname) || '' });
+    } catch (_) { /* settings unavailable */ }
+  }
+
+  async saveNickname () {
+    if (this.state.nicknameBusy) return;
+    this.setState({ nicknameBusy: true, error: null, notice: null });
+    try {
+      const value = this.state.nickname.trim() || null;
+      const res = await fetch('/settings/nickname', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ value })
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error || `HTTP ${res.status}`);
+      const saved = (json.settings && json.settings.nickname) || '';
+      this.setState({ nickname: saved, nicknameBusy: false, notice: saved ? 'Nickname saved.' : 'Nickname cleared.' });
+      if (typeof this.props.onNicknameChange === 'function') this.props.onNicknameChange(saved || null);
+    } catch (e) {
+      this.setState({ nicknameBusy: false, error: e.message });
     }
   }
 
@@ -217,6 +248,34 @@ class Identity extends React.Component {
         info.unlocked
           ? React.createElement('button', { className: 'id-btn ghost', onClick: () => this.lock() }, '🔒 Lock now')
           : null
+      ),
+      React.createElement('div', { style: { marginTop: 14 } },
+        React.createElement('h3', { style: { margin: '0 0 4px', fontSize: 13 } }, 'Nickname'),
+        React.createElement('div', { className: 'd', style: { marginBottom: 8 } },
+          'Optional display name for chat and the dashboard. Your pubkey stays the real identity — others always see it next to your nickname.'),
+        React.createElement('div', { className: 'id-row' },
+          React.createElement('input', {
+            className: 'id-input',
+            type: 'text',
+            maxLength: 32,
+            placeholder: 'e.g. Neorion',
+            value: this.state.nickname,
+            onChange: (e) => this.setState({ nickname: e.target.value }),
+            onKeyDown: (e) => { if (e.key === 'Enter') this.saveNickname(); }
+          }),
+          React.createElement('button', {
+            className: 'id-btn',
+            disabled: this.state.nicknameBusy,
+            onClick: () => this.saveNickname()
+          }, this.state.nicknameBusy ? '…' : 'Save'),
+          this.state.nickname
+            ? React.createElement('button', {
+              className: 'id-btn ghost',
+              disabled: this.state.nicknameBusy,
+              onClick: () => this.setState({ nickname: '' }, () => this.saveNickname())
+            }, 'Clear')
+            : null
+        )
       ),
       !info.unlocked
         ? React.createElement('div', { className: 'id-row' },

@@ -32,6 +32,16 @@ contextBridge.exposeInMainWorld('electronAPI', {
     }
   },
   notify: (payload) => ipcRenderer.invoke('notify:show', payload || {}),
+  onNotifyAction: (handler) => {
+    const listener = (_e, data) => handler(data);
+    ipcRenderer.on('notify:action', listener);
+    return () => ipcRenderer.removeListener('notify:action', listener);
+  },
+  onNotifyClick: (handler) => {
+    const listener = (_e, data) => handler(data);
+    ipcRenderer.on('notify:click', listener);
+    return () => ipcRenderer.removeListener('notify:click', listener);
+  },
   platform: process.platform,
   versions: {
     node: process.versions.node,

@@ -11,6 +11,8 @@ const Onboarding = require('./Onboarding');
 const Identity = require('./Identity');
 const Chat = require('./Chat');
 const GlobalChatDock = require('./GlobalChatDock');
+const MissionBroadcastBanner = require('./MissionBroadcastBanner');
+const Notifications = require('./Notifications');
 const Groups = require('./Groups');
 const Library = require('./Library');
 const Missions = require('./Missions');
@@ -30,7 +32,8 @@ const TABS = [
   ['groups', 'Groups'],
   ['peers', 'Peers']
 ];
-const TAB_KEYS = TABS.map(([k]) => k);
+// Notifications is opened from the header bell (not a primary feature tab).
+const TAB_KEYS = TABS.map(([k]) => k).concat(['notifications']);
 
 const TITLE = 'GoonCitizen — Monitor';
 
@@ -130,6 +133,12 @@ const CSS = `
   .home-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(250px,1fr));gap:12px;padding:14px}
   .tab-badge{display:inline-block;background:var(--accent);color:#fff;border-radius:999px;font-size:10.5px;
     font-weight:700;min-width:16px;padding:0 5px;margin-left:6px;line-height:16px;vertical-align:text-top}
+  .bell{position:relative;background:var(--panel2);border:1px solid var(--line);color:var(--text);
+    border-radius:7px;padding:5px 11px;font-size:14px;cursor:pointer;line-height:1}
+  .bell:hover{border-color:var(--accent)}
+  .bell.on{border-color:var(--accent);color:var(--accent)}
+  .bell .dot{position:absolute;top:-4px;right:-4px;background:var(--accent);color:#fff;border-radius:999px;
+    font-size:10px;font-weight:700;min-width:16px;padding:0 4px;line-height:16px;text-align:center}
   .home-card{background:var(--panel2);border:1px solid var(--line);border-radius:10px;padding:16px;
     text-align:left;cursor:pointer;color:var(--text);display:grid;gap:8px;align-content:start}
   .home-card:hover{border-color:var(--accent)}
@@ -257,6 +266,8 @@ class Dashboard extends React.Component {
       showSettings: false,
       showIdentity: false,
       chatUnread: 0,
+      notifyPending: 0,
+      nickname: null,
       // Game.log visibility + rules + re-parse
       loginfo: null,
       reparse: null,
@@ -273,6 +284,7 @@ class Dashboard extends React.Component {
   componentDidMount () {
     this.poll();
     this.fetchRules();
+    this.loadNickname();
     this._timer = setInterval(() => {
       if (this.state.auto) this.poll();
     }, 2000);
@@ -300,6 +312,13 @@ class Dashboard extends React.Component {
     if (this._identityUnsub) this._identityUnsub();
     if (this._timer) clearInterval(this._timer);
     Object.values(this._copiedTimers).forEach(clearTimeout);
+  }
+
+  async loadNickname () {
+    try {
+      const res = await fetch('/settings').then((r) => r.json());
+      this.setState({ nickname: (res.settings && res.settings.nickname) || null });
+    } catch (_) { /* ignore */ }
   }
 
   async poll () {
@@ -1135,9 +1154,17 @@ class Dashboard extends React.Component {
       case 'missions': return React.createElement(Missions, { identityPubkey: this.state.identityPubkey });
       case 'wallet': return React.createElement(Wallet, null);
       case 'library': return React.createElement(Library, null);
-      case 'chat': return React.createElement(Chat, { identityPubkey: this.state.identityPubkey });
+      case 'chat': return React.createElement(Chat, {
+        identityPubkey: this.state.identityPubkey,
+        nickname: this.state.nickname
+      });
       case 'groups': return React.createElement(Groups, { identityPubkey: this.state.identityPubkey });
       case 'peers': return React.createElement(Peers, null);
+      case 'notifications': return React.createElement(Notifications, {
+        onPendingCount: (n) => {
+          if (n !== this.state.notifyPending) this.setState({ notifyPending: n });
+        }
+      });
       default: return this.renderHome();
     }
   }
@@ -1155,12 +1182,16 @@ class Dashboard extends React.Component {
         onReady: (pubkey) => this.setState({ identityPubkey: pubkey, identityExists: !!pubkey, identityLocked: false })
       }),
       this.state.showSettings
-        ? React.createElement(Settings, { onClose: () => this.setState({ showSettings: false }) })
+        ? React.createElement(Settings, {
+          onClose: () => this.setState({ showSettings: false }),
+          onNicknameChange: (n) => this.setState({ nickname: n || null })
+        })
         : null,
       this.state.showIdentity
         ? React.createElement(Identity, {
           onClose: () => this.setState({ showIdentity: false }),
-          onForget: () => this.setState({ identityPubkey: null, identityExists: false, identityLocked: false })
+          onForget: () => this.setState({ identityPubkey: null, identityExists: false, identityLocked: false }),
+          onNicknameChange: (n) => this.setState({ nickname: n || null })
         })
         : null,
       React.createElement('header', null,
@@ -1171,11 +1202,15 @@ class Dashboard extends React.Component {
             ? React.createElement('button', {
               className: 'pill idchip ' + (this.state.identityPubkey ? 'on' : 'off'),
               title: this.state.identityPubkey
-                ? 'signing unlocked — click to manage identity (lock, backup, reveal seed)'
+                ? ((this.state.nickname ? this.state.nickname + ' · ' : '') +
+                  this.state.identityPubkey +
+                  ' — click to manage identity (nickname, lock, backup)')
                 : (this.state.identityExists ? 'identity locked — click to unlock or manage' : 'identity — click to manage'),
               onClick: () => this.setState({ showIdentity: true })
             }, this.state.identityPubkey
-              ? '🔑 ' + this.state.identityPubkey.slice(0, 8) + '…'
+              ? ('🔑 ' + (this.state.nickname
+                ? (this.state.nickname + ' · ' + this.state.identityPubkey.slice(0, 8) + '…')
+                : (this.state.identityPubkey.slice(0, 8) + '…')))
               : (this.state.identityExists ? '🔒 locked' : '🔑 identity'))
             : null,
           // Compact stat strip — the full breakdown lives on the Live/Analyze tabs.
@@ -1204,6 +1239,20 @@ class Dashboard extends React.Component {
                 onChange: (e) => this.setState({ auto: e.target.checked })
               }),
               ' auto-refresh'
+            ),
+            React.createElement('button', {
+              type: 'button',
+              className: 'bell' + (this.state.tab === 'notifications' ? ' on' : ''),
+              title: this.state.notifyPending
+                ? `${this.state.notifyPending} pending notification${this.state.notifyPending === 1 ? '' : 's'} — open history`
+                : 'Notifications — mission broadcasts and inbox history',
+              onClick: () => this.showTab('notifications')
+            },
+            '🔔',
+            this.state.notifyPending
+              ? React.createElement('span', { className: 'dot' },
+                this.state.notifyPending > 99 ? '99+' : this.state.notifyPending)
+              : null
             ),
             React.createElement('button', {
               type: 'button',
@@ -1252,9 +1301,19 @@ class Dashboard extends React.Component {
       this.renderTab(),
       React.createElement(GlobalChatDock, {
         identityPubkey: this.state.identityPubkey,
+        nickname: this.state.nickname,
         hide: this.state.tab === 'chat',
         onUnread: (n) => {
           if (n !== this.state.chatUnread) this.setState({ chatUnread: n });
+        }
+      }),
+      React.createElement(MissionBroadcastBanner, {
+        hide: this.state.tab === 'notifications',
+        onResolved: () => {
+          if (this.state.tab === 'missions') this.showTab('missions');
+        },
+        onPendingCount: (n) => {
+          if (n !== this.state.notifyPending) this.setState({ notifyPending: n });
         }
       })
     );

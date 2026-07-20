@@ -34,7 +34,7 @@ const CSS = `
   .chat-msg .m{display:flex;gap:8px;align-items:baseline}
   .chat-msg .who{font-weight:600;font-size:12.5px}
   .chat-msg .who.me{color:var(--accent)}
-  .chat-msg .key{color:var(--muted);font-size:10.5px;font-family:'Cascadia Code',Consolas,monospace}
+  .chat-msg .key{color:var(--muted);font-size:10.5px;font-family:'Cascadia Code',Consolas,monospace;cursor:help}
   .chat-msg .t{color:var(--muted);font-size:10.5px;font-variant-numeric:tabular-nums}
   .chat-msg .b{font-size:13.5px;line-height:1.5;word-break:break-word;white-space:pre-wrap}
   .chat-empty{color:var(--muted);font-style:italic;text-align:center;margin:auto;font-size:13px;line-height:1.7}
@@ -155,6 +155,7 @@ class Chat extends React.Component {
               React.createElement('div', { className: 'm' },
                 React.createElement('span', { className: 'who' + (me && m.author === me ? ' me' : '') },
                   m.handle || shortKey(m.author)),
+                // Pubkey always visible — nickname is a label, never a substitute for the actor id.
                 React.createElement('span', { className: 'key', title: m.author }, shortKey(m.author)),
                 React.createElement('span', { className: 't' }, shortTime(m.ts))
               ),
@@ -168,7 +169,9 @@ class Chat extends React.Component {
           React.createElement('input', {
             type: 'text',
             value: this.state.draft,
-            placeholder: me ? 'Message as ' + shortKey(me) + '…' : 'Unlock your identity to chat…',
+            placeholder: me
+              ? ('Message as ' + (this.props.nickname || shortKey(me)) + '…')
+              : 'Unlock your identity to chat…',
             onChange: (e) => this.setState({ draft: e.target.value }),
             onKeyDown: (e) => { if (e.key === 'Enter') this.send(); }
           }),

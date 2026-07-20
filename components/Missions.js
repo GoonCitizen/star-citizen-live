@@ -250,6 +250,14 @@ class Missions extends React.Component {
       ),
       React.createElement('div', { className: 'mi-meta' }, m.id + (m.assigneeId ? ` · assignee ${m.assigneeId.slice(0, 12)}…` : '')),
       React.createElement('div', { className: 'mi-row' },
+        m.status === 'open' && isCreator
+          ? React.createElement('button', {
+            className: 'mi-btn ghost',
+            disabled: this.state.busy,
+            title: 'Re-notify peer hubs that this mission is open (desktop Accept / Ignore on receive)',
+            onClick: () => this.act(() => this.post(`/missions/${m.id}/broadcast`), 'Broadcast sent to peers.')
+          }, '📡 Broadcast')
+          : null,
         m.status === 'open' && me && !isCreator && !applied
           ? React.createElement('button', { className: 'mi-btn ghost', disabled: this.state.busy, onClick: () => this.act(() => this.post(`/missions/${m.id}/apply`, { applicantId: me }), 'Applied.') }, 'Apply')
           : null,

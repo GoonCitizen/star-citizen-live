@@ -19,6 +19,8 @@ const Onboarding = require('../components/Onboarding');
 const Identity = require('../components/Identity');
 const Chat = require('../components/Chat');
 const GlobalChatDock = require('../components/GlobalChatDock');
+const MissionBroadcastBanner = require('../components/MissionBroadcastBanner');
+const Notifications = require('../components/Notifications');
 const Groups = require('../components/Groups');
 const GroupPage = require('../components/GroupPage');
 const Library = require('../components/Library');
@@ -55,6 +57,8 @@ ${Onboarding.CSS}
 ${Identity.CSS}
 ${Chat.CSS}
 ${GlobalChatDock.CSS}
+${MissionBroadcastBanner.CSS}
+${Notifications.CSS}
 ${Groups.CSS}
 ${GroupPage.CSS}
 ${Library.CSS}

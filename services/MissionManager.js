@@ -170,6 +170,55 @@ class MissionManager extends EventEmitter {
     return mission;
   }
 
+  /**
+   * Upsert a mission received from a peer broadcast. Skips the local officer
+   * allowlist — the remote creator's pubkey is the provenance. Does not
+   * clobber an already-assigned/completed local copy.
+   * @param {Object} data Mission snapshot from the wire.
+   * @returns {{ mission: Object, created: Boolean }}
+   */
+  ingestRemote (data = {}) {
+    if (!data || !data.id) throw new Error('mission id required');
+    const existing = this.getMission(data.id);
+    if (existing) {
+      if (existing.status === 'open' && (!data.status || data.status === 'open')) {
+        existing.title = data.title || existing.title;
+        existing.description = data.description != null ? data.description : existing.description;
+        existing.reward = data.reward != null ? Number(data.reward) : existing.reward;
+        existing.groupId = data.groupId != null ? data.groupId : existing.groupId;
+        if (data.authorities) existing.authorities = data.authorities;
+        this.store.put('missions', existing.id, existing);
+      }
+      return { mission: existing, created: false };
+    }
+    const officer = data.createdBy || null;
+    const authorities = data.authorities || this._normalizeAuthorities(null, officer);
+    const mission = {
+      id: String(data.id),
+      title: data.title || 'Untitled mission',
+      type: data.type || 'bounty',
+      description: data.description || '',
+      reward: Number(data.reward) || 0,
+      requirements: data.requirements || null,
+      location: data.location || null,
+      deadline: data.deadline || null,
+      outOfGame: !!data.outOfGame,
+      groupId: data.groupId || null,
+      authorities,
+      escrow: data.escrow || null,
+      createdBy: officer != null ? String(officer) : null,
+      createdAt: data.createdAt || new Date().toISOString(),
+      status: data.status || 'open',
+      assigneeId: data.assigneeId || null,
+      contract: data.contract || { type: 'single' },
+      source: data.source || 'remote'
+    };
+    this.store.put('missions', mission.id, mission);
+    this._audit(officer || 'remote', 'mission.ingest', 'mission', mission.id, mission.title);
+    this.emit('mission:ingested', mission);
+    return { mission, created: true };
+  }
+
   /** Normalize the authorities field: `{ keys: [pubkey…], threshold }` or null. */
   _normalizeAuthorities (input, creator) {
     const PUBKEY_RE = /^0[23][0-9a-f]{64}$/;

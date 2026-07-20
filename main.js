@@ -298,6 +298,7 @@ function createWindow (port) {
     minWidth: 800,
     minHeight: 600,
     title: BRAND_NAME,
+    autoHideMenuBar: true,
     webPreferences: {
       nodeIntegration: false,
       contextIsolation: true,
@@ -307,6 +308,10 @@ function createWindow (port) {
     icon,
     show: false
   });
+
+  // No File/Edit/View window menu — the dashboard chrome is the toolbar.
+  mainWindow.setMenuBarVisibility(false);
+  if (typeof mainWindow.removeMenu === 'function') mainWindow.removeMenu();
 
   const isDev = process.argv.includes('--dev');
   const dashboardUrl = `http://127.0.0.1:${port}/`;
@@ -321,6 +326,7 @@ function createWindow (port) {
 
   mainWindow.once('ready-to-show', () => {
     mainWindow.setTitle(BRAND_NAME);
+    mainWindow.setMenuBarVisibility(false);
     if (!startHidden) {
       mainWindow.show();
       if (isDev) mainWindow.focus();
@@ -435,6 +441,8 @@ async function stopService () {
 if (gotLock) {
   app.whenReady().then(async () => {
     try {
+      // Hide the native application / window menu bar (File, Edit, View…).
+      Menu.setApplicationMenu(null);
       await openAppStore(); // settings come from the Fabric Store
       configureAutoLaunch();
       createTray();
@@ -746,19 +754,43 @@ ipcMain.handle('set-open-at-login', (_e, enabled) => {
   return { openAtLogin: openAtLoginEnabled() };
 });
 
-ipcMain.handle('notify:show', (_e, { title, body } = {}) => {
+ipcMain.handle('notify:show', (_e, { title, body, id, kind, actions } = {}) => {
   if (!Notification || !Notification.isSupported()) return { ok: false, reason: 'unsupported' };
-  const n = new Notification({
+  const actionList = Array.isArray(actions) ? actions.slice(0, 2) : [];
+  const opts = {
     title: String(title || BRAND_NAME),
     body: String(body || ''),
     silent: false
-  });
+  };
+  // Action buttons are reliably supported on macOS; other platforms still get
+  // click-to-focus. The dashboard always shows in-app Accept / Ignore too.
+  if (process.platform === 'darwin' && actionList.length) {
+    opts.actions = actionList.map((a) => ({ type: 'button', text: String(a.text || a.id || 'OK') }));
+  }
+  const n = new Notification(opts);
+  const payload = { id: id || null, kind: kind || null };
   n.on('click', () => {
     showMainWindow();
-    if (mainWindow) mainWindow.focus();
+    if (mainWindow) {
+      mainWindow.focus();
+      mainWindow.webContents.send('notify:click', payload);
+    }
+  });
+  n.on('action', (_event, index) => {
+    const action = actionList[index] || {};
+    showMainWindow();
+    if (mainWindow) {
+      mainWindow.focus();
+      mainWindow.webContents.send('notify:action', {
+        id: id || null,
+        kind: kind || null,
+        index,
+        action: action.id || action.text || null
+      });
+    }
   });
   n.show();
-  return { ok: true };
+  return { ok: true, actions: process.platform === 'darwin' && actionList.length > 0 };
 });
 
 ipcMain.handle('restart-service', async () => {

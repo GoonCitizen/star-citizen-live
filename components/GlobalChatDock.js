@@ -41,6 +41,7 @@ const CSS = `
   .gcdock-msg .m{display:flex;gap:6px;align-items:baseline}
   .gcdock-msg .who{font-weight:600;font-size:12px}
   .gcdock-msg .who.me{color:var(--accent)}
+  .gcdock-msg .key{color:var(--muted);font-size:10px;font-family:'Cascadia Code',Consolas,monospace;cursor:help}
   .gcdock-msg .t{color:var(--muted);font-size:10.5px;font-variant-numeric:tabular-nums}
   .gcdock-msg .b{font-size:13px;line-height:1.45;word-break:break-word;white-space:pre-wrap}
   .gcdock-empty{color:var(--muted);font-style:italic;text-align:center;margin:auto;font-size:12.5px}
@@ -317,6 +318,7 @@ class GlobalChatDock extends React.Component {
               React.createElement('div', { className: 'm' },
                 React.createElement('span', { className: 'who' + (me && m.author === me ? ' me' : '') },
                   m.handle || shortKey(m.author)),
+                React.createElement('span', { className: 'key', title: m.author }, shortKey(m.author)),
                 React.createElement('span', { className: 't' }, shortTime(m.ts))
               ),
               React.createElement('div', { className: 'b' }, m.body)
@@ -329,7 +331,9 @@ class GlobalChatDock extends React.Component {
           React.createElement('input', {
             type: 'text',
             value: this.state.draft,
-            placeholder: me ? 'Message global…' : 'Unlock identity to chat…',
+            placeholder: me
+              ? ('Message as ' + (this.props.nickname || shortKey(me)) + '…')
+              : 'Unlock identity to chat…',
             onChange: (e) => this.setState({ draft: e.target.value }),
             onKeyDown: (e) => { if (e.key === 'Enter') this.send(); }
           }),
