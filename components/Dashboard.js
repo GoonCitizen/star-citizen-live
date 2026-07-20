@@ -9,6 +9,7 @@
 const React = require('react');
 const Onboarding = require('./Onboarding');
 const Groups = require('./Groups');
+const Settings = require('./Settings');
 
 const TITLE = 'GoonCitizen — Monitor';
 
@@ -196,7 +197,8 @@ class Dashboard extends React.Component {
       azTypes: null,
       azOutcomes: null,
       azFactions: null,
-      identityPubkey: null
+      identityPubkey: null,
+      showSettings: false
     };
     this._timer = null;
     this._copiedTimers = {};
@@ -850,6 +852,9 @@ class Dashboard extends React.Component {
       React.createElement(Onboarding, {
         onReady: (pubkey) => this.setState({ identityPubkey: pubkey })
       }),
+      this.state.showSettings
+        ? React.createElement(Settings, { onClose: () => this.setState({ showSettings: false }) })
+        : null,
       React.createElement('header', null,
         React.createElement('div', { className: 'row' },
           React.createElement('h1', null, '🛰️ GoonCitizen'),
@@ -882,7 +887,13 @@ class Dashboard extends React.Component {
                 onChange: (e) => this.setState({ auto: e.target.checked })
               }),
               ' auto-refresh'
-            )
+            ),
+            React.createElement('button', {
+              type: 'button',
+              className: 'gear',
+              title: 'Settings — log path, Discord, peers',
+              onClick: () => this.setState({ showSettings: true })
+            }, '⚙️')
           )
         ),
         React.createElement('div', { className: 'row', style: { marginTop: 10, gap: 8 } },

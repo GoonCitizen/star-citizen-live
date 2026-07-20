@@ -1,6 +1,8 @@
 ## Classes
 
 <dl>
+<dt><a href="#Group">Group</a></dt>
+<dd></dd>
 <dt><a href="#Mission">Mission</a> ⇐ <code>Entity</code></dt>
 <dd><p>Represents a Mission in the Star Citizen universe.
 Missions can be accepted by signing with secp256k1 or Musig2 multisig.</p>
@@ -22,6 +24,21 @@ Provides a Fabric-compatible declarative API with Discord integration.</p>
 ## Constants
 
 <dl>
+<dt><a href="#crypto">crypto</a></dt>
+<dd><p>Group — a member-created org unit backed by a k-of-n Schnorr multisig.</p>
+<p>Members are identified by their compressed secp256k1 public keys (the same
+actor ids the identity onboarding produces). Threshold decisions (mission
+acceptance, payout release) are verified with the standard Fabric
+<a href="Federation">Federation</a> k-of-n Schnorr verification (BIP340).</p>
+</dd>
+<dt><a href="#crypto">crypto</a></dt>
+<dd><p>GroupManager — member-created groups with k-of-n Schnorr multisig.</p>
+<p>Any player (pubkey) may create a group; members may add members. Groups
+scope mission visibility (missions shared to a group are served only to
+its members) and act as authority sets for mission acceptance/payouts.
+Mutations are recorded in a hash-chained audit log (same pattern as
+MissionManager).</p>
+</dd>
 <dt><a href="#http">http</a></dt>
 <dd><p>Star Citizen Live - Fabric-free service (M1 skeleton + M3 parser).</p>
 <p>Boots with ZERO external dependencies - only Node.js built-ins (http, crypto,
@@ -46,6 +63,31 @@ Keeps the method names/events the rest of the code already uses
 <p>Officer model: settings.officers is an allowlist of actor ids. If EMPTY, the
 register runs in permissive &quot;bootstrap&quot; mode (everyone is an officer) so it is
 usable before roles are wired (REST/Discord auth lands in M5.2/M5.3).</p>
+</dd>
+<dt><a href="#EventEmitter">EventEmitter</a></dt>
+<dd><p>PayoutManager — Bitcoin-unlocked mission rewards.</p>
+<p>A mission&#39;s reward can be escrowed on-chain in a k-of-n multisig address
+built from the mission&#39;s AUTHORITY pubkeys (the same keys whose Schnorr
+signatures accept the completion claim). Flow:</p>
+<ol>
+<li>createEscrow(mission)   -&gt; k-of-n P2WSH address (bitcoind createmultisig)</li>
+<li>(creator funds address) -&gt; checkFunding() confirms via scantxoutset</li>
+<li>claim accepted (k-of-n Schnorr on the acceptance message, MissionManager)
+-&gt; &#39;payout:unlocked&#39; -&gt; escrow status &#39;payable&#39;</li>
+<li>buildPayout()           -&gt; PSBT paying the claimant (authorities sign
+                       with their own wallets — keys never touch
+                       the server)</li>
+<li>broadcastPayout(hex)    -&gt; sendrawtransaction</li>
+</ol>
+<p>Modes:</p>
+<ul>
+<li>LEDGER (no rpc): the obligation + authorization are recorded and
+auditable; settlement happens out-of-band.</li>
+<li>BITCOIN (rpc provided): full on-chain flow. Mainnet is refused unless
+<code>allowMainnet: true</code> — regtest/signet first, by decision.</li>
+</ul>
+<p><code>rpc</code> is any <code>(method, params) =&gt; Promise&lt;result&gt;</code> — on goon.vc it wraps
+the Hub&#39;s managed bitcoind (<code>@fabric/core</code> Bitcoin <code>_makeRPCRequest</code>).</p>
 </dd>
 </dl>
 
@@ -193,6 +235,71 @@ Stops monitoring the game log and stops HTTP server if running.
 **Kind**: instance method of [<code>StarCitizenAPI</code>](#StarCitizenAPI)  
 **Returns**: [<code>Promise.&lt;StarCitizenAPI&gt;</code>](#StarCitizenAPI) - Returns this for chaining  
 **Emits**: <code>event:stopped When service is fully stopped</code>  
+<a name="Group"></a>
+
+## Group
+**Kind**: global class  
+
+* [Group](#Group)
+    * [new Group(data)](#new_Group_new)
+    * [.includes()](#Group+includes) ⇒ <code>Boolean</code>
+    * [.validate()](#Group+validate)
+    * [.commitment()](#Group+commitment)
+    * [.federation()](#Group+federation)
+    * [.verifyMultiSignature(multiSig, [threshold])](#Group+verifyMultiSignature) ⇒ <code>Boolean</code>
+
+<a name="new_Group_new"></a>
+
+### new Group(data)
+
+| Param | Type | Default | Description |
+| --- | --- | --- | --- |
+| data | <code>Object</code> |  | Group data. |
+| data.id | <code>String</code> |  | Group id. |
+| data.name | <code>String</code> |  | Display name. |
+| data.creator | <code>String</code> |  | Creator pubkey (hex). |
+| data.members | <code>Array.&lt;String&gt;</code> |  | Member pubkeys (hex). |
+| [data.threshold] | <code>Number</code> | <code>1</code> | Signatures required for group decisions. |
+| [data.createdAt] | <code>String</code> |  | ISO timestamp. |
+
+<a name="Group+includes"></a>
+
+### group.includes() ⇒ <code>Boolean</code>
+**Kind**: instance method of [<code>Group</code>](#Group)  
+**Returns**: <code>Boolean</code> - True when `pubkey` is a member of this group.  
+<a name="Group+validate"></a>
+
+### group.validate()
+Validate shape: pubkeys well-formed, threshold achievable.
+
+**Kind**: instance method of [<code>Group</code>](#Group)  
+<a name="Group+commitment"></a>
+
+### group.commitment()
+Deterministic commitment over the group's identity-defining fields.
+
+**Kind**: instance method of [<code>Group</code>](#Group)  
+<a name="Group+federation"></a>
+
+### group.federation()
+Lazily build the Fabric Federation for this member set.
+
+**Kind**: instance method of [<code>Group</code>](#Group)  
+<a name="Group+verifyMultiSignature"></a>
+
+### group.verifyMultiSignature(multiSig, [threshold]) ⇒ <code>Boolean</code>
+Verify a k-of-n multisignature against this group's roster + threshold.
+Signers sign the raw message bytes with BIP340 Schnorr (Fabric
+`Key.signSchnorr`); non-member signatures do not count.
+
+**Kind**: instance method of [<code>Group</code>](#Group)  
+**Returns**: <code>Boolean</code> - True when at least `threshold` member signatures verify.  
+
+| Param | Type | Description |
+| --- | --- | --- |
+| multiSig | <code>Object</code> | `{ message, signatures: { [pubkey]: sigHexOrBuffer } }`. |
+| [threshold] | <code>Number</code> | Override (defaults to the group threshold). |
+
 <a name="Mission"></a>
 
 ## Mission ⇐ <code>Entity</code>
@@ -399,8 +506,11 @@ Supports both single secp256k1 signatures and Musig2 multisig.
 * [MissionManager](#MissionManager)
     * [new MissionManager([settings])](#new_MissionManager_new)
     * [.createMission(data)](#MissionManager+createMission) ⇒ [<code>Mission</code>](#Mission)
+    * [._normalizeAuthorities()](#MissionManager+_normalizeAuthorities)
     * [.getMission(missionId)](#MissionManager+getMission) ⇒ [<code>Mission</code>](#Mission) \| <code>null</code>
     * [.getMissionApplications(missionId)](#MissionManager+getMissionApplications) ⇒ [<code>Array.&lt;MissionApplication&gt;</code>](#MissionApplication)
+    * [.acceptanceMessage(mission, claim)](#MissionManager+acceptanceMessage) ⇒ <code>String</code>
+    * [.verifyAcceptance()](#MissionManager+verifyAcceptance) ⇒ <code>Boolean</code>
     * [.submitApplication(applicationData)](#MissionManager+submitApplication) ⇒ [<code>Promise.&lt;MissionApplication&gt;</code>](#MissionApplication)
     * [.verifySignature(message, signature, publicKey, [multisigData])](#MissionManager+verifySignature) ⇒ <code>Promise.&lt;Boolean&gt;</code>
     * [.verifySecp256k1Signature(message, signature, publicKey)](#MissionManager+verifySecp256k1Signature) ⇒ <code>Boolean</code>
@@ -433,6 +543,12 @@ Create a new mission.
 | --- | --- | --- |
 | data | <code>Object</code> | Mission data. |
 
+<a name="MissionManager+_normalizeAuthorities"></a>
+
+### missionManager.\_normalizeAuthorities()
+Normalize the authorities field: `{ keys: [pubkey…], threshold }` or null.
+
+**Kind**: instance method of [<code>MissionManager</code>](#MissionManager)  
 <a name="MissionManager+getMission"></a>
 
 ### missionManager.getMission(missionId) ⇒ [<code>Mission</code>](#Mission) \| <code>null</code>
@@ -457,6 +573,28 @@ Get applications for a mission.
 | --- | --- | --- |
 | missionId | <code>String</code> | Mission ID. |
 
+<a name="MissionManager+acceptanceMessage"></a>
+
+### missionManager.acceptanceMessage(mission, claim) ⇒ <code>String</code>
+Deterministic message the mission's authorities must sign to accept a
+completion claim (and release any escrowed payout).
+
+**Kind**: instance method of [<code>MissionManager</code>](#MissionManager)  
+**Returns**: <code>String</code> - Canonical acceptance message.  
+
+| Param | Type | Description |
+| --- | --- | --- |
+| mission | <code>Object</code> | Mission record. |
+| claim | <code>Object</code> | Claim record. |
+
+<a name="MissionManager+verifyAcceptance"></a>
+
+### missionManager.verifyAcceptance() ⇒ <code>Boolean</code>
+Verify a k-of-n acceptance against the mission's authorities set.
+Signers sign `acceptanceMessage(mission, claim)` bytes with BIP340
+Schnorr; only authority pubkeys count.
+
+**Kind**: instance method of [<code>MissionManager</code>](#MissionManager)  
 <a name="MissionManager+submitApplication"></a>
 
 ### missionManager.submitApplication(applicationData) ⇒ [<code>Promise.&lt;MissionApplication&gt;</code>](#MissionApplication)
@@ -640,6 +778,29 @@ Services can override this method to declare their UI components.
 
 **Kind**: instance method of [<code>StarCitizen</code>](#StarCitizen)  
 **Returns**: <code>Object</code> \| <code>null</code> - UI component configuration or null  
+<a name="crypto"></a>
+
+## crypto
+Group — a member-created org unit backed by a k-of-n Schnorr multisig.
+
+Members are identified by their compressed secp256k1 public keys (the same
+actor ids the identity onboarding produces). Threshold decisions (mission
+acceptance, payout release) are verified with the standard Fabric
+[Federation](Federation) k-of-n Schnorr verification (BIP340).
+
+**Kind**: global constant  
+<a name="crypto"></a>
+
+## crypto
+GroupManager — member-created groups with k-of-n Schnorr multisig.
+
+Any player (pubkey) may create a group; members may add members. Groups
+scope mission visibility (missions shared to a group are served only to
+its members) and act as authority sets for mission acceptance/payouts.
+Mutations are recorded in a hash-chained audit log (same pattern as
+MissionManager).
+
+**Kind**: global constant  
 <a name="http"></a>
 
 ## http
@@ -675,6 +836,34 @@ Keeps the method names/events the rest of the code already uses
 Officer model: settings.officers is an allowlist of actor ids. If EMPTY, the
 register runs in permissive "bootstrap" mode (everyone is an officer) so it is
 usable before roles are wired (REST/Discord auth lands in M5.2/M5.3).
+
+**Kind**: global constant  
+<a name="EventEmitter"></a>
+
+## EventEmitter
+PayoutManager — Bitcoin-unlocked mission rewards.
+
+A mission's reward can be escrowed on-chain in a k-of-n multisig address
+built from the mission's AUTHORITY pubkeys (the same keys whose Schnorr
+signatures accept the completion claim). Flow:
+
+  1. createEscrow(mission)   -> k-of-n P2WSH address (bitcoind createmultisig)
+  2. (creator funds address) -> checkFunding() confirms via scantxoutset
+  3. claim accepted (k-of-n Schnorr on the acceptance message, MissionManager)
+     -> 'payout:unlocked' -> escrow status 'payable'
+  4. buildPayout()           -> PSBT paying the claimant (authorities sign
+                                with their own wallets — keys never touch
+                                the server)
+  5. broadcastPayout(hex)    -> sendrawtransaction
+
+Modes:
+  - LEDGER (no rpc): the obligation + authorization are recorded and
+    auditable; settlement happens out-of-band.
+  - BITCOIN (rpc provided): full on-chain flow. Mainnet is refused unless
+    `allowMainnet: true` — regtest/signet first, by decision.
+
+`rpc` is any `(method, params) => Promise<result>` — on goon.vc it wraps
+the Hub's managed bitcoind (`@fabric/core` Bitcoin `_makeRPCRequest`).
 
 **Kind**: global constant  
 <a name="StarCitizenActivity"></a>

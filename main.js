@@ -24,6 +24,7 @@ const LiveRelay = require('./services/LiveRelay');
 const { resolveLogFile } = require('./functions/locate');
 const identityLib = require('./functions/identity');
 const identityStore = require('./functions/identityStore');
+const settingsStore = require('./functions/settingsStore');
 
 let settings = {};
 try {
@@ -58,14 +59,17 @@ function servicePort () {
   return Number(process.env.PORT) || settings.http?.port || settings.port || 3041;
 }
 
-/** Map settings/local.js (+ env) into LiveRelay constructor options. */
+/** Map settings/local.js + persisted userData settings (+ env) into LiveRelay options. */
 function buildRelaySettings (port) {
-  const explicit = process.env.SC_LOGFILE || settings.logfile || null;
-  const channel = process.env.SC_CHANNEL || settings.channel || null;
+  // Persisted operator settings (edited via the dashboard's Settings modal).
+  // Priority: env > persisted settings.json (userData) > settings/local.js > auto.
+  const persisted = settingsStore.loadSettings(app.getPath('userData'));
+  const explicit = process.env.SC_LOGFILE || persisted.logfile || settings.logfile || null;
+  const channel = process.env.SC_CHANNEL || persisted.channel || settings.channel || null;
   const resolved = resolveLogFile({ explicit, channel });
 
   const discordIn = settings.discord || {};
-  const webhook = process.env.DISCORD_WEBHOOK_URL || discordIn.webhook || null;
+  const webhook = process.env.DISCORD_WEBHOOK_URL || persisted.discordWebhook || discordIn.webhook || null;
 
   return {
     port,
@@ -92,7 +96,8 @@ function buildRelaySettings (port) {
     uplink: Object.assign({
       enable: !!(process.env.SC_UPLINK_URL || settings.uplink?.url),
       url: process.env.SC_UPLINK_URL || settings.uplink?.url || null
-    }, settings.uplink || {})
+    }, settings.uplink || {}),
+    settingsDir: app.getPath('userData')
   };
 }
 
@@ -178,8 +183,9 @@ function openAtLoginEnabled () {
 
 /** Enable launch at OS login for installed builds (and opt-in via settings). */
 function configureAutoLaunch () {
-  const forceOff = process.env.SC_OPEN_AT_LOGIN === '0' || settings.openAtLogin === false;
-  const forceOn = process.env.SC_OPEN_AT_LOGIN === '1' || settings.openAtLogin === true;
+  const persisted = settingsStore.loadSettings(app.getPath('userData'));
+  const forceOff = process.env.SC_OPEN_AT_LOGIN === '0' || persisted.openAtLogin === false || settings.openAtLogin === false;
+  const forceOn = process.env.SC_OPEN_AT_LOGIN === '1' || persisted.openAtLogin === true || settings.openAtLogin === true;
   const enable = forceOn || (!forceOff && app.isPackaged);
 
   try {

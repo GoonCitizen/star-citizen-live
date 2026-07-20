@@ -23,6 +23,7 @@ const readline = require('readline');
 
 const { parseLine, shipName, parseSessionInfo, missionType, isNPC, missionFaction } = require('../functions/parser');
 const { resolveLogFile, channelFromPath } = require('../functions/locate');
+const settingsStore = require('../functions/settingsStore');
 
 // Lines worth surfacing in the monitor - combat/death hints AND mission/objective
 // activity. Includes wording the parser may not recognize yet, so we can keep
@@ -60,7 +61,8 @@ class StarCitizenService extends EventEmitter {
       seed: null,   // optional: replay a past log once on start to pre-fill the monitor
       discord: { enable: false, webhook: null, announceKills: true, announcePlayerJoins: true, announceActivities: false, announceMissions: false, announceCombat: false, announceIncaps: false },
       missions: { enable: true },
-      uplink: { enable: false, url: null, intervalMs: 5000 }
+      uplink: { enable: false, url: null, intervalMs: 5000 },
+      settingsDir: null // dir for persisted operator settings (settings.json) + peer list
     }, settings);
     this.settings.discord = Object.assign({ enable: false, webhook: null, announceKills: true, announcePlayerJoins: true, announceActivities: false, announceMissions: false, announceCombat: false, announceIncaps: false }, settings.discord || {});
     this.settings.uplink = Object.assign({ enable: false, url: null, intervalMs: 5000 }, settings.uplink || {});
@@ -87,6 +89,13 @@ class StarCitizenService extends EventEmitter {
     this._uplinkQueue = [];     // events awaiting signed push to the uplink
     this._uplinkTimer = null;
     this._uplinkWired = false;
+
+    // Peers: remote hubs (e.g. goon.vc) that receive this relay's signed
+    // event batches — the desktop counterpart of the Hub's AddPeer/RemovePeer.
+    // Loaded from the persisted operator settings; managed via REST.
+    const persisted = this.settings.settingsDir ? settingsStore.loadSettings(this.settings.settingsDir) : {};
+    this.peers = (Array.isArray(persisted.peers) ? persisted.peers : []).map((p) => Object.assign({ enabled: true }, p));
+    if (persisted.uplinkIntervalMs) this.settings.uplink.intervalMs = persisted.uplinkIntervalMs;
 
     // Safety net: a stray 'error' (e.g. the game rotating Game.log) must never
     // crash the process. Without a listener, EventEmitter throws on 'error'.
@@ -402,6 +411,79 @@ class StarCitizenService extends EventEmitter {
           logs: this.logs.length, missions: this.missions.length
         }});
       }
+      // ---- Operator settings + peers (Hub-compatible shapes; LOCAL relay only) ----
+      // Mirrors hub.fabric.pub: GET /settings (list), PUT /settings/:name, and
+      // AddPeer/RemovePeer/ListPeers semantics over REST. Disabled in hosted
+      // server mode — goon.vc settings belong to the Hub's own settings API.
+      if (this.settings.mode !== 'server') {
+        const settingsDir = this.settings.settingsDir;
+        if (req.method === 'GET' && pathname === '/settings') {
+          const persisted = settingsDir ? settingsStore.loadSettings(settingsDir) : {};
+          return send(200, {
+            success: true,
+            settings: persisted,
+            editable: !!settingsDir,
+            allowedKeys: settingsStore.ALLOWED_KEYS,
+            runtime: {
+              logfile: this.settings.logfile,
+              channel: this.channel,
+              port: this.settings.port,
+              mode: this.settings.mode,
+              identity: this._identity ? this._identity.pubkey : null,
+              uplinkActive: !!this._uplinkTimer,
+              uplinkQueued: this._uplinkQueue.length
+            }
+          });
+        }
+        let sMatch;
+        if ((sMatch = pathname.match(/^\/settings\/([a-zA-Z]+)$/)) && req.method === 'PUT') {
+          if (!settingsDir) return send(400, { error: 'No settings directory configured (settingsDir)' });
+          const d = await body();
+          try {
+            const updated = settingsStore.putSetting(settingsDir, sMatch[1], d.value);
+            // Live-applicable settings take effect immediately; the rest on restart.
+            let requiresRestart = ['logfile', 'channel', 'discordWebhook'].includes(sMatch[1]);
+            if (sMatch[1] === 'peers') { this.peers = (updated.peers || []).map((p) => Object.assign({ enabled: true }, p)); this._refreshUplink(); requiresRestart = false; }
+            if (sMatch[1] === 'uplinkIntervalMs') { this.settings.uplink.intervalMs = updated.uplinkIntervalMs || 5000; requiresRestart = false; }
+            return send(200, { success: true, settings: updated, requiresRestart });
+          } catch (e) { return send(400, { error: e.message }); }
+        }
+        if (pathname === `${base}/peers` || pathname === '/peers') {
+          if (req.method === 'GET') return send(200, { type: 'Collection', data: this.peers });
+          if (req.method === 'POST') {
+            const d = await body();
+            if (!d.url || !/^https?:\/\//.test(d.url)) return send(400, { error: 'peer url must be http(s)' });
+            if (this.peers.some((p) => p.url === d.url)) return send(400, { error: 'peer already exists' });
+            const peer = { id: idFor(d.url), url: d.url.replace(/\/$/, ''), label: d.label || null, enabled: d.enabled !== false };
+            this.peers.push(peer);
+            if (settingsDir) settingsStore.putSetting(settingsDir, 'peers', this.peers.map(({ lastSeen, lastError, ...p }) => p));
+            this._refreshUplink();
+            this.emit('peer:added', peer);
+            return send(200, { type: 'Peer', data: peer });
+          }
+        }
+        let pMatch;
+        if ((pMatch = pathname.match(new RegExp(`^(?:${base})?/peers/([^/]+)$`)))) {
+          const peer = this.peers.find((p) => p.id === pMatch[1]);
+          if (!peer) return send(404, { error: 'Peer not found' });
+          if (req.method === 'DELETE') {
+            this.peers = this.peers.filter((p) => p.id !== peer.id);
+            if (settingsDir) settingsStore.putSetting(settingsDir, 'peers', this.peers.map(({ lastSeen, lastError, ...p }) => p));
+            this._refreshUplink();
+            this.emit('peer:removed', peer);
+            return send(200, { success: true });
+          }
+          if (req.method === 'POST') {
+            const d = await body();
+            if (d.enabled !== undefined) peer.enabled = !!d.enabled;
+            if (d.label !== undefined) peer.label = d.label || null;
+            if (settingsDir) settingsStore.putSetting(settingsDir, 'peers', this.peers.map(({ lastSeen, lastError, ...p }) => p));
+            this._refreshUplink();
+            return send(200, { type: 'Peer', data: peer });
+          }
+        }
+      }
+
       // Schnorr login: exchange a signed envelope for a Bearer session token.
       if (req.method === 'POST' && pathname === `${base}/auth`) {
         const result = this._login(await body());
@@ -923,11 +1005,26 @@ class StarCitizenService extends EventEmitter {
    */
   setIdentity (identity) {
     this._identity = identity || null;
-    if (this._identity && this.settings.uplink.enable && this.settings.uplink.url) {
+    if (this._identity && this._uplinkTargets().length) {
       this._startUplink();
     } else {
       this._stopUplink();
     }
+  }
+
+  /** Active uplink URLs: enabled peers + the legacy single-url setting. */
+  _uplinkTargets () {
+    const urls = this.peers.filter((p) => p.enabled !== false && p.url).map((p) => p.url);
+    if (this.settings.uplink.enable && this.settings.uplink.url && !urls.includes(this.settings.uplink.url)) {
+      urls.push(this.settings.uplink.url);
+    }
+    return urls;
+  }
+
+  /** Re-evaluate the uplink after the peer list changes. */
+  _refreshUplink () {
+    if (this._identity && this._uplinkTargets().length) this._startUplink();
+    else this._stopUplink();
   }
 
   _startUplink () {
@@ -953,41 +1050,60 @@ class StarCitizenService extends EventEmitter {
     const interval = this.settings.uplink.intervalMs || 5000;
     this._uplinkTimer = setInterval(() => { this._flushUplink().catch((e) => this.emit('error', e)); }, interval);
     if (this._uplinkTimer.unref) this._uplinkTimer.unref();
-    console.log(`[STAR-CITIZEN] uplink active -> ${this.settings.uplink.url}`);
+    console.log(`[STAR-CITIZEN] uplink active -> ${this._uplinkTargets().join(', ')}`);
   }
 
   _stopUplink () {
     if (this._uplinkTimer) { clearInterval(this._uplinkTimer); this._uplinkTimer = null; }
   }
 
-  /** Push queued events to the uplink as one signed batch. */
+  /**
+   * Push queued events to every enabled peer as one signed batch. Server-side
+   * ingest is idempotent (content-derived ids), so delivering the same batch
+   * to multiple peers — or re-delivering after a partial failure — is safe.
+   * Events are requeued only when EVERY peer fails.
+   */
   async _flushUplink () {
     if (!this._identity || !this._uplinkQueue || !this._uplinkQueue.length) return null;
     if (typeof fetch !== 'function') return null;
+    const targets = this._uplinkTargets();
+    if (!targets.length) return null;
     const events = this._uplinkQueue.splice(0, 200);
     const envelope = identityLib().signEnvelope(this._identity, { events, sentAt: new Date().toISOString() });
-    const target = this.settings.uplink.url.replace(/\/$/, '') + '/services/star-citizen/events';
-    try {
-      const res = await fetch(target, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(envelope)
-      });
-      if (!res.ok) {
-        // Requeue on server errors; drop on auth rejections (bad roster/key).
-        if (res.status >= 500) this._uplinkQueue.unshift(...events);
-        this.emit('uplink:error', { status: res.status });
-        return null;
+    const body = JSON.stringify(envelope);
+
+    const results = await Promise.all(targets.map(async (url) => {
+      const peer = this.peers.find((p) => p.url === url);
+      try {
+        const res = await fetch(url.replace(/\/$/, '') + '/services/star-citizen/events', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body
+        });
+        if (!res.ok) {
+          if (peer) peer.lastError = `HTTP ${res.status}`;
+          this.emit('uplink:error', { url, status: res.status });
+          // 4xx (bad roster/key) is a hard reject for this peer; 5xx may recover.
+          return res.status >= 500 ? 'retry' : 'rejected';
+        }
+        const result = await res.json().catch(() => null);
+        if (peer) { peer.lastSeen = new Date().toISOString(); peer.lastError = null; }
+        this.emit('uplink:sent', { url, count: events.length, result });
+        return result || 'ok';
+      } catch (e) {
+        if (peer) peer.lastError = e.message;
+        this.emit('uplink:error', { url, error: e.message });
+        return 'retry';
       }
-      const result = await res.json().catch(() => null);
-      this.emit('uplink:sent', { count: events.length, result });
-      return result;
-    } catch (e) {
-      this._uplinkQueue.unshift(...events); // network failure: retry next tick
+    }));
+
+    const delivered = results.some((r) => r !== 'retry' && r !== 'rejected');
+    if (!delivered && results.some((r) => r === 'retry')) {
+      this._uplinkQueue.unshift(...events); // nothing landed anywhere: retry next tick
       if (this._uplinkQueue.length > 5000) this._uplinkQueue.length = 5000;
-      this.emit('uplink:error', { error: e.message });
       return null;
     }
+    return results.find((r) => r !== 'retry' && r !== 'rejected') || null;
   }
 
   // ---- Lifecycle ----
@@ -1007,7 +1123,7 @@ class StarCitizenService extends EventEmitter {
       this.server = http.createServer((req, res) => this._handle(req, res));
       await new Promise((resolve) => this.server.listen(this.settings.port, resolve));
     }
-    if (this._identity && this.settings.uplink.enable && this.settings.uplink.url) this._startUplink();
+    this._refreshUplink();
     this.state.status = 'STARTED';
     this.state.startedAt = new Date().toISOString();
     this.emit('ready');
@@ -1046,17 +1162,27 @@ if (require.main === module) {
     svc.start();
     return;
   }
+  // Persisted operator settings (settings.json — editable via the dashboard).
+  // Priority: env > persisted settings > auto-detect.
+  const settingsDir = process.env.SC_SETTINGS_DIR || path.join(__dirname, '..', 'stores');
+  const persisted = settingsStore.loadSettings(settingsDir);
   // Auto-locate the active log across drives/channels (SC_LOGFILE or SC_CHANNEL override).
-  const resolved = resolveLogFile({ explicit: process.env.SC_LOGFILE || null, channel: process.env.SC_CHANNEL || null });
+  const resolved = resolveLogFile({
+    explicit: process.env.SC_LOGFILE || persisted.logfile || null,
+    channel: process.env.SC_CHANNEL || persisted.channel || null
+  });
   if (resolved.file) console.log(`[STAR-CITIZEN] log: ${resolved.channel || '?'} channel (${resolved.source}) -> ${resolved.file}`);
   else console.log('[STAR-CITIZEN] no Game.log found across drives/channels - set SC_LOGFILE or SC_CHANNEL');
+  const webhook = process.env.DISCORD_WEBHOOK_URL || persisted.discordWebhook || null;
   const svc = new StarCitizenService({
     port: process.env.PORT || 3041,
     logfile: resolved.file,
     channel: resolved.channel,
     seed: process.env.SC_SEED || resolved.file,   // pre-fill from history by default
+    settingsDir,
     missions: { enable: true, dir: process.env.SC_REGISTER_DIR || null, officers: (process.env.SC_OFFICERS || '').split(',').map((s) => s.trim()).filter(Boolean) },
-    discord: { enable: !!process.env.DISCORD_WEBHOOK_URL, webhook: process.env.DISCORD_WEBHOOK_URL || null }
+    discord: { enable: !!webhook, webhook },
+    uplink: { enable: !!process.env.SC_UPLINK_URL, url: process.env.SC_UPLINK_URL || null }
   });
   svc.start();
 }

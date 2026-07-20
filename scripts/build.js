@@ -17,6 +17,7 @@ const dest = path.join(root, 'assets', 'index.html');
 const Dashboard = require('../components/Dashboard');
 const Onboarding = require('../components/Onboarding');
 const Groups = require('../components/Groups');
+const Settings = require('../components/Settings');
 
 async function main () {
   const result = await esbuild.build({
@@ -44,6 +45,7 @@ async function main () {
 ${Dashboard.CSS}
 ${Onboarding.CSS}
 ${Groups.CSS}
+${Settings.CSS}
 </style>
 </head>
 <body>
