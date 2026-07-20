@@ -37,18 +37,35 @@ function idFor (content) {
   return crypto.createHash('sha256').update(String(content)).digest('hex').slice(0, 32);
 }
 
+// Lazy-loaded identity helpers (functions/identity.js pulls in @fabric/core).
+// The local relay must still boot with zero external deps when signing is unused.
+let _identityLib = null;
+function identityLib () {
+  if (!_identityLib) _identityLib = require('../functions/identity');
+  return _identityLib;
+}
+
+// Collections a remote relay may push into via the signed batch endpoint.
+const INGEST_COLLECTIONS = ['activities', 'players', 'vehicles', 'kills', 'deaths', 'incaps', 'missionlog'];
+
 class StarCitizenService extends EventEmitter {
   constructor (settings = {}) {
     super();
     this.settings = Object.assign({
       port: 3041,
+      listen: true, // false = embed via apiHandler() on a host HTTP server (goon.vc)
+      mode: 'relay', // 'relay' = local log tailing; 'server' = hosted API (no log, signed ingest required)
       logfile: null,
       channel: null, // SC channel (LIVE/PTU/EPTU/HOTFIX/TECH-PREVIEW) for display
       seed: null,   // optional: replay a past log once on start to pre-fill the monitor
       discord: { enable: false, webhook: null, announceKills: true, announcePlayerJoins: true, announceActivities: false, announceMissions: false, announceCombat: false, announceIncaps: false },
-      missions: { enable: true }
+      missions: { enable: true },
+      uplink: { enable: false, url: null, intervalMs: 5000 }
     }, settings);
     this.settings.discord = Object.assign({ enable: false, webhook: null, announceKills: true, announcePlayerJoins: true, announceActivities: false, announceMissions: false, announceCombat: false, announceIncaps: false }, settings.discord || {});
+    this.settings.uplink = Object.assign({ enable: false, url: null, intervalMs: 5000 }, settings.uplink || {});
+    // Signed ingest is mandatory in server mode; opt-in locally.
+    this.settings.ingest = Object.assign({ requireSigned: this.settings.mode === 'server' }, settings.ingest || {});
 
     this.state = { status: 'STOPPED', activities: {}, players: {}, logins: {}, vehicles: {}, kills: {}, incaps: {}, deaths: {}, missionlog: {}, notifications: {}, logs: {}, startedAt: null };
     this.state.missionGroups = {};  // missions grouped by MissionId (built from the log)
@@ -66,6 +83,10 @@ class StarCitizenService extends EventEmitter {
     this._ino = null;   // file identity, to detect log recreation (restart)
     this._pollTimer = null;
     this.server = null;
+    this._identity = null;      // decrypted player identity (uplink signing)
+    this._uplinkQueue = [];     // events awaiting signed push to the uplink
+    this._uplinkTimer = null;
+    this._uplinkWired = false;
 
     // Safety net: a stray 'error' (e.g. the game rotating Game.log) must never
     // crash the process. Without a listener, EventEmitter throws on 'error'.
@@ -74,6 +95,25 @@ class StarCitizenService extends EventEmitter {
     const MissionManager = require('../services/MissionManager');
     this.missionManager = (this.settings.missions && this.settings.missions.enable)
       ? new MissionManager(this.settings.missions) : null;
+
+    // Groups: member-created k-of-n Schnorr multisig units (mission scoping +
+    // authority sets). Shares the register directory by default.
+    const GroupManager = require('../services/GroupManager');
+    const groupSettings = Object.assign({ enable: true, dir: (this.settings.missions && this.settings.missions.dir) || null }, this.settings.groups || {});
+    this.groupManager = groupSettings.enable ? new GroupManager(groupSettings) : null;
+    if (this.missionManager && this.groupManager) this.missionManager.groupManager = this.groupManager;
+
+    // Bearer sessions issued by POST …/auth (Schnorr login challenge).
+    this._sessions = {};
+
+    // Bitcoin payouts: escrow mission rewards in authority multisig addresses.
+    // settings.payouts = { enable, network, rpc, allowMainnet, feeSats }.
+    this.payoutManager = null;
+    if (this.settings.payouts && this.settings.payouts.enable !== false && (this.settings.payouts.rpc || this.settings.payouts.ledger)) {
+      const PayoutManager = require('../services/PayoutManager');
+      this.payoutManager = new PayoutManager(this.settings.payouts);
+      if (this.missionManager) this.payoutManager.attach(this.missionManager);
+    }
 
     this.history = this._loadHistory();   // compact backfill of past logs (Analyze tab)
 
@@ -178,12 +218,131 @@ class StarCitizenService extends EventEmitter {
   get status () { return this.state.status; }
 
   // ---- HTTP ----
+
+  /**
+   * Embeddable request handler for hosting the API inside another HTTP
+   * server (e.g. the goon.vc Hub). Handles /services/star-citizen/* and
+   * returns true; returns false (without touching the response) for
+   * unrelated paths so the host can route them elsewhere.
+   * @returns {Function} async (req, res) => Boolean
+   */
+  apiHandler () {
+    const base = '/services/star-citizen';
+    return async (req, res) => {
+      const pathname = new URL(req.url, 'http://localhost').pathname;
+      if (pathname !== base && !pathname.startsWith(`${base}/`)) return false;
+      await this._handle(req, res);
+      return true;
+    };
+  }
+
+  // ---- Signed ingest (remote relays -> hosted server) ----
+
+  /**
+   * Verify a Schnorr envelope and check the optional sender allowlist.
+   * @param {Object} envelope { pubkey, payload, signature }
+   * @returns {{ ok: Boolean, error: String|null, code: Number }}
+   */
+  _checkEnvelope (envelope) {
+    if (!envelope || !envelope.pubkey || !envelope.signature || envelope.payload === undefined) {
+      return { ok: false, code: 401, error: 'Signed envelope required: { pubkey, payload, signature }' };
+    }
+    const allowed = this.settings.ingest.allowedKeys;
+    if (Array.isArray(allowed) && allowed.length && !allowed.includes(envelope.pubkey)) {
+      return { ok: false, code: 403, error: 'Sender key is not on the roster' };
+    }
+    if (!identityLib().verifyEnvelope(envelope)) {
+      return { ok: false, code: 401, error: 'Invalid signature' };
+    }
+    return { ok: true, code: 200, error: null };
+  }
+
+  // ---- Auth sessions (Schnorr login) ----
+
+  /**
+   * Resolve the authenticated pubkey for a request from its Bearer session.
+   * @returns {String|null} Pubkey, or null when unauthenticated/expired.
+   */
+  _authPubkey (req) {
+    const header = (req.headers && req.headers.authorization) || '';
+    if (!header.startsWith('Bearer ')) return null;
+    const session = this._sessions[header.slice(7)];
+    if (!session) return null;
+    if (session.expiresAt < Date.now()) { delete this._sessions[session.token]; return null; }
+    return session.pubkey;
+  }
+
+  /**
+   * Issue a session for a Schnorr login envelope:
+   * `{ pubkey, payload: { intent: 'login', ts }, signature }` where `ts` is
+   * within 5 minutes of server time (replay damping).
+   * @returns {{ token, pubkey, expiresAt }|{ error, code }}
+   */
+  _login (envelope) {
+    const check = this._checkEnvelope(envelope);
+    if (!check.ok) return { error: check.error, code: check.code };
+    const p = envelope.payload || {};
+    if (p.intent !== 'login') return { error: 'payload.intent must be "login"', code: 400 };
+    const ts = Date.parse(p.ts);
+    if (Number.isNaN(ts) || Math.abs(Date.now() - ts) > 5 * 60 * 1000) {
+      return { error: 'payload.ts must be within 5 minutes of server time', code: 401 };
+    }
+    const token = crypto.randomBytes(24).toString('hex');
+    const session = { token, pubkey: envelope.pubkey, createdAt: Date.now(), expiresAt: Date.now() + 24 * 60 * 60 * 1000 };
+    this._sessions[token] = session;
+    // Cap session table growth.
+    const keys = Object.keys(this._sessions);
+    if (keys.length > 5000) delete this._sessions[keys[0]];
+    return { token, pubkey: session.pubkey, expiresAt: new Date(session.expiresAt).toISOString() };
+  }
+
+  /**
+   * Resolve the acting identity for register mutations. In hosted server
+   * mode the authenticated session pubkey is authoritative (bodies cannot
+   * impersonate); locally the body-provided actor id is kept (M5 behavior).
+   */
+  _actor (req, bodyValue) {
+    if (this.settings.mode === 'server') return this._authPubkey(req);
+    return this._authPubkey(req) || bodyValue || null;
+  }
+
+  /**
+   * Idempotently upsert one remote event into a collection, tagged with its
+   * source pubkey. The id derives from source + collection + content (no
+   * timestamps), so re-delivery of the same batch is a no-op.
+   * @returns {{ id: String, created: Boolean }}
+   */
+  _ingestEvent (source, collection, data) {
+    if (!INGEST_COLLECTIONS.includes(collection)) {
+      throw Object.assign(new Error(`Unknown collection: ${collection}`), { code: 'BAD_COLLECTION' });
+    }
+    if (collection === 'players') {
+      if (!data || !data.name) throw Object.assign(new Error('players event requires name'), { code: 'BAD_EVENT' });
+      const { player } = this.recordPlayer(data.name, data.timestamp || new Date().toISOString());
+      player.source = player.source || source;
+      return { id: player.id, created: false };
+    }
+    const { canonicalStringify } = identityLib();
+    const id = idFor(canonicalStringify({ source, collection, data }));
+    const existed = !!this.state[collection][id];
+    if (!existed) {
+      this.state[collection][id] = Object.assign({ id, source }, data);
+      if (collection === 'kills') this.emit('kill', this.state[collection][id]);
+    }
+    return { id, created: !existed };
+  }
+
   async _handle (req, res) {
     const base = '/services/star-citizen';
     const url = new URL(req.url, `http://localhost:${this.settings.port}`);
     const pathname = url.pathname;
     const send = (code, obj) => { res.writeHead(code, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(obj, null, 2)); };
-    const body = async () => { const c = []; for await (const ch of req) c.push(ch); return c.length ? JSON.parse(Buffer.concat(c).toString()) : {}; };
+    // Read the JSON body. When embedded behind Express (goon.vc Hub), body-parser
+    // has already consumed the stream and parsed req.body — use it directly.
+    const body = async () => {
+      if (req.body && typeof req.body === 'object' && Object.keys(req.body).length) return req.body;
+      const c = []; for await (const ch of req) c.push(ch); return c.length ? JSON.parse(Buffer.concat(c).toString()) : {};
+    };
 
     try {
       // Live monitor web UI (read-only dashboard) — built from components/Dashboard.js.
@@ -243,12 +402,105 @@ class StarCitizenService extends EventEmitter {
           logs: this.logs.length, missions: this.missions.length
         }});
       }
+      // Schnorr login: exchange a signed envelope for a Bearer session token.
+      if (req.method === 'POST' && pathname === `${base}/auth`) {
+        const result = this._login(await body());
+        if (result.error) return send(result.code || 401, { error: result.error });
+        return send(200, { type: 'Session', data: result });
+      }
+
+      // ---- Groups (k-of-n Schnorr multisig units) ----
+      const gm = this.groupManager;
+      const viewer = this._authPubkey(req);
+      const serverMode = this.settings.mode === 'server';
+      // In hosted mode every mutation requires an authenticated session.
+      const requireAuth = () => {
+        if (serverMode && !viewer) { send(401, { error: 'Authentication required (POST …/auth with a signed login envelope)' }); return false; }
+        return true;
+      };
+      if (pathname === `${base}/groups`) {
+        if (!gm) return send(503, { error: 'Group system not available' });
+        if (req.method === 'GET') {
+          // Members see their groups; unauthenticated hosted callers see none.
+          const data = serverMode
+            ? (viewer ? gm.groupsFor(viewer) : [])
+            : (viewer ? gm.groupsFor(viewer) : gm.groups);
+          return send(200, { type: 'Collection', data });
+        }
+        if (req.method === 'POST') {
+          if (!requireAuth()) return;
+          const d = await body();
+          const creator = viewer || d.creator; // local relay may specify creator explicitly
+          try { return send(200, { type: 'Group', data: await gm.createGroup(d, creator) }); }
+          catch (e) { return send(e.code === 'FORBIDDEN' ? 403 : 400, { error: e.message }); }
+        }
+      }
+      let gmatch;
+      if ((gmatch = pathname.match(new RegExp(`^${base}/groups/([^/]+)$`))) && req.method === 'GET') {
+        if (!gm) return send(503, { error: 'Group system not available' });
+        const group = gm.getGroup(gmatch[1]);
+        if (!group) return send(404, { error: 'Group not found' });
+        if (serverMode && (!viewer || !group.includes(viewer))) return send(403, { error: 'forbidden: not a group member' });
+        return send(200, { type: 'Group', data: group.toJSON() });
+      }
+      if ((gmatch = pathname.match(new RegExp(`^${base}/groups/([^/]+)/members$`))) && req.method === 'POST') {
+        if (!gm) return send(503, { error: 'Group system not available' });
+        if (!requireAuth()) return;
+        const d = await body();
+        const actor = viewer || d.actor;
+        try {
+          const data = d.remove
+            ? await gm.removeMember(gmatch[1], d.pubkey, actor)
+            : await gm.addMember(gmatch[1], d.pubkey, actor);
+          return send(200, { type: 'Group', data });
+        } catch (e) {
+          return send(e.code === 'FORBIDDEN' ? 403 : /not found/i.test(e.message) ? 404 : 400, { error: e.message });
+        }
+      }
+      if (req.method === 'GET' && pathname === `${base}/groupaudit`) {
+        return send(200, { type: 'Collection', data: gm ? gm.audit : [] });
+      }
+
+      // Signed batch ingest: remote relays push Schnorr-signed event batches.
+      // Envelope: { pubkey, payload: { events: [{ collection, data }, …] }, signature }.
+      // Idempotent — replayed batches upsert to the same content-derived ids.
+      if (req.method === 'POST' && pathname === `${base}/events`) {
+        const envelope = await body();
+        const check = this._checkEnvelope(envelope);
+        if (!check.ok) return send(check.code, { error: check.error });
+        const events = (envelope.payload && Array.isArray(envelope.payload.events)) ? envelope.payload.events : null;
+        if (!events) return send(400, { error: 'payload.events array required' });
+        const results = [];
+        let created = 0;
+        for (const ev of events) {
+          try {
+            const r = this._ingestEvent(envelope.pubkey, ev.collection, ev.data);
+            if (r.created) created += 1;
+            results.push({ id: r.id, collection: ev.collection, created: r.created });
+          } catch (e) {
+            results.push({ error: e.message, collection: ev.collection || null });
+          }
+        }
+        this.emit('ingest', { source: envelope.pubkey, received: events.length, created });
+        return send(200, { type: 'IngestResult', received: events.length, created, results });
+      }
+
       const collections = { activities: () => this.activities, players: () => this.players, logins: () => this.logins, vehicles: () => this.vehicles, kills: () => this.kills, incaps: () => this.incaps, deaths: () => this.deaths, missionlog: () => this.missionlog, notifications: () => this.notifications, messages: () => this.logs };
       for (const [name, getter] of Object.entries(collections)) {
         if (pathname === `${base}/${name}`) {
           if (req.method === 'GET') return send(200, { type: 'Collection', data: getter() });
           if (req.method === 'POST' && name !== 'messages' && name !== 'logins' && name !== 'notifications' && name !== 'incaps' && name !== 'deaths') {
             const data = await body();
+            // Server mode (goon.vc): unsigned single-event POSTs are rejected —
+            // remote relays must use the signed batch endpoint above.
+            if (this.settings.ingest.requireSigned) {
+              const check = this._checkEnvelope(data);
+              if (!check.ok) return send(check.code, { error: check.error });
+              try {
+                const r = this._ingestEvent(data.pubkey, name, data.payload);
+                return send(200, { type: name, data: this.state[name][r.id] || { id: r.id } });
+              } catch (e) { return send(400, { error: e.message }); }
+            }
             // Players dedupe by handle (distinct roster) rather than per-event.
             if (name === 'players' && data.name) {
               const { player } = this.recordPlayer(data.name, data.timestamp || new Date().toISOString());
@@ -261,11 +513,24 @@ class StarCitizenService extends EventEmitter {
           }
         }
       }
+      // Missions shared to a group are visible to its members only (hosted mode).
+      const visible = (m) => {
+        if (!m) return false;
+        if (!serverMode || !m.groupId) return true;
+        return !!(viewer && gm && gm.isMember(m.groupId, viewer));
+      };
       if (pathname === `${base}/missions`) {
-        if (req.method === 'GET') return send(200, { type: 'Collection', data: this.missions });
+        if (req.method === 'GET') return send(200, { type: 'Collection', data: this.missions.filter(visible) });
         if (req.method === 'POST') {
           if (!this.missionManager) return send(503, { error: 'Mission system not available' });
-          try { return send(200, { type: 'Mission', data: await this.missionManager.createMission(await body()) }); }
+          if (!requireAuth()) return;
+          const d = await body();
+          const creator = this._actor(req, d.createdBy || d.officerId);
+          if (d.groupId) {
+            if (!gm || !gm.getGroup(d.groupId)) return send(404, { error: 'Group not found' });
+            if (!gm.isMember(d.groupId, creator)) return send(403, { error: 'forbidden: not a member of the target group' });
+          }
+          try { return send(200, { type: 'Mission', data: await this.missionManager.createMission(Object.assign({}, d, { createdBy: creator })) }); }
           catch (e) { return send(e.code === 'FORBIDDEN' ? 403 : 400, { error: e.message }); }
         }
       }
@@ -273,7 +538,8 @@ class StarCitizenService extends EventEmitter {
       if (mMatch && req.method === 'GET') {
         if (!this.missionManager) return send(503, { error: 'Mission system not available' });
         const m = this.missionManager.getMission(mMatch[1]);
-        return m ? send(200, { type: 'Mission', data: m }) : send(404, { error: 'Mission not found' });
+        if (!m || !visible(m)) return send(404, { error: 'Mission not found' });
+        return send(200, { type: 'Mission', data: m });
       }
 
       // ---- Mission register flow (M5.2) ----
@@ -294,19 +560,75 @@ class StarCitizenService extends EventEmitter {
       if ((mr = pathname.match(new RegExp(`^${base}/missions/([^/]+)/applications$`))) && req.method === 'GET')
         return send(200, { type: 'Collection', data: reg ? reg.getMissionApplications(mr[1]) : [] });
       if ((mr = pathname.match(new RegExp(`^${base}/missions/([^/]+)/cancel$`))) && req.method === 'POST') {
-        const d = await body(); return run(() => reg.cancelMission(Object.assign({ missionId: mr[1] }, d)), 'Mission');
+        if (!requireAuth()) return;
+        const d = await body(); return run(() => reg.cancelMission(Object.assign({}, d, { missionId: mr[1], officerId: this._actor(req, d.officerId) })), 'Mission');
       }
       if ((mr = pathname.match(new RegExp(`^${base}/missions/([^/]+)/apply$`))) && req.method === 'POST') {
-        const d = await body(); return run(() => reg.applyToMission(Object.assign({ missionId: mr[1] }, d)), 'Application');
+        if (!requireAuth()) return;
+        const d = await body(); return run(() => reg.applyToMission(Object.assign({}, d, { missionId: mr[1], applicantId: this._actor(req, d.applicantId) })), 'Application');
       }
       if ((mr = pathname.match(new RegExp(`^${base}/missions/([^/]+)/claim$`))) && req.method === 'POST') {
-        const d = await body(); return run(() => reg.submitClaim(Object.assign({ missionId: mr[1] }, d)), 'Claim');
+        if (!requireAuth()) return;
+        const d = await body(); return run(() => reg.submitClaim(Object.assign({}, d, { missionId: mr[1], claimantId: this._actor(req, d.claimantId) })), 'Claim');
       }
       if ((mr = pathname.match(new RegExp(`^${base}/applications/([^/]+)/decision$`))) && req.method === 'POST') {
-        const d = await body(); return run(() => reg.decideApplication(Object.assign({ applicationId: mr[1] }, d)), 'Application');
+        if (!requireAuth()) return;
+        const d = await body(); return run(() => reg.decideApplication(Object.assign({}, d, { applicationId: mr[1], officerId: this._actor(req, d.officerId) })), 'Application');
       }
       if ((mr = pathname.match(new RegExp(`^${base}/claims/([^/]+)/validate$`))) && req.method === 'POST') {
-        const d = await body(); return run(() => reg.validateClaim(Object.assign({ claimId: mr[1] }, d)), 'Validation');
+        if (!requireAuth()) return;
+        const d = await body(); return run(() => reg.validateClaim(Object.assign({}, d, { claimId: mr[1], officerId: this._actor(req, d.officerId) })), 'Validation');
+      }
+
+      // ---- Bitcoin escrow / payouts ----
+      const pm = this.payoutManager;
+      const escrowMission = (id) => {
+        const m = reg ? reg.getMission(id) : null;
+        if (!m || !visible(m)) return null;
+        return m;
+      };
+      if ((mr = pathname.match(new RegExp(`^${base}/missions/([^/]+)/escrow$`)))) {
+        if (!pm) return send(503, { error: 'Payout system not available' });
+        const m = escrowMission(mr[1]);
+        if (!m) return send(404, { error: 'Mission not found' });
+        if (req.method === 'GET') {
+          if (!m.escrow) return send(404, { error: 'Mission has no escrow' });
+          let funding = null;
+          try { funding = await pm.checkFunding(m.escrow); reg.store.put('missions', m.id, m); } catch (e) { funding = { error: e.message }; }
+          return send(200, { type: 'Escrow', data: Object.assign({}, m.escrow, { funding }) });
+        }
+        if (req.method === 'POST') {
+          if (!requireAuth()) return;
+          const d = await body();
+          const actor = this._actor(req, d.actor);
+          const allowed = actor && (actor === m.createdBy || (m.authorities && m.authorities.keys.includes(actor)));
+          if (!allowed) return send(403, { error: 'forbidden: only the creator or an authority may create the escrow' });
+          if (m.escrow) return send(400, { error: 'escrow already exists' });
+          try {
+            m.escrow = await pm.createEscrow(m, d.amountSats);
+            reg.store.put('missions', m.id, m);
+            reg._audit(actor, 'escrow.create', 'mission', m.id, `${m.escrow.amountSats} sats -> ${m.escrow.address || 'ledger'}`);
+            return send(200, { type: 'Escrow', data: m.escrow });
+          } catch (e) { return send(400, { error: e.message }); }
+        }
+      }
+      if ((mr = pathname.match(new RegExp(`^${base}/missions/([^/]+)/payout$`))) && req.method === 'POST') {
+        if (!pm) return send(503, { error: 'Payout system not available' });
+        if (!requireAuth()) return;
+        const m = escrowMission(mr[1]);
+        if (!m || !m.escrow) return send(404, { error: 'Mission escrow not found' });
+        const d = await body();
+        try {
+          if (d.signedTxHex) {
+            const result = await pm.broadcastPayout(m.escrow, d.signedTxHex);
+            reg.store.put('missions', m.id, m);
+            reg._audit(this._actor(req, d.actor), 'escrow.paid', 'mission', m.id, result.txid);
+            return send(200, { type: 'Payout', data: result });
+          }
+          const built = await pm.buildPayout(m.escrow, d.toAddress || m.escrow.payee);
+          reg.store.put('missions', m.id, m);
+          return send(200, { type: 'PayoutPsbt', data: built });
+        } catch (e) { return send(400, { error: e.message }); }
       }
 
       return send(404, { error: 'Not found', path: pathname });
@@ -591,30 +913,115 @@ class StarCitizenService extends EventEmitter {
     } catch (e) { this.emit('error', e); return null; }
   }
 
+  // ---- Uplink (local relay -> hosted goon.vc server) ----
+
+  /**
+   * Provide (or clear) the player's decrypted identity. While set, parsed
+   * events are queued and pushed to the configured uplink as Schnorr-signed
+   * batches. Called by the Electron main process after unlock.
+   * @param {Object|null} identity Decrypted identity ({ xprv, pubkey, … }) or null to lock.
+   */
+  setIdentity (identity) {
+    this._identity = identity || null;
+    if (this._identity && this.settings.uplink.enable && this.settings.uplink.url) {
+      this._startUplink();
+    } else {
+      this._stopUplink();
+    }
+  }
+
+  _startUplink () {
+    if (this._uplinkTimer) return;
+    this._uplinkQueue = this._uplinkQueue || [];
+    if (!this._uplinkWired) {
+      this._uplinkWired = true;
+      const queue = (collection) => (ev) => {
+        if (!this._identity) return;
+        this._uplinkQueue.push({ collection, data: ev });
+        if (this._uplinkQueue.length > 5000) this._uplinkQueue.shift();
+      };
+      this.on('kill', queue('kills'));
+      this.on('player:death', queue('deaths'));
+      this.on('player:incap', queue('incaps'));
+      this.on('vehicle:destroy', queue('vehicles'));
+      this.on('mission:event', queue('missionlog'));
+      this.on('player:join', (p) => {
+        if (!this._identity) return;
+        this._uplinkQueue.push({ collection: 'players', data: { name: p.name, timestamp: p.lastSeen } });
+      });
+    }
+    const interval = this.settings.uplink.intervalMs || 5000;
+    this._uplinkTimer = setInterval(() => { this._flushUplink().catch((e) => this.emit('error', e)); }, interval);
+    if (this._uplinkTimer.unref) this._uplinkTimer.unref();
+    console.log(`[STAR-CITIZEN] uplink active -> ${this.settings.uplink.url}`);
+  }
+
+  _stopUplink () {
+    if (this._uplinkTimer) { clearInterval(this._uplinkTimer); this._uplinkTimer = null; }
+  }
+
+  /** Push queued events to the uplink as one signed batch. */
+  async _flushUplink () {
+    if (!this._identity || !this._uplinkQueue || !this._uplinkQueue.length) return null;
+    if (typeof fetch !== 'function') return null;
+    const events = this._uplinkQueue.splice(0, 200);
+    const envelope = identityLib().signEnvelope(this._identity, { events, sentAt: new Date().toISOString() });
+    const target = this.settings.uplink.url.replace(/\/$/, '') + '/services/star-citizen/events';
+    try {
+      const res = await fetch(target, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(envelope)
+      });
+      if (!res.ok) {
+        // Requeue on server errors; drop on auth rejections (bad roster/key).
+        if (res.status >= 500) this._uplinkQueue.unshift(...events);
+        this.emit('uplink:error', { status: res.status });
+        return null;
+      }
+      const result = await res.json().catch(() => null);
+      this.emit('uplink:sent', { count: events.length, result });
+      return result;
+    } catch (e) {
+      this._uplinkQueue.unshift(...events); // network failure: retry next tick
+      if (this._uplinkQueue.length > 5000) this._uplinkQueue.length = 5000;
+      this.emit('uplink:error', { error: e.message });
+      return null;
+    }
+  }
+
   // ---- Lifecycle ----
   async start () {
     this.state.status = 'STARTING';
     if (this.missionManager) await this.missionManager.start();
+    if (this.groupManager) await this.groupManager.start();
+    const serverMode = this.settings.mode === 'server';
     // Seed FIRST (replays history), then start the live poller at the current
     // end-of-file so we only stream genuinely new lines and don't double-read.
-    if (this.settings.seed) {
+    if (!serverMode && this.settings.seed) {
       try { const n = await this.replayLog(this.settings.seed); console.log(`[STAR-CITIZEN] seeded ${n} lines from ${this.settings.seed}`); }
       catch (e) { this.emit('error', e); }
     }
-    this.openLog();
-    this.server = http.createServer((req, res) => this._handle(req, res));
-    await new Promise((resolve) => this.server.listen(this.settings.port, resolve));
+    if (!serverMode) this.openLog();
+    if (this.settings.listen !== false) {
+      this.server = http.createServer((req, res) => this._handle(req, res));
+      await new Promise((resolve) => this.server.listen(this.settings.port, resolve));
+    }
+    if (this._identity && this.settings.uplink.enable && this.settings.uplink.url) this._startUplink();
     this.state.status = 'STARTED';
     this.state.startedAt = new Date().toISOString();
     this.emit('ready');
-    console.log(`[STAR-CITIZEN] listening on http://localhost:${this.settings.port}/services/star-citizen`);
+    if (this.server) console.log(`[STAR-CITIZEN] listening on http://localhost:${this.settings.port}/services/star-citizen`);
+    else console.log('[STAR-CITIZEN] API ready (embedded mode, no listener)');
     return this;
   }
 
   async stop () {
     this.state.status = 'STOPPING';
     if (this._pollTimer) { clearTimeout(this._pollTimer); this._pollTimer = null; }
+    this._stopUplink();
     if (this.missionManager) await this.missionManager.stop();
+    if (this.groupManager) await this.groupManager.stop();
     if (this.server) {
       await new Promise((r) => this.server.close(r));
       this.server = null;
@@ -628,6 +1035,17 @@ class StarCitizenService extends EventEmitter {
 module.exports = StarCitizenService;
 
 if (require.main === module) {
+  // Hosted server mode (goon.vc): API only, signed ingest, no log tailing.
+  if (process.env.SC_MODE === 'server') {
+    const svc = new StarCitizenService({
+      port: process.env.PORT || 3041,
+      mode: 'server',
+      missions: { enable: true, dir: process.env.SC_REGISTER_DIR || null, officers: (process.env.SC_OFFICERS || '').split(',').map((s) => s.trim()).filter(Boolean) },
+      ingest: { allowedKeys: (process.env.SC_ROSTER || '').split(',').map((s) => s.trim()).filter(Boolean) }
+    });
+    svc.start();
+    return;
+  }
   // Auto-locate the active log across drives/channels (SC_LOGFILE or SC_CHANNEL override).
   const resolved = resolveLogFile({ explicit: process.env.SC_LOGFILE || null, channel: process.env.SC_CHANNEL || null });
   if (resolved.file) console.log(`[STAR-CITIZEN] log: ${resolved.channel || '?'} channel (${resolved.source}) -> ${resolved.file}`);

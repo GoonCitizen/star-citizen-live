@@ -15,6 +15,8 @@ const root = path.join(__dirname, '..');
 const entry = path.join(__dirname, 'dashboard-entry.js');
 const dest = path.join(root, 'assets', 'index.html');
 const Dashboard = require('../components/Dashboard');
+const Onboarding = require('../components/Onboarding');
+const Groups = require('../components/Groups');
 
 async function main () {
   const result = await esbuild.build({
@@ -40,6 +42,8 @@ async function main () {
 <title>${Dashboard.TITLE}</title>
 <style>
 ${Dashboard.CSS}
+${Onboarding.CSS}
+${Groups.CSS}
 </style>
 </head>
 <body>

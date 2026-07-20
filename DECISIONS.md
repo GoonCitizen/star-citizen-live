@@ -4,6 +4,55 @@ understands the direction. Newest at the top.
 
 ---
 
+## D-008 — Player identities, goon.vc hub, multisig groups, Bitcoin-unlocked payouts
+**Date:** 2026-07-19 · **Status:** Adopted (implemented; deploy pending)
+
+**Decision:** Four connected capabilities land together:
+1. **First-run identity** — the desktop app onboards each player with a BIP39
+   keypair (`functions/identity.js`, `components/Onboarding.js`). The encrypted
+   key lives in Electron `userData`; the compressed secp256k1 pubkey is the
+   player's actor id. Keys never leave the client.
+2. **goon.vc hub** — the separate `goon.vc` repo (a Fabric Hub) mounts this
+   project's API at `/services/star-citizen` via `LiveRelay.apiHandler()` in
+   `mode: 'server'` (no log tailing, no dashboard). Installed clients push
+   **Schnorr-signed event batches** (`POST …/events`); unsigned writes are
+   rejected in hosted mode, and every stored event carries its `source` pubkey.
+   Ingest is idempotent by content id (DESIGN-event-convergence.md).
+3. **Groups** — any member may create a group (`types/Group.js`,
+   `services/GroupManager.js`): a pubkey roster + k-of-n threshold, verified
+   with the standard Fabric `Federation` BIP340 Schnorr multisignature.
+   Missions carrying a `groupId` are served **only to that group's members**
+   (Schnorr login → Bearer session, `POST …/auth`).
+4. **Bitcoin-unlocked completion** — missions may carry an `authorities` set
+   (pubkeys + threshold; defaults to the creator). Approving a completion claim
+   requires k-of-n Schnorr signatures over a canonical acceptance message; the
+   signed authorization is embedded in the audit chain (this delivers M6's
+   signed audit). With an escrow attached, acceptance flips it to `payable`:
+   `services/PayoutManager.js` derives a k-of-n multisig address from the
+   authority keys (bitcoind `createmultisig`), verifies funding
+   (`scantxoutset`), builds the payout PSBT for the authorities to sign
+   client-side, and broadcasts the signed tx. **Mainnet is refused** unless
+   explicitly overridden — regtest/signet until the flow is proven. Missions
+   without funding use a ledger-only obligation.
+
+**Why:** the org needs multi-player visibility (one machine's log is not the
+org), authenticated contribution (signing proves authorship — D-004's honest
+limit stands), member-run groups without granting server-side roles, and a
+reward mechanism whose settlement does not depend on trusting the server.
+
+**Consequences / guardrails:**
+- Amends D-002/D-004: signed identity + multisig return **as optional modules**
+  — the local relay still runs standalone with zero external deps and no
+  identity (crypto loads lazily). D-005 holds: humans (creator/authorities)
+  validate completion; the log remains supporting evidence only.
+- The server stores only pubkeys, signatures, and events — never private keys.
+- The legacy officer allowlist still governs missions without an authorities
+  set (backward compatible with M5).
+- Deploy artifacts live in `goon.vc/deploy/` + `goon.vc/DEPLOY.md` (systemd,
+  Caddy TLS, env template). Actual VPS deployment is the remaining step.
+
+---
+
 ## D-007 — Analytics dashboard + player log backload are adopted project goals
 **Date:** 2026-06-19 · **Status:** Adopted
 

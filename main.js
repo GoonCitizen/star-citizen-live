@@ -22,6 +22,8 @@ const http = require('http');
 const { BRAND_NAME } = require('./constants');
 const LiveRelay = require('./services/LiveRelay');
 const { resolveLogFile } = require('./functions/locate');
+const identityLib = require('./functions/identity');
+const identityStore = require('./functions/identityStore');
 
 let settings = {};
 try {
@@ -37,6 +39,8 @@ let starCitizenService = null;
 let activePort = null;
 /** When true, closing the window quits instead of hiding to tray. */
 let isQuitting = false;
+/** Decrypted identity, held in main-process memory only while unlocked. */
+let unlockedIdentity = null;
 
 const startHidden = process.argv.includes('--hidden') ||
   process.argv.includes('--open-as-hidden');
@@ -84,7 +88,11 @@ function buildRelaySettings (port) {
       officers: process.env.SC_OFFICERS
         ? process.env.SC_OFFICERS.split(',').map((s) => s.trim()).filter(Boolean)
         : (Array.isArray(settings.missions?.officers) ? settings.missions.officers.map(String) : [])
-    }, settings.missions || {})
+    }, settings.missions || {}),
+    uplink: Object.assign({
+      enable: !!(process.env.SC_UPLINK_URL || settings.uplink?.url),
+      url: process.env.SC_UPLINK_URL || settings.uplink?.url || null
+    }, settings.uplink || {})
   };
 }
 
@@ -390,6 +398,7 @@ if (gotLock) {
       configureAutoLaunch();
       createTray();
       await startService();
+      applyIdentityToService();
       createWindow(activePort || servicePort());
     } catch (error) {
       console.error('[ELECTRON]', '[ERROR]', 'Startup failed:', error);
@@ -421,6 +430,98 @@ if (gotLock) {
   });
 }
 
+// --- Identity (first-run onboarding) -------------------------------------
+
+function identityDir () {
+  return app.getPath('userData');
+}
+
+/** Push the unlocked identity into the running relay for uplink signing. */
+function applyIdentityToService () {
+  if (starCitizenService && typeof starCitizenService.setIdentity === 'function') {
+    starCitizenService.setIdentity(unlockedIdentity);
+  }
+}
+
+function identitySummary () {
+  const blob = identityStore.loadEncrypted(identityDir());
+  return {
+    exists: !!blob,
+    pubkey: blob ? blob.pubkey : null,
+    xpub: blob ? blob.xpub : null,
+    createdAt: blob ? blob.createdAt : null,
+    unlocked: !!unlockedIdentity
+  };
+}
+
+ipcMain.handle('identity:get', () => identitySummary());
+
+ipcMain.handle('identity:create', (_e, { password } = {}) => {
+  if (identityStore.hasIdentity(identityDir())) {
+    return { error: 'An identity already exists. Restore or forget it first.' };
+  }
+  try {
+    const identity = identityLib.createIdentity();
+    const blob = identityLib.encryptIdentity(identity, password);
+    identityStore.saveEncrypted(identityDir(), blob);
+    unlockedIdentity = identity;
+    applyIdentityToService();
+    // Mnemonic is returned exactly once so the UI can show the backup step.
+    return { pubkey: identity.pubkey, mnemonic: identity.mnemonic };
+  } catch (error) {
+    return { error: error.message || String(error) };
+  }
+});
+
+ipcMain.handle('identity:restore', (_e, { mnemonic, xprv, password } = {}) => {
+  try {
+    const identity = identityLib.restoreIdentity(xprv ? { xprv } : { mnemonic });
+    const blob = identityLib.encryptIdentity(identity, password);
+    identityStore.saveEncrypted(identityDir(), blob);
+    unlockedIdentity = identity;
+    applyIdentityToService();
+    return { pubkey: identity.pubkey };
+  } catch (error) {
+    return { error: error.message || String(error) };
+  }
+});
+
+ipcMain.handle('identity:unlock', (_e, { password } = {}) => {
+  const blob = identityStore.loadEncrypted(identityDir());
+  if (!blob) return { error: 'No identity found.' };
+  try {
+    unlockedIdentity = identityLib.decryptIdentity(blob, password);
+    applyIdentityToService();
+    return { pubkey: unlockedIdentity.pubkey };
+  } catch (error) {
+    return { error: error.message || String(error) };
+  }
+});
+
+ipcMain.handle('identity:sign-envelope', (_e, payload) => {
+  if (!unlockedIdentity) return { error: 'Identity is locked.' };
+  try {
+    return identityLib.signEnvelope(unlockedIdentity, payload);
+  } catch (error) {
+    return { error: error.message || String(error) };
+  }
+});
+
+ipcMain.handle('identity:lock', () => {
+  unlockedIdentity = null;
+  applyIdentityToService();
+  return { unlocked: false };
+});
+
+ipcMain.handle('identity:forget', () => {
+  unlockedIdentity = null;
+  applyIdentityToService();
+  const removed = identityStore.removeIdentity(identityDir());
+  return { removed };
+});
+
+// --- Service status --------------------------------------------------------
+
 ipcMain.handle('get-service-status', () => {
   if (starCitizenService) {
     return {
@@ -442,6 +543,7 @@ ipcMain.handle('set-open-at-login', (_e, enabled) => {
 ipcMain.handle('restart-service', async () => {
   await stopService();
   await startService();
+  applyIdentityToService();
   if (mainWindow && activePort) {
     await mainWindow.loadURL(`http://127.0.0.1:${activePort}/`);
   }

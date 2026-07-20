@@ -83,11 +83,14 @@ class MissionManager extends EventEmitter {
   isOfficer (actor) { return this.officers.size === 0 || this.officers.has(String(actor)); }
   _requireOfficer (actor) { if (!this.isOfficer(actor)) { const e = new Error('forbidden: not an officer'); e.code = 'FORBIDDEN'; throw e; } }
 
-  // ---- audit (hash chain) ----
-  _audit (actor, action, entity, entityId, summary) {
+  // ---- audit (hash chain; optional signed authorizations — M6) ----
+  // `authorization` is the Schnorr evidence that authorized the mutation:
+  // `{ message, signatures: { [pubkey]: sigHex } }`. It is part of the hashed
+  // body, so it is tamper-evident, and verifyAudit re-checks the signatures.
+  _audit (actor, action, entity, entityId, summary, authorization = null) {
     const chain = this.audit;
     const prevHash = chain.length ? chain[chain.length - 1].hash : ZERO;
-    const body = { seq: chain.length, ts: new Date().toISOString(), actor: actor != null ? String(actor) : null, action, entity, entityId, summary: summary || '' };
+    const body = { seq: chain.length, ts: new Date().toISOString(), actor: actor != null ? String(actor) : null, action, entity, entityId, summary: summary || '', authorization: authorization || null };
     const hash = sha256(prevHash + JSON.stringify(body));
     const entry = Object.assign({ id: `audit-${body.seq}` }, body, { prevHash, hash });
     this.store.put('audit', entry.id, entry);
@@ -95,12 +98,22 @@ class MissionManager extends EventEmitter {
     return entry;
   }
 
-  // Recompute the chain and confirm nothing was altered.
+  // Recompute the chain and confirm nothing was altered. Entries carrying a
+  // signed authorization also have each Schnorr signature re-verified.
   verifyAudit () {
     let prev = ZERO;
     for (const e of this.audit) {
-      const body = { seq: e.seq, ts: e.ts, actor: e.actor, action: e.action, entity: e.entity, entityId: e.entityId, summary: e.summary };
+      const body = { seq: e.seq, ts: e.ts, actor: e.actor, action: e.action, entity: e.entity, entityId: e.entityId, summary: e.summary, authorization: e.authorization || null };
       if (e.prevHash !== prev || e.hash !== sha256(prev + JSON.stringify(body))) return false;
+      if (e.authorization && e.authorization.signatures) {
+        try {
+          const Key = require('@fabric/core/types/key');
+          for (const [pubkey, sig] of Object.entries(e.authorization.signatures)) {
+            const key = new Key({ public: pubkey });
+            if (!key.verifySchnorr(Buffer.from(String(e.authorization.message)), Buffer.from(String(sig), 'hex'))) return false;
+          }
+        } catch (_) { return false; }
+      }
       prev = e.hash;
     }
     return true;
@@ -116,6 +129,9 @@ class MissionManager extends EventEmitter {
     const officer = data.createdBy || data.officerId || null;
     this._requireOfficer(officer);
     const id = data.id || this._id('mission');
+    // Authorities: pubkeys whose k-of-n signatures accept completion (and
+    // unlock any Bitcoin payout). Defaults to the creator alone (1-of-1).
+    const authorities = this._normalizeAuthorities(data.authorities, officer);
     const mission = {
       id,
       title: data.title || 'Untitled mission',
@@ -126,6 +142,9 @@ class MissionManager extends EventEmitter {
       location: data.location || null,
       deadline: data.deadline || null,
       outOfGame: !!data.outOfGame,
+      groupId: data.groupId || null,     // visibility scope (group members only)
+      authorities,                        // { keys: [pubkeys], threshold } or null
+      escrow: data.escrow || null,        // Bitcoin escrow record (see PayoutManager)
       createdBy: officer != null ? String(officer) : null,
       createdAt: new Date().toISOString(),
       status: 'open',
@@ -136,6 +155,20 @@ class MissionManager extends EventEmitter {
     this._audit(officer, 'mission.create', 'mission', id, mission.title);
     this.emit('mission:created', mission);
     return mission;
+  }
+
+  /** Normalize the authorities field: `{ keys: [pubkey…], threshold }` or null. */
+  _normalizeAuthorities (input, creator) {
+    const PUBKEY_RE = /^0[23][0-9a-f]{64}$/;
+    if (input && Array.isArray(input.keys) && input.keys.length) {
+      const keys = [...new Set(input.keys.map(String))];
+      for (const k of keys) { if (!PUBKEY_RE.test(k)) throw new Error(`invalid authority pubkey: ${k}`); }
+      const threshold = Math.min(Math.max(1, Number(input.threshold) || 1), keys.length);
+      return { keys, threshold };
+    }
+    // Default: the creator alone, when the creator is a pubkey identity.
+    if (creator && PUBKEY_RE.test(String(creator))) return { keys: [String(creator)], threshold: 1 };
+    return null;
   }
 
   /**
@@ -221,13 +254,61 @@ class MissionManager extends EventEmitter {
     return claim;
   }
 
+  /**
+   * Deterministic message the mission's authorities must sign to accept a
+   * completion claim (and release any escrowed payout).
+   * @param {Object} mission Mission record.
+   * @param {Object} claim Claim record.
+   * @returns {String} Canonical acceptance message.
+   */
+  acceptanceMessage (mission, claim) {
+    return JSON.stringify({ action: 'mission.accept', missionId: mission.id, claimId: claim.id, claimantId: claim.claimantId });
+  }
+
+  /**
+   * Verify a k-of-n acceptance against the mission's authorities set.
+   * Signers sign `acceptanceMessage(mission, claim)` bytes with BIP340
+   * Schnorr; only authority pubkeys count.
+   * @returns {Boolean}
+   */
+  verifyAcceptance (mission, claim, signatures) {
+    if (!mission.authorities || !mission.authorities.keys || !mission.authorities.keys.length) return false;
+    if (!signatures || typeof signatures !== 'object') return false;
+    const Group = require('../types/Group');
+    const authorityGroup = new Group({
+      id: `authorities-${mission.id}`,
+      name: 'authorities',
+      members: mission.authorities.keys,
+      threshold: mission.authorities.threshold || 1
+    });
+    return authorityGroup.verifyMultiSignature({ message: this.acceptanceMessage(mission, claim), signatures });
+  }
+
   async validateClaim (data = {}) {
     const claim = this.store.get('claims', data.claimId);
     if (!claim) throw new Error('claim not found');
-    this._requireOfficer(data.officerId);
     if (claim.status !== 'pending') throw new Error(`claim already ${claim.status}`);
     const m = this._mission(claim.missionId);
+
+    // Authorization: when the mission has an authorities set, approval requires
+    // k-of-n Schnorr signatures over the acceptance message (the officer
+    // allowlist is bypassed — the mission's own authority set governs it).
+    // Otherwise the legacy officer-allowlist path applies (M5 behavior).
+    let authorization = null;
+    const hasAuthorities = !!(m.authorities && m.authorities.keys && m.authorities.keys.length);
+    if (hasAuthorities && data.decision === 'approve') {
+      if (!this.verifyAcceptance(m, claim, data.signatures)) {
+        const e = new Error(`acceptance requires ${m.authorities.threshold}-of-${m.authorities.keys.length} authority signature(s) over the acceptance message`);
+        e.code = 'FORBIDDEN';
+        throw e;
+      }
+      authorization = { message: this.acceptanceMessage(m, claim), signatures: data.signatures };
+    } else {
+      this._requireOfficer(data.officerId);
+    }
+
     const validation = { id: this._id('validation'), claimId: claim.id, missionId: m.id, officerId: data.officerId != null ? String(data.officerId) : null, decision: data.decision, note: data.note || '', validatedAt: new Date().toISOString() };
+    if (authorization) validation.authorization = authorization;
 
     if (data.decision === 'approve') {
       claim.status = 'validated';
@@ -236,9 +317,11 @@ class MissionManager extends EventEmitter {
       this.store.put('claims', claim.id, claim);
       this.store.put('missions', m.id, m);
       this.store.put('validations', validation.id, validation);
-      this._audit(data.officerId, 'claim.validate', 'claim', claim.id, 'approved');
+      this._audit(data.officerId, 'claim.validate', 'claim', claim.id, 'approved', authorization);
       this.emit('claim:validated', validation);
       this.emit('mission:completed', m);
+      // Escrowed Bitcoin payouts unlock on acceptance (see PayoutManager).
+      if (m.escrow) this.emit('payout:unlocked', { mission: m, claim, validation });
     } else if (data.decision === 'reject') {
       claim.status = 'rejected';                 // mission stays 'assigned'; assignee may re-claim
       this.store.put('claims', claim.id, claim);

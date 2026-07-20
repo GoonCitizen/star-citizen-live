@@ -7,6 +7,8 @@
  */
 
 const React = require('react');
+const Onboarding = require('./Onboarding');
+const Groups = require('./Groups');
 
 const TITLE = 'GoonCitizen — Monitor';
 
@@ -193,7 +195,8 @@ class Dashboard extends React.Component {
       azPlayers: null,
       azTypes: null,
       azOutcomes: null,
-      azFactions: null
+      azFactions: null,
+      identityPubkey: null
     };
     this._timer = null;
     this._copiedTimers = {};
@@ -844,10 +847,19 @@ class Dashboard extends React.Component {
     const scope = D ? (sel + '/' + tot + ' months · ' + np + (D.generatedAt ? ' · history loaded' : '')) : '';
 
     return React.createElement(React.Fragment, null,
+      React.createElement(Onboarding, {
+        onReady: (pubkey) => this.setState({ identityPubkey: pubkey })
+      }),
       React.createElement('header', null,
         React.createElement('div', { className: 'row' },
           React.createElement('h1', null, '🛰️ GoonCitizen'),
           React.createElement('span', { className: 'pill ' + (this.state.online ? 'on' : 'off') }, this.state.status),
+          this.state.identityPubkey
+            ? React.createElement('span', {
+              className: 'pill on',
+              title: 'signing identity unlocked — ' + this.state.identityPubkey
+            }, '🔑 ' + this.state.identityPubkey.slice(0, 8) + '…')
+            : null,
           React.createElement('div', { className: 'counts' },
             React.createElement('span', { className: 'k' }, 'kills ', React.createElement('b', null, c.kills)),
             React.createElement('span', { className: 'k', title: 'combat objectives progressed — inferred from missions (kills are not logged directly)' }, 'combat ', React.createElement('b', null, c.combat)),
@@ -884,6 +896,11 @@ class Dashboard extends React.Component {
             className: 'tab ' + (this.state.tab === 'analyze' ? 'on' : ''),
             onClick: () => this.showTab('analyze')
           }, 'Analyze'),
+          React.createElement('button', {
+            type: 'button',
+            className: 'tab ' + (this.state.tab === 'groups' ? 'on' : ''),
+            onClick: () => this.showTab('groups')
+          }, 'Groups'),
           React.createElement('span', { className: 'sub', style: { color: 'var(--muted)', fontSize: 12 } }, scope)
         ),
         this.state.tab === 'live'
@@ -905,7 +922,11 @@ class Dashboard extends React.Component {
           )
           : null
       ),
-      this.state.tab === 'live' ? this.renderLive() : this.renderAnalyze()
+      this.state.tab === 'live'
+        ? this.renderLive()
+        : (this.state.tab === 'groups'
+          ? React.createElement(Groups, { identityPubkey: this.state.identityPubkey })
+          : this.renderAnalyze())
     );
   }
 }

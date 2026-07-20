@@ -12,6 +12,15 @@ contextBridge.exposeInMainWorld('electronAPI', {
   getServiceStatus: () => ipcRenderer.invoke('get-service-status'),
   restartService: () => ipcRenderer.invoke('restart-service'),
   setOpenAtLogin: (enabled) => ipcRenderer.invoke('set-open-at-login', enabled),
+  identity: {
+    get: () => ipcRenderer.invoke('identity:get'),
+    create: (password) => ipcRenderer.invoke('identity:create', { password }),
+    restore: (opts) => ipcRenderer.invoke('identity:restore', opts),
+    unlock: (password) => ipcRenderer.invoke('identity:unlock', { password }),
+    signEnvelope: (payload) => ipcRenderer.invoke('identity:sign-envelope', payload),
+    lock: () => ipcRenderer.invoke('identity:lock'),
+    forget: () => ipcRenderer.invoke('identity:forget')
+  },
   platform: process.platform,
   versions: {
     node: process.versions.node,
