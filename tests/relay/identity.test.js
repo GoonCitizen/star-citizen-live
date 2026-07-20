@@ -83,3 +83,42 @@ test('keyFromIdentity signs consistently with the original key', () => {
   const key = keyFromIdentity(identity);
   assert.strictEqual(key.pubkey, identity.pubkey);
 });
+
+// Backup portability: the exported backup file is the at-rest blob plus a
+// `type` marker; importing strips the marker and decrypts with the password.
+test('encrypted backup file round-trips through export/import shape', () => {
+  const identity = createIdentity();
+  const password = 'orbital drop shock trooper';
+  const blob = encryptIdentity(identity, password);
+
+  const backupFile = Object.assign({ type: 'gooncitizen-identity-backup' }, blob);
+  const { type, ...restored } = JSON.parse(JSON.stringify(backupFile));
+  assert.strictEqual(type, 'gooncitizen-identity-backup');
+
+  const decrypted = decryptIdentity(restored, password);
+  assert.strictEqual(decrypted.pubkey, identity.pubkey);
+  assert.strictEqual(decrypted.xprv, identity.xprv);
+  assert.throws(() => decryptIdentity(restored, 'not the password'), /Could not decrypt/);
+});
+
+test('identityStore refuses to persist plaintext secrets', () => {
+  const fs = require('fs');
+  const os = require('os');
+  const path = require('path');
+  const identityStore = require('../../functions/identityStore');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'sc-id-'));
+
+  const identity = createIdentity();
+  assert.throws(() => identityStore.saveEncrypted(dir, identity), /not an encrypted identity blob/);
+  assert.throws(
+    () => identityStore.saveEncrypted(dir, Object.assign({ ciphertext: 'aa' }, { xprv: identity.xprv })),
+    /plaintext secrets/
+  );
+
+  const blob = encryptIdentity(identity, 'a strong password here');
+  const file = identityStore.saveEncrypted(dir, blob);
+  assert.ok(fs.existsSync(file));
+  const loaded = identityStore.loadEncrypted(dir);
+  assert.strictEqual(loaded.pubkey, identity.pubkey);
+  fs.rmSync(dir, { recursive: true, force: true });
+});

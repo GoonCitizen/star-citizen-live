@@ -17,25 +17,38 @@ const path = require('path');
 const LiveRelay = require('../services/LiveRelay');
 const { resolveLogFile } = require('../functions/locate');
 const settingsStore = require('../functions/settingsStore');
+const { storeRoot, registerPath } = require('../functions/storePaths');
 
 function csv (value) {
   return String(value || '').split(',').map((s) => s.trim()).filter(Boolean);
 }
 
+/** Hub-style store root: `stores/gooncitizen` (override with SC_SETTINGS_DIR). */
+function resolveSettingsDir () {
+  if (process.env.SC_SETTINGS_DIR) return storeRoot(process.env.SC_SETTINGS_DIR);
+  return storeRoot(path.join(__dirname, '..', 'stores'));
+}
+
 /** Build LiveRelay settings for the hosted server mode (goon.vc-style). */
 function serverSettings () {
+  const settingsDir = resolveSettingsDir();
   return {
     port: process.env.PORT || 3041,
     mode: 'server',
-    missions: { enable: true, dir: process.env.SC_REGISTER_DIR || null, officers: csv(process.env.SC_OFFICERS) },
+    settingsDir,
+    missions: {
+      enable: true,
+      dir: process.env.SC_REGISTER_DIR || registerPath(settingsDir),
+      officers: csv(process.env.SC_OFFICERS)
+    },
     ingest: { allowedKeys: csv(process.env.SC_ROSTER) }
   };
 }
 
 /** Build LiveRelay settings for the local relay (env > persisted > auto). */
 function relaySettings () {
-  // Persisted operator settings (settings.json — editable via the dashboard).
-  const settingsDir = process.env.SC_SETTINGS_DIR || path.join(__dirname, '..', 'stores');
+  // Persisted operator settings live in the Fabric store root (settings.json).
+  const settingsDir = resolveSettingsDir();
   const persisted = settingsStore.loadSettings(settingsDir);
 
   // Auto-locate the active log across drives/channels (SC_LOGFILE or SC_CHANNEL override).
@@ -53,7 +66,11 @@ function relaySettings () {
     channel: resolved.channel,
     seed: process.env.SC_SEED || resolved.file,   // pre-fill from history by default
     settingsDir,
-    missions: { enable: true, dir: process.env.SC_REGISTER_DIR || null, officers: csv(process.env.SC_OFFICERS) },
+    missions: {
+      enable: true,
+      dir: process.env.SC_REGISTER_DIR || registerPath(settingsDir),
+      officers: csv(process.env.SC_OFFICERS)
+    },
     discord: { enable: !!webhook, webhook },
     uplink: { enable: !!process.env.SC_UPLINK_URL, url: process.env.SC_UPLINK_URL || null }
   };

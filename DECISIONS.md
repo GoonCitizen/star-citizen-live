@@ -4,6 +4,53 @@ understands the direction. Newest at the top.
 
 ---
 
+## D-009 — Align with Fabric conventions; integrate with the Fabric Network
+**Date:** 2026-07-19 · **Status:** Adopted
+
+**Decision:** GoonCitizen follows the Fabric project conventions and integrates
+with the **Fabric Network** using the **Fabric Protocol** (amends the "no Fabric"
+framing of D-002 — the heavyweight transport stays out, but conventions, types,
+and network integration come in):
+1. **Types in `types/`, data in `stores/`** — code never lives in `stores/`.
+   `types/Store.js` is the register persistence type (backed by
+   `@fabric/core/types/store`, LevelDB). The named Fabric store root is
+   `stores/gooncitizen/` (CLI) / `<userData>/stores/gooncitizen/` (desktop) —
+   the counterpart of the Hub's `stores/hub` — holding `settings.json` and
+   the `register/` LevelDB.
+2. **Hub features come forward** — capabilities proven in `hub.fabric.pub` are
+   progressively adopted: peer management is a top-level dashboard feature
+   (`components/Peers.js`, Hub-compatible `GET|POST /peers` +
+   `POST|DELETE /peers/:id`); settings mirror the Hub's `GET /settings` /
+   `PUT /settings/:name` shapes; **identity safety follows the Hub's
+   IdentityManager model** (`components/Identity.js`): idle auto-lock
+   (default 30 min, signing re-arms), password re-verification before seed
+   reveal or backup export, hidden-by-default secrets with copy gated on
+   reveal, password-sealed backup export/import, and typed confirmation
+   before forget. The plaintext key lives only in Electron main-process
+   memory; the renderer sees signatures, never secrets. More (documents,
+   activity stream) can follow.
+3. **Dashboard = home page** — the UI opens on a Home tab listing the feature
+   set (Live feed, Analyze, Groups, Peers) along the top, Hub-style, with
+   hash-synced navigation (`/#live`, `/#groups`, …).
+4. **Scripts follow Fabric naming** — `npm run desktop`, `build:desktop`,
+   `build:desktop:dir` match `@fabric/hub`; installers target **Windows x64 +
+   Debian x64** (primary — most players run Windows) plus a macOS build.
+
+**Why:** the org's hub (goon.vc) *is* a Fabric Hub; matching its conventions
+means shared muscle memory, shared code paths (identity, Schnorr envelopes,
+Store), and a clean path to full Fabric Network participation instead of a
+parallel bespoke stack.
+
+**Consequences / guardrails:**
+- D-002's core lesson stands: the local relay must keep working standalone —
+  Fabric crypto/persistence load lazily and memory-only mode remains for tests.
+- `stores/` stays gitignored (data only, no code).
+- New top-level features should land as Hub-style components + REST surfaces so
+  they can later be driven over the Fabric Protocol (wire `Message`s) without
+  redesign.
+
+---
+
 ## D-008 — Player identities, goon.vc hub, multisig groups, Bitcoin-unlocked payouts
 **Date:** 2026-07-19 · **Status:** Adopted (implemented; deploy pending)
 

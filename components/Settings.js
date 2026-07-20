@@ -1,12 +1,11 @@
 'use strict';
 
 /**
- * Settings modal — operator settings + peer management.
+ * Settings modal — operator relay settings.
  *
- * Mirrors the Hub's settings surface (`GET /settings`, `PUT /settings/:name`)
- * and its peer semantics (ListPeers/AddPeer/RemovePeer) against the local
- * relay. Peers are remote hubs (e.g. https://goon.vc) that receive this
- * relay's Schnorr-signed event batches while the identity is unlocked.
+ * Mirrors the Hub's settings surface (`GET /settings`, `PUT /settings/:name`).
+ * Peer management lives on the top-level Peers tab (`components/Peers.js`),
+ * matching the Hub's PeerList as a first-class feature.
  */
 
 const React = require('react');
@@ -34,14 +33,6 @@ const CSS = `
     font-size:12.5px;font-weight:600;cursor:pointer;white-space:nowrap}
   .st-btn:disabled{opacity:.45;cursor:default}
   .st-btn.ghost{background:var(--panel2);border:1px solid var(--line);color:var(--text)}
-  .st-btn.danger{background:transparent;border:1px solid var(--line);color:var(--kill);padding:3px 9px;font-size:11px;font-weight:500}
-  .st-peer{display:flex;gap:10px;align-items:center;padding:8px 0;border-bottom:1px solid #20262f}
-  .st-peer:last-child{border-bottom:none}
-  .st-peer .u{flex:1;min-width:0}
-  .st-peer .url{font-family:'Cascadia Code',Consolas,monospace;font-size:12px;word-break:break-all}
-  .st-peer .meta{color:var(--muted);font-size:11px;margin-top:2px}
-  .st-peer .meta .err{color:var(--kill)}
-  .st-peer .meta .ok{color:var(--good)}
   .st-err{background:rgba(248,81,73,.12);color:var(--kill);border-radius:7px;padding:8px 11px;font-size:12.5px;margin-bottom:10px}
   .st-note{background:rgba(210,153,34,.12);color:var(--warn);border-radius:7px;padding:8px 11px;font-size:12.5px;margin-top:10px}
   .st-runtime{color:var(--muted);font-size:11.5px;display:grid;gap:3px;
@@ -61,14 +52,10 @@ class Settings extends React.Component {
       editable: false,
       requiresRestart: false,
       runtime: {},
-      // fields
       logfile: '',
       channel: '',
       discordWebhook: '',
-      // peers
-      peers: [],
-      newPeerUrl: '',
-      newPeerLabel: '',
+      peerCount: 0,
       busy: false
     };
   }
@@ -78,92 +65,47 @@ class Settings extends React.Component {
   }
 
   async load () {
+    this.setState({ loading: true, error: null });
     try {
       const [settingsRes, peersRes] = await Promise.all([
         fetch('/settings').then((r) => r.json()),
-        fetch('/peers').then((r) => r.json())
+        fetch('/peers').then((r) => (r.ok ? r.json() : { data: [] })).catch(() => ({ data: [] }))
       ]);
       const s = settingsRes.settings || {};
       this.setState({
         loading: false,
         editable: !!settingsRes.editable,
+        requiresRestart: !!settingsRes.requiresRestart,
         runtime: settingsRes.runtime || {},
         logfile: s.logfile || '',
         channel: s.channel || '',
         discordWebhook: s.discordWebhook || '',
-        peers: peersRes.data || []
+        peerCount: Array.isArray(peersRes.data) ? peersRes.data.length : 0
       });
     } catch (e) {
-      this.setState({ loading: false, error: 'Could not load settings: ' + e.message });
+      this.setState({ loading: false, error: e.message });
     }
   }
 
   async put (name, value) {
-    const res = await fetch(`/settings/${name}`, {
+    const res = await fetch(`/settings/${encodeURIComponent(name)}`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ value: value === '' ? null : value })
     });
     const json = await res.json();
     if (!res.ok) throw new Error(json.error || `HTTP ${res.status}`);
-    if (json.requiresRestart) this.setState({ requiresRestart: true });
     return json;
   }
 
   async save () {
-    if (this.state.busy) return;
+    if (this.state.busy || !this.state.editable) return;
     this.setState({ busy: true, error: null });
     try {
-      await this.put('logfile', this.state.logfile.trim());
-      await this.put('channel', this.state.channel.trim());
-      await this.put('discordWebhook', this.state.discordWebhook.trim());
-      this.setState({ busy: false });
-    } catch (e) {
-      this.setState({ busy: false, error: e.message });
-    }
-  }
-
-  async addPeer () {
-    const url = this.state.newPeerUrl.trim();
-    if (!/^https?:\/\//.test(url) || this.state.busy) return;
-    this.setState({ busy: true, error: null });
-    try {
-      const res = await fetch('/peers', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ url, label: this.state.newPeerLabel.trim() || null })
-      });
-      const json = await res.json();
-      if (!res.ok) throw new Error(json.error || `HTTP ${res.status}`);
-      this.setState({ busy: false, newPeerUrl: '', newPeerLabel: '' });
-      await this.load();
-    } catch (e) {
-      this.setState({ busy: false, error: e.message });
-    }
-  }
-
-  async togglePeer (peer) {
-    if (this.state.busy) return;
-    this.setState({ busy: true, error: null });
-    try {
-      await fetch(`/peers/${peer.id}`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ enabled: !(peer.enabled !== false) })
-      });
-      this.setState({ busy: false });
-      await this.load();
-    } catch (e) {
-      this.setState({ busy: false, error: e.message });
-    }
-  }
-
-  async removePeer (peer) {
-    if (this.state.busy) return;
-    this.setState({ busy: true, error: null });
-    try {
-      await fetch(`/peers/${peer.id}`, { method: 'DELETE' });
-      this.setState({ busy: false });
+      await this.put('logfile', this.state.logfile.trim() || null);
+      await this.put('channel', this.state.channel.trim() || null);
+      await this.put('discordWebhook', this.state.discordWebhook.trim() || null);
+      this.setState({ busy: false, requiresRestart: true });
       await this.load();
     } catch (e) {
       this.setState({ busy: false, error: e.message });
@@ -172,10 +114,7 @@ class Settings extends React.Component {
 
   async restart () {
     if (window.electronAPI && window.electronAPI.restartService) {
-      this.setState({ busy: true });
-      try { await window.electronAPI.restartService(); } catch (_) { /* window reloads */ }
-      this.setState({ busy: false, requiresRestart: false });
-      await this.load();
+      await window.electronAPI.restartService();
     }
   }
 
@@ -205,7 +144,6 @@ class Settings extends React.Component {
           : React.createElement(React.Fragment, null,
             this.state.error ? React.createElement('div', { className: 'st-sec' }, React.createElement('div', { className: 'st-err' }, this.state.error)) : null,
 
-            // --- Relay ---
             React.createElement('div', { className: 'st-sec' },
               React.createElement('h3', null, 'Relay'),
               React.createElement('div', { className: 'd' }, 'Where the game log comes from. Leave blank to auto-detect the freshest Game.log across drives and channels.'),
@@ -225,49 +163,25 @@ class Settings extends React.Component {
                 : null
             ),
 
-            // --- Peers ---
             React.createElement('div', { className: 'st-sec' },
-              React.createElement('h3', null, 'Peers'),
+              React.createElement('h3', null, 'Fabric Network'),
               React.createElement('div', { className: 'd' },
-                'Remote hubs that receive your signed event batches (e.g. https://goon.vc). Pushing starts when your identity is unlocked; delivery is idempotent, so multiple peers are safe.'),
-              this.state.peers.length
-                ? this.state.peers.map((p) => React.createElement('div', { className: 'st-peer', key: p.id },
-                  React.createElement('div', { className: 'u' },
-                    React.createElement('div', { className: 'url' }, (p.label ? p.label + ' — ' : '') + p.url),
-                    React.createElement('div', { className: 'meta' },
-                      p.enabled === false
-                        ? 'disabled'
-                        : (p.lastError
-                          ? React.createElement('span', { className: 'err' }, 'error: ' + p.lastError)
-                          : (p.lastSeen
-                            ? React.createElement('span', { className: 'ok' }, 'last push ' + String(p.lastSeen).slice(11, 19))
-                            : 'no pushes yet'))
-                    )
-                  ),
-                  React.createElement('button', { className: 'st-btn ghost', style: { padding: '3px 10px', fontSize: 11 }, disabled: this.state.busy, onClick: () => this.togglePeer(p) }, p.enabled === false ? 'Enable' : 'Disable'),
-                  React.createElement('button', { className: 'st-btn danger', disabled: this.state.busy, onClick: () => this.removePeer(p) }, 'Remove')
-                ))
-                : React.createElement('div', { style: { color: 'var(--muted)', fontSize: 12.5, padding: '4px 0 10px' } }, 'no peers configured'),
-              React.createElement('div', { className: 'st-row', style: { marginTop: 8 } },
-                React.createElement('input', {
-                  type: 'text', value: this.state.newPeerUrl, placeholder: 'https://goon.vc',
-                  style: { flex: 2, background: 'var(--bg)', border: '1px solid var(--line)', color: 'var(--text)', borderRadius: 7, padding: '7px 10px', fontSize: 12.5 },
-                  onChange: (e) => this.setState({ newPeerUrl: e.target.value })
-                }),
-                React.createElement('input', {
-                  type: 'text', value: this.state.newPeerLabel, placeholder: 'label (optional)',
-                  style: { flex: 1, background: 'var(--bg)', border: '1px solid var(--line)', color: 'var(--text)', borderRadius: 7, padding: '7px 10px', fontSize: 12.5 },
-                  onChange: (e) => this.setState({ newPeerLabel: e.target.value })
-                }),
+                'Peer hubs (e.g. goon.vc) are managed on the Peers tab — add them there to push Schnorr-signed event batches over the Fabric Protocol.'),
+              React.createElement('div', { className: 'st-row' },
+                React.createElement('span', { style: { fontSize: 12.5, color: 'var(--muted)' } },
+                  this.state.peerCount
+                    ? `${this.state.peerCount} peer${this.state.peerCount === 1 ? '' : 's'} configured`
+                    : 'no peers configured'),
                 React.createElement('button', {
-                  className: 'st-btn',
-                  disabled: !/^https?:\/\//.test(this.state.newPeerUrl.trim()) || this.state.busy,
-                  onClick: () => this.addPeer()
-                }, 'Add peer')
+                  className: 'st-btn ghost',
+                  onClick: () => {
+                    this.props.onClose();
+                    window.location.hash = 'peers';
+                  }
+                }, 'Open Peers')
               )
             ),
 
-            // --- Runtime ---
             React.createElement('div', { className: 'st-sec' },
               React.createElement('h3', null, 'Runtime'),
               React.createElement('div', { className: 'st-runtime' },

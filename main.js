@@ -25,6 +25,7 @@ const { resolveLogFile } = require('./functions/locate');
 const identityLib = require('./functions/identity');
 const identityStore = require('./functions/identityStore');
 const settingsStore = require('./functions/settingsStore');
+const { storeRoot, registerPath } = require('./functions/storePaths');
 
 let settings = {};
 try {
@@ -61,9 +62,17 @@ function servicePort () {
 
 /** Map settings/local.js + persisted userData settings (+ env) into LiveRelay options. */
 function buildRelaySettings (port) {
-  // Persisted operator settings (edited via the dashboard's Settings modal).
-  // Priority: env > persisted settings.json (userData) > settings/local.js > auto.
-  const persisted = settingsStore.loadSettings(app.getPath('userData'));
+  // Hub-style named store under userData (counterpart of Hub's stores/hub).
+  const appStoreRoot = storeRoot(path.join(app.getPath('userData'), 'stores'));
+  // Also pick up a one-time migrate from the old flat userData/settings.json.
+  try {
+    const legacy = path.join(app.getPath('userData'), 'settings.json');
+    const next = path.join(appStoreRoot, 'settings.json');
+    if (fs.existsSync(legacy) && !fs.existsSync(next)) fs.renameSync(legacy, next);
+  } catch (_) { /* best effort */ }
+
+  // Priority: env > persisted settings.json (store root) > settings/local.js > auto.
+  const persisted = settingsStore.loadSettings(appStoreRoot);
   const explicit = process.env.SC_LOGFILE || persisted.logfile || settings.logfile || null;
   const channel = process.env.SC_CHANNEL || persisted.channel || settings.channel || null;
   const resolved = resolveLogFile({ explicit, channel });
@@ -88,7 +97,7 @@ function buildRelaySettings (port) {
     },
     missions: Object.assign({
       enable: true,
-      dir: process.env.SC_REGISTER_DIR || settings.missions?.dir || null,
+      dir: process.env.SC_REGISTER_DIR || settings.missions?.dir || registerPath(appStoreRoot),
       officers: process.env.SC_OFFICERS
         ? process.env.SC_OFFICERS.split(',').map((s) => s.trim()).filter(Boolean)
         : (Array.isArray(settings.missions?.officers) ? settings.missions.officers.map(String) : [])
@@ -97,7 +106,7 @@ function buildRelaySettings (port) {
       enable: !!(process.env.SC_UPLINK_URL || settings.uplink?.url),
       url: process.env.SC_UPLINK_URL || settings.uplink?.url || null
     }, settings.uplink || {}),
-    settingsDir: app.getPath('userData')
+    settingsDir: appStoreRoot
   };
 }
 
@@ -436,10 +445,29 @@ if (gotLock) {
   });
 }
 
-// --- Identity (first-run onboarding) -------------------------------------
+// --- Identity (first-run onboarding + Hub-style key safety) ---------------
+//
+// Safety model brought forward from hub.fabric.pub's IdentityManager:
+//  - the plaintext key lives only in main-process memory while unlocked
+//  - auto-lock clears it after an idle timeout (configurable, default 30 min)
+//  - seed reveal and backup export re-verify the password first
+//  - forget requires an explicit confirmation flag
+//  - every lock-state change is broadcast so the UI never drifts
+
+const IDENTITY_AUTOLOCK_DEFAULT_MINUTES = 30;
+let identityAutoLockTimer = null;
 
 function identityDir () {
   return app.getPath('userData');
+}
+
+function identityAutoLockMinutes () {
+  const persisted = settingsStore.loadSettings(storeRoot(path.join(app.getPath('userData'), 'stores')));
+  const v = persisted.identityAutoLockMinutes;
+  if (v === 0) return 0;
+  const n = Math.floor(Number(v));
+  if (!Number.isFinite(n) || n <= 0) return IDENTITY_AUTOLOCK_DEFAULT_MINUTES;
+  return Math.min(24 * 60, n);
 }
 
 /** Push the unlocked identity into the running relay for uplink signing. */
@@ -449,6 +477,38 @@ function applyIdentityToService () {
   }
 }
 
+/** Notify the renderer that lock state changed (header chip, modals). */
+function broadcastIdentityChanged () {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('identity:changed', identitySummary());
+  }
+}
+
+function lockIdentity () {
+  unlockedIdentity = null;
+  if (identityAutoLockTimer) { clearTimeout(identityAutoLockTimer); identityAutoLockTimer = null; }
+  applyIdentityToService();
+  broadcastIdentityChanged();
+}
+
+/** (Re)start the idle auto-lock countdown; called on unlock and each signing use. */
+function armIdentityAutoLock () {
+  if (identityAutoLockTimer) { clearTimeout(identityAutoLockTimer); identityAutoLockTimer = null; }
+  const minutes = identityAutoLockMinutes();
+  if (!minutes || !unlockedIdentity) return;
+  identityAutoLockTimer = setTimeout(() => {
+    console.log('[IDENTITY] auto-lock after', minutes, 'min idle');
+    lockIdentity();
+  }, minutes * 60 * 1000);
+}
+
+function setUnlockedIdentity (identity) {
+  unlockedIdentity = identity;
+  applyIdentityToService();
+  armIdentityAutoLock();
+  broadcastIdentityChanged();
+}
+
 function identitySummary () {
   const blob = identityStore.loadEncrypted(identityDir());
   return {
@@ -456,7 +516,8 @@ function identitySummary () {
     pubkey: blob ? blob.pubkey : null,
     xpub: blob ? blob.xpub : null,
     createdAt: blob ? blob.createdAt : null,
-    unlocked: !!unlockedIdentity
+    unlocked: !!unlockedIdentity,
+    autoLockMinutes: identityAutoLockMinutes()
   };
 }
 
@@ -466,12 +527,12 @@ ipcMain.handle('identity:create', (_e, { password } = {}) => {
   if (identityStore.hasIdentity(identityDir())) {
     return { error: 'An identity already exists. Restore or forget it first.' };
   }
+  if (!password || password.length < 8) return { error: 'Password must be at least 8 characters.' };
   try {
     const identity = identityLib.createIdentity();
     const blob = identityLib.encryptIdentity(identity, password);
     identityStore.saveEncrypted(identityDir(), blob);
-    unlockedIdentity = identity;
-    applyIdentityToService();
+    setUnlockedIdentity(identity);
     // Mnemonic is returned exactly once so the UI can show the backup step.
     return { pubkey: identity.pubkey, mnemonic: identity.mnemonic };
   } catch (error) {
@@ -480,12 +541,12 @@ ipcMain.handle('identity:create', (_e, { password } = {}) => {
 });
 
 ipcMain.handle('identity:restore', (_e, { mnemonic, xprv, password } = {}) => {
+  if (!password || password.length < 8) return { error: 'Password must be at least 8 characters.' };
   try {
     const identity = identityLib.restoreIdentity(xprv ? { xprv } : { mnemonic });
     const blob = identityLib.encryptIdentity(identity, password);
     identityStore.saveEncrypted(identityDir(), blob);
-    unlockedIdentity = identity;
-    applyIdentityToService();
+    setUnlockedIdentity(identity);
     return { pubkey: identity.pubkey };
   } catch (error) {
     return { error: error.message || String(error) };
@@ -496,9 +557,9 @@ ipcMain.handle('identity:unlock', (_e, { password } = {}) => {
   const blob = identityStore.loadEncrypted(identityDir());
   if (!blob) return { error: 'No identity found.' };
   try {
-    unlockedIdentity = identityLib.decryptIdentity(blob, password);
-    applyIdentityToService();
-    return { pubkey: unlockedIdentity.pubkey };
+    const identity = identityLib.decryptIdentity(blob, password);
+    setUnlockedIdentity(identity);
+    return { pubkey: identity.pubkey };
   } catch (error) {
     return { error: error.message || String(error) };
   }
@@ -507,22 +568,86 @@ ipcMain.handle('identity:unlock', (_e, { password } = {}) => {
 ipcMain.handle('identity:sign-envelope', (_e, payload) => {
   if (!unlockedIdentity) return { error: 'Identity is locked.' };
   try {
-    return identityLib.signEnvelope(unlockedIdentity, payload);
+    const envelope = identityLib.signEnvelope(unlockedIdentity, payload);
+    armIdentityAutoLock(); // signing is activity — reset the idle countdown
+    return envelope;
   } catch (error) {
     return { error: error.message || String(error) };
   }
 });
 
 ipcMain.handle('identity:lock', () => {
-  unlockedIdentity = null;
-  applyIdentityToService();
+  lockIdentity();
   return { unlocked: false };
 });
 
-ipcMain.handle('identity:forget', () => {
-  unlockedIdentity = null;
-  applyIdentityToService();
+// Reveal the recovery phrase / xprv — always re-verifies the password, even
+// while unlocked, so a walk-up attacker at an unlocked app cannot exfiltrate
+// the seed (mirrors the Hub's reveal discipline).
+ipcMain.handle('identity:reveal', (_e, { password } = {}) => {
+  const blob = identityStore.loadEncrypted(identityDir());
+  if (!blob) return { error: 'No identity found.' };
+  try {
+    const identity = identityLib.decryptIdentity(blob, password);
+    return { mnemonic: identity.mnemonic, xprv: identity.xprv, pubkey: identity.pubkey };
+  } catch (error) {
+    return { error: 'Incorrect password.' };
+  }
+});
+
+// Export the at-rest encrypted blob as a portable backup file. Password is
+// re-verified first; the file itself stays sealed with the same password.
+ipcMain.handle('identity:export-backup', (_e, { password } = {}) => {
+  const blob = identityStore.loadEncrypted(identityDir());
+  if (!blob) return { error: 'No identity found.' };
+  try {
+    identityLib.decryptIdentity(blob, password); // verify only
+  } catch (error) {
+    return { error: 'Incorrect password.' };
+  }
+  return {
+    filename: `gooncitizen-identity-${(blob.pubkey || 'backup').slice(0, 8)}.enc.json`,
+    backup: Object.assign({ type: 'gooncitizen-identity-backup' }, blob)
+  };
+});
+
+// Import a backup file (the encrypted blob format above). Requires the
+// backup's password; refuses to overwrite an existing identity unless
+// `replace` is set.
+ipcMain.handle('identity:import-backup', (_e, { backup, password, replace } = {}) => {
+  if (!backup || !backup.ciphertext) return { error: 'Not a GoonCitizen identity backup file.' };
+  if (identityStore.hasIdentity(identityDir()) && !replace) {
+    return { error: 'An identity already exists. Check "replace" to overwrite it.' };
+  }
+  try {
+    const identity = identityLib.decryptIdentity(backup, password);
+    const { type, ...blob } = backup;
+    identityStore.saveEncrypted(identityDir(), blob);
+    setUnlockedIdentity(identity);
+    return { pubkey: identity.pubkey };
+  } catch (error) {
+    return { error: 'Could not decrypt backup (wrong password or corrupted file).' };
+  }
+});
+
+ipcMain.handle('identity:set-autolock', (_e, { minutes } = {}) => {
+  const n = Math.floor(Number(minutes));
+  if (!Number.isFinite(n) || n < 0) return { error: 'minutes must be a non-negative number' };
+  try {
+    const dir = storeRoot(path.join(app.getPath('userData'), 'stores'));
+    settingsStore.putSetting(dir, 'identityAutoLockMinutes', Math.min(24 * 60, n));
+    armIdentityAutoLock();
+    return identitySummary();
+  } catch (error) {
+    return { error: error.message || String(error) };
+  }
+});
+
+ipcMain.handle('identity:forget', (_e, { confirm } = {}) => {
+  if (!confirm) return { error: 'Confirmation required to forget the identity.' };
+  lockIdentity();
   const removed = identityStore.removeIdentity(identityDir());
+  broadcastIdentityChanged();
   return { removed };
 });
 

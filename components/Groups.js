@@ -52,6 +52,9 @@ const CSS = `
   .gp-add input{flex:1;background:var(--bg);border:1px solid var(--line);color:var(--text);
     border-radius:7px;padding:7px 10px;font-size:12px;font-family:'Cascadia Code',Consolas,monospace}
   .gp-hint{color:var(--muted);padding:20px 14px;font-size:13px;line-height:1.6}
+  .gp-tag.public{background:rgba(63,185,80,.15);color:var(--good)}
+  .gp-tag.private{background:rgba(110,118,129,.18);color:var(--muted)}
+  .gp-actions{display:flex;flex-wrap:wrap;gap:8px;padding:10px 14px;border-top:1px solid var(--line)}
 `;
 
 function identityBridge () {
@@ -207,6 +210,45 @@ class Groups extends React.Component {
     }
   }
 
+  shareUrl (g) {
+    const path = g.path || `/groups/${g.slug || g.id}`;
+    return `${window.location.origin}${path}`;
+  }
+
+  async share (g) {
+    const url = this.shareUrl(g);
+    try {
+      await navigator.clipboard.writeText(url);
+      this.setState({ notice: 'Share link copied.' });
+    } catch (_) {
+      this.setState({ notice: url });
+    }
+  }
+
+  openPage (g) {
+    const path = g.path || `/groups/${g.slug || g.id}`;
+    window.location.href = path;
+  }
+
+  async toggleVisibility (g) {
+    if (this.state.busy) return;
+    this.setState({ busy: true, error: null, notice: null });
+    try {
+      const next = g.visibility === 'public' ? 'private' : 'public';
+      const res = await fetch(`${BASE}/groups/${encodeURIComponent(g.id)}`, {
+        method: 'PUT',
+        headers: this.headers(),
+        body: JSON.stringify({ visibility: next })
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error || `HTTP ${res.status}`);
+      this.setState({ busy: false, notice: next === 'public' ? 'Group is now public — share the link so others can apply.' : 'Group is now private.' });
+      await this.refresh();
+    } catch (e) {
+      this.setState({ busy: false, error: e.message });
+    }
+  }
+
   copy (text) {
     try { navigator.clipboard.writeText(text); this.setState({ notice: 'Copied to clipboard.' }); } catch (_) { /* ignore */ }
   }
@@ -259,33 +301,48 @@ class Groups extends React.Component {
       return React.createElement('div', { className: 'gp-hint' },
         this.state.groups.length
           ? 'Select a group to manage it.'
-          : 'No groups yet — create one to share missions with a squad. Members are identified by the pubkey shown in each pilot\'s GoonCitizen header.');
+          : 'No groups yet — create one to share missions with a squad. Make it public and Share the page so others can apply to join.');
     }
     const me = this.state.pubkey;
     const isCreator = me && g.creator === me;
-    const canManage = me && g.members.includes(me);
-    const addValid = PUBKEY_RE.test(this.state.addKey.trim()) && !g.members.includes(this.state.addKey.trim());
+    const canManage = me && Array.isArray(g.members) && g.members.includes(me);
+    const addValid = PUBKEY_RE.test(this.state.addKey.trim()) && canManage && !g.members.includes(this.state.addKey.trim());
+    const memberList = Array.isArray(g.members) ? g.members : null;
 
     return React.createElement(React.Fragment, null,
       React.createElement('div', { className: 'gp-meta' },
-        React.createElement('span', null, 'decisions ', React.createElement('b', null, `${g.threshold}-of-${g.members.length}`)),
+        React.createElement('span', null, 'decisions ', React.createElement('b', null, `${g.threshold}-of-${memberList ? memberList.length : 'n'}`)),
         React.createElement('span', null, 'created ', React.createElement('b', null, String(g.createdAt || '').slice(0, 10))),
-        React.createElement('span', { title: g.commitment }, 'commitment ', React.createElement('b', null, (g.commitment || '').slice(0, 12) + '…')),
-        React.createElement('button', { className: 'gp-btn ghost', style: { padding: '2px 10px', fontSize: 11 }, onClick: () => this.copy(g.id) }, 'Copy group id')
+        React.createElement('span', { className: 'gp-tag ' + (g.visibility === 'public' ? 'public' : 'private') }, g.visibility || 'private'),
+        React.createElement('span', { title: g.path }, 'page ', React.createElement('b', null, g.path || `/groups/${g.id}`))
       ),
-      React.createElement('div', null,
-        g.members.map((m) => React.createElement('div', { className: 'gp-member', key: m },
-          React.createElement('code', null, m),
-          m === g.creator ? React.createElement('span', { className: 'gp-tag creator' }, 'creator') : null,
-          m === me ? React.createElement('span', { className: 'gp-tag you' }, 'you') : null,
-          (isCreator && m !== g.creator)
-            ? React.createElement('button', {
-              className: 'gp-btn danger', disabled: this.state.busy,
-              onClick: () => this.member(g.id, m, true)
-            }, 'remove')
-            : null
-        ))
+      React.createElement('div', { className: 'gp-actions' },
+        React.createElement('button', { className: 'gp-btn', onClick: () => this.openPage(g) }, 'Open page'),
+        React.createElement('button', { className: 'gp-btn ghost', onClick: () => this.share(g) }, 'Share'),
+        isCreator
+          ? React.createElement('button', {
+            className: 'gp-btn ghost', disabled: this.state.busy,
+            onClick: () => this.toggleVisibility(g)
+          }, g.visibility === 'public' ? 'Make private' : 'Make public')
+          : null
       ),
+      memberList
+        ? React.createElement('div', null,
+          memberList.map((m) => React.createElement('div', { className: 'gp-member', key: m },
+            React.createElement('code', null, m),
+            m === g.creator ? React.createElement('span', { className: 'gp-tag creator' }, 'creator') : null,
+            m === me ? React.createElement('span', { className: 'gp-tag you' }, 'you') : null,
+            (isCreator && m !== g.creator)
+              ? React.createElement('button', {
+                className: 'gp-btn danger', disabled: this.state.busy,
+                onClick: () => this.member(g.id, m, true)
+              }, 'remove')
+              : null
+          ))
+        )
+        : React.createElement('div', { className: 'gp-hint' },
+          'Public group — open the page to apply to join.'
+        ),
       canManage
         ? React.createElement('div', { className: 'gp-add' },
           React.createElement('input', {
@@ -297,7 +354,9 @@ class Groups extends React.Component {
             onClick: () => this.member(g.id, this.state.addKey.trim(), false)
           }, 'Add')
         )
-        : React.createElement('div', { className: 'gp-hint' }, 'Only members can manage this group.')
+        : (memberList
+          ? React.createElement('div', { className: 'gp-hint' }, 'Only members can manage this group.')
+          : null)
     );
   }
 
@@ -330,10 +389,15 @@ class Groups extends React.Component {
               ? this.state.groups.map((g) => React.createElement('div', {
                 className: 'gp-row' + (g.id === this.state.selectedId ? ' on' : ''),
                 key: g.id,
-                onClick: () => this.setState({ selectedId: g.id })
+                onClick: () => this.setState({ selectedId: g.id }),
+                onDoubleClick: () => this.openPage(g)
               },
-                React.createElement('span', { className: 'n' }, g.name),
-                React.createElement('span', { className: 'd' }, `${g.members.length} member${g.members.length === 1 ? '' : 's'} · ${g.threshold}-of-${g.members.length}`)
+                React.createElement('span', { className: 'n' }, g.name,
+                  React.createElement('span', { className: 'gp-tag ' + (g.visibility === 'public' ? 'public' : 'private'), style: { marginLeft: 8 } }, g.visibility || 'private')
+                ),
+                React.createElement('span', { className: 'd' },
+                  (g.members ? `${g.members.length} member${g.members.length === 1 ? '' : 's'}` : `${g.memberCount || 0} members`) +
+                  ` · ${g.threshold}-of-${g.members ? g.members.length : 'n'}`)
               ))
               : React.createElement('div', { className: 'empty' }, 'no groups yet'))
         ),

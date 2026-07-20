@@ -55,10 +55,11 @@ dashboard; (3) player log backload into shared history. New work must protect th
 - **Forked from:** `martindale/star-citizen-live`, branch `feature/fabric-0.1.0`
   (upstream `GoonCitizen/star-citizen-live`). Package: `@rsi/star-citizen`.
 - **License:** **MIT** — keep the original copyright/license notice in files.
-- **This fork's direction:** the original was a **Fabric** (decentralized/p2p)
-  service. We **removed Fabric** (see `DECISIONS.md` → D-002) and rebuilt the core
-  as a standard, zero-dependency Node service. The original Fabric code is kept for
-  reference (see §4) but is **not** what runs.
+- **This fork's direction:** D-002 removed the heavyweight Fabric *transport* from
+  the local relay; D-009 brings **Fabric conventions + Network integration** back
+  in: `types/` for code, `stores/gooncitizen/` for data (like Hub `stores/hub`),
+  peer management, and Schnorr-signed uplink to org hubs (goon.vc) over the
+  Fabric Protocol.
 
 ---
 
@@ -70,20 +71,19 @@ runtime dependencies** (only Node built-ins: `http`, `crypto`, `events`, `fs`,
 `readline`).
 
 ```bash
-npm start        # run the service  -> http://localhost:3041/  (dashboard)
-                 #                      http://localhost:3041/services/star-citizen  (status JSON)
-npm test         # run the test suite (Node built-in runner: node --test test/*.test.js)
-npm run replay /path/to/Game.log   # replay a saved log and tally detected events
+npm start                 # LiveRelay → http://localhost:3041/  (dashboard home)
+npm run desktop           # Electron shell (Fabric-style; alias: start:desktop)
+npm test                  # node --test tests/relay/*.test.js
+npm run replay /path/to/Game.log
+npm run build:desktop     # installers for the current OS
+npm run build:installers  # Windows x64 + Debian x64 + macOS
 ```
 
-- `npm start` → `node app/server.js`. It **auto-detects** the SC install across
-  drive roots and channels (LIVE/PTU/EPTU/HOTFIX/TECH-PREVIEW) and tails the
-  freshest `Game.log` (the one you're actually playing). It is **read-only** — it
-  never edits the game install.
-- `npm run replay <path>` → `node scripts/replay.js` — offline; the fastest way to
-  test the parser without being in-game.
-- `npm run start:fabric` → **deprecated** original Fabric entry (`scripts/node.js`),
-  kept only for reference.
+- `npm start` → `scripts/node.js` → `services/LiveRelay.js`. Auto-detects the SC
+  install across drives/channels and tails the freshest `Game.log` (read-only).
+- Store root: **`stores/gooncitizen/`** (settings.json + `register/` LevelDB) —
+  same shape as Hub `stores/hub`. Type code: `types/Store.js`.
+- Dashboard home lists features along the top: Live, Analyze, Groups, Peers.
 
 ### Environment variables (config; secrets via env only)
 | Var | Purpose |
@@ -93,7 +93,8 @@ npm run replay /path/to/Game.log   # replay a saved log and tally detected event
 | `SC_SEED` | Pre-fill the monitor from a different log on start. |
 | `DISCORD_WEBHOOK_URL` | Enable Discord posting (optional). |
 | `SC_OFFICERS` | Comma-separated officer allowlist for the mission register. |
-| `SC_REGISTER_DIR` | Persist the mission register to disk (default: in-memory). |
+| `SC_REGISTER_DIR` | Persist the mission/group register via Fabric Store (LevelDB). Default: `stores/gooncitizen/register` (CLI) / `<userData>/stores/gooncitizen/register` (desktop). |
+| `SC_SETTINGS_DIR` | Named Fabric store root (settings.json + register/). Default: `stores/gooncitizen`. |
 
 Settings can also come from `settings/local.js` (copy `settings/example.js`).
 **Never commit secrets** — `settings/local.js`, `settings/auth.txt`, and `.env`

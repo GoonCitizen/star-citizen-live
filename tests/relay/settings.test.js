@@ -36,6 +36,9 @@ test('settingsStore round-trips allowlisted keys and rejects unknown ones', () =
   assert.strictEqual(loaded.logfile, 'C:/Games/SC/LIVE/Game.log');
   assert.strictEqual(loaded.peers.length, 1);
   assert.throws(() => settingsStore.putSetting(dir, 'evil', 1), /unknown setting/);
+
+  settingsStore.putSetting(dir, 'identityAutoLockMinutes', 15);
+  assert.strictEqual(settingsStore.loadSettings(dir).identityAutoLockMinutes, 15);
   // null removes
   settingsStore.putSetting(dir, 'logfile', null);
   assert.strictEqual(settingsStore.loadSettings(dir).logfile, undefined);

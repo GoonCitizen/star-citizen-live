@@ -19,7 +19,16 @@ contextBridge.exposeInMainWorld('electronAPI', {
     unlock: (password) => ipcRenderer.invoke('identity:unlock', { password }),
     signEnvelope: (payload) => ipcRenderer.invoke('identity:sign-envelope', payload),
     lock: () => ipcRenderer.invoke('identity:lock'),
-    forget: () => ipcRenderer.invoke('identity:forget')
+    reveal: (password) => ipcRenderer.invoke('identity:reveal', { password }),
+    exportBackup: (password) => ipcRenderer.invoke('identity:export-backup', { password }),
+    importBackup: (backup, password, replace) => ipcRenderer.invoke('identity:import-backup', { backup, password, replace }),
+    setAutoLock: (minutes) => ipcRenderer.invoke('identity:set-autolock', { minutes }),
+    forget: (confirm) => ipcRenderer.invoke('identity:forget', { confirm: !!confirm }),
+    onChanged: (handler) => {
+      const listener = (_e, summary) => handler(summary);
+      ipcRenderer.on('identity:changed', listener);
+      return () => ipcRenderer.removeListener('identity:changed', listener);
+    }
   },
   platform: process.platform,
   versions: {

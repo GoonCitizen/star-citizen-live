@@ -10,6 +10,8 @@ Missions can be accepted by signing with secp256k1 or Musig2 multisig.</p>
 <dt><a href="#MissionApplication">MissionApplication</a> ⇐ <code>Entity</code></dt>
 <dd><p>Represents an application to accept a Mission.</p>
 </dd>
+<dt><a href="#Store">Store</a></dt>
+<dd></dd>
 <dt><a href="#MissionManager">MissionManager</a></dt>
 <dd><p>Mission Manager service.
 Handles mission lifecycle, applications, and cryptographic verification.
@@ -30,20 +32,34 @@ Provides a Fabric-compatible declarative API with Discord integration.</p>
 actor ids the identity onboarding produces). Threshold decisions (mission
 acceptance, payout release) are verified with the standard Fabric
 <a href="Federation">Federation</a> k-of-n Schnorr verification (BIP340).</p>
+<p>Pages: <code>/groups/:id</code> by default, or <code>/groups/:slug</code> when a custom slug is set.
+Visibility: <code>private</code> (members only) or <code>public</code> (shareable join page).</p>
+</dd>
+<dt><a href="#fs">fs</a></dt>
+<dd><p>Store — keyed-collection persistence for the mission register + groups.</p>
+<p>Follows the Fabric convention: the <em>type</em> lives in <code>types/</code>, the <em>data</em>
+lives under the named store root <code>stores/gooncitizen/</code> (like the Hub&#39;s
+<code>stores/hub</code>). The register LevelDB is <code>stores/gooncitizen/register</code>.</p>
+<p>Surface (sync): get / all / count / put — same as the original M5 seam so
+MissionManager and GroupManager stay simple.</p>
+<p>Persistence: when <code>path</code> (or legacy <code>dir</code>) is set, collections are kept in an
+{@link <a href="https://github.com/FabricLabs/fabric/blob/master/types/store.js">https://github.com/FabricLabs/fabric/blob/master/types/store.js</a></p>
 </dd>
 <dt><a href="#crypto">crypto</a></dt>
-<dd><p>GroupManager — member-created groups with k-of-n Schnorr multisig.</p>
-<p>Any player (pubkey) may create a group; members may add members. Groups
-scope mission visibility (missions shared to a group are served only to
-its members) and act as authority sets for mission acceptance/payouts.
-Mutations are recorded in a hash-chained audit log (same pattern as
-MissionManager).</p>
+<dd><p>GroupManager — member-created groups with k-of-n Schnorr multisig,
+public/private visibility, custom page slugs, and join applications.</p>
+<p>Group pages live at <code>/groups/:id</code> (or <code>/groups/:slug</code> when a custom slug
+is set). Public groups can be shared; visitors apply to join; the creator
+accepts or rejects. Private groups are members-only.</p>
+<p>Persistence: uses <code>types/Store.js</code> → <code>@fabric/core</code> LevelDB under
+<code>stores/gooncitizen/register</code> (Hub-style named store root).</p>
 </dd>
 <dt><a href="#http">http</a></dt>
 <dd><p>Star Citizen Live - Fabric-free service (M1 skeleton + M3 parser).</p>
 <p>Boots with ZERO external dependencies - only Node.js built-ins (http, crypto,
-events, fs, readline) plus global fetch. No @fabric/hub, no SSH git deps, no
-400 MB install. <code>node services/LiveRelay.js</code> just works.</p>
+events, fs, readline) plus global fetch (identity/group crypto loads lazily).
+This file is the SERVICE DEFINITION only — the server entry that boots it
+from the environment is <code>scripts/node.js</code> (<code>npm start</code>).</p>
 <p>Features: in-memory collections, REST endpoints, live log tailing (read-only,
 optional) AND offline replay, real Game.log event parsing (functions/parser.js),
 optional Discord webhook posting, and the mission/contract seam.</p>
@@ -57,7 +73,8 @@ optional Discord webhook posting, and the mission/contract seam.</p>
                                       --officer validate(reject)--&gt; back to assigned
   open|assigned --officer cancel--&gt; cancelled</p>
 <p>Every mutation appends a hash-chained AuditEntry (tamper-evident; M6 adds
-officer signatures over each entry). Backed by stores/register.js (memory or file).
+officer signatures over each entry). Backed by types/Store.js (in-memory
+or <code>@fabric/core</code> Store / LevelDB under <code>stores/</code> when a path is configured).
 Keeps the method names/events the rest of the code already uses
 (createMission/getMission/missions, start/stop) so nothing else breaks.</p>
 <p>Officer model: settings.officers is an allowlist of actor ids. If EMPTY, the
@@ -242,11 +259,18 @@ Stops monitoring the game log and stops HTTP server if running.
 
 * [Group](#Group)
     * [new Group(data)](#new_Group_new)
-    * [.includes()](#Group+includes) ⇒ <code>Boolean</code>
-    * [.validate()](#Group+validate)
-    * [.commitment()](#Group+commitment)
-    * [.federation()](#Group+federation)
-    * [.verifyMultiSignature(multiSig, [threshold])](#Group+verifyMultiSignature) ⇒ <code>Boolean</code>
+    * _instance_
+        * [.pathKey()](#Group+pathKey)
+        * [.pagePath()](#Group+pagePath)
+        * [.includes()](#Group+includes) ⇒ <code>Boolean</code>
+        * [.validate()](#Group+validate)
+        * [.commitment()](#Group+commitment)
+        * [.federation()](#Group+federation)
+        * [.verifyMultiSignature(multiSig, [threshold])](#Group+verifyMultiSignature) ⇒ <code>Boolean</code>
+        * [.toJSON()](#Group+toJSON)
+        * [.toPublicJSON()](#Group+toPublicJSON)
+    * _static_
+        * [.normalizeSlug()](#Group.normalizeSlug)
 
 <a name="new_Group_new"></a>
 
@@ -260,8 +284,22 @@ Stops monitoring the game log and stops HTTP server if running.
 | data.creator | <code>String</code> |  | Creator pubkey (hex). |
 | data.members | <code>Array.&lt;String&gt;</code> |  | Member pubkeys (hex). |
 | [data.threshold] | <code>Number</code> | <code>1</code> | Signatures required for group decisions. |
+| [data.visibility] | <code>String</code> | <code>private</code> | `public` | `private`. |
+| [data.slug] | <code>String</code> \| <code>null</code> |  | Optional custom URL slug (else use id). |
 | [data.createdAt] | <code>String</code> |  | ISO timestamp. |
 
+<a name="Group+pathKey"></a>
+
+### group.pathKey()
+Path segment for the group page: custom slug or id.
+
+**Kind**: instance method of [<code>Group</code>](#Group)  
+<a name="Group+pagePath"></a>
+
+### group.pagePath()
+Absolute path for the group page (`/groups/...`).
+
+**Kind**: instance method of [<code>Group</code>](#Group)  
 <a name="Group+includes"></a>
 
 ### group.includes() ⇒ <code>Boolean</code>
@@ -300,6 +338,25 @@ Signers sign the raw message bytes with BIP340 Schnorr (Fabric
 | multiSig | <code>Object</code> | `{ message, signatures: { [pubkey]: sigHexOrBuffer } }`. |
 | [threshold] | <code>Number</code> | Override (defaults to the group threshold). |
 
+<a name="Group+toJSON"></a>
+
+### group.toJSON()
+Full JSON for members / authenticated managers.
+
+**Kind**: instance method of [<code>Group</code>](#Group)  
+<a name="Group+toPublicJSON"></a>
+
+### group.toPublicJSON()
+Public summary for share pages (no full member list — only count).
+Safe for unauthenticated GET when visibility is public.
+
+**Kind**: instance method of [<code>Group</code>](#Group)  
+<a name="Group.normalizeSlug"></a>
+
+### Group.normalizeSlug()
+Normalize a custom URL slug (lowercase, hyphenated) or return null.
+
+**Kind**: static method of [<code>Group</code>](#Group)  
 <a name="Mission"></a>
 
 ## Mission ⇐ <code>Entity</code>
@@ -494,6 +551,39 @@ Convert application to JSON.
 
 **Kind**: instance method of [<code>MissionApplication</code>](#MissionApplication)  
 **Returns**: <code>Object</code> - Application data.  
+<a name="Store"></a>
+
+## Store
+**Kind**: global class  
+
+* [Store](#Store)
+    * [new Store([opts])](#new_Store_new)
+    * [.start()](#Store+start)
+    * [.flush()](#Store+flush)
+
+<a name="new_Store_new"></a>
+
+### new Store([opts])
+
+| Param | Type | Description |
+| --- | --- | --- |
+| [opts] | <code>Object</code> |  |
+| [opts.path] | <code>String</code> \| <code>null</code> | LevelDB path for `@fabric/core` Store. |
+| [opts.dir] | <code>String</code> \| <code>null</code> | Alias for `path` (legacy register API). |
+
+<a name="Store+start"></a>
+
+### store.start()
+Open the Fabric Store (if configured) and load collections into memory.
+Idempotent — safe when MissionManager and GroupManager share one instance.
+
+**Kind**: instance method of [<code>Store</code>](#Store)  
+<a name="Store+flush"></a>
+
+### store.flush()
+Flush pending Level writes (also called from stop).
+
+**Kind**: instance method of [<code>Store</code>](#Store)  
 <a name="MissionManager"></a>
 
 ## MissionManager
@@ -788,17 +878,42 @@ actor ids the identity onboarding produces). Threshold decisions (mission
 acceptance, payout release) are verified with the standard Fabric
 [Federation](Federation) k-of-n Schnorr verification (BIP340).
 
+Pages: `/groups/:id` by default, or `/groups/:slug` when a custom slug is set.
+Visibility: `private` (members only) or `public` (shareable join page).
+
 **Kind**: global constant  
+<a name="fs"></a>
+
+## fs
+Store — keyed-collection persistence for the mission register + groups.
+
+Follows the Fabric convention: the *type* lives in `types/`, the *data*
+lives under the named store root `stores/gooncitizen/` (like the Hub's
+`stores/hub`). The register LevelDB is `stores/gooncitizen/register`.
+
+Surface (sync): get / all / count / put — same as the original M5 seam so
+MissionManager and GroupManager stay simple.
+
+Persistence: when `path` (or legacy `dir`) is set, collections are kept in an
+{@link https://github.com/FabricLabs/fabric/blob/master/types/store.js
+
+**Kind**: global constant  
+**Fabric/core**: Store} (LevelDB). Memory-only when path is null (tests).
+
+Call `await store.start()` before reads that must see prior sessions, and
+`await store.stop()` on shutdown so pending writes flush.  
 <a name="crypto"></a>
 
 ## crypto
-GroupManager — member-created groups with k-of-n Schnorr multisig.
+GroupManager — member-created groups with k-of-n Schnorr multisig,
+public/private visibility, custom page slugs, and join applications.
 
-Any player (pubkey) may create a group; members may add members. Groups
-scope mission visibility (missions shared to a group are served only to
-its members) and act as authority sets for mission acceptance/payouts.
-Mutations are recorded in a hash-chained audit log (same pattern as
-MissionManager).
+Group pages live at `/groups/:id` (or `/groups/:slug` when a custom slug
+is set). Public groups can be shared; visitors apply to join; the creator
+accepts or rejects. Private groups are members-only.
+
+Persistence: uses `types/Store.js` → `@fabric/core` LevelDB under
+`stores/gooncitizen/register` (Hub-style named store root).
 
 **Kind**: global constant  
 <a name="http"></a>
@@ -807,8 +922,9 @@ MissionManager).
 Star Citizen Live - Fabric-free service (M1 skeleton + M3 parser).
 
 Boots with ZERO external dependencies - only Node.js built-ins (http, crypto,
-events, fs, readline) plus global fetch. No @fabric/hub, no SSH git deps, no
-400 MB install. `node services/LiveRelay.js` just works.
+events, fs, readline) plus global fetch (identity/group crypto loads lazily).
+This file is the SERVICE DEFINITION only — the server entry that boots it
+from the environment is `scripts/node.js` (`npm start`).
 
 Features: in-memory collections, REST endpoints, live log tailing (read-only,
 optional) AND offline replay, real Game.log event parsing (functions/parser.js),
@@ -829,7 +945,8 @@ Implements D-005: a centralized, OFFICER-VALIDATED register. Lifecycle:
   open|assigned --officer cancel--> cancelled
 
 Every mutation appends a hash-chained AuditEntry (tamper-evident; M6 adds
-officer signatures over each entry). Backed by stores/register.js (memory or file).
+officer signatures over each entry). Backed by types/Store.js (in-memory
+or `@fabric/core` Store / LevelDB under `stores/` when a path is configured).
 Keeps the method names/events the rest of the code already uses
 (createMission/getMission/missions, start/stop) so nothing else breaks.
 

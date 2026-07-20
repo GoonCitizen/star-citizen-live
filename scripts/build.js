@@ -16,7 +16,10 @@ const entry = path.join(__dirname, 'dashboard-entry.js');
 const dest = path.join(root, 'assets', 'index.html');
 const Dashboard = require('../components/Dashboard');
 const Onboarding = require('../components/Onboarding');
+const Identity = require('../components/Identity');
 const Groups = require('../components/Groups');
+const GroupPage = require('../components/GroupPage');
+const Peers = require('../components/Peers');
 const Settings = require('../components/Settings');
 
 async function main () {
@@ -44,7 +47,10 @@ async function main () {
 <style>
 ${Dashboard.CSS}
 ${Onboarding.CSS}
+${Identity.CSS}
 ${Groups.CSS}
+${GroupPage.CSS}
+${Peers.CSS}
 ${Settings.CSS}
 </style>
 </head>

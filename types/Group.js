@@ -7,12 +7,16 @@
  * actor ids the identity onboarding produces). Threshold decisions (mission
  * acceptance, payout release) are verified with the standard Fabric
  * {@link Federation} k-of-n Schnorr verification (BIP340).
+ *
+ * Pages: `/groups/:id` by default, or `/groups/:slug` when a custom slug is set.
+ * Visibility: `private` (members only) or `public` (shareable join page).
  */
 
 const crypto = require('crypto');
 const Federation = require('@fabric/core/types/federation');
 
 const PUBKEY_RE = /^0[23][0-9a-f]{64}$/;
+const SLUG_RE = /^[a-z0-9](?:[a-z0-9-]{0,46}[a-z0-9])?$/;
 
 class Group {
   /**
@@ -22,6 +26,8 @@ class Group {
    * @param {String} data.creator Creator pubkey (hex).
    * @param {Array<String>} data.members Member pubkeys (hex).
    * @param {Number} [data.threshold=1] Signatures required for group decisions.
+   * @param {String} [data.visibility=private] `public` | `private`.
+   * @param {String|null} [data.slug] Optional custom URL slug (else use id).
    * @param {String} [data.createdAt] ISO timestamp.
    */
   constructor (data = {}) {
@@ -30,6 +36,8 @@ class Group {
     this.creator = data.creator || null;
     this.members = Array.isArray(data.members) ? [...new Set(data.members)] : [];
     this.threshold = Math.max(1, Number(data.threshold) || 1);
+    this.visibility = data.visibility === 'public' ? 'public' : 'private';
+    this.slug = data.slug || null;
     this.createdAt = data.createdAt || new Date().toISOString();
     this._federation = null;
   }
@@ -37,6 +45,30 @@ class Group {
   static isValidPubkey (pubkey) {
     return typeof pubkey === 'string' && PUBKEY_RE.test(pubkey);
   }
+
+  static isValidSlug (slug) {
+    return typeof slug === 'string' && SLUG_RE.test(slug) && !slug.startsWith('group-');
+  }
+
+  /** Normalize a custom URL slug (lowercase, hyphenated) or return null. */
+  static normalizeSlug (input) {
+    if (input == null || input === '') return null;
+    const slug = String(input).trim().toLowerCase()
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/^-+|-+$/g, '')
+      .slice(0, 48);
+    if (!slug) return null;
+    if (!Group.isValidSlug(slug)) throw new Error('slug must be 2–48 chars, lowercase letters/digits/hyphens (not starting with "group-")');
+    return slug;
+  }
+
+  isPublic () { return this.visibility === 'public'; }
+
+  /** Path segment for the group page: custom slug or id. */
+  pathKey () { return this.slug || this.id; }
+
+  /** Absolute path for the group page (`/groups/...`). */
+  pagePath () { return `/groups/${this.pathKey()}`; }
 
   /** @returns {Boolean} True when `pubkey` is a member of this group. */
   includes (pubkey) {
@@ -53,6 +85,12 @@ class Group {
     if (this.threshold > this.members.length) {
       throw new Error(`threshold ${this.threshold} exceeds member count ${this.members.length}`);
     }
+    if (this.slug != null && !Group.isValidSlug(this.slug)) {
+      throw new Error('invalid group slug');
+    }
+    if (this.visibility !== 'public' && this.visibility !== 'private') {
+      throw new Error('visibility must be public or private');
+    }
     return true;
   }
 
@@ -63,7 +101,9 @@ class Group {
       name: this.name,
       creator: this.creator,
       members: [...this.members].sort(),
-      threshold: this.threshold
+      threshold: this.threshold,
+      visibility: this.visibility,
+      slug: this.slug
     });
     return crypto.createHash('sha256').update(body).digest('hex');
   }
@@ -101,6 +141,7 @@ class Group {
     }
   }
 
+  /** Full JSON for members / authenticated managers. */
   toJSON () {
     return {
       id: this.id,
@@ -108,8 +149,29 @@ class Group {
       creator: this.creator,
       members: this.members,
       threshold: this.threshold,
+      visibility: this.visibility,
+      slug: this.slug,
+      path: this.pagePath(),
       createdAt: this.createdAt,
       commitment: this.commitment()
+    };
+  }
+
+  /**
+   * Public summary for share pages (no full member list — only count).
+   * Safe for unauthenticated GET when visibility is public.
+   */
+  toPublicJSON () {
+    return {
+      id: this.id,
+      name: this.name,
+      creator: this.creator,
+      memberCount: this.members.length,
+      threshold: this.threshold,
+      visibility: this.visibility,
+      slug: this.slug,
+      path: this.pagePath(),
+      createdAt: this.createdAt
     };
   }
 }

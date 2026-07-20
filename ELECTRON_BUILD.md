@@ -28,10 +28,10 @@ Or run the relay only (browser at http://localhost:3041/):
 npm start
 ```
 
-Legacy alias:
+Fabric-style alias (matches `@fabric/hub`):
 
 ```bash
-npm run electron:dev
+npm run desktop:dev
 ```
 
 This will:
@@ -63,21 +63,24 @@ npm run build:installer:deb
 
 Output: `dist/gooncitizen_x.x.x_amd64.deb` (name may vary by electron-builder version)
 
-### Both platforms
+### All platforms (Windows x64 + Debian x64 + macOS)
 
 ```bash
 npm run build:installers
 ```
 
-Each target runs `npm run build:browser` first (bundles `components/Dashboard.js` → `assets/index.html`).
+Primary targets are **Windows NSIS (x64)** and **Debian .deb (x64)** — most players
+run Windows — plus a **macOS dmg/zip** for the host architecture. Arches are pinned
+in the `build` config (`package.json`), so no CLI arch flags are needed.
 
-## Building Windows Installer (legacy script name)
+### Current OS only (Fabric-style, matches `@fabric/hub`)
 
 ```bash
-npm run build:win:installer
+npm run build:desktop       # installers for the OS you're on
+npm run build:desktop:dir   # unpacked app under dist/ for quick checks
 ```
 
-Same as `build:installer:win`.
+Each target runs `npm run build:browser` first (bundles `components/Dashboard.js` → `assets/index.html`).
 
 ## Output
 

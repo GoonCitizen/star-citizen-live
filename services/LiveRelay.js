@@ -103,14 +103,27 @@ class StarCitizenService extends EventEmitter {
     this.on('error', (e) => console.error('[STAR-CITIZEN] error:', (e && e.message) || e));
 
     const MissionManager = require('../services/MissionManager');
+    const GroupManager = require('../services/GroupManager');
+    const { Store } = require('../types/Store');
+
+    // Shared Fabric Store for missions + groups. Persists under the Hub-style
+    // named store (`stores/gooncitizen/register`) unless overridden. Null → memory (tests).
+    const registerDir = this._resolveRegisterPath();
+    this.registerStore = new Store({ path: registerDir });
+    if (registerDir) console.log(`[STAR-CITIZEN] register store: ${registerDir}`);
+
     this.missionManager = (this.settings.missions && this.settings.missions.enable)
-      ? new MissionManager(this.settings.missions) : null;
+      ? new MissionManager(Object.assign({}, this.settings.missions, { store: this.registerStore }))
+      : null;
 
     // Groups: member-created k-of-n Schnorr multisig units (mission scoping +
-    // authority sets). Shares the register directory by default.
-    const GroupManager = require('../services/GroupManager');
-    const groupSettings = Object.assign({ enable: true, dir: (this.settings.missions && this.settings.missions.dir) || null }, this.settings.groups || {});
-    this.groupManager = groupSettings.enable ? new GroupManager(groupSettings) : null;
+    // authority sets). Shares the register Store with missions.
+    const groupSettings = Object.assign(
+      { enable: true },
+      this.settings.groups || {},
+      { store: this.registerStore }
+    );
+    this.groupManager = groupSettings.enable !== false ? new GroupManager(groupSettings) : null;
     if (this.missionManager && this.groupManager) this.missionManager.groupManager = this.groupManager;
 
     // Bearer sessions issued by POST …/auth (Schnorr login challenge).
@@ -128,6 +141,23 @@ class StarCitizenService extends EventEmitter {
     this.history = this._loadHistory();   // compact backfill of past logs (Analyze tab)
 
     if (this.settings.discord.enable) this._wireDiscord();
+  }
+
+  /**
+   * LevelDB path for the Fabric-backed register Store, or null for memory-only.
+   * Priority: registerPath → missions.dir → groups.dir → settingsDir/register
+   * (settingsDir is the Hub-style named root, e.g. stores/gooncitizen).
+   */
+  _resolveRegisterPath () {
+    const explicit = this.settings.registerPath
+      || (this.settings.missions && this.settings.missions.dir)
+      || (this.settings.groups && this.settings.groups.dir)
+      || null;
+    if (explicit) return explicit;
+    if (this.settings.settingsDir) {
+      return path.join(this.settings.settingsDir, 'register');
+    }
+    return null;
   }
 
   // Load the backfilled history aggregate (built by `npm run backfill`), if present.
@@ -355,8 +385,8 @@ class StarCitizenService extends EventEmitter {
     };
 
     try {
-      // Live monitor web UI (read-only dashboard) — built from components/Dashboard.js.
-      if (req.method === 'GET' && (pathname === '/' || pathname === `${base}/ui`)) {
+      // SPA shell — dashboard at / and dedicated group pages at /groups/:id (or :slug).
+      if (req.method === 'GET' && (pathname === '/' || pathname === `${base}/ui` || pathname === '/groups' || /^\/groups\/[^/]+$/.test(pathname))) {
         let html;
         try {
           const uiPath = path.join(__dirname, '..', 'assets', 'index.html');
@@ -493,6 +523,7 @@ class StarCitizenService extends EventEmitter {
       }
 
       // ---- Groups (k-of-n Schnorr multisig units) ----
+      const Group = require('../types/Group');
       const gm = this.groupManager;
       const viewer = this._authPubkey(req);
       const serverMode = this.settings.mode === 'server';
@@ -504,10 +535,17 @@ class StarCitizenService extends EventEmitter {
       if (pathname === `${base}/groups`) {
         if (!gm) return send(503, { error: 'Group system not available' });
         if (req.method === 'GET') {
-          // Members see their groups; unauthenticated hosted callers see none.
-          const data = serverMode
-            ? (viewer ? gm.groupsFor(viewer) : [])
-            : (viewer ? gm.groupsFor(viewer) : gm.groups);
+          // Members see their groups; public groups are included for discovery.
+          let data;
+          if (viewer) {
+            const mine = gm.groupsFor(viewer);
+            const publicOnes = gm.groups.filter((g) => g.visibility === 'public' && !mine.some((m) => m.id === g.id));
+            data = mine.concat(publicOnes.map((g) => new Group(g).toPublicJSON()));
+          } else if (serverMode) {
+            data = gm.groups.filter((g) => g.visibility === 'public').map((g) => new Group(g).toPublicJSON());
+          } else {
+            data = gm.groups;
+          }
           return send(200, { type: 'Collection', data });
         }
         if (req.method === 'POST') {
@@ -519,23 +557,64 @@ class StarCitizenService extends EventEmitter {
         }
       }
       let gmatch;
-      if ((gmatch = pathname.match(new RegExp(`^${base}/groups/([^/]+)$`))) && req.method === 'GET') {
+      if ((gmatch = pathname.match(new RegExp(`^${base}/groups/([^/]+)$`)))) {
         if (!gm) return send(503, { error: 'Group system not available' });
-        const group = gm.getGroup(gmatch[1]);
+        const group = gm.findGroup(gmatch[1]);
         if (!group) return send(404, { error: 'Group not found' });
-        if (serverMode && (!viewer || !group.includes(viewer))) return send(403, { error: 'forbidden: not a group member' });
-        return send(200, { type: 'Group', data: group.toJSON() });
+        if (req.method === 'GET') {
+          const view = gm.viewFor(group, viewer);
+          if (!view) return send(403, { error: 'forbidden: this group is private' });
+          return send(200, { type: 'Group', data: view });
+        }
+        if (req.method === 'PUT') {
+          if (!requireAuth()) return;
+          const d = await body();
+          const actor = viewer || d.actor;
+          try { return send(200, { type: 'Group', data: await gm.updateGroup(group.id, d, actor) }); }
+          catch (e) { return send(e.code === 'FORBIDDEN' ? 403 : /not found/i.test(e.message) ? 404 : 400, { error: e.message }); }
+        }
       }
       if ((gmatch = pathname.match(new RegExp(`^${base}/groups/([^/]+)/members$`))) && req.method === 'POST') {
         if (!gm) return send(503, { error: 'Group system not available' });
         if (!requireAuth()) return;
         const d = await body();
         const actor = viewer || d.actor;
+        const group = gm.findGroup(gmatch[1]);
+        if (!group) return send(404, { error: 'Group not found' });
         try {
           const data = d.remove
-            ? await gm.removeMember(gmatch[1], d.pubkey, actor)
-            : await gm.addMember(gmatch[1], d.pubkey, actor);
+            ? await gm.removeMember(group.id, d.pubkey, actor)
+            : await gm.addMember(group.id, d.pubkey, actor);
           return send(200, { type: 'Group', data });
+        } catch (e) {
+          return send(e.code === 'FORBIDDEN' ? 403 : /not found/i.test(e.message) ? 404 : 400, { error: e.message });
+        }
+      }
+      if ((gmatch = pathname.match(new RegExp(`^${base}/groups/([^/]+)/applications$`)))) {
+        if (!gm) return send(503, { error: 'Group system not available' });
+        const group = gm.findGroup(gmatch[1]);
+        if (!group) return send(404, { error: 'Group not found' });
+        if (req.method === 'GET') {
+          if (!viewer || group.creator !== viewer) return send(403, { error: 'forbidden: only the creator can list join applications' });
+          return send(200, { type: 'Collection', data: gm.getGroupApplications(group.id) });
+        }
+        if (req.method === 'POST') {
+          if (!requireAuth()) return;
+          const d = await body();
+          const applicant = viewer || d.applicantId;
+          try { return send(200, { type: 'GroupApplication', data: await gm.applyToGroup(group.id, applicant, d.message) }); }
+          catch (e) { return send(e.code === 'FORBIDDEN' ? 403 : 400, { error: e.message }); }
+        }
+      }
+      if ((gmatch = pathname.match(new RegExp(`^${base}/group-applications/([^/]+)/decision$`))) && req.method === 'POST') {
+        if (!gm) return send(503, { error: 'Group system not available' });
+        if (!requireAuth()) return;
+        const d = await body();
+        try {
+          return send(200, {
+            type: 'GroupApplication',
+            data: await gm.decideApplication(Object.assign({}, d, { applicationId: gmatch[1], actor: viewer || d.actor }))
+          });
         } catch (e) {
           return send(e.code === 'FORBIDDEN' ? 403 : /not found/i.test(e.message) ? 404 : 400, { error: e.message });
         }
@@ -1110,6 +1189,7 @@ class StarCitizenService extends EventEmitter {
   // ---- Lifecycle ----
   async start () {
     this.state.status = 'STARTING';
+    if (this.registerStore) await this.registerStore.start();
     if (this.missionManager) await this.missionManager.start();
     if (this.groupManager) await this.groupManager.start();
     const serverMode = this.settings.mode === 'server';
@@ -1139,6 +1219,7 @@ class StarCitizenService extends EventEmitter {
     this._stopUplink();
     if (this.missionManager) await this.missionManager.stop();
     if (this.groupManager) await this.groupManager.stop();
+    if (this.registerStore) await this.registerStore.stop();
     if (this.server) {
       await new Promise((r) => this.server.close(r));
       this.server = null;

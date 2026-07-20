@@ -1,8 +1,9 @@
 'use strict';
 
 // Persisted runtime settings — the desktop/relay counterpart of the Hub's
-// settings store (stores/hub STATE → `settings`). Plain JSON on disk:
-// Electron passes its userData dir; the standalone relay uses stores/.
+// settings under `stores/hub`. Plain JSON on disk at
+// `stores/gooncitizen/settings.json` (CLI) or
+// `<userData>/stores/gooncitizen/settings.json` (desktop).
 // Only allowlisted keys are persisted, so the file stays a small, auditable
 // operator config (never secrets like the identity key).
 
@@ -18,7 +19,8 @@ const ALLOWED_KEYS = [
   'peers',      // [{ id, url, label, enabled }] — remote hubs receiving signed events
   'uplinkIntervalMs',
   'discordWebhook',
-  'openAtLogin'
+  'openAtLogin',
+  'identityAutoLockMinutes' // 0 = off; default 30 (mirrors Hub identity lock prefs)
 ];
 
 function settingsPath (dir) {

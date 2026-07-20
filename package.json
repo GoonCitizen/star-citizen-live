@@ -8,21 +8,21 @@
     "./parser": "./functions/parser.js",
     "./locate": "./functions/locate.js",
     "./types/Mission": "./types/Mission.js",
+    "./types/Store": "./types/Store.js",
     "./components/Dashboard": "./components/Dashboard.js"
   },
   "scripts": {
     "backfill": "node scripts/backfill.js",
     "build:browser": "node scripts/build.js",
-    "build:electron": "npm run build:browser && electron-builder",
-    "build:installer:deb": "npm run build:browser && electron-builder --linux deb --publish never",
-    "build:installer:win": "npm run build:browser && electron-builder --win nsis --publish never",
-    "build:installers": "npm run build:browser && electron-builder --win nsis --linux deb --publish never",
-    "build:win:installer": "npm run build:installer:win",
-    "build:win": "npm run build:browser && electron-builder --win",
+    "build:desktop": "npm run build:browser && electron-builder build --publish never",
+    "build:desktop:dir": "npm run build:browser && electron-builder --dir",
+    "build:installer:deb": "npm run build:browser && electron-builder --linux --publish never",
+    "build:installer:win": "npm run build:browser && electron-builder --win --publish never",
+    "build:installers": "npm run build:browser && electron-builder --win --linux --mac --publish never",
     "build": "npm run make:api && npm run build:browser",
     "coverage": "c8 npm test",
-    "electron:dev": "node scripts/desktop.js . --dev",
-    "electron": "node scripts/desktop.js .",
+    "desktop:dev": "node scripts/desktop.js . --dev",
+    "desktop": "node scripts/desktop.js .",
     "make:api": "jsdoc2md --configure jsdoc.json --files types/*.js services/*.js README.md > API.md",
     "replay": "node scripts/replay.js",
     "report:install": "rm -rf node_modules && echo \"\n\" > package-lock.json && echo \"$ npm i\" > reports/install.log && npm i >> reports/install.log",
@@ -87,8 +87,10 @@
     "directories": {
       "output": "dist"
     },
+    "npmRebuild": false,
     "files": [
       "**/*",
+      "!**/node_modules/@fabric/core/build/**",
       "!**/node_modules/*/{CHANGELOG.md,README.md,README,readme.md,readme}",
       "!**/node_modules/*/{test,__tests__,tests,powered-test,example,examples}",
       "!**/node_modules/*.d.ts",
@@ -101,6 +103,13 @@
       "!**/{appveyor.yml,.travis.yml,circle.yml}",
       "!**/{npm-debug.log,yarn.lock,.yarn-integrity,.yarn-metadata.json}"
     ],
+    "mac": {
+      "category": "public.app-category.games",
+      "target": [
+        "dmg",
+        "zip"
+      ]
+    },
     "win": {
       "target": [
         {
@@ -122,8 +131,14 @@
     },
     "linux": {
       "target": [
-        "deb"
+        {
+          "target": "deb",
+          "arch": [
+            "x64"
+          ]
+        }
       ],
+      "artifactName": "gooncitizen_${version}_${arch}.${ext}",
       "category": "Game",
       "maintainer": "Fabric Labs <support@fabric.pub>",
       "synopsis": "GoonCitizen — Star Citizen log relay and org dashboard",

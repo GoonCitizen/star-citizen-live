@@ -51,7 +51,7 @@ class Onboarding extends React.Component {
   constructor (props) {
     super(props);
     this.state = {
-      step: 'loading', // loading | choice | password | backup | restore | unlock | done
+      step: 'loading', // loading | choice | password | backup | restore | import | unlock | done
       busy: false,
       error: null,
       password: '',
@@ -59,7 +59,8 @@ class Onboarding extends React.Component {
       mnemonic: null, // shown once after create
       restoreWords: '',
       acked: false,
-      pubkey: null
+      pubkey: null,
+      importPassword: ''
     };
   }
 
@@ -163,7 +164,55 @@ class Onboarding extends React.Component {
         React.createElement('button', {
           className: 'ob-btn ghost',
           onClick: () => this.setState({ step: 'restore', error: null })
-        }, 'Restore from seed phrase')
+        }, 'Restore from seed phrase'),
+        React.createElement('button', {
+          className: 'ob-btn ghost',
+          onClick: () => this.setState({ step: 'import', error: null })
+        }, 'Load from backup file')
+      )
+    ];
+  }
+
+  importBackupFile (file) {
+    if (!file || !this.state.importPassword) return;
+    this.setState({ busy: true, error: null });
+    const reader = new FileReader();
+    reader.onload = async () => {
+      try {
+        const backup = JSON.parse(String(reader.result || ''));
+        const res = await identityBridge().importBackup(backup, this.state.importPassword, false);
+        if (res.error) return this.setState({ busy: false, error: res.error });
+        this.finish(res.pubkey);
+      } catch (e) {
+        this.setState({ busy: false, error: 'Could not read backup file: ' + e.message });
+      }
+    };
+    reader.onerror = () => this.setState({ busy: false, error: 'Failed to read backup file.' });
+    reader.readAsText(file);
+  }
+
+  renderImport () {
+    return [
+      React.createElement('h2', { key: 'h' }, 'Load from backup'),
+      React.createElement('div', { className: 'sub', key: 's' },
+        'Select a GoonCitizen encrypted backup file (.enc.json) and enter the password that sealed it.'),
+      this.field('Backup password', 'importPassword'),
+      React.createElement('div', { className: 'ob-actions', key: 'a' },
+        React.createElement('label', {
+          className: 'ob-btn' + (this.state.importPassword ? '' : ' ghost'),
+          style: { cursor: this.state.importPassword ? 'pointer' : 'default', opacity: this.state.importPassword ? 1 : 0.45 }
+        },
+        this.state.busy ? 'Importing…' : 'Choose backup file…',
+        React.createElement('input', {
+          type: 'file', accept: '.json,application/json', style: { display: 'none' },
+          disabled: !this.state.importPassword || this.state.busy,
+          onChange: (e) => this.importBackupFile(e.target.files && e.target.files[0])
+        })
+        ),
+        React.createElement('button', {
+          className: 'ob-btn ghost',
+          onClick: () => this.setState({ step: 'choice', error: null })
+        }, 'Back')
       )
     ];
   }
@@ -281,6 +330,7 @@ class Onboarding extends React.Component {
     else if (this.state.step === 'password') body = this.renderPassword();
     else if (this.state.step === 'backup') body = this.renderBackup();
     else if (this.state.step === 'restore') body = this.renderRestore();
+    else if (this.state.step === 'import') body = this.renderImport();
     else if (this.state.step === 'unlock') body = this.renderUnlock();
 
     return React.createElement('div', { className: 'ob-overlay' },

@@ -8,8 +8,20 @@
 
 const React = require('react');
 const Onboarding = require('./Onboarding');
+const Identity = require('./Identity');
 const Groups = require('./Groups');
+const Peers = require('./Peers');
 const Settings = require('./Settings');
+
+// Top-level features, listed along the top of the dashboard (Hub-style).
+const TABS = [
+  ['home', 'Home'],
+  ['live', 'Live feed'],
+  ['analyze', 'Analyze'],
+  ['groups', 'Groups'],
+  ['peers', 'Peers']
+];
+const TAB_KEYS = TABS.map(([k]) => k);
 
 const TITLE = 'GoonCitizen — Monitor';
 
@@ -29,6 +41,9 @@ const CSS = `
   .pill{padding:2px 10px;border-radius:999px;font-size:12px;font-weight:600}
   .pill.on{background:rgba(63,185,80,.15);color:var(--good)}
   .pill.off{background:rgba(248,81,73,.15);color:var(--kill)}
+  .idchip{border:1px solid transparent;cursor:pointer;font-family:inherit}
+  .idchip.off{background:rgba(210,153,34,.15);color:var(--warn)}
+  .idchip:hover{border-color:var(--accent)}
   .counts{display:flex;gap:12px;flex-wrap:wrap;color:var(--muted);font-size:12.5px}
   .counts b{color:var(--text)}
   .counts .k b{color:var(--kill)}
@@ -83,6 +98,13 @@ const CSS = `
   .mc .d{font-size:11px;color:var(--muted);margin-top:2px}
   .lbr{display:grid;grid-template-columns:1fr 72px 86px 56px;gap:8px;align-items:center;padding:6px 8px;font-size:12.5px;border-radius:6px}
   .lbr.click{cursor:pointer}.lbr.click:hover{background:var(--panel2)}
+  .home-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(250px,1fr));gap:12px;padding:14px}
+  .home-card{background:var(--panel2);border:1px solid var(--line);border-radius:10px;padding:16px;
+    text-align:left;cursor:pointer;color:var(--text);display:grid;gap:8px;align-content:start}
+  .home-card:hover{border-color:var(--accent)}
+  .home-card .hc-title{font-size:15px;font-weight:650}
+  .home-card .hc-desc{font-size:12.5px;color:var(--muted);line-height:1.5}
+  .home-card .hc-stat{font-size:11.5px;color:var(--accent);font-family:'Cascadia Code',Consolas,monospace}
 `;
 
 const GOOD = '#3fb950';
@@ -167,8 +189,9 @@ function badge (ev) {
 class Dashboard extends React.Component {
   constructor (props) {
     super(props);
+    const hashTab = (typeof window !== 'undefined' && String(window.location.hash || '').replace(/^#/, '')) || '';
     this.state = {
-      tab: 'live',
+      tab: TAB_KEYS.includes(hashTab) ? hashTab : 'home',
       status: '…',
       online: false,
       counts: {
@@ -198,10 +221,14 @@ class Dashboard extends React.Component {
       azOutcomes: null,
       azFactions: null,
       identityPubkey: null,
-      showSettings: false
+      identityLocked: false,
+      identityExists: false,
+      showSettings: false,
+      showIdentity: false
     };
     this._timer = null;
     this._copiedTimers = {};
+    this._identityUnsub = null;
   }
 
   componentDidMount () {
@@ -209,9 +236,28 @@ class Dashboard extends React.Component {
     this._timer = setInterval(() => {
       if (this.state.auto) this.poll();
     }, 2000);
+    this._onHash = () => {
+      const h = String(window.location.hash || '').replace(/^#/, '');
+      const tab = TAB_KEYS.includes(h) ? h : 'home';
+      if (tab !== this.state.tab) this.showTab(tab, { fromHash: true });
+    };
+    window.addEventListener('hashchange', this._onHash);
+    // Live lock-state from the desktop shell (auto-lock, manual lock, forget).
+    const idBridge = (window.electronAPI && window.electronAPI.identity) || null;
+    if (idBridge && idBridge.onChanged) {
+      this._identityUnsub = idBridge.onChanged((summary) => {
+        this.setState({
+          identityExists: !!(summary && summary.exists),
+          identityLocked: !!(summary && summary.exists && !summary.unlocked),
+          identityPubkey: (summary && summary.unlocked) ? summary.pubkey : null
+        });
+      });
+    }
   }
 
   componentWillUnmount () {
+    if (this._onHash) window.removeEventListener('hashchange', this._onHash);
+    if (this._identityUnsub) this._identityUnsub();
     if (this._timer) clearInterval(this._timer);
     Object.values(this._copiedTimers).forEach(clearTimeout);
   }
@@ -256,7 +302,13 @@ class Dashboard extends React.Component {
       .catch(() => this.setState({ azLoading: false }));
   }
 
-  showTab (tab) {
+  showTab (tab, { fromHash = false } = {}) {
+    if (!fromHash) {
+      const hash = tab === 'home' ? '' : `#${tab}`;
+      if (window.location.hash !== hash) {
+        history.replaceState(null, '', window.location.pathname + window.location.search + hash);
+      }
+    }
     this.setState({ tab }, () => {
       if (tab === 'analyze' && !this.state.analytics) this.fetchAnalytics();
     });
@@ -840,6 +892,49 @@ class Dashboard extends React.Component {
     );
   }
 
+  renderHome () {
+    const c = this.state.counts;
+    const cards = [
+      ['live', '📡 Live feed', 'Watch Game.log events as they happen — missions, objectives, combat and deaths, parsed in real time.',
+        `${c.missions || 0} missions · ${c.deaths || 0} deaths this session`],
+      ['analyze', '📊 Analyze', 'Activity analytics across your backloaded history and the live session — heatmap, outcomes, pilots.',
+        'sliced by month, pilot, mission type'],
+      ['groups', '👥 Groups', 'Member-created squads with k-of-n Schnorr decisions. Share a public group page; others apply to join.',
+        'pages at /groups/:id (or a custom URL)'],
+      ['peers', '🌐 Peers', 'Fabric Network peer management — push your signed event batches to org hubs like goon.vc.',
+        'Fabric Protocol · idempotent delivery']
+    ];
+    return React.createElement('main', null,
+      React.createElement('section', { className: 'panel full' },
+        React.createElement('h2', null, '🛰️ Welcome to GoonCitizen ',
+          React.createElement('span', { className: 'sub' }, '— the org relay: read-only Game.log monitoring, shared history, and an officer-validated mission register on the Fabric Network.')
+        ),
+        React.createElement('div', { className: 'home-grid' },
+          cards.map(([tab, title, desc, stat]) => React.createElement('button', {
+            key: tab,
+            type: 'button',
+            className: 'home-card',
+            onClick: () => this.showTab(tab)
+          },
+          React.createElement('div', { className: 'hc-title' }, title),
+          React.createElement('div', { className: 'hc-desc' }, desc),
+          React.createElement('div', { className: 'hc-stat' }, stat)
+          ))
+        )
+      )
+    );
+  }
+
+  renderTab () {
+    switch (this.state.tab) {
+      case 'live': return this.renderLive();
+      case 'analyze': return this.renderAnalyze();
+      case 'groups': return React.createElement(Groups, { identityPubkey: this.state.identityPubkey });
+      case 'peers': return React.createElement(Peers, null);
+      default: return this.renderHome();
+    }
+  }
+
   render () {
     const c = this.state.counts;
     const D = this.state.analytics;
@@ -850,20 +945,31 @@ class Dashboard extends React.Component {
 
     return React.createElement(React.Fragment, null,
       React.createElement(Onboarding, {
-        onReady: (pubkey) => this.setState({ identityPubkey: pubkey })
+        onReady: (pubkey) => this.setState({ identityPubkey: pubkey, identityExists: !!pubkey, identityLocked: false })
       }),
       this.state.showSettings
         ? React.createElement(Settings, { onClose: () => this.setState({ showSettings: false }) })
+        : null,
+      this.state.showIdentity
+        ? React.createElement(Identity, {
+          onClose: () => this.setState({ showIdentity: false }),
+          onForget: () => this.setState({ identityPubkey: null, identityExists: false, identityLocked: false })
+        })
         : null,
       React.createElement('header', null,
         React.createElement('div', { className: 'row' },
           React.createElement('h1', null, '🛰️ GoonCitizen'),
           React.createElement('span', { className: 'pill ' + (this.state.online ? 'on' : 'off') }, this.state.status),
-          this.state.identityPubkey
-            ? React.createElement('span', {
-              className: 'pill on',
-              title: 'signing identity unlocked — ' + this.state.identityPubkey
-            }, '🔑 ' + this.state.identityPubkey.slice(0, 8) + '…')
+          (window.electronAPI && window.electronAPI.identity)
+            ? React.createElement('button', {
+              className: 'pill idchip ' + (this.state.identityPubkey ? 'on' : 'off'),
+              title: this.state.identityPubkey
+                ? 'signing unlocked — click to manage identity (lock, backup, reveal seed)'
+                : (this.state.identityExists ? 'identity locked — click to unlock or manage' : 'identity — click to manage'),
+              onClick: () => this.setState({ showIdentity: true })
+            }, this.state.identityPubkey
+              ? '🔑 ' + this.state.identityPubkey.slice(0, 8) + '…'
+              : (this.state.identityExists ? '🔒 locked' : '🔑 identity'))
             : null,
           React.createElement('div', { className: 'counts' },
             React.createElement('span', { className: 'k' }, 'kills ', React.createElement('b', null, c.kills)),
@@ -891,28 +997,21 @@ class Dashboard extends React.Component {
             React.createElement('button', {
               type: 'button',
               className: 'gear',
-              title: 'Settings — log path, Discord, peers',
+              title: 'Settings — log path, Discord, runtime',
               onClick: () => this.setState({ showSettings: true })
             }, '⚙️')
           )
         ),
         React.createElement('div', { className: 'row', style: { marginTop: 10, gap: 8 } },
-          React.createElement('button', {
+          TABS.map(([key, label]) => React.createElement('button', {
+            key,
             type: 'button',
-            className: 'tab ' + (this.state.tab === 'live' ? 'on' : ''),
-            onClick: () => this.showTab('live')
-          }, 'Live feed'),
-          React.createElement('button', {
-            type: 'button',
-            className: 'tab ' + (this.state.tab === 'analyze' ? 'on' : ''),
-            onClick: () => this.showTab('analyze')
-          }, 'Analyze'),
-          React.createElement('button', {
-            type: 'button',
-            className: 'tab ' + (this.state.tab === 'groups' ? 'on' : ''),
-            onClick: () => this.showTab('groups')
-          }, 'Groups'),
-          React.createElement('span', { className: 'sub', style: { color: 'var(--muted)', fontSize: 12 } }, scope)
+            className: 'tab ' + (this.state.tab === key ? 'on' : ''),
+            onClick: () => this.showTab(key)
+          }, label)),
+          this.state.tab === 'analyze'
+            ? React.createElement('span', { className: 'sub', style: { color: 'var(--muted)', fontSize: 12 } }, scope)
+            : null
         ),
         this.state.tab === 'live'
           ? React.createElement('div', { className: 'row', style: { marginTop: 10 } },
@@ -933,11 +1032,7 @@ class Dashboard extends React.Component {
           )
           : null
       ),
-      this.state.tab === 'live'
-        ? this.renderLive()
-        : (this.state.tab === 'groups'
-          ? React.createElement(Groups, { identityPubkey: this.state.identityPubkey })
-          : this.renderAnalyze())
+      this.renderTab()
     );
   }
 }

@@ -10,7 +10,8 @@
  *   open|assigned --officer cancel--> cancelled
  *
  * Every mutation appends a hash-chained AuditEntry (tamper-evident; M6 adds
- * officer signatures over each entry). Backed by stores/register.js (memory or file).
+ * officer signatures over each entry). Backed by types/Store.js (in-memory
+ * or `@fabric/core` Store / LevelDB under `stores/` when a path is configured).
  * Keeps the method names/events the rest of the code already uses
  * (createMission/getMission/missions, start/stop) so nothing else breaks.
  *
@@ -24,7 +25,7 @@ const crypto = require('crypto');
 const EventEmitter = require('events');
 const secp256k1 = require('tiny-secp256k1');
 const Actor = require('@fabric/core/types/actor');
-const { Store } = require('../stores/register');
+const { Store } = require('../types/Store');
 
 // Local Types
 const Mission = require('../types/Mission');
@@ -49,7 +50,7 @@ class MissionManager extends EventEmitter {
     super();
     this.settings = Object.assign({ enable: true, officers: [], dir: null }, settings);
     this.officers = new Set((this.settings.officers || []).map(String));
-    this.store = settings.store || new Store({ dir: this.settings.dir });
+    this.store = settings.store || new Store({ path: this.settings.dir || this.settings.path || null });
     this._counter = 0;
   }
 
@@ -73,8 +74,20 @@ class MissionManager extends EventEmitter {
     return this.missions.filter(m => m.status === 'completed');
   }
 
-  async start () { this.emit('ready'); return this; }
-  async stop () { this.emit('stopped'); return this; }
+  async start () {
+    if (this.store && typeof this.store.start === 'function') await this.store.start();
+    this.emit('ready');
+    return this;
+  }
+
+  async stop () {
+    if (this.store && typeof this.store.stop === 'function' && !this.settings.store) {
+      // Only stop when we own the store; shared LiveRelay registerStore is stopped by the relay.
+      await this.store.stop();
+    }
+    this.emit('stopped');
+    return this;
+  }
 
   _id (prefix) { this._counter += 1; return `${prefix}-${Date.now().toString(36)}-${this._counter}`; }
   _mission (id) { const m = this.store.get('missions', id); if (!m) throw new Error('mission not found'); return m; }
