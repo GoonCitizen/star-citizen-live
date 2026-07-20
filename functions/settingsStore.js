@@ -30,7 +30,8 @@ const ALLOWED_KEYS = [
   'notifyChatGroups',        // notify on new group chat messages (default true)
   'notifyWhenFocused',       // also notify while the app window is focused (default false)
   'nickname',                // operator display name for chat (pubkey remains the actor id)
-  'notifyMissionBroadcasts'  // desktop notify when a peer broadcasts a mission (default true)
+  'notifyMissionBroadcasts', // desktop notify when a peer broadcasts a mission (default true)
+  'linkedDevices'            // mutual device-link attestations [{ peerFabricId, label, … }]
 ];
 
 const NICKNAME_MAX = 32;

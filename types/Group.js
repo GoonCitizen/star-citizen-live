@@ -34,6 +34,9 @@ class Group {
    * @param {String|null} [data.slug] Optional custom URL slug (else use id).
    * @param {String|null} [data.parentId] Parent group id when this is a subgroup.
    * @param {String} [data.createdAt] ISO timestamp.
+   * @param {String|null} [data.contractId] Fabric Federation contract id (Actor hex).
+   * @param {Object|null} [data.proposedPolicy] Hub-shaped `{ validators, threshold }`.
+   * @param {String|null} [data.policyFingerprint] sha256 of canonical policy.
    */
   constructor (data = {}) {
     this.id = data.id || null;
@@ -45,6 +48,9 @@ class Group {
     this.slug = data.slug || null;
     this.parentId = data.parentId || null;
     this.createdAt = data.createdAt || new Date().toISOString();
+    this.contractId = data.contractId || null;
+    this.proposedPolicy = data.proposedPolicy || null;
+    this.policyFingerprint = data.policyFingerprint || null;
     this._federation = null;
   }
 
@@ -161,6 +167,9 @@ class Group {
       parentId: this.parentId || null,
       path: this.pagePath(),
       createdAt: this.createdAt,
+      contractId: this.contractId || null,
+      proposedPolicy: this.proposedPolicy || null,
+      policyFingerprint: this.policyFingerprint || null,
       commitment: this.commitment()
     };
   }
@@ -180,7 +189,8 @@ class Group {
       slug: this.slug,
       parentId: this.parentId || null,
       path: this.pagePath(),
-      createdAt: this.createdAt
+      createdAt: this.createdAt,
+      contractId: this.contractId || null
     };
   }
 }

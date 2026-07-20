@@ -153,6 +153,14 @@
         "libxtst6",
         "libnss3"
       ]
-    }
+    },
+    "protocols": [
+      {
+        "name": "Fabric",
+        "schemes": [
+          "fabric"
+        ]
+      }
+    ]
   }
 }

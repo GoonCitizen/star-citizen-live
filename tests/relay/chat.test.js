@@ -129,7 +129,7 @@ test('hosted chat: signed envelope required, group channels members-only', async
   } finally { await svc.stop(); }
 });
 
-// ---- Two-relay sync over Fabric Peer (P2P_CHAT_MESSAGE) ----
+// ---- Two-relay sync: global = P2P_CHAT_MESSAGE; group = GroupChat CONTRACT_MESSAGE ----
 
 function sleep (ms) { return new Promise((r) => setTimeout(r, ms)); }
 async function waitFor (fn, { timeoutMs = 15000, intervalMs = 100 } = {}) {
@@ -171,17 +171,25 @@ test('chat converges between two Fabric peers (bidirectional)', async () => {
   await local.start();
   const localPort = local.server.address().port;
   try {
-    const groupData = { id: 'group-shared-1', name: 'Shared Wing', members: [alice.pubkey, bob.pubkey], threshold: 1 };
-    await hub.groupManager.createGroup(groupData, alice.pubkey);
-    await local.groupManager.createGroup(groupData, alice.pubkey);
-    const groupChannel = 'group:group-shared-1';
-
     local.setIdentity(alice);
     await waitFor(() => local.fabricNetwork && local.fabricNetwork.ready);
     await waitFor(() => (
       local.fabricNetwork.status().fabricConnected >= 1 ||
       hub.fabricNetwork.status().fabricConnected >= 1
     ));
+
+    // Alice creates the Federation group; hub ingests CONTRACT_PUBLISH.
+    const created = await request(localPort, 'POST', `${BASE}/groups`, {
+      id: 'group-shared-1',
+      name: 'Shared Wing',
+      members: [alice.pubkey, bob.pubkey],
+      threshold: 1,
+      creator: alice.pubkey
+    });
+    assert.strictEqual(created.status, 200, JSON.stringify(created.body));
+    assert.ok(created.body.data.contractId, 'group must have a Federation contractId');
+    await waitFor(() => hub.groupManager.getGroup('group-shared-1'));
+    const groupChannel = 'group:group-shared-1';
 
     const g1 = await request(localPort, 'POST', `${BASE}/chat/messages`, { channel: 'global', body: 'hello from the relay' });
     assert.strictEqual(g1.status, 200);
@@ -192,7 +200,6 @@ test('chat converges between two Fabric peers (bidirectional)', async () => {
     await waitFor(() => hub.chatManager.list(groupChannel).some((m) => m.body === 'wing check-in'));
 
     // Bob posts on the hub; Alice's peer receives over Fabric.
-    // Hub must know Alice's listen address to dial back (star is one-way until then).
     await request(hubPort, 'POST', '/peers', { address: `127.0.0.1:${portA}` });
     await waitFor(() => hub.fabricNetwork.status().fabricConnected >= 1);
 

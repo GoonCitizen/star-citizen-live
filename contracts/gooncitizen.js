@@ -13,6 +13,10 @@
  *
  * The id MUST be computed the same way the core Peer registers it
  * (`new Actor(definition).id`), so senders and the peer agree on the namespace.
+ *
+ * Application-namespace model (shoutbox + CONTRACT_* gossip): see
+ * `@fabric/core` docs/APPLICATION_NAMESPACES.md and
+ * `./applicationMessageTypes.js`.
  */
 
 const Actor = require('@fabric/core/types/actor');

@@ -4,6 +4,100 @@ understands the direction. Newest at the top.
 
 ---
 
+## D-013 — Mutual device-link attestations (separate seeds)
+**Date:** 2026-07-20 · **Status:** Adopted
+
+**Decision:** Passport, Hub browser identity, and GoonCitizen each keep **their
+own seed**. Cross-app trust is a **mutual Schnorr attestation** over a Hub
+rendezvous (`/device-links`), not a shared mnemonic.
+
+1. **Offer** — initiator signs
+   `fabric:device-link:1:offer:<nonce>:<initiatorId>:<label>:<origin>` and
+   `POST /device-links` → `protocolUrl` `fabric://link?sessionId&hub`.
+2. **Responder** — GoonCitizen opens `fabric://link` (or Passport via
+   `FABRIC_DEVICE_LINK_REQUEST` postMessage), BIP340-signs the mutual message
+   `fabric:device-link:1:<nonce>:<initiatorId>:<responderId>:<label>`,
+   `POST …/signatures` `{ role: 'responder', … }`.
+3. **Countersign** — initiator signs the same mutual message
+   `{ role: 'initiator' }` → `status: linked`. Both sides store peer
+   Fabric id / xpub locally (non-secret).
+
+**Why:** One shared seed across apps is brittle and unsafe for operators.
+Dual attestation preserves independent backups while proving both keys agreed.
+
+**Consequences / guardrails:**
+- Same crypto rules as client-signed login (Identity.id from xpub, BIP340).
+- Cannot link a key to itself (initiator id === responder id rejected).
+- Session TTL / origin checks match desktop login access rules.
+
+---
+
+## D-012 — Fabric application namespaces (shoutbox + contract gossip)
+**Date:** 2026-07-20 · **Status:** Adopted
+
+**Decision:** GoonCitizen follows Fabric’s **application namespace** contract
+flow (see `@fabric/core` `docs/APPLICATION_NAMESPACES.md` and `MESSAGES.md` §3):
+
+1. **Global shoutbox** — `P2P_CHAT_MESSAGE` for network-wide `global` chat.
+2. **Gossip** — Peers relay `P2P_CHAT_MESSAGE`, `CONTRACT_PUBLISH`, and
+   `CONTRACT_MESSAGE` (`P2P_CONTRACT_*` aliases). Apps ignore irrelevant
+   contract namespaces; unknown ids must not crash the Peer.
+3. **App contracts** — the frozen **GoonCitizen** genesis namespaces
+   network-wide mission/event types; each **Group** is its own Federation
+   contract (`CONTRACT_PUBLISH` + `GroupChat` / `GroupChange` / `GroupShare` /
+   Hub-shaped `FederationContractInvite`) with a convergent validator timeline.
+4. **Extensibility** — new collections attach under a contract namespace without
+   moving the GoonCitizen genesis `Actor` id (do not casually edit frozen
+   `messageTypes` on that genesis).
+
+**Why:** One mesh, many apps. A single relay path plus per-contract ignore
+rules scales better than per-app wire opcodes; Federation validators give each
+Group a Hub-compatible convergent policy.
+
+**Consequences / guardrails:**
+- Keep `global` chat on `P2P_CHAT_MESSAGE`; do not stuff group chat into the
+  shoutbox.
+- Group-scoped shares use the Group contract, not only local `groupId` filters.
+- Align invite JSON with Hub `FederationContractInvite` v2 when possible.
+
+---
+
+## D-011 — Client-signed Fabric site login (Passport ↔ desktop)
+**Date:** 2026-07-20 · **Status:** Adopted
+
+**Decision:** Websites (e.g. `relay.goon.vc`) authenticate players with a
+**client-signed** Fabric login session. GoonCitizen desktop and Fabric Passport
+are interchangeable signers for the same challenge.
+
+1. **Site** — `POST /sessions` `{ origin }` creates a pending challenge and
+   returns `protocolUrl` (`fabric://login?sessionId=…&hub=…`) plus
+   `acceptsClientSignature: true` (Hub `fabricDesktopAuth`).
+2. **Desktop** — GoonCitizen registers as a `fabric:` handler, fetches the
+   pending session, shows an in-app approval modal, BIP340-signs with the
+   unlocked player identity, and `POST`s
+   `{ signature, pubkeyHex, identity: { id, xpub } }` to
+   `/sessions/:id/signatures`.
+3. **Passport** — pages `postMessage` `FABRIC_SITE_LOGIN_REQUEST`; the
+   extension popup approves and POSTs the same body.
+4. **Hub self-sign** (empty body on `POST …/signatures`) remains for linking a
+   browser to a **Hub node** identity — distinct from player login.
+
+**Why:** Hub’s original desktop login used the Hub root key (node link). Orgs
+need players to prove *their* key on web surfaces; desktop and extension must
+share one REST contract so either can complete sign-in.
+
+**Consequences / guardrails:**
+- Always verify against the **server-stored** challenge (never trust a client
+  `message` field).
+- Crypto verification authenticates client-signed completion; poll still
+  enforces Origin/Referer off-loopback.
+- OS `fabric:` ownership may be contested with Fabric Hub desktop — last
+  registered / default-app wins; document for operators.
+- Secrets stay in Electron main / Passport session memory; renderer only
+  approves or rejects.
+
+---
+
 ## D-010 — Fabric Peer is the peering transport (HTTPS uplink retired)
 **Date:** 2026-07-20 · **Status:** Adopted
 
@@ -15,19 +109,24 @@ AMP/`Message` protocol over TCP/NOISE — not HTTP(S) batch uplink or chat pull.
    Fabric Store `fabricPort`). Identity unlock supplies the Peer key material.
 2. **Default seed** — `relay.goon.vc:7777` (replaces `https://relay.goon.vc`).
    Peers UI / REST accept `host:port` only.
-3. **Wire types** — chat uses `P2P_CHAT_MESSAGE` (Peer auto-relays);
-   mission offers use GenericMessage `@type: MissionBroadcast` (optional
-   `scope: 'global'|'group'` + `groupId`); log/event batches use
-   GenericMessage `SCEventBatch`. Local dashboard HTTP (`:3041`) stays for UI/API only.
-4. **Group-scoped broadcasts** — hub still relays; receivers **filter on
-   membership in the group tree** (`isInGroupTree`: direct member or member
-   of a nested subgroup). Same idea as `group:<id>` chat. Non-members do not
-   get a pending offer. Hosted register may retain offers and filter
-   list-by-viewer. **Groups** (not a single "org") are the multi-install
-   sharing boundary; optional `parentId` nests subgroups.
-5. **Star relay (goon.vc)** — Peer does not auto-relay arbitrary GenericMessage
-   app types; goon.vc attaches handlers that `relayFrom` MissionBroadcast /
-   SCEventBatch and ingest into the mounted LiveRelay.
+3. **Wire types** — network-wide `global` chat uses `P2P_CHAT_MESSAGE`;
+   GoonCitizen app events use `CONTRACT_MESSAGE` under the frozen GoonCitizen
+   contract id (`MissionCreated` / `MissionBroadcast` / `SCEventBatch`).
+   Each **Group** is a Hub-aligned **Federation contract**
+   (`CONTRACT_PUBLISH` + `contracts/gooncitizenGroup.js`) carrying
+   `GroupChat`, `GroupChange`, `GroupShare`, and Hub-shaped
+   `FederationContractInvite` / Response. Local dashboard HTTP (`:3041`)
+   stays for UI/API only.
+4. **Group-scoped broadcasts** — published as `GroupShare` on the Group
+   Federation contract; receivers **filter on membership in the group tree**
+   (`isInGroupTree`). Non-members do not get a pending offer. Hosted register
+   may retain offers and filter list-by-viewer. **Groups** (not a single
+   "org") are the multi-install sharing boundary; optional `parentId` nests
+   subgroups.
+5. **Star relay (goon.vc)** — `@fabric/core` Peer relays
+   `CONTRACT_MESSAGE` / `CONTRACT_PUBLISH` / `P2P_CHAT_MESSAGE` natively
+   (hop re-sign); goon.vc attaches GoonCitizen ingest handlers to the Hub
+   agent Peer.
 
 **Why:** D-009 brought Fabric conventions back; HTTPS uplink was a temporary
 bridge. Real Peer transport matches hub.fabric.pub, enables signed wire frames

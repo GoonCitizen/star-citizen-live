@@ -3,10 +3,10 @@
 /**
  * FabricNetwork — local `@fabric/core` Peer for GoonCitizen peering.
  *
- * Replaces HTTPS batch uplink / chat pull with signed Fabric wire Messages:
- *   - P2P_CHAT_MESSAGE  (Peer auto-relays)
- *   - CONTRACT_MESSAGE  MissionCreated / MissionBroadcast / SCEventBatch
- *     (namespaced by the GoonCitizen contract id; Peer auto-relays)
+ * Wire Messages:
+ *   - P2P_CHAT_MESSAGE     — network-wide `global` chat (Peer auto-relays)
+ *   - CONTRACT_MESSAGE     — GoonCitizen app types + per-Group Federation types
+ *   - CONTRACT_PUBLISH     — GoonCitizen genesis + per-Group Federation genesis
  *
  * Lazy-requires Peer/Message so memory-only unit tests stay light.
  */
@@ -15,6 +15,13 @@ const EventEmitter = require('events');
 const path = require('path');
 
 const { gooncitizenContractId, gooncitizenContractDefinition } = require('../contracts/gooncitizen');
+const {
+  groupContractDefinition,
+  groupContractId,
+  isGroupContractDefinition,
+  isGroupMessageType,
+  GROUP_MESSAGE_TYPES
+} = require('../contracts/gooncitizenGroup');
 
 const DEFAULT_SEED = 'relay.goon.vc:7777';
 // App `type` values carried inside the GoonCitizen CONTRACT_MESSAGE namespace.
@@ -59,18 +66,13 @@ function normalizeFabricAddress (value, { migrate = false } = {}) {
 /**
  * Subscribe app handlers to a Fabric Peer using its native message events.
  *
- * `@fabric/core` now provides first-class handling (see MESSAGES.md):
- *   - `chat`             — first-class `P2P_CHAT_MESSAGE` (relayed verbatim)
- *   - `contract:message` — namespaced `CONTRACT_MESSAGE` (relayed)
- *   - `contract:proposal`— verified `ContractProposal` (relayed)
- *
- * GoonCitizen app traffic is namespaced by the GoonCitizen contract id; we
- * dispatch only for that namespace. The `opts.relay` flag is retained for
- * backward compatibility but is a no-op — the core Peer relays these frames
- * itself (with wire-hash dedup), so no monkey-patched fan-out is needed.
+ * Namespaces:
+ *   - GoonCitizen contract id → MissionCreated / MissionBroadcast / SCEventBatch
+ *   - Group Federation contracts → GroupChat / GroupChange / GroupShare / invites
+ *     (by typed app message, and/or `handlers.isKnownGroupContract(id)`)
  *
  * @param {Object} peer Fabric Peer instance
- * @param {Object} handlers { onMissionCreated?, onMissionBroadcast, onEventBatch, onChat?, onProposal? }
+ * @param {Object} handlers
  * @param {{ relay?: boolean }} [opts]
  */
 function attachAppHandlers (peer, handlers = {}, _opts = {}) {
@@ -93,20 +95,56 @@ function attachAppHandlers (peer, handlers = {}, _opts = {}) {
     }
   });
 
+  peer.on('contract:publish', (ev) => {
+    if (!ev || !ev.object) return;
+    if (!isGroupContractDefinition(ev.object)) return;
+    if (typeof handlers.onGroupContractPublish !== 'function') return;
+    try {
+      handlers.onGroupContractPublish(ev.object, ev.signer || null, {
+        origin: ev.origin,
+        contract: ev.contract || groupContractId(ev.object)
+      });
+    } catch (e) {
+      peer.emit('warning', `[FABRIC:GOON] group contract publish handler error: ${(e && e.message) || e}`);
+    }
+  });
+
   peer.on('contract:message', (ev) => {
-    if (!ev || String(ev.contract) !== goonId) return; // GoonCitizen namespace only
+    if (!ev || !ev.contract) return;
+    const contract = String(ev.contract);
     const body = ev.object || {};
     const appType = body.type || body['@type'] || null;
     const object = body.object != null ? body.object : body;
     const signer = ev.signer || actorPubkey(body) || null;
-    const meta = { origin: ev.origin, wireMessage: null, msg: body, signer };
+    const meta = { origin: ev.origin, wireMessage: null, msg: body, signer, contract };
+
     try {
-      if (appType === 'MissionCreated' && typeof handlers.onMissionCreated === 'function') {
-        handlers.onMissionCreated(object, signer, meta);
-      } else if (appType === 'MissionBroadcast' && typeof handlers.onMissionBroadcast === 'function') {
-        handlers.onMissionBroadcast(object, signer, meta);
-      } else if (appType === 'SCEventBatch' && typeof handlers.onEventBatch === 'function') {
-        handlers.onEventBatch(object, signer, meta);
+      if (contract === goonId) {
+        if (appType === 'MissionCreated' && typeof handlers.onMissionCreated === 'function') {
+          handlers.onMissionCreated(object, signer, meta);
+        } else if (appType === 'MissionBroadcast' && typeof handlers.onMissionBroadcast === 'function') {
+          handlers.onMissionBroadcast(object, signer, meta);
+        } else if (appType === 'SCEventBatch' && typeof handlers.onEventBatch === 'function') {
+          handlers.onEventBatch(object, signer, meta);
+        }
+        return;
+      }
+
+      const knownGroup = typeof handlers.isKnownGroupContract === 'function'
+        ? handlers.isKnownGroupContract(contract)
+        : false;
+      if (!knownGroup && !isGroupMessageType(appType)) return;
+
+      if (appType === 'GroupChat' && typeof handlers.onGroupChat === 'function') {
+        handlers.onGroupChat(object, signer, meta);
+      } else if (appType === 'GroupChange' && typeof handlers.onGroupChange === 'function') {
+        handlers.onGroupChange(object, signer, meta);
+      } else if (appType === 'GroupShare' && typeof handlers.onGroupShare === 'function') {
+        handlers.onGroupShare(object, signer, meta);
+      } else if (appType === 'FederationContractInvite' && typeof handlers.onFederationInvite === 'function') {
+        handlers.onFederationInvite(object, signer, meta);
+      } else if (appType === 'FederationContractInviteResponse' && typeof handlers.onFederationInviteResponse === 'function') {
+        handlers.onFederationInviteResponse(object, signer, meta);
       }
     } catch (e) {
       peer.emit('warning', `[FABRIC:GOON] contract message handler error (${appType}): ${(e && e.message) || e}`);
@@ -129,14 +167,6 @@ function attachAppHandlers (peer, handlers = {}, _opts = {}) {
 class FabricNetwork extends EventEmitter {
   /**
    * @param {Object} [settings]
-   * @param {boolean} [settings.enable=true]
-   * @param {boolean} [settings.listen=true]
-   * @param {number} [settings.port=7777]
-   * @param {string} [settings.interface='0.0.0.0']
-   * @param {string[]} [settings.peers] Seed `host:port` list
-   * @param {string|null} [settings.peersDb] LevelDB path for peer registry
-   * @param {boolean} [settings.relayAppMessages=false] Fan-out app GenericMessages
-   * @param {boolean} [settings.networking=true]
    */
   constructor (settings = {}) {
     super();
@@ -156,6 +186,8 @@ class FabricNetwork extends EventEmitter {
     this._peer = null;
     this._starting = null;
     this._handlers = null;
+    /** @type {Set<string>} locally known group Federation contract ids */
+    this._groupContractIds = new Set();
   }
 
   static get DEFAULT_SEED () { return DEFAULT_SEED; }
@@ -170,28 +202,33 @@ class FabricNetwork extends EventEmitter {
 
   get peer () { return this._peer; }
 
-  /**
-   * Provide (or clear) unlocked identity. Does not start/stop by itself —
-   * callers invoke {@link #start} / {@link #stop}.
-   * @param {Object|null} identity
-   */
   setIdentity (identity) {
     this._identity = identity || null;
   }
 
-  /**
-   * Register ingest callbacks used when wire messages arrive.
-   * @param {Object} handlers { onMissionBroadcast, onEventBatch, onChat }
-   */
   setHandlers (handlers) {
     this._handlers = handlers || null;
   }
 
   /**
-   * Replace the outbound seed peer list (host:port). When the Peer is already
-   * running, initiates connections to newly added addresses (no listen restart).
-   * @param {string[]} addresses
+   * Register (or forget) a group Federation contract id for ingest routing.
+   * @param {string} contractId
+   * @param {boolean} [known=true]
    */
+  setGroupContractKnown (contractId, known = true) {
+    const id = String(contractId || '').trim();
+    if (!id) return;
+    if (known) this._groupContractIds.add(id);
+    else this._groupContractIds.delete(id);
+  }
+
+  /** Replace the known group-contract id set (e.g. after loading groups). */
+  setKnownGroupContracts (ids) {
+    this._groupContractIds = new Set(
+      (Array.isArray(ids) ? ids : []).map((x) => String(x || '').trim()).filter(Boolean)
+    );
+  }
+
   setPeers (addresses) {
     const list = (Array.isArray(addresses) ? addresses : [])
       .map((a) => normalizeFabricAddress(a, { migrate: true }))
@@ -212,10 +249,6 @@ class FabricNetwork extends EventEmitter {
     }
   }
 
-  /**
-   * Runtime status for GET /settings.
-   * @returns {Object}
-   */
   status () {
     const peer = this._peer;
     const connections = peer && peer.connections ? Object.keys(peer.connections).length : 0;
@@ -226,7 +259,8 @@ class FabricNetwork extends EventEmitter {
       fabricPeerId: peer && peer.key ? peer.key.pubkey : (this._identity && this._identity.pubkey) || null,
       fabricConnected: connections,
       fabricPeers: (this.settings.peers || []).slice(),
-      ready: this.ready
+      ready: this.ready,
+      groupContracts: this._groupContractIds.size
     };
   }
 
@@ -238,6 +272,12 @@ class FabricNetwork extends EventEmitter {
 
     this._starting = this._startInner().finally(() => { this._starting = null; });
     return this._starting;
+  }
+
+  _forward (name, ...args) {
+    if (this._handlers && typeof this._handlers[name] === 'function') {
+      this._handlers[name](...args);
+    }
   }
 
   async _startInner () {
@@ -269,10 +309,6 @@ class FabricNetwork extends EventEmitter {
     peer.on('connections:open', (ev) => this.emit('connections:open', ev));
     peer.on('connections:close', (ev) => this.emit('connections:close', ev));
 
-    // Track raw inbound TCP sockets ourselves: Peer only registers a
-    // connection after the NOISE handshake, and its same-peer dedup can leave
-    // an accepted socket untracked — net.Server.close() would then wait on it
-    // forever during stop().
     this._rawInbound = new Set();
     this._stoppingPeer = false;
     if (peer.server && typeof peer.server.on === 'function') {
@@ -283,41 +319,57 @@ class FabricNetwork extends EventEmitter {
       });
     }
 
+    const self = this;
     attachAppHandlers(peer, {
+      isKnownGroupContract: (id) => self._groupContractIds.has(String(id)),
       onMissionCreated: (object, source, meta) => {
         this.emit('missionCreated', { object, source, meta });
-        if (this._handlers && typeof this._handlers.onMissionCreated === 'function') {
-          this._handlers.onMissionCreated(object, source, meta);
-        }
+        this._forward('onMissionCreated', object, source, meta);
       },
       onMissionBroadcast: (object, source, meta) => {
         this.emit('missionBroadcast', { object, source, meta });
-        if (this._handlers && typeof this._handlers.onMissionBroadcast === 'function') {
-          this._handlers.onMissionBroadcast(object, source, meta);
-        }
+        this._forward('onMissionBroadcast', object, source, meta);
       },
       onEventBatch: (object, source, meta) => {
         this.emit('eventBatch', { object, source, meta });
-        if (this._handlers && typeof this._handlers.onEventBatch === 'function') {
-          this._handlers.onEventBatch(object, source, meta);
-        }
+        this._forward('onEventBatch', object, source, meta);
       },
       onChat: (msg, source, meta) => {
         this.emit('chat', { msg, source, meta });
-        if (this._handlers && typeof this._handlers.onChat === 'function') {
-          this._handlers.onChat(msg, source, meta);
-        }
+        this._forward('onChat', msg, source, meta);
       },
       onProposal: (payload, source, meta) => {
         this.emit('contractProposal', { payload, source, meta });
-        if (this._handlers && typeof this._handlers.onProposal === 'function') {
-          this._handlers.onProposal(payload, source, meta);
-        }
+        this._forward('onProposal', payload, source, meta);
+      },
+      onGroupContractPublish: (object, source, meta) => {
+        const id = (meta && meta.contract) || groupContractId(object);
+        this.setGroupContractKnown(id, true);
+        this.emit('groupContractPublish', { object, source, meta, contractId: id });
+        this._forward('onGroupContractPublish', object, source, meta);
+      },
+      onGroupChat: (object, source, meta) => {
+        this.emit('groupChat', { object, source, meta });
+        this._forward('onGroupChat', object, source, meta);
+      },
+      onGroupChange: (object, source, meta) => {
+        this.emit('groupChange', { object, source, meta });
+        this._forward('onGroupChange', object, source, meta);
+      },
+      onGroupShare: (object, source, meta) => {
+        this.emit('groupShare', { object, source, meta });
+        this._forward('onGroupShare', object, source, meta);
+      },
+      onFederationInvite: (object, source, meta) => {
+        this.emit('federationInvite', { object, source, meta });
+        this._forward('onFederationInvite', object, source, meta);
+      },
+      onFederationInviteResponse: (object, source, meta) => {
+        this.emit('federationInviteResponse', { object, source, meta });
+        this._forward('onFederationInviteResponse', object, source, meta);
       }
     });
 
-    // Announce the GoonCitizen contract namespace when peers connect (and once
-    // on start). Best-effort: CONTRACT_MESSAGE still relays for unregistered ids.
     peer.on('connections:open', () => {
       try { this.publishContract(); } catch (_) { /* not ready / no peers yet */ }
     });
@@ -330,8 +382,6 @@ class FabricNetwork extends EventEmitter {
   }
 
   async stop () {
-    // A start may still be in flight (setIdentity → start is fire-and-forget
-    // in callers); wait for it so the freshly bound listener gets torn down.
     if (this._starting) {
       try { await this._starting; } catch (_) { /* start failed — nothing to stop */ }
     }
@@ -339,9 +389,6 @@ class FabricNetwork extends EventEmitter {
     this._peer = null;
     if (!peer) return this;
     this._stoppingPeer = true;
-    // Peer.stop() destroys tracked sockets but only a clean stream `end`
-    // clears each connection's ping keepalive — tear down explicitly so an
-    // abrupt shutdown cannot leave ref'd timers holding the event loop.
     for (const id of Object.keys(peer.connections || {})) {
       const c = peer.connections[id];
       if (!c) continue;
@@ -350,8 +397,6 @@ class FabricNetwork extends EventEmitter {
         if (typeof c.destroy === 'function') c.destroy();
       } catch (_) { /* already torn down */ }
     }
-    // Destroy accepted-but-untracked inbound sockets so server.close() can
-    // complete (see _rawInbound note in _startInner).
     if (this._rawInbound) {
       for (const sock of this._rawInbound) {
         try { sock.destroy(); } catch (_) { /* already closed */ }
@@ -362,9 +407,6 @@ class FabricNetwork extends EventEmitter {
     return this;
   }
 
-  /**
-   * Restart with current identity + peer list (e.g. after Peers UI change).
-   */
   async restart () {
     await this.stop();
     if (this._identity && this.settings.enable !== false) await this.start();
@@ -385,9 +427,8 @@ class FabricNetwork extends EventEmitter {
   }
 
   /**
-   * Announce the GoonCitizen contract definition (CONTRACT_PUBLISH). Registers
-   * the namespace on receiving peers. Best-effort; requires an unlocked peer.
-   * @returns {Object|null} the sent Message, or null when not ready.
+   * Announce the GoonCitizen contract definition (CONTRACT_PUBLISH).
+   * @returns {Object|null}
    */
   publishContract () {
     if (!this.ready) return null;
@@ -395,8 +436,21 @@ class FabricNetwork extends EventEmitter {
   }
 
   /**
-   * Publish a chat record as a first-class `P2P_CHAT_MESSAGE` (opcode 0x68).
-   * The core Peer relays the author-signed frame verbatim.
+   * Publish a Group Federation genesis (CONTRACT_PUBLISH).
+   * @param {Object} definition From {@link groupContractDefinition}
+   */
+  publishGroupContract (definition) {
+    if (!isGroupContractDefinition(definition)) {
+      throw new Error('publishGroupContract requires a GoonCitizenGroup definition');
+    }
+    const id = groupContractId(definition);
+    this.setGroupContractKnown(id, true);
+    return this._signAndRelay('CONTRACT_PUBLISH', definition);
+  }
+
+  /**
+   * Publish a chat record as first-class `P2P_CHAT_MESSAGE` (global only on
+   * the LiveRelay path; group chat uses {@link #publishGroupChat}).
    * @param {Object} record ChatManager record
    */
   publishChat (record) {
@@ -418,43 +472,73 @@ class FabricNetwork extends EventEmitter {
     return this._signAndRelay('P2P_CHAT_MESSAGE', body);
   }
 
-  /**
-   * Publish a newly created mission as a namespaced `CONTRACT_MESSAGE`
-   * (`type: MissionCreated`). Peers upsert the register entry; no Accept/Ignore
-   * offer is created (use {@link #publishMissionBroadcast} for that).
-   * @param {Object} payload { mission, createdAt?, handle? }
-   */
   publishMissionCreated (payload) {
-    return this._publishContractMessage('MissionCreated', Object.assign({}, payload));
+    return this._publishContractMessage(gooncitizenContractId(), 'MissionCreated', Object.assign({}, payload));
   }
 
-  /**
-   * Publish a mission offer as a namespaced `CONTRACT_MESSAGE`
-   * (`contract: <GoonCitizen id>`, `type: MissionBroadcast`).
-   * @param {Object} payload Broadcast payload (mission, scope, groupId, …)
-   */
   publishMissionBroadcast (payload) {
-    return this._publishContractMessage('MissionBroadcast', Object.assign({}, payload));
+    return this._publishContractMessage(gooncitizenContractId(), 'MissionBroadcast', Object.assign({}, payload));
   }
 
-  /**
-   * Publish a signed batch of log/register events as a namespaced
-   * `CONTRACT_MESSAGE` (`type: SCEventBatch`).
-   * @param {Array<{collection:string,data:Object}>} events
-   * @param {string} [sentAt]
-   */
   publishEventBatch (events, sentAt = new Date().toISOString()) {
     if (!Array.isArray(events) || !events.length) return null;
-    return this._publishContractMessage('SCEventBatch', { events, sentAt });
+    return this._publishContractMessage(gooncitizenContractId(), 'SCEventBatch', { events, sentAt });
   }
 
   /**
-   * Publish a mission contract proposal (escrow / payout) as a signed
-   * `ContractProposal` scoped to the GoonCitizen contract id. Transport only —
-   * `messages` carry the acceptance / PSBT material built by the register.
-   * @param {import('@fabric/core/types/message')[]} messages
-   * @param {{ purpose?: string, statePatch?: object[], psbtProposalBase64?: string, parentChainRoot?: string|null }} [opts]
+   * @param {string} contractId Group Federation contract id
+   * @param {Object} payload GroupChat object
    */
+  publishGroupChat (contractId, payload) {
+    return this._publishContractMessage(contractId, 'GroupChat', Object.assign({}, payload));
+  }
+
+  /**
+   * @param {string} contractId
+   * @param {Object} payload GroupChange object
+   */
+  publishGroupChange (contractId, payload) {
+    return this._publishContractMessage(contractId, 'GroupChange', Object.assign({}, payload));
+  }
+
+  /**
+   * @param {string} contractId
+   * @param {Object} payload GroupShare object `{ kind, object, … }`
+   */
+  publishGroupShare (contractId, payload) {
+    return this._publishContractMessage(contractId, 'GroupShare', Object.assign({}, payload));
+  }
+
+  /**
+   * @param {string} contractId
+   * @param {Object} invite FederationContractInvite fields/object
+   */
+  publishFederationInvite (contractId, invite) {
+    const {
+      buildFederationContractInvite,
+      FEDERATION_CONTRACT_INVITE
+    } = require('../functions/federationContractInvite');
+    const doc = invite && invite.type === FEDERATION_CONTRACT_INVITE
+      ? invite
+      : buildFederationContractInvite(Object.assign({ contractId }, invite || {}));
+    return this._publishContractMessage(contractId, FEDERATION_CONTRACT_INVITE, doc);
+  }
+
+  /**
+   * @param {string} contractId
+   * @param {Object} response FederationContractInviteResponse fields/object
+   */
+  publishFederationInviteResponse (contractId, response) {
+    const {
+      buildFederationContractInviteResponse,
+      FEDERATION_CONTRACT_INVITE_RESPONSE
+    } = require('../functions/federationContractInvite');
+    const doc = response && response.type === FEDERATION_CONTRACT_INVITE_RESPONSE
+      ? response
+      : buildFederationContractInviteResponse(response || {});
+    return this._publishContractMessage(contractId, FEDERATION_CONTRACT_INVITE_RESPONSE, doc);
+  }
+
   publishContractProposal (messages, opts = {}) {
     const pubkey = this._identity && this._identity.pubkey;
     if (!pubkey) throw new Error('identity required');
@@ -471,11 +555,13 @@ class FabricNetwork extends EventEmitter {
     return this._signAndRelay('CONTRACT_PROPOSAL', payload);
   }
 
-  _publishContractMessage (type, object) {
+  _publishContractMessage (contractId, type, object) {
     const pubkey = this._identity && this._identity.pubkey;
     if (!pubkey) throw new Error('identity required');
+    const contract = String(contractId || '').trim();
+    if (!contract) throw new Error('contract id required');
     const body = {
-      contract: gooncitizenContractId(),
+      contract,
       type,
       actor: { publicKey: pubkey, id: pubkey },
       object
@@ -485,6 +571,7 @@ class FabricNetwork extends EventEmitter {
 }
 
 FabricNetwork.APP_RELAY_TYPES = APP_RELAY_TYPES;
+FabricNetwork.GROUP_MESSAGE_TYPES = GROUP_MESSAGE_TYPES;
 FabricNetwork.peersDbPath = function peersDbPath (settingsDir) {
   if (!settingsDir) return null;
   return path.join(settingsDir, 'peers');

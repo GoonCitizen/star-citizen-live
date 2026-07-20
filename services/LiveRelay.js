@@ -152,10 +152,18 @@ class StarCitizenService extends EventEmitter {
     );
     this.groupManager = groupSettings.enable !== false ? new GroupManager(groupSettings) : null;
     if (this.missionManager && this.groupManager) this.missionManager.groupManager = this.groupManager;
+    if (this.groupManager) {
+      // Federation contract publish + GroupChange fan-out (best-effort).
+      this.groupManager.on('group:created', (group, meta) => {
+        this._publishGroupContractFor(group, meta && meta.definition).catch((e) => this.emit('error', e));
+      });
+      this.groupManager.on('group:local-change', (change) => {
+        this._publishGroupChange(change).catch((e) => this.emit('error', e));
+      });
+    }
 
     // Chat: Hub-style ChatMessage records — global channel + one per group.
-    // Local posts publish P2P_CHAT_MESSAGE over Fabric; remote messages arrive
-    // via the Peer chat handler (idempotent content ids).
+    // Global posts use P2P_CHAT_MESSAGE; group posts use GroupChat CONTRACT_MESSAGE.
     const ChatManager = require('../services/ChatManager');
     this.chatManager = new ChatManager({ store: this.registerStore, groupManager: this.groupManager });
 
@@ -795,7 +803,18 @@ class StarCitizenService extends EventEmitter {
       handle: this._nickname || this._sessionHandle || null,
       mission: this._missionWireSnapshot(m)
     };
-    this.fabricNetwork.publishMissionBroadcast(payload);
+    if (scope === 'group') {
+      const contractId = await this._ensureGroupContractId(groupId);
+      if (!contractId) throw new Error('group Federation contract is not ready');
+      this.fabricNetwork.publishGroupShare(contractId, {
+        kind: 'MissionBroadcast',
+        groupId,
+        contractId,
+        object: payload
+      });
+    } else {
+      this.fabricNetwork.publishMissionBroadcast(payload);
+    }
     const st = this.fabricNetwork.status();
     return {
       missionId: m.id,
@@ -805,6 +824,51 @@ class StarCitizenService extends EventEmitter {
       peers: st.fabricConnected,
       fabricPeerId: st.fabricPeerId
     };
+  }
+
+  /**
+   * Ensure a group's Federation contract is persisted + published. Returns contractId.
+   * @param {string} groupId
+   * @returns {Promise<string|null>}
+   */
+  async _ensureGroupContractId (groupId) {
+    if (!this.groupManager || !groupId) return null;
+    const { group, definition } = this.groupManager.ensureContract(groupId);
+    await this._publishGroupContractFor(group, definition);
+    return group.contractId || null;
+  }
+
+  async _publishGroupContractFor (group, definition) {
+    if (!group) return null;
+    let def = definition;
+    let g = group;
+    if (!def && this.groupManager) {
+      try {
+        const ensured = this.groupManager.ensureContract(group.id);
+        def = ensured.definition;
+        g = ensured.group;
+      } catch (_) { return null; }
+    }
+    if (!def) return null;
+    await this._ensureFabric();
+    if (!this.fabricNetwork || !this.fabricNetwork.ready) return null;
+    const { groupContractId } = require('../contracts/gooncitizenGroup');
+    this.fabricNetwork.setGroupContractKnown(g.contractId || groupContractId(def), true);
+    this.fabricNetwork.publishGroupContract(def);
+    return def;
+  }
+
+  async _publishGroupChange (change) {
+    if (!change) return null;
+    let contractId = change.contractId;
+    if (!contractId && change.groupId) {
+      contractId = await this._ensureGroupContractId(change.groupId);
+    }
+    if (!contractId) return null;
+    await this._ensureFabric();
+    if (!this.fabricNetwork || !this.fabricNetwork.ready) return null;
+    this.fabricNetwork.publishGroupChange(contractId, change);
+    return change;
   }
 
   async _handle (req, res) {
@@ -1051,11 +1115,12 @@ class StarCitizenService extends EventEmitter {
         return send(200, { type: 'Session', data: result });
       }
 
-      // ---- Groups (k-of-n Schnorr multisig units) ----
+      // ---- Groups (k-of-n Schnorr multisig units / Federation contracts) ----
       const Group = require('../types/Group');
       const gm = this.groupManager;
       const viewer = this._authPubkey(req);
       const serverMode = this.settings.mode === 'server';
+      let gmatch = null;
       // In hosted mode every mutation requires an authenticated session.
       const requireAuth = () => {
         if (serverMode && !viewer) { send(401, { error: 'Authentication required (POST …/auth with a signed login envelope)' }); return false; }
@@ -1134,11 +1199,45 @@ class StarCitizenService extends EventEmitter {
           if (!requireAuth()) return;
           const d = await body();
           const creator = viewer || d.creator; // local relay may specify creator explicitly
-          try { return send(200, { type: 'Group', data: await gm.createGroup(d, creator) }); }
-          catch (e) { return send(e.code === 'FORBIDDEN' ? 403 : 400, { error: e.message }); }
+          try {
+            const group = await gm.createGroup(d, creator);
+            // group:created listener publishes CONTRACT_PUBLISH when Fabric is up.
+            this._publishGroupContractFor(group).catch((e) => this.emit('error', e));
+            return send(200, { type: 'Group', data: group });
+          } catch (e) { return send(e.code === 'FORBIDDEN' ? 403 : 400, { error: e.message }); }
         }
       }
-      let gmatch;
+      // FederationContractInvite — Hub-shaped join / co-signer invite under a group contract.
+      if ((gmatch = pathname.match(new RegExp(`^${base}/groups/([^/]+)/invites$`))) && req.method === 'POST') {
+        if (!gm) return send(503, { error: 'Group system not available' });
+        if (!requireAuth()) return;
+        const group = gm.findGroup(gmatch[1]);
+        if (!group) return send(404, { error: 'Group not found' });
+        const actor = viewer || (this._identity && this._identity.pubkey);
+        if (!actor || !group.includes(actor)) return send(403, { error: 'forbidden: members only' });
+        const d = await body();
+        try {
+          const data = await this.inviteToGroupFederation(group.id, actor, {
+            note: d.note,
+            inviteId: d.inviteId
+          });
+          return send(200, { type: 'FederationContractInvite', data });
+        } catch (e) {
+          return send(e.code === 'FORBIDDEN' ? 403 : 400, { error: e.message });
+        }
+      }
+      if ((gmatch = pathname.match(new RegExp(`^${base}/groups/([^/]+)/invites/([^/]+)/(accept|reject)$`))) && req.method === 'POST') {
+        if (!gm) return send(503, { error: 'Group system not available' });
+        if (!requireAuth()) return;
+        const actor = viewer || (this._identity && this._identity.pubkey);
+        if (!actor) return send(401, { error: 'Authentication required' });
+        try {
+          const data = await this.respondToGroupFederationInvite(gmatch[1], gmatch[2], actor, gmatch[3] === 'accept');
+          return send(200, { type: 'FederationContractInviteResponse', data });
+        } catch (e) {
+          return send(e.code === 'FORBIDDEN' ? 403 : /not found/i.test(e.message) ? 404 : 400, { error: e.message });
+        }
+      }
       if ((gmatch = pathname.match(new RegExp(`^${base}/groups/([^/]+)$`)))) {
         if (!gm) return send(503, { error: 'Group system not available' });
         const group = gm.findGroup(gmatch[1]);
@@ -1847,6 +1946,9 @@ class StarCitizenService extends EventEmitter {
       onChat: (msg, source) => {
         if (!this.chatManager || !msg) return;
         const obj = msg.object || {};
+        const channel = obj.channel || 'global';
+        // Group chat rides GroupChat CONTRACT_MESSAGE; ignore legacy group:* on this path.
+        if (String(channel).startsWith('group:')) return;
         const actorPk = msg.actor && (msg.actor.publicKey || msg.actor.pubkey || msg.actor.id);
         const author = obj.author || actorPk || null;
         const body = obj.body != null ? obj.body : obj.content;
@@ -1862,7 +1964,7 @@ class StarCitizenService extends EventEmitter {
         }
         try {
           this.chatManager.ingest(author, {
-            channel: obj.channel || 'global',
+            channel: 'global',
             body,
             author,
             handle: obj.handle || null,
@@ -1871,6 +1973,73 @@ class StarCitizenService extends EventEmitter {
         } catch (e) {
           if (!/must match|unknown channel/i.test(e.message || '')) this.emit('error', e);
         }
+      },
+      isKnownGroupContract: (id) => !!(this.groupManager && this.groupManager.getGroupByContractId(id)),
+      onGroupContractPublish: (object, source) => {
+        if (!this.groupManager || !object) return;
+        try {
+          this.groupManager.ingestContractPublish(object, resolveSignerPubkey(source) || source);
+          if (this.fabricNetwork) {
+            const { groupContractId } = require('../contracts/gooncitizenGroup');
+            this.fabricNetwork.setGroupContractKnown(groupContractId(object), true);
+          }
+        } catch (e) { this.emit('error', e); }
+      },
+      onGroupChat: (object, source, meta) => {
+        if (!this.chatManager || !this.groupManager || !object) return;
+        const contractId = (meta && meta.contract) || object.contractId;
+        const group = (contractId && this.groupManager.getGroupByContractId(contractId))
+          || (object.groupId && this.groupManager.getGroup(object.groupId));
+        if (!group) return;
+        const me = this._identity && this._identity.pubkey;
+        if (me && !this.groupManager.isInGroupTree(group.id, me) && this.settings.mode !== 'server') return;
+        const author = object.author || resolveSignerPubkey(source) || source;
+        const body = object.body != null ? object.body : object.content;
+        const ts = object.ts || new Date().toISOString();
+        if (!author || !body) return;
+        try {
+          this.chatManager.ingest(author, {
+            channel: `group:${group.id}`,
+            body,
+            author,
+            handle: object.handle || null,
+            ts,
+            id: object.id || null
+          });
+        } catch (e) {
+          if (!/must match|unknown channel/i.test(e.message || '')) this.emit('error', e);
+        }
+      },
+      onGroupChange: (object, source, meta) => {
+        if (!this.groupManager || !object) return;
+        try {
+          const change = Object.assign({}, object, {
+            contractId: object.contractId || (meta && meta.contract) || null
+          });
+          this.groupManager.ingestGroupChange(change, resolveSignerPubkey(source) || source);
+        } catch (e) { this.emit('error', e); }
+      },
+      onGroupShare: (object, source, meta) => {
+        if (!object) return;
+        const kind = object.kind || object['@type'];
+        const inner = object.object != null ? object.object : object;
+        const resolved = actorId(source, meta && meta.msg && meta.msg.actor);
+        if (!resolved) return;
+        try {
+          if (kind === 'MissionBroadcast' || (inner && inner.mission)) {
+            this._ingestMissionBroadcast(resolved, inner);
+          }
+        } catch (e) { this.emit('error', e); }
+      },
+      onFederationInvite: (object, source, meta) => {
+        try {
+          this._ingestFederationInvite(object, resolveSignerPubkey(source) || source, meta);
+        } catch (e) { this.emit('error', e); }
+      },
+      onFederationInviteResponse: (object, source, meta) => {
+        try {
+          this._ingestFederationInviteResponse(object, resolveSignerPubkey(source) || source, meta);
+        } catch (e) { this.emit('error', e); }
       }
     };
   }
@@ -1898,6 +2067,9 @@ class StarCitizenService extends EventEmitter {
     }
     this.fabricNetwork.setIdentity(this._identity);
     this.fabricNetwork.setPeers(this._fabricPeerAddresses());
+    if (this.groupManager) {
+      this.fabricNetwork.setKnownGroupContracts(this.groupManager.knownContractIds());
+    }
     if (!this.fabricNetwork.peer) await this.fabricNetwork.start();
     this._startFabricFlush();
     return this.fabricNetwork;
@@ -1983,12 +2155,154 @@ class StarCitizenService extends EventEmitter {
   async _publishChat (record) {
     try {
       await this._ensureFabric();
-      if (this.fabricNetwork && this.fabricNetwork.ready) {
+      if (!this.fabricNetwork || !this.fabricNetwork.ready || !record) return;
+      const channel = record.channel || 'global';
+      if (channel === 'global') {
         this.fabricNetwork.publishChat(record);
+        return;
       }
+      const ChatManager = require('../services/ChatManager');
+      const groupId = ChatManager.groupIdOf(channel);
+      if (!groupId) return;
+      const contractId = await this._ensureGroupContractId(groupId);
+      if (!contractId) return;
+      this.fabricNetwork.publishGroupChat(contractId, {
+        id: record.id,
+        groupId,
+        contractId,
+        author: record.author,
+        body: record.body,
+        handle: record.handle || null,
+        ts: record.ts
+      });
     } catch (e) {
       this.emit('error', e);
     }
+  }
+
+  /**
+   * Publish a Hub-shaped FederationContractInvite under the group's contract.
+   * @param {string} groupId
+   * @param {string} actor Member inviting
+   * @param {{ note?: string, inviteId?: string }} [opts]
+   */
+  async inviteToGroupFederation (groupId, actor, opts = {}) {
+    if (!this.groupManager) throw Object.assign(new Error('Group system not available'), { code: 'UNAVAILABLE' });
+    const group = this.groupManager.getGroup(groupId);
+    if (!group) throw Object.assign(new Error('Group not found'), { code: 'NOT_FOUND' });
+    if (!group.includes(actor)) {
+      const e = new Error('forbidden: only members may invite'); e.code = 'FORBIDDEN'; throw e;
+    }
+    if (!this._identity) throw new Error('Unlock your identity to invite');
+    const contractId = await this._ensureGroupContractId(groupId);
+    if (!contractId) throw new Error('group Federation contract is not ready');
+    const { buildFederationContractInvite } = require('../functions/federationContractInvite');
+    const { normalizeProposedPolicy } = require('../contracts/gooncitizenGroup');
+    const inviteId = opts.inviteId || idFor(`invite:${groupId}:${Date.now()}:${actor}`);
+    const invite = buildFederationContractInvite({
+      inviteId,
+      inviterHubId: actor,
+      contractId,
+      note: opts.note || `Join group ${group.name}`,
+      proposedPolicy: normalizeProposedPolicy({
+        validators: group.members,
+        threshold: group.threshold
+      })
+    });
+    await this._ensureFabric();
+    if (!this.fabricNetwork || !this.fabricNetwork.ready) {
+      throw new Error('Fabric peer is not ready — check Peers / listen port');
+    }
+    this.fabricNetwork.publishFederationInvite(contractId, invite);
+    if (this.registerStore) {
+      this.registerStore.put('groupinvites', inviteId, Object.assign({}, invite, {
+        groupId,
+        status: 'pending',
+        createdAt: new Date().toISOString()
+      }));
+    }
+    return invite;
+  }
+
+  /**
+   * Accept or reject a FederationContractInvite. Accept adds the responder
+   * as a member via GroupChange (local + published).
+   */
+  async respondToGroupFederationInvite (groupIdOrSlug, inviteId, actor, accept) {
+    if (!this.groupManager) throw Object.assign(new Error('Group system not available'), { code: 'UNAVAILABLE' });
+    const group = this.groupManager.findGroup(groupIdOrSlug);
+    if (!group) throw Object.assign(new Error('Group not found'), { code: 'NOT_FOUND' });
+    const stored = this.registerStore && this.registerStore.get('groupinvites', inviteId);
+    const contractId = (stored && stored.contractId) || group.contractId || await this._ensureGroupContractId(group.id);
+    if (!contractId) throw new Error('group Federation contract is not ready');
+    const { buildFederationContractInviteResponse } = require('../functions/federationContractInvite');
+    const response = buildFederationContractInviteResponse({
+      inviteId,
+      accept: !!accept,
+      responderPubkey: actor
+    });
+    await this._ensureFabric();
+    if (this.fabricNetwork && this.fabricNetwork.ready) {
+      this.fabricNetwork.publishFederationInviteResponse(contractId, response);
+    }
+    // Membership is applied on the inviting node when the Response is ingested
+    // (addMember → GroupChange). Invitee waits for GroupChange / republish.
+    if (stored && this.registerStore) {
+      stored.status = accept ? 'accepted' : 'rejected';
+      stored.respondedAt = new Date().toISOString();
+      stored.responderPubkey = actor;
+      this.registerStore.put('groupinvites', inviteId, stored);
+    }
+    return response;
+  }
+
+  _ingestFederationInvite (object, source, meta) {
+    const {
+      parseFederationContractInviteLoose
+    } = require('../functions/federationContractInvite');
+    const invite = parseFederationContractInviteLoose(object)
+      || parseFederationContractInviteLoose(JSON.stringify(object));
+    if (!invite || !invite.inviteId) return;
+    const contractId = invite.contractId || (meta && meta.contract);
+    const group = this.groupManager && (
+      (contractId && this.groupManager.getGroupByContractId(contractId))
+      || null
+    );
+    if (this.registerStore) {
+      this.registerStore.put('groupinvites', invite.inviteId, Object.assign({}, invite, {
+        groupId: group ? group.id : null,
+        contractId: contractId || null,
+        status: 'pending',
+        source: source || null,
+        receivedAt: new Date().toISOString()
+      }));
+    }
+    this.emit('group:invite', invite);
+  }
+
+  _ingestFederationInviteResponse (object, source, meta) {
+    const {
+      parseFederationContractInviteResponseLoose
+    } = require('../functions/federationContractInvite');
+    const response = parseFederationContractInviteResponseLoose(object)
+      || parseFederationContractInviteResponseLoose(JSON.stringify(object));
+    if (!response) return;
+    const stored = this.registerStore && this.registerStore.get('groupinvites', response.inviteId);
+    if (stored && this.registerStore) {
+      stored.status = response.accept ? 'accepted' : 'rejected';
+      stored.respondedAt = new Date().toISOString();
+      stored.responderPubkey = response.responderPubkey || source;
+      this.registerStore.put('groupinvites', response.inviteId, stored);
+    }
+    // When a peer accepts, add them as a member if we have the group locally.
+    if (response.accept && response.responderPubkey && this.groupManager && stored) {
+      const group = (stored.groupId && this.groupManager.getGroup(stored.groupId))
+        || (stored.contractId && this.groupManager.getGroupByContractId(stored.contractId));
+      if (group && group.creator && !group.includes(response.responderPubkey)) {
+        this.groupManager.addMember(group.id, response.responderPubkey, group.creator).catch((e) => this.emit('error', e));
+      }
+    }
+    this.emit('group:invite-response', response);
   }
 
   /**

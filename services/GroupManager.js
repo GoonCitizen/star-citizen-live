@@ -21,6 +21,13 @@ const EventEmitter = require('events');
 
 const Group = require('../types/Group');
 const { Store } = require('../types/Store');
+const {
+  groupContractDefinition,
+  groupContractId,
+  normalizeProposedPolicy,
+  policyFingerprint,
+  isGroupContractDefinition
+} = require('../contracts/gooncitizenGroup');
 
 const ZERO = '0'.repeat(64);
 const sha256 = (s) => crypto.createHash('sha256').update(String(s)).digest('hex');
@@ -84,6 +91,18 @@ class GroupManager extends EventEmitter {
     return this._hydrate(this.store.get('groups', id));
   }
 
+  /** @returns {Group|null} Look up by Fabric Federation contract id. */
+  getGroupByContractId (contractId) {
+    if (!contractId) return null;
+    const match = this.groups.find((g) => g.contractId === contractId);
+    return this._hydrate(match || null);
+  }
+
+  /** All known group Federation contract ids (for FabricNetwork routing). */
+  knownContractIds () {
+    return this.groups.map((g) => g.contractId).filter(Boolean);
+  }
+
   /**
    * Resolve a group by id or custom slug.
    * @param {String} idOrSlug Path segment from `/groups/:idOrSlug`.
@@ -95,6 +114,187 @@ class GroupManager extends EventEmitter {
     if (byId) return byId;
     const match = this.groups.find((g) => g.slug === idOrSlug);
     return this._hydrate(match || null);
+  }
+
+  /**
+   * Build (or return existing) Federation genesis for a group. Persists
+   * `contractId` / `proposedPolicy` / `policyFingerprint` on first call.
+   * Does not publish — caller (LiveRelay) publishes via FabricNetwork.
+   * @param {string} groupId
+   * @returns {{ group: Object, definition: Object, created: boolean }}
+   */
+  ensureContract (groupId) {
+    const data = this.store.get('groups', groupId);
+    if (!data) throw new Error('group not found');
+    if (data._contractDefinition) {
+      if (!data.contractId) data.contractId = groupContractId(data._contractDefinition);
+      this.store.put('groups', groupId, data);
+      return { group: new Group(data).toJSON(), definition: data._contractDefinition, created: false };
+    }
+    const policy = normalizeProposedPolicy({
+      validators: data.members,
+      threshold: data.threshold
+    });
+    const definition = groupContractDefinition({
+      groupId: data.id,
+      creator: data.creator,
+      validators: policy.validators,
+      threshold: policy.threshold,
+      createdAt: data.createdAt,
+      meta: {
+        name: data.name,
+        visibility: data.visibility,
+        slug: data.slug,
+        parentId: data.parentId || null
+      }
+    });
+    const contractId = groupContractId(definition);
+    data.contractId = contractId;
+    data.proposedPolicy = definition.proposedPolicy;
+    data.policyFingerprint = policyFingerprint(definition.proposedPolicy);
+    // Persist genesis so republish stays id-stable (do not recompute from
+    // a later membership roster).
+    data._contractDefinition = definition;
+    this.store.put('groups', groupId, data);
+    const json = new Group(data).toJSON();
+    this.emit('group:contract', { group: json, definition, created: true });
+    return { group: json, definition, created: true };
+  }
+
+  /**
+   * Upsert a group from a remote CONTRACT_PUBLISH (GoonCitizenGroup).
+   * Idempotent on contractId / groupId.
+   * @param {Object} definition
+   * @param {string|null} [source] Signer pubkey
+   * @returns {{ group: Object, created: boolean }}
+   */
+  ingestContractPublish (definition, source = null) {
+    if (!isGroupContractDefinition(definition)) {
+      throw new Error('not a GoonCitizenGroup contract definition');
+    }
+    const contractId = groupContractId(definition);
+    const existing = this.getGroupByContractId(contractId) || this.getGroup(definition.groupId);
+    const policy = normalizeProposedPolicy(definition.proposedPolicy);
+    if (!policy) throw new Error('invalid proposedPolicy on group contract');
+
+    if (existing) {
+      const data = this.store.get('groups', existing.id);
+      data.contractId = contractId;
+      data.proposedPolicy = policy;
+      data.policyFingerprint = policyFingerprint(policy);
+      data._contractDefinition = definition;
+      // Do not clobber a richer local roster with an older genesis unless
+      // local has no members yet.
+      if (!data.members || !data.members.length) {
+        data.members = policy.validators.slice();
+        data.threshold = policy.threshold;
+      }
+      if (definition.meta) {
+        if (definition.meta.name) data.name = definition.meta.name;
+        if (definition.meta.visibility) data.visibility = definition.meta.visibility;
+        if (definition.meta.slug !== undefined) data.slug = definition.meta.slug;
+        if (definition.meta.parentId !== undefined) data.parentId = definition.meta.parentId;
+      }
+      this.store.put('groups', data.id, data);
+      const json = new Group(data).toJSON();
+      this.emit('group:ingested', { group: json, created: false, source });
+      return { group: json, created: false };
+    }
+
+    const group = new Group({
+      id: definition.groupId,
+      name: (definition.meta && definition.meta.name) || 'Unnamed group',
+      creator: definition.creator,
+      members: policy.validators.slice(),
+      threshold: policy.threshold,
+      visibility: (definition.meta && definition.meta.visibility) || 'private',
+      slug: (definition.meta && definition.meta.slug) || null,
+      parentId: (definition.meta && definition.meta.parentId) || null,
+      createdAt: definition.createdAt || new Date().toISOString(),
+      contractId,
+      proposedPolicy: policy,
+      policyFingerprint: policyFingerprint(policy)
+    });
+    group.validate();
+    const json = group.toJSON();
+    json._contractDefinition = definition;
+    this.store.put('groups', json.id, json);
+    this._audit(source || definition.creator, 'group.ingest', json.id, `contract ${contractId.slice(0, 12)}…`);
+    this.emit('group:ingested', { group: new Group(json).toJSON(), created: true, source });
+    return { group: new Group(json).toJSON(), created: true };
+  }
+
+  /**
+   * Apply a remote GroupChange. Actions: member.add | member.remove | update.
+   * Idempotent where possible.
+   * @param {Object} change
+   * @param {string|null} [source]
+   * @returns {{ group: Object|null, applied: boolean, skipped?: string }}
+   */
+  ingestGroupChange (change = {}, source = null) {
+    const contractId = change.contractId || null;
+    const groupId = change.groupId || null;
+    const group = (contractId && this.getGroupByContractId(contractId)) || (groupId && this.getGroup(groupId));
+    if (!group) return { group: null, applied: false, skipped: 'group-unknown' };
+
+    const data = this.store.get('groups', group.id);
+    const action = String(change.action || '');
+    const actor = change.actor || source || null;
+    const changeId = change.id || null;
+    if (changeId) {
+      const seen = this.store.get('groupchanges', changeId);
+      if (seen) return { group: new Group(data).toJSON(), applied: false, skipped: 'duplicate' };
+    }
+
+    if (action === 'member.add') {
+      const pubkey = String(change.member || '').trim();
+      if (!Group.isValidPubkey(pubkey)) return { group: null, applied: false, skipped: 'bad-member' };
+      if (!data.members.includes(pubkey)) {
+        data.members = data.members.concat([pubkey]);
+      }
+    } else if (action === 'member.remove') {
+      const pubkey = String(change.member || '').trim();
+      if (pubkey === data.creator) return { group: null, applied: false, skipped: 'creator' };
+      data.members = data.members.filter((m) => m !== pubkey);
+      data.threshold = Math.min(data.threshold, data.members.length);
+    } else if (action === 'update' && change.patch && typeof change.patch === 'object') {
+      const patch = change.patch;
+      if (patch.name !== undefined) data.name = String(patch.name || data.name);
+      if (patch.threshold !== undefined) data.threshold = Number(patch.threshold) || data.threshold;
+      if (patch.visibility === 'public' || patch.visibility === 'private') data.visibility = patch.visibility;
+      if (patch.slug !== undefined) {
+        try { data.slug = Group.normalizeSlug(patch.slug); } catch (_) { /* ignore bad remote slug */ }
+      }
+    } else {
+      return { group: null, applied: false, skipped: 'bad-action' };
+    }
+
+    data.proposedPolicy = normalizeProposedPolicy({
+      validators: data.members,
+      threshold: data.threshold
+    });
+    data.policyFingerprint = policyFingerprint(data.proposedPolicy);
+    // Invalidate cached Federation in hydrated Group on next access.
+    const g = new Group(data);
+    g.validate();
+    const json = g.toJSON();
+    // Preserve genesis definition for republish stability.
+    if (data._contractDefinition) json._contractDefinition = data._contractDefinition;
+    if (data.contractId) json.contractId = data.contractId;
+    this.store.put('groups', json.id, Object.assign({}, data, json));
+    if (changeId) {
+      this.store.put('groupchanges', changeId, {
+        id: changeId,
+        groupId: json.id,
+        contractId: json.contractId,
+        action,
+        ts: change.ts || new Date().toISOString(),
+        source: actor
+      });
+    }
+    this._audit(actor, `group.change.${action}`, json.id, change.member || '');
+    this.emit('group:changed', { group: json, change, source: actor });
+    return { group: json, applied: true };
   }
 
   /** Groups the pubkey belongs to. */
@@ -211,23 +411,43 @@ class GroupManager extends EventEmitter {
     const members = [...new Set([creator].concat(Array.isArray(data.members) ? data.members : []))];
     const slug = Group.normalizeSlug(data.slug);
     this._assertSlugAvailable(slug, null);
+    const createdAt = new Date().toISOString();
+    const id = data.id || this._id();
+    const threshold = data.threshold;
+    const visibility = data.visibility === 'public' ? 'public' : 'private';
+    const policy = normalizeProposedPolicy({ validators: members, threshold });
+    const definition = groupContractDefinition({
+      groupId: id,
+      creator,
+      validators: policy.validators,
+      threshold: policy.threshold,
+      createdAt,
+      meta: { name: data.name || 'Unnamed group', visibility, slug, parentId }
+    });
+    const contractId = groupContractId(definition);
     const group = new Group({
-      id: data.id || this._id(),
+      id,
       name: data.name,
       creator,
       members,
-      threshold: data.threshold,
-      visibility: data.visibility === 'public' ? 'public' : 'private',
+      threshold,
+      visibility,
       slug,
-      parentId
+      parentId,
+      createdAt,
+      contractId,
+      proposedPolicy: definition.proposedPolicy,
+      policyFingerprint: policyFingerprint(definition.proposedPolicy)
     });
     group.validate();
     if (this.store.get('groups', group.id)) throw new Error('group id already exists');
     const json = group.toJSON();
+    json._contractDefinition = definition;
     this.store.put('groups', group.id, json);
     this._audit(creator, 'group.create', group.id, `${group.name} (${members.length} member(s), ${group.visibility}${parentId ? `, parent=${parentId}` : ''})`);
-    this.emit('group:created', json);
-    return json;
+    const publicJson = new Group(json).toJSON();
+    this.emit('group:created', publicJson, { definition });
+    return publicJson;
   }
 
   /**
@@ -254,10 +474,30 @@ class GroupManager extends EventEmitter {
     const group = new Group(data);
     group.validate();
     const json = group.toJSON();
-    this.store.put('groups', groupId, json);
+    const prevDef = data._contractDefinition;
+    const prevContractId = data.contractId;
+    this.store.put('groups', groupId, Object.assign({}, json, {
+      _contractDefinition: prevDef,
+      contractId: prevContractId || json.contractId
+    }));
     this._audit(actor, 'group.update', groupId, `visibility=${json.visibility} slug=${json.slug || '—'} threshold=${json.threshold}`);
+    const change = {
+      id: this._id('gchg'),
+      action: 'update',
+      groupId,
+      contractId: prevContractId || json.contractId,
+      actor,
+      patch: {
+        name: json.name,
+        threshold: json.threshold,
+        visibility: json.visibility,
+        slug: json.slug
+      },
+      ts: new Date().toISOString()
+    };
     this.emit('group:updated', json);
-    return json;
+    this.emit('group:local-change', change);
+    return new Group(this.store.get('groups', groupId)).toJSON();
   }
 
   /**
@@ -272,13 +512,25 @@ class GroupManager extends EventEmitter {
     if (!Group.isValidPubkey(pubkey)) throw new Error('invalid member pubkey');
     if (data.members.includes(pubkey)) return new Group(data).toJSON();
     data.members = data.members.concat([pubkey]);
+    data.proposedPolicy = normalizeProposedPolicy({ validators: data.members, threshold: data.threshold });
+    data.policyFingerprint = policyFingerprint(data.proposedPolicy);
     const group = new Group(data);
     group.validate();
     const json = group.toJSON();
-    this.store.put('groups', groupId, json);
+    this.store.put('groups', groupId, Object.assign({}, data, json));
     this._audit(actor, 'group.member.add', groupId, pubkey);
+    const change = {
+      id: this._id('gchg'),
+      action: 'member.add',
+      groupId,
+      contractId: data.contractId || null,
+      actor,
+      member: pubkey,
+      ts: new Date().toISOString()
+    };
     this.emit('group:member-added', { groupId, pubkey, actor });
-    return json;
+    this.emit('group:local-change', change);
+    return new Group(this.store.get('groups', groupId)).toJSON();
   }
 
   /**
@@ -295,13 +547,25 @@ class GroupManager extends EventEmitter {
     if (!data.members.includes(pubkey)) return new Group(data).toJSON();
     data.members = data.members.filter((m) => m !== pubkey);
     data.threshold = Math.min(data.threshold, data.members.length);
+    data.proposedPolicy = normalizeProposedPolicy({ validators: data.members, threshold: data.threshold });
+    data.policyFingerprint = policyFingerprint(data.proposedPolicy);
     const group = new Group(data);
     group.validate();
     const json = group.toJSON();
-    this.store.put('groups', groupId, json);
+    this.store.put('groups', groupId, Object.assign({}, data, json));
     this._audit(actor, 'group.member.remove', groupId, pubkey);
+    const change = {
+      id: this._id('gchg'),
+      action: 'member.remove',
+      groupId,
+      contractId: data.contractId || null,
+      actor,
+      member: pubkey,
+      ts: new Date().toISOString()
+    };
     this.emit('group:member-removed', { groupId, pubkey, actor });
-    return json;
+    this.emit('group:local-change', change);
+    return new Group(this.store.get('groups', groupId)).toJSON();
   }
 
   getGroupApplications (groupId) {

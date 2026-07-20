@@ -9,6 +9,7 @@
 const React = require('react');
 const Onboarding = require('./Onboarding');
 const Identity = require('./Identity');
+const FabricLoginModal = require('./FabricLoginModal');
 const Chat = require('./Chat');
 const GlobalChatDock = require('./GlobalChatDock');
 const MissionBroadcastBanner = require('./MissionBroadcastBanner');
@@ -1210,6 +1211,7 @@ class Dashboard extends React.Component {
       React.createElement(Onboarding, {
         onReady: (pubkey) => this.setState({ identityPubkey: pubkey, identityExists: !!pubkey, identityLocked: false })
       }),
+      React.createElement(FabricLoginModal, null),
       this.state.showSettings
         ? React.createElement(Settings, {
           onClose: () => this.setState({ showSettings: false }),

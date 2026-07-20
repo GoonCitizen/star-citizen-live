@@ -5,7 +5,8 @@
 > project context **here** so the two never drift. (`PROJECT_CONTEXT.md` is a
 > legacy pointer to this file as well.)
 >
-> **Last reviewed against source:** branch `feature/fabric-free-m1` · 2026-07-20 (D-010 Fabric P2P).
+> **Last reviewed against source:** branch `feature/fabric-free-m1` · 2026-07-20
+> (D-013 device-link; D-012 application namespaces; D-011 site login; D-010 Fabric P2P).
 > If you change architecture, commands, or state, update **this file** and the
 > reality it describes — not a copy.
 
@@ -87,22 +88,25 @@ npm run build:installers  # Windows x64 + Debian x64 + macOS
   Type code: `types/Store.js`.
 - Dashboard home lists features along the top: Live, Analyze, Missions,
   Wallet, Library, Chat, Groups, Peers. Chat uses Hub message types
-  (`ChatMessage` records, carried as Fabric `P2P_CHAT_MESSAGE`): a `global`
-  channel plus a `group:<id>` channel per group (members-only in hosted mode).
-  Local posts publish over the Fabric Peer; remotes arrive via Peer ingest
+  (`ChatMessage` records): **`global`** is Fabric `P2P_CHAT_MESSAGE`; each
+  **`group:<id>`** channel is `GroupChat` under that Group's Federation
+  `CONTRACT_MESSAGE` (`contracts/gooncitizenGroup.js`). Local posts publish
+  over the Fabric Peer; remotes arrive via Peer ingest
   (`services/ChatManager.js` + `services/FabricNetwork.js`). The dedicated Chat
   tab remains; **global chat is also always available** via a floating dock on
   other tabs (`components/GlobalChatDock.js`). Operators set an optional
   **nickname** (Settings / Identity; Fabric Store key `nickname`) for chat
   display; the compressed pubkey remains the actor id and is always shown
-  beside the nickname.   Mission creators can **Broadcast** an open mission
+  beside the nickname. Mission creators can **Broadcast** an open mission
   (`POST …/missions/:id/broadcast` with `{ scope, groupId }` — network-wide
-  to Fabric peers, or to a group tree including subgroups); receivers get a
-  pending offer with desktop + in-app **Accept** (apply) / **Ignore**, gated
-  by `notifyMissionBroadcasts` (group scope is membership-filtered on receive
-  via `isInGroupTree`). Many orgs install the app; **Groups** (optional
-  `parentId` subgroups) are the sharing boundary across the mesh — not a
-  single hard-coded org. A header **notification bell** opens the
+  GoonCitizen `MissionBroadcast`, or group-scoped `GroupShare` on the Group
+  Federation contract); receivers get a pending offer with desktop + in-app
+  **Accept** (apply) / **Ignore**, gated by `notifyMissionBroadcasts` (group
+  scope is membership-filtered on receive via `isInGroupTree`). Many orgs
+  install the app; **Groups** are Hub-aligned **Federation contracts**
+  (optional `parentId` subgroups) with `contractId`, `GroupChange`, and
+  Hub-shaped `FederationContractInvite` — the sharing boundary across the
+  mesh, not a single hard-coded org. A header **notification bell** opens the
   dedicated Notifications history page (`#notifications`). Desktop
   notifications for chat are controlled in Settings (`notifyDesktop`,
   `notifyChatGlobal`, `notifyChatGroups`, `notifyWhenFocused`) and shown via
@@ -120,6 +124,13 @@ npm run build:installers  # Windows x64 + Debian x64 + macOS
   HTTPS uplink. `shareLogsGlobal` (default on) gates pushing parsed log events
   (`SCEventBatch`) only; chat and mission broadcasts always publish when the
   peer is up.
+- **Site login (D-011):** desktop registers the **`fabric:`** protocol and
+  completes **client-signed** Hub sessions (`fabric://login?sessionId&hub`)
+  with the unlocked player key — interchangeable with Fabric Passport on the
+  same `/sessions` REST contract (see `components/FabricLoginModal.js`).
+- **Device link (D-013):** mutual Schnorr attestation with separate seeds —
+  `fabric://link?sessionId&hub` opens an in-app approve modal; peer Fabric id
+  is stored under settings `linkedDevices` (see `DECISIONS.md` D-013).
 
 ### Environment variables (config; secrets via env only)
 | Var | Purpose |

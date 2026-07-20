@@ -42,6 +42,16 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.on('notify:click', listener);
     return () => ipcRenderer.removeListener('notify:click', listener);
   },
+  /** Client-signed Fabric site login (`fabric://login`) — approve/reject in the renderer. */
+  fabricLogin: {
+    onPrompt: (handler) => {
+      const listener = (_e, payload) => handler(payload);
+      ipcRenderer.on('fabric-login-prompt', listener);
+      return () => ipcRenderer.removeListener('fabric-login-prompt', listener);
+    },
+    pullPending: () => ipcRenderer.invoke('fabric-login:pull-pending'),
+    resolve: (opts) => ipcRenderer.invoke('fabric-login:resolve', opts || {})
+  },
   platform: process.platform,
   versions: {
     node: process.versions.node,

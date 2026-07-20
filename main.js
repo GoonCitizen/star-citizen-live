@@ -26,6 +26,16 @@ const identityLib = require('./functions/identity');
 const identityStore = require('./functions/identityStore');
 const settingsStore = require('./functions/settingsStore');
 const { storeRoot, registerPath } = require('./functions/storePaths');
+const { FABRIC_PROTOCOL, parseFabricLoginUrl } = require('./functions/fabricProtocolLogin');
+const { parseFabricDeviceLinkUrl } = require('./functions/fabricDeviceLinkProtocol');
+const {
+  fetchPendingLoginSession,
+  completeClientSignedLogin
+} = require('./functions/fabricLoginClient');
+const {
+  fetchPendingDeviceLink,
+  completeDeviceLinkAsResponder
+} = require('./functions/fabricDeviceLinkClient');
 
 let settings = {};
 try {
@@ -43,6 +53,10 @@ let activePort = null;
 let isQuitting = false;
 /** Decrypted identity, held in main-process memory only while unlocked. */
 let unlockedIdentity = null;
+/** Pending fabric://login prompt for the renderer (or queued before window ready). */
+let pendingFabricLoginPrompt = null;
+/** In-flight login prompts keyed by sessionId (message retained for sign). */
+const fabricLoginBySession = new Map();
 
 const startHidden = process.argv.includes('--hidden') ||
   process.argv.includes('--open-as-hidden');
@@ -55,8 +69,10 @@ if (!gotLock) {
   if (process.platform === 'win32' && app.setAppUserModelId) {
     app.setAppUserModelId('vc.goon.desktop');
   }
-  app.on('second-instance', () => {
+  app.on('second-instance', (_event, argv) => {
     showMainWindow();
+    const fabricArg = (argv || []).find((a) => typeof a === 'string' && a.startsWith('fabric:'));
+    if (fabricArg) void handleFabricProtocolUrl(fabricArg);
   });
 }
 
@@ -444,11 +460,195 @@ async function stopService () {
   }
 }
 
+function registerFabricProtocol () {
+  try {
+    let ok = false;
+    if (process.defaultApp) {
+      if (process.argv.length >= 2) {
+        const mainScript = path.resolve(process.argv[1]);
+        ok = app.setAsDefaultProtocolClient(FABRIC_PROTOCOL, process.execPath, [mainScript]);
+      } else {
+        console.warn('[ELECTRON]', '[WARNING]', 'Cannot register fabric: — missing argv[1]');
+      }
+    } else {
+      ok = app.setAsDefaultProtocolClient(FABRIC_PROTOCOL);
+    }
+    if (!ok) {
+      console.warn('[ELECTRON]', '[WARNING]', 'setAsDefaultProtocolClient(fabric) returned false (another app may own fabric:)');
+    } else {
+      console.log('[ELECTRON]', '[STATUS]', 'Registered as fabric: protocol handler');
+    }
+  } catch (e) {
+    console.warn('[ELECTRON]', '[WARNING]', 'setAsDefaultProtocolClient:', e && e.message ? e.message : e);
+  }
+}
+
+function deliverFabricLoginPrompt (payload) {
+  if (!payload) return;
+  pendingFabricLoginPrompt = payload;
+  fabricLoginBySession.set(String(payload.sessionId), payload);
+  showMainWindow();
+  const w = mainWindow && !mainWindow.isDestroyed() ? mainWindow : null;
+  if (w && w.webContents) {
+    const send = () => {
+      if (!mainWindow || mainWindow.isDestroyed()) return;
+      mainWindow.webContents.send('fabric-login-prompt', payload);
+    };
+    // Avoid dropping the IPC if the dashboard has not finished loading yet.
+    if (w.webContents.isLoadingMainFrame && w.webContents.isLoadingMainFrame()) {
+      w.webContents.once('did-finish-load', send);
+    } else {
+      send();
+    }
+  }
+}
+
+/**
+ * Persist a mutual device-link peer on the Fabric Store (non-secret metadata).
+ */
+function mergeLinkedDeviceLocal (entry) {
+  if (!appStore || !entry || !entry.peerFabricId) return;
+  try {
+    const cur = settingsStore.loadSettings(appStore);
+    const list = Array.isArray(cur.linkedDevices) ? cur.linkedDevices.slice() : [];
+    const peer = String(entry.peerFabricId);
+    const idx = list.findIndex((d) => d && String(d.peerFabricId) === peer);
+    const row = {
+      kind: entry.kind || 'device-link',
+      peerFabricId: peer,
+      peerXpub: entry.peerXpub || null,
+      label: entry.label || 'Linked device',
+      hubOrigin: entry.hubOrigin || null,
+      linkedAt: entry.linkedAt || new Date().toISOString(),
+      role: entry.role || 'responder'
+    };
+    if (idx >= 0) list[idx] = { ...list[idx], ...row };
+    else list.push(row);
+    settingsStore.putSetting(appStore, 'linkedDevices', list);
+  } catch (e) {
+    console.warn('[ELECTRON]', '[WARNING]', 'linkedDevices persist:', e && e.message ? e.message : e);
+  }
+}
+
+/**
+ * Handle fabric://login or fabric://link — fetch pending session, prompt renderer.
+ */
+async function handleFabricProtocolUrl (urlStr) {
+  const linkParsed = parseFabricDeviceLinkUrl(urlStr);
+  if (linkParsed.ok) {
+    await handleFabricDeviceLinkUrl(linkParsed);
+    return;
+  }
+  const parsed = parseFabricLoginUrl(urlStr);
+  if (!parsed.ok) {
+    console.warn('[ELECTRON]', '[WARNING]', 'fabric: url ignored:', parsed.error || linkParsed.error);
+    return;
+  }
+  const { sessionId, hubBase } = parsed;
+  try {
+    const pending = await fetchPendingLoginSession(hubBase, sessionId);
+    if (!pending.ok) {
+      console.error('[ELECTRON]', '[ERROR]', 'fabric login session:', pending.error);
+      deliverFabricLoginPrompt({
+        kind: 'login',
+        sessionId,
+        hubBase,
+        origin: hubBase,
+        message: '',
+        nonce: '',
+        identityLocked: !unlockedIdentity,
+        error: pending.error
+      });
+      return;
+    }
+    deliverFabricLoginPrompt({
+      kind: 'login',
+      sessionId,
+      hubBase,
+      origin: pending.origin || hubBase,
+      message: pending.message,
+      nonce: pending.nonce || '',
+      identityLocked: !unlockedIdentity
+    });
+    console.log('[ELECTRON]', '[STATUS]', 'fabric login prompt delivered:', sessionId.slice(0, 12) + '…');
+  } catch (e) {
+    console.error('[ELECTRON]', '[ERROR]', 'fabric login:', e && e.message ? e.message : e);
+  }
+}
+
+/**
+ * Responder path: fabric://link?sessionId=…&hub=…
+ */
+async function handleFabricDeviceLinkUrl (parsed) {
+  const { sessionId, hubBase } = parsed;
+  try {
+    const pending = await fetchPendingDeviceLink(hubBase, sessionId);
+    if (!pending.ok) {
+      console.error('[ELECTRON]', '[ERROR]', 'fabric device-link session:', pending.error);
+      deliverFabricLoginPrompt({
+        kind: 'device-link',
+        sessionId,
+        hubBase,
+        origin: hubBase,
+        label: '',
+        initiator: null,
+        identityLocked: !unlockedIdentity,
+        error: pending.error
+      });
+      return;
+    }
+    if (pending.status !== 'pending') {
+      deliverFabricLoginPrompt({
+        kind: 'device-link',
+        sessionId,
+        hubBase,
+        origin: pending.origin || hubBase,
+        label: pending.label || '',
+        initiator: pending.initiator || null,
+        identityLocked: !unlockedIdentity,
+        error: pending.status === 'linked'
+          ? 'This link is already complete.'
+          : `Device link status is ${pending.status || 'unknown'} — expected pending.`
+      });
+      return;
+    }
+    deliverFabricLoginPrompt({
+      kind: 'device-link',
+      sessionId,
+      hubBase,
+      origin: pending.origin || hubBase,
+      label: pending.label || '',
+      nonce: pending.nonce || '',
+      initiator: pending.initiator || null,
+      identityLocked: !unlockedIdentity
+    });
+    console.log('[ELECTRON]', '[STATUS]', 'fabric device-link prompt delivered:', sessionId.slice(0, 12) + '…');
+  } catch (e) {
+    console.error('[ELECTRON]', '[ERROR]', 'fabric device-link:', e && e.message ? e.message : e);
+  }
+}
+
+function drainArgvFabricUrl () {
+  const arg = process.argv.find((a) => typeof a === 'string' && a.startsWith('fabric:'));
+  if (arg) void handleFabricProtocolUrl(arg);
+}
+
+// macOS may deliver open-url before ready.
+let earlyFabricUrl = null;
+if (gotLock) {
+  app.on('open-url', (event, url) => {
+    event.preventDefault();
+    if (app.isReady()) void handleFabricProtocolUrl(url);
+    else earlyFabricUrl = url;
+  });
+}
+
 if (gotLock) {
   app.whenReady().then(async () => {
     try {
       // Hide the native application / window menu bar (File, Edit, View…).
       Menu.setApplicationMenu(null);
+      registerFabricProtocol();
       await openAppStore(); // settings come from the Fabric Store
       configureAutoLaunch();
       createTray();
@@ -456,6 +656,13 @@ if (gotLock) {
       applyIdentityToService();
       applySnapshotCaptureToService();
       createWindow(activePort || servicePort());
+      if (earlyFabricUrl) {
+        const u = earlyFabricUrl;
+        earlyFabricUrl = null;
+        void handleFabricProtocolUrl(u);
+      } else {
+        drainArgvFabricUrl();
+      }
     } catch (error) {
       console.error('[ELECTRON]', '[ERROR]', 'Startup failed:', error);
       isQuitting = true;
@@ -464,6 +671,7 @@ if (gotLock) {
     }
 
     app.on('activate', () => {
+      registerFabricProtocol();
       showMainWindow();
     });
   });
@@ -485,6 +693,79 @@ if (gotLock) {
     await stopService();
   });
 }
+
+ipcMain.handle('fabric-login:pull-pending', () => {
+  const p = pendingFabricLoginPrompt;
+  return p || null;
+});
+
+ipcMain.handle('fabric-login:resolve', async (_e, { approve, sessionId } = {}) => {
+  const sid = sessionId != null ? String(sessionId).trim() : '';
+  const prompt = (sid && fabricLoginBySession.get(sid)) || pendingFabricLoginPrompt;
+  if (!prompt || !prompt.sessionId) return { error: 'No pending request.' };
+  if (sid && String(prompt.sessionId) !== sid) return { error: 'Session mismatch.' };
+
+  const clearPrompt = () => {
+    fabricLoginBySession.delete(String(prompt.sessionId));
+    if (pendingFabricLoginPrompt && String(pendingFabricLoginPrompt.sessionId) === String(prompt.sessionId)) {
+      pendingFabricLoginPrompt = null;
+    }
+  };
+
+  if (!approve) {
+    clearPrompt();
+    return { ok: true, approved: false };
+  }
+
+  if (!unlockedIdentity) {
+    return { error: 'Identity is locked — unlock it, then try the link again.' };
+  }
+
+  if (prompt.kind === 'device-link') {
+    if (prompt.error && !prompt.initiator) {
+      return { error: prompt.error };
+    }
+    const result = await completeDeviceLinkAsResponder(
+      unlockedIdentity,
+      prompt.hubBase,
+      {
+        sessionId: prompt.sessionId,
+        status: 'pending',
+        nonce: prompt.nonce,
+        label: prompt.label,
+        initiator: prompt.initiator
+      }
+    );
+    if (!result.ok) return { error: result.error || 'Device link failed.' };
+    mergeLinkedDeviceLocal({
+      kind: 'device-link',
+      peerFabricId: result.peerFabricId || (prompt.initiator && prompt.initiator.id),
+      peerXpub: result.peerXpub || (prompt.initiator && prompt.initiator.xpub),
+      label: result.label || prompt.label || 'Linked device',
+      hubOrigin: prompt.origin || prompt.hubBase,
+      role: 'responder'
+    });
+    armIdentityAutoLock();
+    clearPrompt();
+    return { ok: true, approved: true, kind: 'device-link', status: result.status };
+  }
+
+  if (!prompt.message) {
+    return { error: prompt.error || 'No challenge message to sign.' };
+  }
+
+  const result = await completeClientSignedLogin(
+    unlockedIdentity,
+    prompt.hubBase,
+    prompt.sessionId,
+    prompt.message
+  );
+  if (!result.ok) return { error: result.error || 'Sign-in failed.' };
+
+  armIdentityAutoLock();
+  clearPrompt();
+  return { ok: true, approved: true, identity: result.identity, signer: result.signer };
+});
 
 // --- Identity (first-run onboarding + Hub-style key safety) ---------------
 //

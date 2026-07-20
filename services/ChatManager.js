@@ -4,9 +4,10 @@
  * ChatManager — org chat brought forward from the Hub, on the Fabric Store.
  *
  * Message types follow hub.fabric.pub conventions:
- *   - stored records are `@type: 'ChatMessage'` (the Hub's WebSocket
- *     broadcast type), carried between nodes as Fabric `P2P_CHAT_MESSAGE`
- *     wire Messages (D-010).
+ *   - stored records are `@type: 'ChatMessage'`
+ *   - `global` rides Fabric `P2P_CHAT_MESSAGE` (D-010)
+ *   - `group:<groupId>` rides `GroupChat` under that Group's Federation
+ *     `CONTRACT_MESSAGE` namespace (Groups-as-Federations)
  *
  * Channels:
  *   - `global`            — network chat on this node (all local viewers)
