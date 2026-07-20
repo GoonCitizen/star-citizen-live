@@ -2,7 +2,11 @@
 
 /**
  * GroupManager — member-created groups with k-of-n Schnorr multisig,
- * public/private visibility, custom page slugs, and join applications.
+ * optional nested subgroups (`parentId`), public/private visibility,
+ * custom page slugs, and join applications.
+ *
+ * Groups are the sharing boundary across many GoonCitizen installations
+ * on the Fabric mesh (not a single global "org").
  *
  * Group pages live at `/groups/:id` (or `/groups/:slug` when a custom slug
  * is set). Public groups can be shared; visitors apply to join; the creator
@@ -98,10 +102,48 @@ class GroupManager extends EventEmitter {
     return this.groups.filter((g) => Array.isArray(g.members) && g.members.includes(pubkey));
   }
 
-  /** @returns {Boolean} True when pubkey is a member of group `groupId`. */
+  /** @returns {Boolean} True when pubkey is a direct member of group `groupId`. */
   isMember (groupId, pubkey) {
     const g = this.store.get('groups', groupId);
     return !!(g && Array.isArray(g.members) && g.members.includes(pubkey));
+  }
+
+  /** Immediate child groups of `parentId`. */
+  childrenOf (parentId) {
+    if (!parentId) return [];
+    return this.groups.filter((g) => g.parentId === parentId);
+  }
+
+  /**
+   * Depth-first descendant ids of `groupId` (subgroups, nested).
+   * @param {String} groupId
+   * @param {number} [maxDepth=8]
+   * @returns {String[]}
+   */
+  descendantIds (groupId, maxDepth = 8) {
+    const out = [];
+    const walk = (id, depth) => {
+      if (depth > maxDepth) return;
+      for (const child of this.childrenOf(id)) {
+        out.push(child.id);
+        walk(child.id, depth + 1);
+      }
+    };
+    walk(groupId, 1);
+    return out;
+  }
+
+  /**
+   * True when pubkey is a direct member of `groupId`, or of any subgroup
+   * beneath it. Used for group-scoped mission broadcasts (fleet → wings).
+   */
+  isInGroupTree (groupId, pubkey) {
+    if (!groupId || !pubkey) return false;
+    if (this.isMember(groupId, pubkey)) return true;
+    for (const id of this.descendantIds(groupId)) {
+      if (this.isMember(id, pubkey)) return true;
+    }
+    return false;
   }
 
   /**
@@ -137,12 +179,34 @@ class GroupManager extends EventEmitter {
 
   /**
    * Create a group. The creator (authenticated pubkey) is always a member.
-   * @param {Object} data { name, members?, threshold?, visibility?, slug? }
+   * Optional `parentId` nests this as a subgroup (actor must be a member of
+   * the parent; cycles and excessive depth are rejected).
+   * @param {Object} data { name, members?, threshold?, visibility?, slug?, parentId? }
    * @param {String} creator Authenticated creator pubkey.
    */
   async createGroup (data = {}, creator) {
     if (!Group.isValidPubkey(creator)) {
       const e = new Error('creator must be an authenticated pubkey'); e.code = 'FORBIDDEN'; throw e;
+    }
+    const parentId = data.parentId || null;
+    if (parentId) {
+      const parent = this.getGroup(parentId);
+      if (!parent) throw new Error('parent group not found');
+      if (!parent.includes(creator)) {
+        const e = new Error('forbidden: only a parent-group member may create a subgroup');
+        e.code = 'FORBIDDEN';
+        throw e;
+      }
+      // Cap nesting so a bad client cannot build an unbounded tree.
+      let depth = 1;
+      let walk = parent.parentId;
+      while (walk) {
+        depth += 1;
+        if (depth > 8) throw new Error('subgroup nesting exceeds maximum depth (8)');
+        const up = this.getGroup(walk);
+        if (!up) break;
+        walk = up.parentId;
+      }
     }
     const members = [...new Set([creator].concat(Array.isArray(data.members) ? data.members : []))];
     const slug = Group.normalizeSlug(data.slug);
@@ -154,13 +218,14 @@ class GroupManager extends EventEmitter {
       members,
       threshold: data.threshold,
       visibility: data.visibility === 'public' ? 'public' : 'private',
-      slug
+      slug,
+      parentId
     });
     group.validate();
     if (this.store.get('groups', group.id)) throw new Error('group id already exists');
     const json = group.toJSON();
     this.store.put('groups', group.id, json);
-    this._audit(creator, 'group.create', group.id, `${group.name} (${members.length} member(s), ${group.visibility})`);
+    this._audit(creator, 'group.create', group.id, `${group.name} (${members.length} member(s), ${group.visibility}${parentId ? `, parent=${parentId}` : ''})`);
     this.emit('group:created', json);
     return json;
   }

@@ -147,7 +147,7 @@ class Chat extends React.Component {
         React.createElement('div', { className: 'chat-head' },
           active ? (active.kind === 'global' ? '🌐 Global' : '👥 ' + active.label) : this.state.channel,
           React.createElement('span', { className: 'sub' },
-            active && active.kind === 'group' ? 'members only' : 'org-wide — relayed via your peer hubs')
+            active && active.kind === 'group' ? 'members only' : 'network — relayed via your Fabric peers')
         ),
         React.createElement('div', { className: 'chat-msgs', ref: this._msgsRef },
           this.state.messages.length

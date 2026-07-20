@@ -1,7 +1,11 @@
 'use strict';
 
 /**
- * Group — a member-created org unit backed by a k-of-n Schnorr multisig.
+ * Group — a member-created unit backed by a k-of-n Schnorr multisig.
+ *
+ * Many installations share over the Fabric mesh; Groups (and nested
+ * subgroups via `parentId`) are the sharing / authority boundary — not a
+ * single hard-coded "org".
  *
  * Members are identified by their compressed secp256k1 public keys (the same
  * actor ids the identity onboarding produces). Threshold decisions (mission
@@ -28,6 +32,7 @@ class Group {
    * @param {Number} [data.threshold=1] Signatures required for group decisions.
    * @param {String} [data.visibility=private] `public` | `private`.
    * @param {String|null} [data.slug] Optional custom URL slug (else use id).
+   * @param {String|null} [data.parentId] Parent group id when this is a subgroup.
    * @param {String} [data.createdAt] ISO timestamp.
    */
   constructor (data = {}) {
@@ -38,6 +43,7 @@ class Group {
     this.threshold = Math.max(1, Number(data.threshold) || 1);
     this.visibility = data.visibility === 'public' ? 'public' : 'private';
     this.slug = data.slug || null;
+    this.parentId = data.parentId || null;
     this.createdAt = data.createdAt || new Date().toISOString();
     this._federation = null;
   }
@@ -103,7 +109,8 @@ class Group {
       members: [...this.members].sort(),
       threshold: this.threshold,
       visibility: this.visibility,
-      slug: this.slug
+      slug: this.slug,
+      parentId: this.parentId || null
     });
     return crypto.createHash('sha256').update(body).digest('hex');
   }
@@ -151,6 +158,7 @@ class Group {
       threshold: this.threshold,
       visibility: this.visibility,
       slug: this.slug,
+      parentId: this.parentId || null,
       path: this.pagePath(),
       createdAt: this.createdAt,
       commitment: this.commitment()
@@ -170,6 +178,7 @@ class Group {
       threshold: this.threshold,
       visibility: this.visibility,
       slug: this.slug,
+      parentId: this.parentId || null,
       path: this.pagePath(),
       createdAt: this.createdAt
     };

@@ -23,7 +23,7 @@ const Wallet = require('./Wallet');
 // Top-level features, listed along the top of the dashboard (Hub-style).
 const TABS = [
   ['home', 'Home'],
-  ['live', 'Live feed'],
+  ['live', 'Feed'],
   ['analyze', 'Analyze'],
   ['missions', 'Missions'],
   ['wallet', 'Wallet'],
@@ -890,11 +890,11 @@ class Dashboard extends React.Component {
       ),
       React.createElement('section', { className: 'panel full' },
         React.createElement('h2', null, '🏅 Pilots ',
-          React.createElement('span', { className: 'sub' }, '— click a row to filter; org-wide once relays report in (M4)')
+          React.createElement('span', { className: 'sub' }, '— click a row to filter; shared history grows as peers report in (M4)')
         ),
         React.createElement('div', { style: { padding: '6px 14px 12px' } },
           !rows.length
-            ? React.createElement('div', { className: 'empty' }, 'no pilot activity in range yet — plays populate here; org-wide arrives with M4')
+            ? React.createElement('div', { className: 'empty' }, 'no pilot activity in range yet — plays populate here; shared multi-pilot history arrives with M4')
             : [
               React.createElement('div', { className: 'lbr', key: 'h', style: { color: 'var(--muted)', fontSize: 11 } },
                 React.createElement('span', null, 'pilot'),
@@ -924,7 +924,7 @@ class Dashboard extends React.Component {
         ),
         React.createElement('div', { style: { padding: '12px 14px' } },
           cmpRows.length < 2
-            ? React.createElement('div', { className: 'empty' }, 'needs ≥2 pilots with activity — run "npm run backfill" or wait for org-wide relays (M4)')
+            ? React.createElement('div', { className: 'empty' }, 'needs ≥2 pilots with activity — run "npm run backfill" or wait for shared peer relays (M4)')
             : React.createElement('div', { style: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(150px,1fr))', gap: 10 } },
               cmpRows.map((r) => React.createElement('div', { className: 'mc', key: r.n },
                 React.createElement('div', { className: 'l' }, r.n),
@@ -1109,7 +1109,7 @@ class Dashboard extends React.Component {
   renderHome () {
     const c = this.state.counts;
     const cards = [
-      ['live', '📡 Live feed', 'Watch Game.log events as they happen — missions, objectives, combat and deaths, parsed in real time.',
+      ['live', '📡 Live Feed', 'Watch Game.log events as they happen — missions, objectives, combat and deaths, parsed in real time.',
         `${c.missions || 0} missions · ${c.deaths || 0} deaths this session`],
       ['analyze', '📊 Analyze', 'Activity analytics across your backloaded history and the live session — heatmap, outcomes, pilots.',
         'sliced by month, pilot, mission type'],

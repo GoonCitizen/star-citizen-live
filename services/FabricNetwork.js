@@ -13,7 +13,10 @@
 const EventEmitter = require('events');
 const path = require('path');
 
+const { gooncitizenContractId, gooncitizenContractDefinition } = require('../contracts/gooncitizen');
+
 const DEFAULT_SEED = 'relay.goon.vc:7777';
+// App `type` values carried inside the GoonCitizen CONTRACT_MESSAGE namespace.
 const APP_RELAY_TYPES = new Set(['MissionBroadcast', 'SCEventBatch']);
 
 /**
@@ -51,56 +54,69 @@ function normalizeFabricAddress (value, { migrate = false } = {}) {
 }
 
 /**
- * Patch a Peer so MissionBroadcast / SCEventBatch emit app events (and
- * optionally fan-out via relayFrom — needed on the org hub).
+ * Subscribe app handlers to a Fabric Peer using its native message events.
+ *
+ * `@fabric/core` now provides first-class handling (see MESSAGES.md):
+ *   - `chat`             — first-class `P2P_CHAT_MESSAGE` (relayed verbatim)
+ *   - `contract:message` — namespaced `CONTRACT_MESSAGE` (relayed)
+ *   - `contract:proposal`— verified `ContractProposal` (relayed)
+ *
+ * GoonCitizen app traffic is namespaced by the GoonCitizen contract id; we
+ * dispatch only for that namespace. The `opts.relay` flag is retained for
+ * backward compatibility but is a no-op — the core Peer relays these frames
+ * itself (with wire-hash dedup), so no monkey-patched fan-out is needed.
+ *
  * @param {Object} peer Fabric Peer instance
- * @param {Object} handlers { onMissionBroadcast, onEventBatch, onChat? }
+ * @param {Object} handlers { onMissionBroadcast, onEventBatch, onChat?, onProposal? }
  * @param {{ relay?: boolean }} [opts]
  */
-function attachAppHandlers (peer, handlers = {}, { relay = false } = {}) {
-  if (!peer || typeof peer._handleGenericMessage !== 'function') {
+function attachAppHandlers (peer, handlers = {}, _opts = {}) {
+  if (!peer || typeof peer.on !== 'function') {
     throw new Error('attachAppHandlers requires a Fabric Peer');
   }
   if (peer._goonAppHandlersAttached) return peer;
   peer._goonAppHandlersAttached = true;
 
-  const original = peer._handleGenericMessage.bind(peer);
-  peer._handleGenericMessage = function patchedGeneric (message, origin = null, socket = null, wireMessage = null) {
-    const msg = message && typeof message === 'object' ? message : {};
-    const type = msg.type || msg['@type'] || null;
-    const signer = wireMessage && typeof peer._verifiedFabricSignerPubkeyHex === 'function'
-      ? peer._verifiedFabricSignerPubkeyHex(wireMessage)
-      : (msg.actor && (msg.actor.publicKey || msg.actor.pubkey || msg.actor.id)) || null;
-    const source = signer ? String(signer) : null;
+  const goonId = gooncitizenContractId();
+  const actorPubkey = (obj) => (obj && obj.actor && (obj.actor.publicKey || obj.actor.pubkey || obj.actor.id)) || null;
 
-    if (type === 'MissionBroadcast' || type === 'SCEventBatch') {
-      const object = msg.object != null ? msg.object : msg;
-      try {
-        if (type === 'MissionBroadcast' && typeof handlers.onMissionBroadcast === 'function') {
-          handlers.onMissionBroadcast(object, source, { origin, wireMessage, msg });
-        }
-        if (type === 'SCEventBatch' && typeof handlers.onEventBatch === 'function') {
-          handlers.onEventBatch(object, source, { origin, wireMessage, msg });
-        }
-      } catch (e) {
-        peer.emit('warning', `[FABRIC:GOON] app handler error (${type}): ${(e && e.message) || e}`);
-      }
-      if (relay && origin && origin.name && wireMessage && typeof peer.relayFrom === 'function') {
-        try { peer.relayFrom(origin.name, wireMessage); } catch (_) { /* ignore */ }
-      }
-      return peer;
+  peer.on('chat', (msg, meta) => {
+    if (typeof handlers.onChat !== 'function') return;
+    const signer = (meta && meta.signer) || actorPubkey(msg) || null;
+    try {
+      handlers.onChat(msg || {}, signer, meta || {});
+    } catch (e) {
+      peer.emit('warning', `[FABRIC:GOON] chat handler error: ${(e && e.message) || e}`);
     }
+  });
 
-    const result = original(message, origin, socket, wireMessage);
-
-    // After Peer's native chat emit/relay, optionally ingest for LiveRelay.
-    if (type === 'P2P_CHAT_MESSAGE' && typeof handlers.onChat === 'function') {
-      try { handlers.onChat(msg, source, { origin, wireMessage }); } catch (e) {
-        peer.emit('warning', `[FABRIC:GOON] chat handler error: ${(e && e.message) || e}`);
+  peer.on('contract:message', (ev) => {
+    if (!ev || String(ev.contract) !== goonId) return; // GoonCitizen namespace only
+    const body = ev.object || {};
+    const appType = body.type || body['@type'] || null;
+    const object = body.object != null ? body.object : body;
+    const signer = ev.signer || actorPubkey(body) || null;
+    const meta = { origin: ev.origin, wireMessage: null, msg: body, signer };
+    try {
+      if (appType === 'MissionBroadcast' && typeof handlers.onMissionBroadcast === 'function') {
+        handlers.onMissionBroadcast(object, signer, meta);
+      } else if (appType === 'SCEventBatch' && typeof handlers.onEventBatch === 'function') {
+        handlers.onEventBatch(object, signer, meta);
       }
+    } catch (e) {
+      peer.emit('warning', `[FABRIC:GOON] contract message handler error (${appType}): ${(e && e.message) || e}`);
     }
-    return result;
-  };
+  });
+
+  peer.on('contract:proposal', (ev) => {
+    if (!ev || String(ev.contract) !== goonId) return;
+    if (typeof handlers.onProposal !== 'function') return;
+    try {
+      handlers.onProposal(ev.payload, ev.signer || null, { origin: ev.origin });
+    } catch (e) {
+      peer.emit('warning', `[FABRIC:GOON] contract proposal handler error: ${(e && e.message) || e}`);
+    }
+  });
 
   return peer;
 }
@@ -280,12 +296,25 @@ class FabricNetwork extends EventEmitter {
         if (this._handlers && typeof this._handlers.onChat === 'function') {
           this._handlers.onChat(msg, source, meta);
         }
+      },
+      onProposal: (payload, source, meta) => {
+        this.emit('contractProposal', { payload, source, meta });
+        if (this._handlers && typeof this._handlers.onProposal === 'function') {
+          this._handlers.onProposal(payload, source, meta);
+        }
       }
-    }, { relay: !!this.settings.relayAppMessages });
+    });
+
+    // Announce the GoonCitizen contract namespace when peers connect (and once
+    // on start). Best-effort: CONTRACT_MESSAGE still relays for unregistered ids.
+    peer.on('connections:open', () => {
+      try { this.publishContract(); } catch (_) { /* not ready / no peers yet */ }
+    });
 
     await peer.start();
     this._peer = peer;
     console.log(`[STAR-CITIZEN] fabric peer listening on ${peer.settings.port} (id ${String(peer.key.pubkey).slice(0, 12)}…)`);
+    try { this.publishContract(); } catch (_) { /* best-effort */ }
     return this;
   }
 
@@ -345,7 +374,18 @@ class FabricNetwork extends EventEmitter {
   }
 
   /**
-   * Publish a ChatMessage record as P2P_CHAT_MESSAGE (auto-relayed by Peer).
+   * Announce the GoonCitizen contract definition (CONTRACT_PUBLISH). Registers
+   * the namespace on receiving peers. Best-effort; requires an unlocked peer.
+   * @returns {Object|null} the sent Message, or null when not ready.
+   */
+  publishContract () {
+    if (!this.ready) return null;
+    return this._signAndRelay('CONTRACT_PUBLISH', gooncitizenContractDefinition());
+  }
+
+  /**
+   * Publish a chat record as a first-class `P2P_CHAT_MESSAGE` (opcode 0x68).
+   * The core Peer relays the author-signed frame verbatim.
    * @param {Object} record ChatManager record
    */
   publishChat (record) {
@@ -368,38 +408,58 @@ class FabricNetwork extends EventEmitter {
   }
 
   /**
-   * Publish a mission offer (GenericMessage MissionBroadcast).
+   * Publish a mission offer as a namespaced `CONTRACT_MESSAGE`
+   * (`contract: <GoonCitizen id>`, `type: MissionBroadcast`).
    * @param {Object} payload Broadcast payload (mission, scope, groupId, …)
    */
   publishMissionBroadcast (payload) {
-    const pubkey = this._identity && this._identity.pubkey;
-    if (!pubkey) throw new Error('identity required');
-    const object = Object.assign({}, payload);
-    const body = {
-      type: 'MissionBroadcast',
-      '@type': 'MissionBroadcast',
-      actor: { publicKey: pubkey, id: pubkey },
-      object
-    };
-    return this._signAndRelay('GenericMessage', body);
+    return this._publishContractMessage('MissionBroadcast', Object.assign({}, payload));
   }
 
   /**
-   * Publish a signed batch of log/register events.
+   * Publish a signed batch of log/register events as a namespaced
+   * `CONTRACT_MESSAGE` (`type: SCEventBatch`).
    * @param {Array<{collection:string,data:Object}>} events
    * @param {string} [sentAt]
    */
   publishEventBatch (events, sentAt = new Date().toISOString()) {
+    if (!Array.isArray(events) || !events.length) return null;
+    return this._publishContractMessage('SCEventBatch', { events, sentAt });
+  }
+
+  /**
+   * Publish a mission contract proposal (escrow / payout) as a signed
+   * `ContractProposal` scoped to the GoonCitizen contract id. Transport only —
+   * `messages` carry the acceptance / PSBT material built by the register.
+   * @param {import('@fabric/core/types/message')[]} messages
+   * @param {{ purpose?: string, statePatch?: object[], psbtProposalBase64?: string, parentChainRoot?: string|null }} [opts]
+   */
+  publishContractProposal (messages, opts = {}) {
     const pubkey = this._identity && this._identity.pubkey;
     if (!pubkey) throw new Error('identity required');
-    if (!Array.isArray(events) || !events.length) return null;
+    if (!Array.isArray(messages) || !messages.length) throw new Error('at least one message is required');
+    const { buildContractProposalPayload } = require('@fabric/core/functions/contractProposal');
+    const payload = buildContractProposalPayload({
+      contractId: gooncitizenContractId(),
+      parentChainRoot: opts.parentChainRoot || null,
+      messages,
+      statePatch: Array.isArray(opts.statePatch) ? opts.statePatch : [],
+      psbtProposalBase64: opts.psbtProposalBase64
+    });
+    if (opts.purpose) payload.purpose = String(opts.purpose);
+    return this._signAndRelay('CONTRACT_PROPOSAL', payload);
+  }
+
+  _publishContractMessage (type, object) {
+    const pubkey = this._identity && this._identity.pubkey;
+    if (!pubkey) throw new Error('identity required');
     const body = {
-      type: 'SCEventBatch',
-      '@type': 'SCEventBatch',
+      contract: gooncitizenContractId(),
+      type,
       actor: { publicKey: pubkey, id: pubkey },
-      object: { events, sentAt }
+      object
     };
-    return this._signAndRelay('GenericMessage', body);
+    return this._signAndRelay('CONTRACT_MESSAGE', body);
   }
 }
 

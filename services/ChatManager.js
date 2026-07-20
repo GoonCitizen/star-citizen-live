@@ -9,9 +9,9 @@
  *     wire Messages (D-010).
  *
  * Channels:
- *   - `global`            — org-wide chat, readable by everyone on the node
- *   - `group:<groupId>`   — dedicated channel per group, members only in
- *                           hosted mode (the local relay shows your groups)
+ *   - `global`            — network chat on this node (all local viewers)
+ *   - `group:<groupId>`   — dedicated channel per group / subgroup, members
+ *                           only in hosted mode (the local relay shows your groups)
  *
  * Ids are content-derived (channel + author + body + ts), so merging the
  * same message from multiple paths (local post, peer push, peer pull) is

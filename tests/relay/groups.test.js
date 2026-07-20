@@ -85,6 +85,39 @@ test('GroupManager lifecycle: create, add/remove member, audit chain', async () 
   assert.deepStrictEqual(gm.groupsFor(b.pubkey).map((x) => x.id), [g.id]);
 });
 
+test('GroupManager subgroups: parentId, tree membership, depth guard', async () => {
+  const fleetLead = createIdentity();
+  const wingLead = createIdentity();
+  const outsider = createIdentity();
+  const gm = new GroupManager({});
+
+  const fleet = await gm.createGroup({ name: 'Fleet', members: [wingLead.pubkey], threshold: 1 }, fleetLead.pubkey);
+  const wing = await gm.createGroup({
+    name: 'Salvage Wing',
+    members: [],
+    threshold: 1,
+    parentId: fleet.id
+  }, wingLead.pubkey);
+
+  assert.strictEqual(wing.parentId, fleet.id);
+  assert.deepStrictEqual(gm.childrenOf(fleet.id).map((x) => x.id), [wing.id]);
+  assert.deepStrictEqual(gm.descendantIds(fleet.id), [wing.id]);
+  assert.strictEqual(gm.isInGroupTree(fleet.id, fleetLead.pubkey), true);
+  assert.strictEqual(gm.isInGroupTree(fleet.id, wingLead.pubkey), true);
+  assert.strictEqual(gm.isInGroupTree(fleet.id, outsider.pubkey), false);
+  assert.strictEqual(gm.isInGroupTree(wing.id, wingLead.pubkey), true);
+  assert.strictEqual(gm.isInGroupTree(wing.id, fleetLead.pubkey), false);
+
+  await assert.rejects(
+    gm.createGroup({ name: 'Nope', parentId: fleet.id }, outsider.pubkey),
+    /parent-group member/
+  );
+  await assert.rejects(
+    gm.createGroup({ name: 'Missing', parentId: 'no-such' }, fleetLead.pubkey),
+    /parent group not found/
+  );
+});
+
 // ---- REST: auth + groups + group-scoped missions ----
 
 test('hosted mode: login session, group CRUD, and membership-scoped missions', async () => {

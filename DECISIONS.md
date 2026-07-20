@@ -20,8 +20,11 @@ AMP/`Message` protocol over TCP/NOISE — not HTTP(S) batch uplink or chat pull.
    `scope: 'global'|'group'` + `groupId`); log/event batches use
    GenericMessage `SCEventBatch`. Local dashboard HTTP (`:3041`) stays for UI/API only.
 4. **Group-scoped broadcasts** — hub still relays; receivers **filter on
-   membership** (same model as `group:<id>` chat). Non-members do not get a
-   pending offer. Hosted register may retain offers and filter list-by-viewer.
+   membership in the group tree** (`isInGroupTree`: direct member or member
+   of a nested subgroup). Same idea as `group:<id>` chat. Non-members do not
+   get a pending offer. Hosted register may retain offers and filter
+   list-by-viewer. **Groups** (not a single "org") are the multi-install
+   sharing boundary; optional `parentId` nests subgroups.
 5. **Star relay (goon.vc)** — Peer does not auto-relay arbitrary GenericMessage
    app types; goon.vc attaches handlers that `relayFrom` MissionBroadcast /
    SCEventBatch and ingest into the mounted LiveRelay.

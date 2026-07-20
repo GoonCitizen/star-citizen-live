@@ -4,7 +4,7 @@
  * Always-available global chat dock + desktop notification watcher.
  *
  * The dedicated Chat tab remains the full channel browser (global + groups).
- * This dock keeps the org-wide `global` channel one click away on every other
+ * This dock keeps the network `global` channel one click away on every other
  * tab, and polls for new messages so desktop notifications can fire per
  * operator settings (Settings → Desktop notifications).
  */
@@ -300,7 +300,7 @@ class GlobalChatDock extends React.Component {
       React.createElement('div', { className: 'gcdock-panel' },
         React.createElement('div', { className: 'gcdock-head' },
           React.createElement('span', null, '💬 Global'),
-          React.createElement('span', { className: 'sub' }, 'always on · org-wide'),
+          React.createElement('span', { className: 'sub' }, 'always on · network'),
           React.createElement('button', {
             type: 'button',
             title: 'Open full Chat (global + groups)',

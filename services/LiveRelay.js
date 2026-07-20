@@ -391,7 +391,7 @@ class StarCitizenService extends EventEmitter {
   }
 
   // Merge backfilled history with the current live session into one compact dataset
-  // for the Analyze tab. Local-player today; the same shape serves org-wide (M4).
+  // for the Analyze tab. Local-player today; the same shape serves shared multi-pilot history (M4).
   _analyticsDataset () {
     const h = this.history || { missions: [], deaths: [], sessions: [], heat: {}, players: [], meta: {} };
     const me = this._sessionHandle || 'you';
@@ -618,11 +618,12 @@ class StarCitizenService extends EventEmitter {
       throw Object.assign(new Error('group-scoped broadcast requires groupId'), { code: 'BAD_EVENT' });
     }
 
-    // Local nodes drop group-only offers unless the unlocked identity is a member.
-    // Hosted server mode keeps all offers (authoritative register); list filters by viewer.
+    // Local nodes drop group-only offers unless the unlocked identity is in
+    // the target group tree (group or a subgroup). Hosted mode keeps all
+    // offers; the list filters by viewer.
     const { canonicalStringify, pubkeysMatch } = identityLib();
     const me = this._identity && this._identity.pubkey;
-    if (scope === 'group' && me && this.groupManager && !this.groupManager.isMember(groupId, me)) {
+    if (scope === 'group' && me && this.groupManager && !this.groupManager.isInGroupTree(groupId, me)) {
       return { id: null, created: false, filtered: true };
     }
 
@@ -666,11 +667,11 @@ class StarCitizenService extends EventEmitter {
       : Object.values(this.state.missionbroadcasts || {});
     let rows = all.slice().sort((a, b) => String(b.broadcastAt || '').localeCompare(String(a.broadcastAt || '')));
     if (pendingOnly) rows = rows.filter((r) => r.status === 'pending');
-    // Hosted: hide group-scoped offers from non-members (same model as group chat).
+    // Hosted: hide group-scoped offers from non-members of that group tree.
     if (this.settings.mode === 'server' && this.groupManager) {
       rows = rows.filter((r) => {
         if (r.scope !== 'group' || !r.groupId) return true;
-        return !!(viewer && this.groupManager.isMember(r.groupId, viewer));
+        return !!(viewer && this.groupManager.isInGroupTree(r.groupId, viewer));
       });
     }
     return rows;
@@ -693,7 +694,8 @@ class StarCitizenService extends EventEmitter {
   /**
    * Publish a mission offer over Fabric (MissionBroadcast GenericMessage).
    * Creator-only; open missions only. Scope defaults to group when the mission
-   * has a groupId, else org-wide (global).
+   * has a groupId, else network-wide (`global` — all connected Fabric peers).
+   * Group scope is membership-filtered on receive (group + subgroups).
    * @param {string} missionId
    * @param {string} actor Creator pubkey
    * @param {{ scope?: 'global'|'group', groupId?: string }} [opts]
@@ -811,7 +813,7 @@ class StarCitizenService extends EventEmitter {
       }
       // Analytics: compact merged dataset (backfilled history + live session) for
       // the "Analyze" dashboard tab. The client slices it by month/year + pilot +
-      // mission type + outcome. Local-player today; same shape serves org-wide (M4).
+      // mission type + outcome. Local-player today; same shape serves shared multi-pilot history (M4).
       if (req.method === 'GET' && pathname === `${base}/analytics`) {
         return send(200, this._analyticsDataset());
       }
@@ -1742,10 +1744,16 @@ class StarCitizenService extends EventEmitter {
 
   _fabricIngestHandlers () {
     const { resolveSignerPubkey, pubkeysMatch } = identityLib();
+    /** Prefer declared actor when a star hop re-signed the outer frame. */
+    const actorId = (source, actor) => {
+      const claimed = actor && (actor.publicKey || actor.pubkey || actor.id);
+      if (claimed) return String(claimed);
+      return resolveSignerPubkey(source, actor);
+    };
     return {
       onMissionBroadcast: (object, source, meta) => {
         const actor = meta && meta.msg && meta.msg.actor;
-        const resolved = resolveSignerPubkey(source, actor);
+        const resolved = actorId(source, actor);
         if (!resolved) return;
         try {
           this._ingestMissionBroadcast(resolved, object || {});
@@ -1754,7 +1762,7 @@ class StarCitizenService extends EventEmitter {
       },
       onEventBatch: (object, source, meta) => {
         const actor = meta && meta.msg && meta.msg.actor;
-        const resolved = resolveSignerPubkey(source, actor);
+        const resolved = actorId(source, actor);
         if (!resolved || !object || !Array.isArray(object.events)) return;
         let created = 0;
         for (const ev of object.events) {
@@ -1769,17 +1777,30 @@ class StarCitizenService extends EventEmitter {
           if (p.enabled !== false) { p.lastSeen = new Date().toISOString(); p.lastError = null; }
         }
       },
+      onProposal: (payload, source) => {
+        // Mission escrow / payout ContractProposals scoped to the GoonCitizen
+        // contract. Transport only — the officer-validated register remains the
+        // source of truth; observers can react to the signed proposal here.
+        if (!payload) return;
+        this.emit('mission:proposal', { payload, source: source || null, via: 'fabric' });
+      },
       onChat: (msg, source) => {
         if (!this.chatManager || !msg) return;
         const obj = msg.object || {};
-        const author = obj.author || (msg.actor && (msg.actor.publicKey || msg.actor.pubkey || msg.actor.id)) || null;
+        const actorPk = msg.actor && (msg.actor.publicKey || msg.actor.pubkey || msg.actor.id);
+        const author = obj.author || actorPk || null;
         const body = obj.body != null ? obj.body : obj.content;
         const ts = obj.ts || (obj.created ? new Date(obj.created).toISOString() : null);
         if (!author || !body || !ts) return;
+        // Direct hop: the verified wire signer equals the author. Relayed hop:
+        // the relaying peer re-signs (per-connection key pinning), so the wire
+        // signer is that hop — fall back to the declared author pubkey (`actor`),
+        // which the trusted relay preserves in the body.
         const signer = resolveSignerPubkey(source, msg.actor) || author;
-        if (!pubkeysMatch(author, signer)) return;
+        if (!pubkeysMatch(author, signer)) {
+          if (!actorPk || !pubkeysMatch(author, actorPk)) return;
+        }
         try {
-          // Ingest under the compressed author id (Hub ChatMessage record shape).
           this.chatManager.ingest(author, {
             channel: obj.channel || 'global',
             body,
@@ -1788,7 +1809,6 @@ class StarCitizenService extends EventEmitter {
             ts
           });
         } catch (e) {
-          // Impersonation / unknown channel — drop quietly.
           if (!/must match|unknown channel/i.test(e.message || '')) this.emit('error', e);
         }
       }
@@ -1884,6 +1904,20 @@ class StarCitizenService extends EventEmitter {
 
   _stopUplink () {
     if (this._uplinkTimer) { clearInterval(this._uplinkTimer); this._uplinkTimer = null; }
+  }
+
+  /**
+   * Publish a mission escrow / payout proposal as a GoonCitizen-namespaced
+   * ContractProposal (transport only; register internals unchanged).
+   * @param {import('@fabric/core/types/message')[]} messages signed acceptance / PSBT frames
+   * @param {{ purpose?: string, statePatch?: object[], psbtProposalBase64?: string }} [opts]
+   */
+  async broadcastMissionProposal (messages, opts = {}) {
+    await this._ensureFabric();
+    if (!this.fabricNetwork || !this.fabricNetwork.ready) {
+      throw Object.assign(new Error('Fabric peer is not ready'), { code: 'UNAVAILABLE' });
+    }
+    return this.fabricNetwork.publishContractProposal(messages, opts);
   }
 
   async _publishChat (record) {

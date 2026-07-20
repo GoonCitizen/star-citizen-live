@@ -80,6 +80,7 @@ class Groups extends React.Component {
       name: '',
       membersText: '',
       threshold: 1,
+      parentId: '',
       creating: false,
       showCreate: false,
       // manage
@@ -177,13 +178,14 @@ class Groups extends React.Component {
           name: this.state.name.trim(),
           members: this.parseMembers(),
           threshold: Number(this.state.threshold) || 1,
+          parentId: this.state.parentId || undefined,
           creator: this.state.pubkey // local relay fallback; ignored when a session exists
         })
       });
       const json = await res.json();
       if (!res.ok) throw new Error(json.error || `HTTP ${res.status}`);
       this.setState({
-        creating: false, showCreate: false, name: '', membersText: '', threshold: 1,
+        creating: false, showCreate: false, name: '', membersText: '', threshold: 1, parentId: '',
         notice: `Group "${json.data.name}" created.`, selectedId: json.data.id
       });
       await this.refresh();
@@ -282,6 +284,18 @@ class Groups extends React.Component {
           onChange: (e) => this.setState({ threshold: e.target.value })
         })
       ),
+      React.createElement('div', null,
+        React.createElement('label', null, 'Parent group (optional — nest as a subgroup)'),
+        React.createElement('select', {
+          value: this.state.parentId,
+          onChange: (e) => this.setState({ parentId: e.target.value })
+        },
+          React.createElement('option', { value: '' }, '— none (top-level) —'),
+          this.state.groups
+            .filter((g) => Array.isArray(g.members) && this.state.pubkey && g.members.includes(this.state.pubkey))
+            .map((g) => React.createElement('option', { key: g.id, value: g.id }, g.name))
+        )
+      ),
       React.createElement('div', { style: { display: 'flex', gap: 8 } },
         React.createElement('button', {
           className: 'gp-btn', disabled: !this.createValid() || this.state.creating,
@@ -289,7 +303,7 @@ class Groups extends React.Component {
         }, this.state.creating ? 'Creating…' : 'Create group'),
         React.createElement('button', {
           className: 'gp-btn ghost',
-          onClick: () => this.setState({ showCreate: false, error: null })
+          onClick: () => this.setState({ showCreate: false, error: null, parentId: '' })
         }, 'Cancel')
       )
     );
@@ -314,6 +328,10 @@ class Groups extends React.Component {
         React.createElement('span', null, 'decisions ', React.createElement('b', null, `${g.threshold}-of-${memberList ? memberList.length : 'n'}`)),
         React.createElement('span', null, 'created ', React.createElement('b', null, String(g.createdAt || '').slice(0, 10))),
         React.createElement('span', { className: 'gp-tag ' + (g.visibility === 'public' ? 'public' : 'private') }, g.visibility || 'private'),
+        g.parentId
+          ? React.createElement('span', null, 'subgroup of ', React.createElement('b', null,
+            (this.state.groups.find((x) => x.id === g.parentId) || {}).name || g.parentId.slice(0, 8) + '…'))
+          : null,
         React.createElement('span', { title: g.path }, 'page ', React.createElement('b', null, g.path || `/groups/${g.id}`))
       ),
       React.createElement('div', { className: 'gp-actions' },
@@ -366,7 +384,7 @@ class Groups extends React.Component {
       React.createElement('div', { className: 'gp-wrap', style: { gridColumn: '1 / -1' } },
         React.createElement('section', { className: 'panel' },
           React.createElement('h2', null, '👥 Your groups ',
-            React.createElement('span', { className: 'sub' }, '— k-of-n multisig squads'),
+            React.createElement('span', { className: 'sub' }, '— k-of-n multisig squads & subgroups'),
             React.createElement('button', {
               className: 'btn', type: 'button',
               disabled: !me,
@@ -392,8 +410,13 @@ class Groups extends React.Component {
                 onClick: () => this.setState({ selectedId: g.id }),
                 onDoubleClick: () => this.openPage(g)
               },
-                React.createElement('span', { className: 'n' }, g.name,
-                  React.createElement('span', { className: 'gp-tag ' + (g.visibility === 'public' ? 'public' : 'private'), style: { marginLeft: 8 } }, g.visibility || 'private')
+                React.createElement('span', { className: 'n', style: g.parentId ? { paddingLeft: 14 } : null },
+                  g.parentId ? '↳ ' : '',
+                  g.name,
+                  React.createElement('span', { className: 'gp-tag ' + (g.visibility === 'public' ? 'public' : 'private'), style: { marginLeft: 8 } }, g.visibility || 'private'),
+                  g.parentId
+                    ? React.createElement('span', { className: 'gp-tag', style: { marginLeft: 6 } }, 'subgroup')
+                    : null
                 ),
                 React.createElement('span', { className: 'd' },
                   (g.members ? `${g.members.length} member${g.members.length === 1 ? '' : 's'}` : `${g.memberCount || 0} members`) +

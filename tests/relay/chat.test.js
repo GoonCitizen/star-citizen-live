@@ -101,7 +101,7 @@ test('hosted chat: signed envelope required, group channels members-only', async
     assert.strictEqual(unsigned.status, 401);
 
     // Signed global post lands; anyone can read global.
-    const env = signEnvelope(alice, { channel: 'global', body: 'org-wide o7', ts: new Date().toISOString() });
+    const env = signEnvelope(alice, { channel: 'global', body: 'network o7', ts: new Date().toISOString() });
     const posted = await request(port, 'POST', `${BASE}/chat/messages`, env);
     assert.strictEqual(posted.status, 200, JSON.stringify(posted.body));
     assert.strictEqual(posted.body.data.author, alice.pubkey);

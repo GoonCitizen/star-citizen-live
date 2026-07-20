@@ -95,11 +95,14 @@ npm run build:installers  # Windows x64 + Debian x64 + macOS
   other tabs (`components/GlobalChatDock.js`). Operators set an optional
   **nickname** (Settings / Identity; Fabric Store key `nickname`) for chat
   display; the compressed pubkey remains the actor id and is always shown
-  beside the nickname. Mission creators can **Broadcast** an open mission
-  (`POST …/missions/:id/broadcast` with `{ scope, groupId }` — org-wide or
-  group-only); receivers get a pending offer with desktop + in-app **Accept**
-  (apply) / **Ignore**, gated by `notifyMissionBroadcasts` (group scope is
-  membership-filtered on receive). A header **notification bell** opens the
+  beside the nickname.   Mission creators can **Broadcast** an open mission
+  (`POST …/missions/:id/broadcast` with `{ scope, groupId }` — network-wide
+  to Fabric peers, or to a group tree including subgroups); receivers get a
+  pending offer with desktop + in-app **Accept** (apply) / **Ignore**, gated
+  by `notifyMissionBroadcasts` (group scope is membership-filtered on receive
+  via `isInGroupTree`). Many orgs install the app; **Groups** (optional
+  `parentId` subgroups) are the sharing boundary across the mesh — not a
+  single hard-coded org. A header **notification bell** opens the
   dedicated Notifications history page (`#notifications`). Desktop
   notifications for chat are controlled in Settings (`notifyDesktop`,
   `notifyChatGlobal`, `notifyChatGroups`, `notifyWhenFocused`) and shown via

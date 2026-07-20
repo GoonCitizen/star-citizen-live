@@ -255,20 +255,20 @@ class Missions extends React.Component {
             React.createElement('button', {
               className: 'mi-btn ghost',
               disabled: this.state.busy,
-              title: 'Notify all Fabric peers (org-wide) that this mission is open',
+              title: 'Notify all connected Fabric peers that this mission is open',
               onClick: () => this.act(
                 () => this.post(`/missions/${m.id}/broadcast`, { scope: 'global' }),
-                'Broadcast sent org-wide.'
+                'Broadcast sent to the network.'
               )
-            }, 'Broadcast org-wide'),
+            }, 'Broadcast to network'),
             m.groupId
               ? React.createElement('button', {
                 className: 'mi-btn ghost',
                 disabled: this.state.busy,
-                title: 'Notify only members of this mission\'s group (hub still relays; non-members filter on receive)',
+                title: 'Notify members of this mission\'s group and its subgroups (hub still relays; non-members filter on receive)',
                 onClick: () => this.act(
                   () => this.post(`/missions/${m.id}/broadcast`, { scope: 'group', groupId: m.groupId }),
-                  'Broadcast sent to group members.'
+                  'Broadcast sent to the group.'
                 )
               }, 'Broadcast to group')
               : null

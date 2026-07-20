@@ -223,8 +223,8 @@ class Notifications extends React.Component {
         React.createElement('h2', null, '🔔 Notifications',
           React.createElement('span', { className: 'sub' },
             pending
-              ? `${pending} pending · mission broadcasts from peers (org-wide or your groups)`
-              : 'history of mission broadcasts (org-wide / group-scoped) and inbox actions')
+              ? `${pending} pending · mission broadcasts from peers (network-wide or your groups)`
+              : 'history of mission broadcasts (network / group) and inbox actions')
         ),
         React.createElement('div', { className: 'nt-filters' },
           [['all', 'All'], ['pending', 'Pending'], ['resolved', 'Resolved']].map(([key, label]) =>
