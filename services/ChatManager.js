@@ -113,9 +113,14 @@ class ChatManager extends EventEmitter {
     if (!data.author) throw new Error('author (pubkey) required');
     const ts = data.ts || new Date().toISOString();
 
+    // Global mesh chat is UTF-8 text only on the wire (no ts) — id from author+body
+    // so multi-path ingest converges. Group / local channels keep ts in the id.
+    const idBasis = channel === GLOBAL_CHANNEL
+      ? { channel, author: data.author, body }
+      : { channel, author: data.author, body, ts };
     const record = {
       '@type': TYPE,
-      id: sha256(canonical({ channel, author: data.author, body, ts })).slice(0, 32),
+      id: sha256(canonical(idBasis)).slice(0, 32),
       channel,
       author: String(data.author),
       handle: data.handle ? String(data.handle).slice(0, 64) : null,
@@ -160,12 +165,11 @@ class ChatManager extends EventEmitter {
   /** Deterministic id for a message payload (mirror of post()). */
   static idOf (data) {
     const body = String(data.body || '').trim().slice(0, MAX_BODY);
-    return sha256(canonical({
-      channel: String(data.channel || GLOBAL_CHANNEL),
-      author: data.author,
-      body,
-      ts: data.ts
-    })).slice(0, 32);
+    const channel = String(data.channel || GLOBAL_CHANNEL);
+    const basis = channel === GLOBAL_CHANNEL
+      ? { channel, author: data.author, body }
+      : { channel, author: data.author, body, ts: data.ts };
+    return sha256(canonical(basis)).slice(0, 32);
   }
 
   /**

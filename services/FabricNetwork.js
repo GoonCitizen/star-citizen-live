@@ -23,11 +23,22 @@ const {
   GROUP_MESSAGE_TYPES
 } = require('../contracts/gooncitizenGroup');
 
-const DEFAULT_SEED = 'relay.goon.vc:7777';
+const DEFAULT_SEEDS = Object.freeze([
+  'hub.fabric.pub:7777',
+  'relay.goon.vc:7777'
+]);
+/** @deprecated Prefer DEFAULT_SEEDS — first network hub seed. */
+const DEFAULT_SEED = DEFAULT_SEEDS[0];
 // App `type` values carried inside the GoonCitizen CONTRACT_MESSAGE namespace.
 // MissionCreated is handled at ingest even if omitted from the genesis
 // messageTypes list (that list is frozen into the contract Actor id).
 const APP_RELAY_TYPES = new Set(['MissionCreated', 'MissionBroadcast', 'SCEventBatch', 'GameStateSnapshot']);
+
+/** True when address is a known network hub seed (selective Fabric relays). */
+function isNetworkHubAddress (address) {
+  const host = String(address || '').trim().toLowerCase().split(':')[0];
+  return host === 'hub.fabric.pub' || host === 'relay.goon.vc';
+}
 
 /**
  * True when `value` looks like a Fabric peer address (`host:port`).
@@ -92,6 +103,15 @@ function attachAppHandlers (peer, handlers = {}, _opts = {}) {
       handlers.onChat(msg || {}, signer, meta || {});
     } catch (e) {
       peer.emit('warning', `[FABRIC:GOON] chat handler error: ${(e && e.message) || e}`);
+    }
+  });
+
+  peer.on('peerAlias', (ev) => {
+    if (typeof handlers.onPeerAlias !== 'function') return;
+    try {
+      handlers.onPeerAlias(ev || {}, (ev && ev.signer) || null, ev || {});
+    } catch (e) {
+      peer.emit('warning', `[FABRIC:GOON] peerAlias handler error: ${(e && e.message) || e}`);
     }
   });
 
@@ -177,7 +197,7 @@ class FabricNetwork extends EventEmitter {
       listen: true,
       port: 7777,
       interface: '0.0.0.0',
-      peers: [DEFAULT_SEED],
+      peers: DEFAULT_SEEDS.slice(),
       peersDb: null,
       relayAppMessages: false,
       networking: true,
@@ -193,6 +213,8 @@ class FabricNetwork extends EventEmitter {
   }
 
   static get DEFAULT_SEED () { return DEFAULT_SEED; }
+  static get DEFAULT_SEEDS () { return DEFAULT_SEEDS.slice(); }
+  static isNetworkHubAddress (v) { return isNetworkHubAddress(v); }
   static isFabricAddress (v) { return isFabricAddress(v); }
   static normalizeFabricAddress (v, opts) { return normalizeFabricAddress(v, opts); }
   static attachAppHandlers (peer, handlers, opts) { return attachAppHandlers(peer, handlers, opts); }
@@ -253,16 +275,116 @@ class FabricNetwork extends EventEmitter {
 
   status () {
     const peer = this._peer;
-    const connections = peer && peer.connections ? Object.keys(peer.connections).length : 0;
+    const connectionIds = peer && peer.connections ? Object.keys(peer.connections) : [];
     return {
       enable: this.settings.enable !== false,
       listening: !!(peer && this.settings.listen),
       fabricListenPort: peer ? peer.settings.port : this.settings.port,
       fabricPeerId: peer && peer.key ? peer.key.pubkey : (this._identity && this._identity.pubkey) || null,
-      fabricConnected: connections,
+      fabricConnected: connectionIds.length,
+      fabricConnections: connectionIds.slice(),
       fabricPeers: (this.settings.peers || []).slice(),
       ready: this.ready,
       groupContracts: this._groupContractIds.size
+    };
+  }
+
+  /** Connected Fabric addresses (connection map keys, typically host:port). */
+  connectedAddresses () {
+    return this.status().fabricConnections || [];
+  }
+
+  /**
+   * True when `connectionId` matches a roster address (exact or host match).
+   * @param {string} connectionId
+   * @param {string} rosterAddress
+   */
+  static connectionMatchesAddress (connectionId, rosterAddress) {
+    const id = String(connectionId || '').toLowerCase();
+    const addr = String(rosterAddress || '').toLowerCase();
+    if (!id || !addr) return false;
+    if (id === addr) return true;
+    const host = addr.split(':')[0];
+    if (host && (id === host || id.startsWith(host + ':'))) return true;
+    return false;
+  }
+
+  _signMessage (vectorType, body, opts = {}) {
+    const Message = require('@fabric/core/types/message');
+    const { keyFromIdentity } = require('../functions/identity');
+    const key = opts.key
+      || (this._peer && this._peer.key)
+      || (this._identity ? keyFromIdentity(this._identity) : null);
+    if (!key) throw new Error('signing key required (unlock identity)');
+    const wireBody = typeof body === 'string' ? body : JSON.stringify(body);
+    return Message.fromVector([vectorType, wireBody]).signWithKey(key);
+  }
+
+  /**
+   * Sign a Message and optionally relay to peers. Sign-only works with an
+   * unlocked identity even when the peer is not listening yet.
+   * @param {string} vectorType
+   * @param {object|string} body
+   * @param {{ to?: string[], relay?: boolean, key?: object }} [opts]
+   */
+  _signAndRelay (vectorType, body, opts = {}) {
+    const msg = this._signMessage(vectorType, body, opts);
+    const shouldRelay = opts.relay !== false;
+    if (!shouldRelay) return msg;
+    if (!this.ready) return msg;
+    const peer = this._peer;
+    const buf = msg.toBuffer();
+    const targets = Array.isArray(opts.to) ? opts.to.map((a) => String(a).trim()).filter(Boolean) : null;
+    if (!targets || !targets.length) {
+      peer.relayFrom(null, msg);
+      return msg;
+    }
+    for (const id of Object.keys(peer.connections || {})) {
+      const hit = targets.some((addr) => FabricNetwork.connectionMatchesAddress(id, addr));
+      if (hit && peer.connections[id] && typeof peer.connections[id]._writeFabric === 'function') {
+        peer.connections[id]._writeFabric(buf);
+      }
+    }
+    return msg;
+  }
+
+  /**
+   * Sign a CONTRACT_MESSAGE without requiring peer ready (clipboard / share).
+   * @param {string} contractId
+   * @param {string} type
+   * @param {object} object
+   * @param {{ relay?: boolean }} [opts]
+   */
+  signContractMessage (contractId, type, object, opts = {}) {
+    const pubkey = this._identity && this._identity.pubkey;
+    if (!pubkey) throw new Error('identity required');
+    const contract = String(contractId || '').trim();
+    if (!contract) throw new Error('contract id required');
+    const body = {
+      contract,
+      type,
+      actor: { publicKey: pubkey, id: pubkey },
+      object
+    };
+    return this._signMessage('CONTRACT_MESSAGE', body, opts);
+  }
+
+  /**
+   * Encode a signed Message as opaque fabric:&lt;hex&gt; for copy-paste.
+   * @param {object} message
+   * @returns {{ message: object, buffer: Buffer, messageHex: string, protocolUrl: string }}
+   */
+  encodeOpaqueMessage (message) {
+    const { buildOpaqueFabricUrl } = require('../functions/groupShareMessage');
+    if (!message || typeof message.toBuffer !== 'function') {
+      throw new Error('Fabric Message required');
+    }
+    const buffer = message.toBuffer();
+    return {
+      message,
+      buffer,
+      messageHex: buffer.toString('hex'),
+      protocolUrl: buildOpaqueFabricUrl(buffer)
     };
   }
 
@@ -339,6 +461,10 @@ class FabricNetwork extends EventEmitter {
       onChat: (msg, source, meta) => {
         this.emit('chat', { msg, source, meta });
         this._forward('onChat', msg, source, meta);
+      },
+      onPeerAlias: (ev, source, meta) => {
+        this.emit('peerAlias', { ev, source, meta });
+        this._forward('onPeerAlias', ev, source, meta);
       },
       onProposal: (payload, source, meta) => {
         this.emit('contractProposal', { payload, source, meta });
@@ -420,18 +546,6 @@ class FabricNetwork extends EventEmitter {
     return this._peer;
   }
 
-  _signAndRelay (vectorType, body) {
-    const Message = require('@fabric/core/types/message');
-    const peer = this._requireReady();
-    const msg = Message.fromVector([vectorType, JSON.stringify(body)]).signWithKey(peer.key);
-    peer.relayFrom(null, msg);
-    return msg;
-  }
-
-  /**
-   * Announce the GoonCitizen contract definition (CONTRACT_PUBLISH).
-   * @returns {Object|null}
-   */
   publishContract () {
     if (!this.ready) return null;
     return this._signAndRelay('CONTRACT_PUBLISH', gooncitizenContractDefinition());
@@ -453,25 +567,29 @@ class FabricNetwork extends EventEmitter {
   /**
    * Publish a chat record as first-class `P2P_CHAT_MESSAGE` (global only on
    * the LiveRelay path; group chat uses {@link #publishGroupChat}).
+   * Wire body = raw UTF-8 message text only (no JSON / handle). Author is AMP signature.
    * @param {Object} record ChatManager record
    */
   publishChat (record) {
     if (!record || !record.body || !record.author) throw new Error('chat record required');
     const pubkey = this._identity && this._identity.pubkey;
     if (pubkey && record.author !== pubkey) throw new Error('chat author must be local identity');
-    const body = {
-      type: 'P2P_CHAT_MESSAGE',
-      actor: { publicKey: record.author, id: record.author },
-      object: {
-        channel: record.channel || 'global',
-        body: record.body,
-        author: record.author,
-        handle: record.handle || null,
-        ts: record.ts,
-        id: record.id || null
-      }
-    };
-    return this._signAndRelay('P2P_CHAT_MESSAGE', body);
+    return this._signAndRelay('P2P_CHAT_MESSAGE', String(record.body));
+  }
+
+  /**
+   * Broadcast personal nickname as first-class `P2P_PEER_ALIAS` (UTF-8 body).
+   * @param {string} nickname
+   */
+  publishPeerAlias (nickname) {
+    const name = String(nickname || '').trim().slice(0, 64);
+    if (!name) return null;
+    const peer = this._peer;
+    if (peer && typeof peer._announceAlias === 'function') {
+      peer._announceAlias(name);
+      return true;
+    }
+    return this._signAndRelay('P2P_PEER_ALIAS', name);
   }
 
   publishMissionCreated (payload) {
@@ -482,18 +600,19 @@ class FabricNetwork extends EventEmitter {
     return this._publishContractMessage(gooncitizenContractId(), 'MissionBroadcast', Object.assign({}, payload));
   }
 
-  publishEventBatch (events, sentAt = new Date().toISOString()) {
+  publishEventBatch (events, sentAt = new Date().toISOString(), opts = {}) {
     if (!Array.isArray(events) || !events.length) return null;
-    return this._publishContractMessage(gooncitizenContractId(), 'SCEventBatch', { events, sentAt });
+    return this._publishContractMessage(gooncitizenContractId(), 'SCEventBatch', { events, sentAt }, opts);
   }
 
   /**
    * Publish a compact cumulative game-state snapshot for Hub sidechain sync.
    * @param {Object} snapshot from functions/gooncitizenGameState.buildGameStateSnapshot
+   * @param {{ to?: string[] }} [opts] Optional Fabric addresses; omit to broadcast
    */
-  publishGameStateSnapshot (snapshot) {
+  publishGameStateSnapshot (snapshot, opts = {}) {
     if (!snapshot || typeof snapshot !== 'object') throw new Error('GameStateSnapshot required');
-    return this._publishContractMessage(gooncitizenContractId(), 'GameStateSnapshot', Object.assign({}, snapshot));
+    return this._publishContractMessage(gooncitizenContractId(), 'GameStateSnapshot', Object.assign({}, snapshot), opts);
   }
 
   /**
@@ -566,7 +685,7 @@ class FabricNetwork extends EventEmitter {
     return this._signAndRelay('CONTRACT_PROPOSAL', payload);
   }
 
-  _publishContractMessage (contractId, type, object) {
+  _publishContractMessage (contractId, type, object, opts = {}) {
     const pubkey = this._identity && this._identity.pubkey;
     if (!pubkey) throw new Error('identity required');
     const contract = String(contractId || '').trim();
@@ -577,7 +696,11 @@ class FabricNetwork extends EventEmitter {
       actor: { publicKey: pubkey, id: pubkey },
       object
     };
-    return this._signAndRelay('CONTRACT_MESSAGE', body);
+    // Legacy callers expected peer ready; keep that guard when relaying.
+    if (opts.relay !== false && !this.ready) {
+      this._requireReady();
+    }
+    return this._signAndRelay('CONTRACT_MESSAGE', body, opts);
   }
 }
 

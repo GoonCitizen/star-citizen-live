@@ -4,13 +4,95 @@ understands the direction. Newest at the top.
 
 ---
 
+## D-019 — Group shares as opaque Fabric Messages
+**Date:** 2026-07-24 · **Status:** Adopted
+
+**Decision:** GoonCitizen Group **Share** copies an opaque `fabric:<hex>` AMP
+Message (signed `CONTRACT_MESSAGE` / `GroupShare` / `kind: GroupOffer` embedding
+the group genesis), not a legacy HTTP page URL as the primary artifact.
+`FederationContractInvite` gains the same `protocolUrl` / `messageHex` fields.
+Desktop `fabric:` opens opaque hex into an Accept/Ignore modal; ingest uses
+existing `ingestContractPublish` / invite handlers. HTTP `/groups/…` remains a
+secondary browser affordance.
+
+**Why:** Mesh-native, offline-capable join offers without depending on the same
+HTTP origin; clipboard/QR portability across installs.
+
+**Consequences:**
+- Prefer `POST …/groups/:id/share` and invite responses’ `protocolUrl`.
+- Do not invent `fabric://group?…` query schemes — opaque Message is enough.
+
+---
+
+## D-018 — Chain of Blocks (PoW, Federation signatures, arbitrary data)
+**Date:** 2026-07-24 · **Status:** Adopted
+
+**Decision:** Use `@fabric/core` **`Chain`** + **`Block`** (Bitcoin-shaped
+header; optional PoW; optional Elements-style block signatures; optional
+arbitrary `data`) — not a separate OrderedChain or parallel “entry” type:
+
+1. **`consensus: 'federation'`** — Hub Beacon `beacon/CHAIN` / `BEACON_EPOCH`
+   Blocks (linear tip; k-of-n Schnorr on the block).
+2. **`consensus: 'gossip'`** — GoonCitizen event firehose / `SCEventBatch` as
+   data Blocks (union by content-id; optional author signatures).
+3. **`consensus: 'pow'`** (default) — Bitcoin/playnet Block + mempool ledger.
+
+**Sidechain document helpers** (`@fabric/core/functions/sidechainState`) hold the
+sealed JSON document. Tip digests feed that document /
+`GameStateSnapshot` (D-015). Do **not** put raw gossip into `beacon/CHAIN`.
+
+App wrapper: `functions/eventChain.js` (thin gossip Block helper + history fold).
+
+**Why:** One Block unit and one Chain ledger; consensus policy keeps authority
+separate (DESIGN-event-convergence: firehose ≠ officer truth; Beacon = L1-tied
+seal clock). Aligns with Bitcoin + Blockstream Elements signed blocks.
+
+**Consequences / guardrails:**
+- Prefer `Chain.create({ consensus })` + `Block` over ad-hoc arrays.
+- Log publish remains opt-in (D-017); chain ops are local.
+- Mission register hash-chained audit stays separate.
+- Do not reintroduce OrderedChain or a dual entry-seal API.
+
+---
+
+## D-017 — Opt-in log sharing (per-peer authorize + improved Peers list)
+**Date:** 2026-07-24 · **Status:** Adopted
+
+**Decision:** Parsed gameplay events (`SCEventBatch`, `GameStateSnapshot`) leave
+the local node only after **explicit authorize**. Chat and mission broadcasts
+remain ungated when the Fabric peer is up (D-010).
+
+1. **Default off** — `shareLogsGlobal` is false unless the operator sets it
+   true in Settings (was previously default-on).
+2. **Per-peer grant** — each roster peer has `shareLogs` (opt-in). When global
+   is off, the uplink targets only peers with `shareLogs: true` via directed
+   Fabric send (`opts.to`); when global is on, batches broadcast to all
+   connected sockets.
+3. **Peers UI** — Hub PeerList-inspired status: connected / offline / disabled,
+   network-hub badge for `hub.fabric.pub` / `relay.goon.vc`, live socket list,
+   and a Share-logs checkbox per peer. Transport remains Fabric TCP/NOISE on
+   the desktop relay; browser WebRTC mesh stays on Hub.
+
+**Why:** Story #2 (authorize share before org aggregation) requires consent ≠
+silent uplink. Most players have one LIVE install and one org hub; authorizing
+that peer is clearer than a default-on global flood.
+
+**Consequences / guardrails:**
+- Do not queue or publish log events without `_canShareLogs()`.
+- Prefer per-peer grants for network hubs (`hub.fabric.pub`, `relay.goon.vc`);
+  global is the “share with everyone I’m connected to” escape hatch.
+- Connection badges are roster+socket correlation, not WebRTC (Hub-only).
+
+---
+
 ## D-016 — Contract-namespace sidechains under Hub Beacon
 **Date:** 2026-07-20 · **Status:** Adopted
 
 **Decision:** Follow Hub **ADR-001**
 (`hub.fabric.pub/docs/ADR-001-CONTRACT_NAMESPACE_SIDECHAINS.md`): Bitcoin L1 tips
 clock the Beacon Federation; each accepted `CONTRACT_PUBLISH` namespace gets the
-**same Statechain implementation** (`@fabric/core` Statechain / Chain family) as
+**same sidechain document helpers** (`@fabric/core` `functions/sidechainState` +
+`Chain` / `Block` family) as
 a further namespace under its parent. GoonCitizen is an application namespace
 under the Hub sidechain; Group Federation contracts are further namespaces under
 GoonCitizen the same way.
@@ -19,9 +101,13 @@ GoonCitizen the same way.
    operators can Accept it into Beacon-tracked contracts.
 2. **Seal** compact game state at Hub `/gooncitizen` **and**
    `/namespaces/<gooncitizenContractId>` (parent namespace head).
-3. **Groups** provision `stores/gooncitizen/sidechains/<groupContractId>/`
-   locally (and publish Group genesis) so further sidechains reuse the same
-   chain layout / Contract protocol — not a parallel format.
+3. **Groups** provision a per-contract Statechain document in the Fabric
+   **Store** collection `groupsidechains` (not raw `fs` under
+   `sidechains/<id>/`) and publish Group genesis so further namespaces reuse
+   the same Contract protocol. Each group document keeps an **append-only
+   JOURNAL** of accepted membership events (applications, decisions,
+   `GroupChange`, invite responses); `STATE` content is the deterministic
+   **fold** of genesis + journal (`functions/groupStatechain.js`).
 
 **Why:** One verify path from L1 → Hub Beacon → GoonCitizen → Groups; rendezvous
 Hubs bootstrap many apps without each inventing a chain.
@@ -39,17 +125,19 @@ Hubs bootstrap many apps without each inventing a chain.
 **Decision:** Cumulative GoonCitizen aggregation (D-014) is published into the
 Hub **logical sidechain** (`sidechain/STATE` content at `/gooncitizen`) so each
 **Beacon epoch** on `relay.goon.vc` seals a public **stateDigest** and full
-snapshot (`sidechain/SNAPSHOTS`), following Fabric **statechain** semantics
-(`@fabric/core` `docs/STATECHAIN.md`, Hub `docs/BEACON_SIDECHAIN_DESIGN_AND_ROADMAP.md`).
+snapshot (`sidechain/SNAPSHOTS`), following Fabric **sidechain document**
+semantics
+(`@fabric/core` `docs/DISTRIBUTED_EXECUTION.md`, Hub `docs/BEACON_SIDECHAIN_DESIGN_AND_ROADMAP.md`).
 
 1. **Clients** publish `GameStateSnapshot` CONTRACT_MESSAGE (and continue
-   `SCEventBatch`) when `shareLogsGlobal` is on.
+   `SCEventBatch`) when log sharing is authorized (D-017: `shareLogsGlobal`
+   or per-peer `shareLogs`).
 2. **relay.goon.vc** (`goon.vc` Hub) folds ingest into durable cumulative
    history, then applies a trusted sidechain patch via
    `Hub._applySidechainPatchesTrusted` (path policy allows `/gooncitizen`).
 3. **Beacon** already embeds `payload.sidechain { clock, stateDigest }` and
    writes per-epoch snapshots — no parallel “game chain”; GoonCitizen rides the
-   Hub statechain.
+   Hub sidechain.
 
 **Why:** Org-wide verified play must be publicly tip-tied and reorg-safe, not
 only local `history.json`. The Beacon is the L1 step clock; the sidechain
@@ -92,6 +180,11 @@ meet that bar.
 - `npm run backfill` writes the same history path (incremental sync), not a
   divergent repo-root file.
 - Hub/server mode does not auto-scan local Game.logs (no file on the host).
+- **Corpus discovery (story #1):** `functions/logCorpus.js` + `locate.js` find
+  all channel `Game.log`s and `logbackups` on Windows drives **and** Linux/macOS
+  Wine/Proton prefixes. `GET …/corpus` + Analyze “My logs” list tracked files /
+  cursors; `POST …/corpus/sync` re-runs the cursor sync. History meta may stamp
+  `ownerPubkey` when identity is unlocked.
 
 ---
 
@@ -205,8 +298,9 @@ AMP/`Message` protocol over TCP/NOISE — not HTTP(S) batch uplink or chat pull.
 1. **Local Fabric Peer** — each GoonCitizen node starts `@fabric/core` Peer
    listening on **port 7777** (`settings/local.js` → `fabric.port`, optional
    Fabric Store `fabricPort`). Identity unlock supplies the Peer key material.
-2. **Default seed** — `relay.goon.vc:7777` (replaces `https://relay.goon.vc`).
-   Peers UI / REST accept `host:port` only.
+2. **Default seeds** — `hub.fabric.pub:7777` and `relay.goon.vc:7777`
+   (replaces the single HTTPS uplink). Both are Fabric Network hubs that
+   selectively relay relevant messages; Peers UI / REST accept `host:port` only.
 3. **Wire types** — network-wide `global` chat uses `P2P_CHAT_MESSAGE`;
    GoonCitizen app events use `CONTRACT_MESSAGE` under the frozen GoonCitizen
    contract id (`MissionCreated` / `MissionBroadcast` / `SCEventBatch`).
@@ -231,8 +325,9 @@ bridge. Real Peer transport matches hub.fabric.pub, enables signed wire frames
 end-to-end, and removes pull-sync race/auth complexity for chat.
 
 **Consequences / guardrails:**
-- `shareLogsGlobal` still gates **log** event publish only; chat + mission
-  broadcasts always publish when the Fabric peer is up.
+- Log event publish is opt-in (D-017): `shareLogsGlobal` and/or per-peer
+  `shareLogs`. Chat + mission broadcasts always publish when the Fabric peer
+  is up.
 - HTTP `POST …/events` may remain on hosted mode for tests/legacy; production
   peering path is Fabric.
 - Do not reintroduce https peer URLs in the Peers UI.
@@ -247,8 +342,10 @@ with the **Fabric Network** using the **Fabric Protocol** (amends the "no Fabric
 framing of D-002 — the heavyweight transport stays out, but conventions, types,
 and network integration come in):
 1. **Types in `types/`, data in `stores/`** — code never lives in `stores/`.
-   `types/Store.js` is the persistence type (backed by
-   `@fabric/core/types/store`, LevelDB). The named Fabric store root is
+   `types/Store.js` is the GoonCitizen persistence façade: it **composes**
+   `@fabric/core/types/store` and persists named collections at Fabric paths
+   `/collections/<name>` via `fabric.set` / `fabric.get` (exposes
+   `store.fabric`). The named Fabric store root is
    `stores/gooncitizen/` (CLI) / `<userData>/stores/gooncitizen/` (desktop) —
    the counterpart of the Hub's `stores/hub`. **All internal storage goes
    through the Fabric Store** (`register/` LevelDB): missions, groups, AND

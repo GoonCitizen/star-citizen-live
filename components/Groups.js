@@ -218,12 +218,35 @@ class Groups extends React.Component {
   }
 
   async share (g) {
-    const url = this.shareUrl(g);
+    this.setState({ busy: true, error: null, notice: null });
     try {
-      await navigator.clipboard.writeText(url);
-      this.setState({ notice: 'Share link copied.' });
-    } catch (_) {
-      this.setState({ notice: url });
+      const res = await fetch(`${BASE}/groups/${encodeURIComponent(g.id)}/share`, {
+        method: 'POST',
+        headers: this.headers(),
+        body: JSON.stringify({ relay: true })
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error || `HTTP ${res.status}`);
+      const url = (json.data && json.data.protocolUrl) || '';
+      if (!url) throw new Error('no protocolUrl in share response');
+      try {
+        await navigator.clipboard.writeText(url);
+        this.setState({
+          busy: false,
+          notice: 'Fabric GroupOffer copied (fabric:… message). Legacy page: ' + this.shareUrl(g)
+        });
+      } catch (_) {
+        this.setState({ busy: false, notice: url });
+      }
+    } catch (e) {
+      // Fallback to HTTP page URL if Fabric share fails
+      const url = this.shareUrl(g);
+      try {
+        await navigator.clipboard.writeText(url);
+        this.setState({ busy: false, notice: 'Share link copied (Fabric share failed: ' + e.message + ').' });
+      } catch (_) {
+        this.setState({ busy: false, error: e.message, notice: url });
+      }
     }
   }
 

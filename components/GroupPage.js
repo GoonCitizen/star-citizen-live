@@ -156,12 +156,36 @@ class GroupPage extends React.Component {
   }
 
   async share () {
-    const url = this.shareUrl();
+    const g = this.state.group;
+    if (!g) return;
+    this.setState({ busy: true, error: null, notice: null });
     try {
-      await navigator.clipboard.writeText(url);
-      this.setState({ notice: 'Share link copied: ' + url });
-    } catch (_) {
-      this.setState({ notice: url });
+      const res = await fetch(`${BASE}/groups/${encodeURIComponent(g.id)}/share`, {
+        method: 'POST',
+        headers: this.headers(),
+        body: JSON.stringify({ relay: true })
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error || `HTTP ${res.status}`);
+      const url = (json.data && json.data.protocolUrl) || '';
+      if (!url) throw new Error('no protocolUrl');
+      try {
+        await navigator.clipboard.writeText(url);
+        this.setState({
+          busy: false,
+          notice: 'Fabric GroupOffer copied. Page URL (secondary): ' + this.shareUrl()
+        });
+      } catch (_) {
+        this.setState({ busy: false, notice: url });
+      }
+    } catch (e) {
+      const url = this.shareUrl();
+      try {
+        await navigator.clipboard.writeText(url);
+        this.setState({ busy: false, notice: 'Page link copied (Fabric share failed: ' + e.message + ').' });
+      } catch (_) {
+        this.setState({ busy: false, error: e.message, notice: url });
+      }
     }
   }
 

@@ -20,7 +20,7 @@ const ALLOWED_KEYS = [
   'discordWebhook',
   'openAtLogin',
   'identityAutoLockMinutes', // 0 = off; default 30 (mirrors Hub identity lock prefs)
-  'shareLogsGlobal',         // push parsed log events to peer hubs for org aggregation (default true)
+  'shareLogsGlobal',         // broadcast parsed log events to all connected peers (default false; prefer per-peer shareLogs)
   'snapshotsEnabled',        // periodic screen snapshots (opt-in; desktop only)
   'snapshotIntervalSeconds', // capture cadence (default 10, min 2)
   'snapshotAutoPurge',       // delete oldest snapshots beyond the disk cap (default true)

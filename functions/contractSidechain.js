@@ -4,7 +4,7 @@
  * Contract-namespace Statechain helpers for GoonCitizen (D-016 / Hub ADR-001).
  *
  * Prefer `@fabric/core/functions/contractSidechainLocal` (digests + parent seals
- * from `@fabric/core/types/statechain`). Local fallback keeps desktop/CI working
+ * from `@fabric/core/functions/sidechainState`). Local fallback keeps desktop/CI working
  * when core lags.
  */
 

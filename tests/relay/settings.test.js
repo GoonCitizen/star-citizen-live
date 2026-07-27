@@ -242,6 +242,11 @@ test('SCEventBatch over Fabric delivers log events to a peer', async () => {
     await request(clientPort, 'POST', '/peers', { address: `127.0.0.1:${fabB}` });
     await waitFor(() => client.fabricNetwork.status().fabricConnected >= 1);
 
+    // Opt-in: authorize log share to the peer (default is off).
+    const peerList = await request(clientPort, 'GET', '/peers');
+    const rosterId = peerList.body.data.find((p) => String(p.address).includes(String(fabB))).id;
+    await request(clientPort, 'POST', `/peers/${rosterId}`, { shareLogs: true });
+
     client.handleLogChange("<2026-07-19T13:00:00.000Z> [Notice] <Actor Death> CActor::Kill: 'V' [1] in zone 'Z' killed by 'K' [2] using 'G' [Class R] with damage type 'B' from direction x: 0.1, y: 0.2, z: 0.3");
     assert.ok(client._uplinkQueue.length >= 1);
     await client._flushUplink();

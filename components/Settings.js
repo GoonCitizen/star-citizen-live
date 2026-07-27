@@ -60,7 +60,7 @@ class Settings extends React.Component {
       snapshotIntervalSeconds: 10,
       snapshotAutoPurge: true,
       snapshotMaxMB: 256,
-      shareLogsGlobal: true,
+      shareLogsGlobal: false,
       notifyDesktop: true,
       notifyChatGlobal: true,
       notifyChatGroups: true,
@@ -96,7 +96,7 @@ class Settings extends React.Component {
         snapshotIntervalSeconds: s.snapshotIntervalSeconds || 10,
         snapshotAutoPurge: s.snapshotAutoPurge !== false,
         snapshotMaxMB: s.snapshotMaxMB || 256,
-        shareLogsGlobal: s.shareLogsGlobal !== false,
+        shareLogsGlobal: s.shareLogsGlobal === true || (settingsRes.runtime && settingsRes.runtime.shareLogsGlobal === true),
         notifyDesktop: s.notifyDesktop !== false,
         notifyChatGlobal: s.notifyChatGlobal !== false,
         notifyChatGroups: s.notifyChatGroups !== false,
@@ -397,7 +397,7 @@ class Settings extends React.Component {
             React.createElement('div', { className: 'st-sec' },
               React.createElement('h3', null, 'Fabric Network'),
               React.createElement('div', { className: 'd' },
-                'Fabric peers (relay.goon.vc:7777 is seeded by default) receive your signed wire Messages over TCP/NOISE. Enable Advanced mode to manage them on the Peers tab.'),
+                'Fabric peers (hub.fabric.pub:7777 and relay.goon.vc:7777 are seeded by default) receive your signed wire Messages over TCP/NOISE. Log events stay private until you authorize sharing — prefer per-peer grants on the Peers tab, or enable global below.'),
               React.createElement('label', { style: { display: 'flex', gap: 8, alignItems: 'center', fontSize: 13, cursor: 'pointer', marginBottom: 10 } },
                 React.createElement('input', {
                   type: 'checkbox',
@@ -409,8 +409,10 @@ class Settings extends React.Component {
                     try { await this.put('shareLogsGlobal', value); } catch (err) { this.setState({ error: err.message }); }
                   }
                 }),
-                'Share logs to global — push my parsed game events to the org\'s central relay for aggregation'
+                'Share logs to global — push my parsed game events to every connected Fabric peer'
               ),
+              React.createElement('div', { className: 'd', style: { marginTop: -4, marginBottom: 10 } },
+                'Default is off. Per-peer “Share logs” on Peers is the usual path for authorizing a network hub.'),
               React.createElement('div', { className: 'st-row' },
                 React.createElement('span', { style: { fontSize: 12.5, color: 'var(--muted)' } },
                   this.state.peerCount

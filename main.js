@@ -57,6 +57,8 @@ let unlockedIdentity = null;
 let pendingFabricLoginPrompt = null;
 /** In-flight login prompts keyed by sessionId (message retained for sign). */
 const fabricLoginBySession = new Map();
+/** Pending opaque fabric:<hex> group share prompt. */
+let pendingGroupSharePrompt = null;
 
 const startHidden = process.argv.includes('--hidden') ||
   process.argv.includes('--open-as-hidden');
@@ -535,7 +537,7 @@ function mergeLinkedDeviceLocal (entry) {
 }
 
 /**
- * Handle fabric://login or fabric://link — fetch pending session, prompt renderer.
+ * Handle fabric://login, fabric://link, or opaque fabric:<hex> group shares.
  */
 async function handleFabricProtocolUrl (urlStr) {
   const linkParsed = parseFabricDeviceLinkUrl(urlStr);
@@ -544,39 +546,90 @@ async function handleFabricProtocolUrl (urlStr) {
     return;
   }
   const parsed = parseFabricLoginUrl(urlStr);
-  if (!parsed.ok) {
-    console.warn('[ELECTRON]', '[WARNING]', 'fabric: url ignored:', parsed.error || linkParsed.error);
-    return;
-  }
-  const { sessionId, hubBase } = parsed;
-  try {
-    const pending = await fetchPendingLoginSession(hubBase, sessionId);
-    if (!pending.ok) {
-      console.error('[ELECTRON]', '[ERROR]', 'fabric login session:', pending.error);
+  if (parsed.ok) {
+    const { sessionId, hubBase } = parsed;
+    try {
+      const pending = await fetchPendingLoginSession(hubBase, sessionId);
+      if (!pending.ok) {
+        console.error('[ELECTRON]', '[ERROR]', 'fabric login session:', pending.error);
+        deliverFabricLoginPrompt({
+          kind: 'login',
+          sessionId,
+          hubBase,
+          origin: hubBase,
+          message: '',
+          nonce: '',
+          identityLocked: !unlockedIdentity,
+          error: pending.error
+        });
+        return;
+      }
       deliverFabricLoginPrompt({
         kind: 'login',
         sessionId,
         hubBase,
-        origin: hubBase,
-        message: '',
-        nonce: '',
-        identityLocked: !unlockedIdentity,
-        error: pending.error
+        origin: pending.origin || hubBase,
+        message: pending.message,
+        nonce: pending.nonce || '',
+        identityLocked: !unlockedIdentity
       });
+      console.log('[ELECTRON]', '[STATUS]', 'fabric login prompt delivered:', sessionId.slice(0, 12) + '…');
+    } catch (e) {
+      console.error('[ELECTRON]', '[ERROR]', 'fabric login:', e && e.message ? e.message : e);
+    }
+    return;
+  }
+
+  // Opaque AMP Message: fabric:<hex>
+  try {
+    const {
+      parseOpaqueFabricMessage,
+      classifyGroupShareMessage
+    } = require('./functions/groupShareMessage');
+    const opaque = parseOpaqueFabricMessage(urlStr);
+    if (opaque.ok) {
+      const classified = classifyGroupShareMessage(opaque.message);
+      if (classified.kind === 'GroupOffer' || classified.kind === 'FederationContractInvite' || classified.kind === 'GroupPublish') {
+        deliverGroupSharePrompt({
+          kind: classified.kind,
+          protocolUrl: urlStr.startsWith('fabric:') ? urlStr.trim() : ('fabric:' + opaque.hex),
+          messageHex: opaque.hex,
+          contractId: classified.contractId,
+          groupId: classified.groupId,
+          offer: classified.kind === 'GroupOffer' ? classified.object : null,
+          invite: classified.kind === 'FederationContractInvite' ? classified.object : null,
+          group: classified.kind === 'GroupOffer' && classified.object && classified.object.meta
+            ? { name: classified.object.meta.name, visibility: classified.object.meta.visibility }
+            : null,
+          identityLocked: !unlockedIdentity
+        });
+        return;
+      }
+      console.warn('[ELECTRON]', '[WARNING]', 'fabric: opaque message not a group share:', classified.kind);
       return;
     }
-    deliverFabricLoginPrompt({
-      kind: 'login',
-      sessionId,
-      hubBase,
-      origin: pending.origin || hubBase,
-      message: pending.message,
-      nonce: pending.nonce || '',
-      identityLocked: !unlockedIdentity
-    });
-    console.log('[ELECTRON]', '[STATUS]', 'fabric login prompt delivered:', sessionId.slice(0, 12) + '…');
   } catch (e) {
-    console.error('[ELECTRON]', '[ERROR]', 'fabric login:', e && e.message ? e.message : e);
+    console.warn('[ELECTRON]', '[WARNING]', 'fabric: opaque parse:', e && e.message ? e.message : e);
+  }
+
+  console.warn('[ELECTRON]', '[WARNING]', 'fabric: url ignored:', parsed.error || linkParsed.error);
+}
+
+function deliverGroupSharePrompt (payload) {
+  if (!payload) return;
+  pendingGroupSharePrompt = payload;
+  showMainWindow();
+  const w = mainWindow && !mainWindow.isDestroyed() ? mainWindow : null;
+  if (w && w.webContents) {
+    const send = () => {
+      if (!mainWindow || mainWindow.isDestroyed()) return;
+      mainWindow.webContents.send('fabric-group-share-prompt', payload);
+    };
+    if (w.webContents.isLoadingMainFrame && w.webContents.isLoadingMainFrame()) {
+      w.webContents.once('did-finish-load', send);
+    } else {
+      send();
+    }
   }
 }
 
@@ -701,6 +754,17 @@ if (gotLock) {
 ipcMain.handle('fabric-login:pull-pending', () => {
   const p = pendingFabricLoginPrompt;
   return p || null;
+});
+
+ipcMain.handle('fabric-group-share:pull-pending', () => {
+  return pendingGroupSharePrompt || null;
+});
+
+ipcMain.handle('fabric-group-share:resolve', async (_e, { dismiss, approve } = {}) => {
+  if (dismiss || approve != null) {
+    pendingGroupSharePrompt = null;
+  }
+  return { ok: true };
 });
 
 ipcMain.handle('fabric-login:resolve', async (_e, { approve, sessionId } = {}) => {

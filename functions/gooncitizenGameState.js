@@ -114,7 +114,7 @@ function patchesForGameState (existingContent, snap) {
     patches.push({ op: 'add', path: '/gooncitizen', value: snap });
   }
 
-  // Parent seal for the GoonCitizen Contract namespace (same Statechain type).
+  // Parent seal for the GoonCitizen Contract namespace (same sidechain document helpers).
   const contractId = snap && snap.contractId ? String(snap.contractId).trim().toLowerCase() : '';
   if (contractId && snap && snap.digest) {
     try {

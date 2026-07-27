@@ -29,6 +29,7 @@ const Peers = require('../components/Peers');
 const Settings = require('../components/Settings');
 const Wallet = require('../components/Wallet');
 const FabricLoginModal = require('../components/FabricLoginModal');
+const GroupOfferModal = require('../components/GroupOfferModal');
 
 async function main () {
   const result = await esbuild.build({
@@ -57,6 +58,7 @@ ${Dashboard.CSS}
 ${Onboarding.CSS}
 ${Identity.CSS}
 ${FabricLoginModal.CSS || ''}
+${GroupOfferModal.CSS || ''}
 ${Chat.CSS}
 ${GlobalChatDock.CSS}
 ${MissionBroadcastBanner.CSS}

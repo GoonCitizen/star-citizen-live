@@ -35,15 +35,18 @@ function fakeRpc () {
   };
 }
 
-test('default peer: relay.goon.vc:7777 is seeded on first boot; removal is respected', async () => {
+test('default peers: hub.fabric.pub and relay.goon.vc are seeded on first boot; removal is respected', async () => {
   const svc = new LiveRelay({ port: 0, missions: { enable: false }, fabric: { enable: false } });
   await svc.start();
   const port = svc.server.address().port;
   try {
     const peers = (await request(port, 'GET', '/peers')).body.data;
-    assert.strictEqual(peers.length, 1);
-    assert.strictEqual(peers[0].address, 'relay.goon.vc:7777');
-    assert.strictEqual(peers[0].enabled, true);
+    assert.strictEqual(peers.length, 2);
+    assert.deepStrictEqual(peers.map((p) => p.address).sort(), [
+      'hub.fabric.pub:7777',
+      'relay.goon.vc:7777'
+    ].sort());
+    assert.ok(peers.every((p) => p.enabled === true && p.primary === true));
   } finally { await svc.stop(); }
 
   // Explicit peers override suppresses the seed (tests / custom deployments).
@@ -54,7 +57,7 @@ test('default peer: relay.goon.vc:7777 is seeded on first boot; removal is respe
   } finally { await clean.stop(); }
 });
 
-test('shareLogsGlobal gates the event uplink but not chat', async () => {
+test('shareLogs consent gates the event uplink but not chat', async () => {
   const fs = require('fs');
   const os = require('os');
   const path = require('path');
@@ -76,24 +79,38 @@ test('shareLogsGlobal gates the event uplink but not chat', async () => {
     svc._startFabricFlush();
     const KILL = "<2026-07-19T13:00:00.000Z> [Notice] <Actor Death> CActor::Kill: 'V' [1] in zone 'Z' killed by 'K' [2] using 'G' [Class R] with damage type 'B' from direction x: 0.1, y: 0.2, z: 0.3";
 
-    // Default: sharing on → events queue.
+    // Default: sharing off → events do not queue.
     svc.handleLogChange(KILL);
-    assert.ok(svc._uplinkQueue.some((e) => e.collection === 'kills'), 'event queued while sharing on');
-    svc._uplinkQueue.length = 0;
+    assert.strictEqual(svc._uplinkQueue.filter((e) => e.collection === 'kills').length, 0, 'no events while sharing off');
 
-    // Turn sharing off via the settings API (no restart) — events stop queuing.
-    const put = await request(port, 'PUT', '/settings/shareLogsGlobal', { value: false });
+    // Turn sharing on via the settings API (no restart) — events queue.
+    const put = await request(port, 'PUT', '/settings/shareLogsGlobal', { value: true });
     assert.strictEqual(put.status, 200);
     assert.strictEqual(put.body.requiresRestart, false);
     svc.handleLogChange(KILL.replace('13:00:00', '13:05:00'));
-    assert.strictEqual(svc._uplinkQueue.filter((e) => e.collection === 'kills').length, 0, 'no events while sharing off');
+    assert.ok(svc._uplinkQueue.some((e) => e.collection === 'kills'), 'event queued while sharing on');
+    svc._uplinkQueue.length = 0;
 
-    // Chat is not gated by shareLogsGlobal (publishes over Fabric when enabled;
+    // Per-peer grant without global: authorize the roster peer.
+    await request(port, 'PUT', '/settings/shareLogsGlobal', { value: false });
+    const peerId = svc.peers[0].id;
+    const patch = await request(port, 'POST', `/peers/${peerId}`, { shareLogs: true });
+    assert.strictEqual(patch.status, 200);
+    assert.strictEqual(patch.body.data.shareLogs, true);
+    svc.handleLogChange(KILL.replace('13:00:00', '13:10:00'));
+    assert.ok(svc._uplinkQueue.some((e) => e.collection === 'kills'), 'event queued with per-peer shareLogs');
+    assert.deepStrictEqual(svc._logShareTargets(), ['127.0.0.1:1']);
+
+    // Chat is not gated by share consent (publishes over Fabric when enabled;
     // with fabric disabled it still posts locally without entering the log queue).
     const chat = await request(port, 'POST', `${BASE}/chat/messages`, { channel: 'global', body: 'still chatting' });
     assert.strictEqual(chat.status, 200);
     assert.strictEqual(chat.body.data.body, 'still chatting');
     assert.strictEqual(svc._uplinkQueue.filter((e) => e.collection === 'chatmessages').length, 0);
+
+    const peers = await request(port, 'GET', '/peers');
+    assert.strictEqual(peers.body.data[0].shareLogs, true);
+    assert.ok(['connected', 'offline', 'disabled'].includes(peers.body.data[0].status));
   } finally {
     await svc.stop();
     require('fs').rmSync(dir, { recursive: true, force: true });

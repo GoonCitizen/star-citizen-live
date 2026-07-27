@@ -21,35 +21,14 @@ const readline = require('readline');
 const { parseLine, missionType, missionFaction } = require('../functions/parser');
 const { storeRoot } = require('../functions/storePaths');
 const cumulativeHistory = require('../functions/cumulativeHistory');
+const { defaultCorpusDirs, findLogs, discoverCorpusFiles } = require('../functions/logCorpus');
 
 const STORE = cumulativeHistory.historyPath(storeRoot()) || path.join(__dirname, '..', 'stores', 'gooncitizen', 'history.json');
 const CURSORS = cumulativeHistory.cursorsPath(storeRoot()) || path.join(__dirname, '..', 'stores', 'gooncitizen', 'log-cursors.json');
 
+/** @deprecated Prefer logCorpus.defaultCorpusDirs — kept for LiveRelay / tests. */
 function defaultDirs () {
-  const dirs = [];
-  const corpus = path.join(__dirname, '..', 'Gamelogs');
-  if (fs.existsSync(corpus)) dirs.push(corpus);
-  const roots = ['C:\\', 'D:\\', 'E:\\', 'F:\\'];
-  const channels = ['LIVE', 'PTU', 'EPTU', 'HOTFIX', 'TECH-PREVIEW'];
-  for (const r of roots) {
-    for (const c of channels) {
-      const lb = path.join(r, 'Roberts Space Industries', 'StarCitizen', c, 'logbackups');
-      if (fs.existsSync(lb)) dirs.push(lb);
-    }
-  }
-  return dirs;
-}
-
-function findLogs (dir) {
-  const out = [];
-  let entries = [];
-  try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch (_) { return out; }
-  for (const e of entries) {
-    const p = path.join(dir, e.name);
-    if (e.isDirectory()) out.push(...findLogs(p));
-    else if (/\.log$/i.test(e.name)) out.push(p);
-  }
-  return out;
+  return defaultCorpusDirs({ repoRoot: path.join(__dirname, '..') });
 }
 
 /** @deprecated Prefer cumulativeHistory.syncFiles — kept for tests. */
@@ -118,13 +97,20 @@ function toStore (acc, generatedAt) {
 }
 
 async function main () {
-  const dirs = process.argv.slice(2).length ? process.argv.slice(2) : defaultDirs();
-  if (!dirs.length) { console.error('No log directories found. Pass directories explicitly.'); process.exit(1); }
-  console.log('Scanning:\n  ' + dirs.join('\n  '));
-  let files = [];
-  for (const d of dirs) files.push(...findLogs(d));
-  files = [...new Set(files)];
-  console.log(`Found ${files.length} log files. Syncing into cumulative history…`);
+  const argvDirs = process.argv.slice(2);
+  let files;
+  if (argvDirs.length) {
+    const dirs = argvDirs;
+    console.log('Scanning:\n  ' + dirs.join('\n  '));
+    files = [];
+    for (const d of dirs) files.push(...findLogs(d));
+    files = [...new Set(files.map((f) => path.resolve(f)))];
+  } else {
+    files = discoverCorpusFiles({ repoRoot: path.join(__dirname, '..') });
+    console.log(`Auto-discovered ${files.length} log files (installs + logbackups + ./Gamelogs)`);
+  }
+  if (!files.length) { console.error('No log files found. Pass directories explicitly.'); process.exit(1); }
+  console.log(`Syncing ${files.length} log files into cumulative history…`);
 
   const history = cumulativeHistory.loadHistory(STORE);
   const cursors = cumulativeHistory.loadCursors(CURSORS);
@@ -141,6 +127,6 @@ async function main () {
   console.log(`  pilots: ${(history.players || []).join(', ') || '(none)'}`);
 }
 
-module.exports = { defaultDirs, findLogs, ingestFiles, processFile, toStore, STORE, CURSORS };
+module.exports = { defaultDirs, findLogs, discoverCorpusFiles, ingestFiles, processFile, toStore, STORE, CURSORS };
 
 if (require.main === module) main().catch((e) => { console.error('Backfill failed:', e.message); process.exit(1); });

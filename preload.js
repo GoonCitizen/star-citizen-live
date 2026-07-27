@@ -52,6 +52,16 @@ contextBridge.exposeInMainWorld('electronAPI', {
     pullPending: () => ipcRenderer.invoke('fabric-login:pull-pending'),
     resolve: (opts) => ipcRenderer.invoke('fabric-login:resolve', opts || {})
   },
+  /** Opaque fabric:<hex> GroupOffer / FederationContractInvite. */
+  groupShare: {
+    onPrompt: (handler) => {
+      const listener = (_e, payload) => handler(payload);
+      ipcRenderer.on('fabric-group-share-prompt', listener);
+      return () => ipcRenderer.removeListener('fabric-group-share-prompt', listener);
+    },
+    pullPending: () => ipcRenderer.invoke('fabric-group-share:pull-pending'),
+    resolve: (opts) => ipcRenderer.invoke('fabric-group-share:resolve', opts || {})
+  },
   platform: process.platform,
   versions: {
     node: process.versions.node,

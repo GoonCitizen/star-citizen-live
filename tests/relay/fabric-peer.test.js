@@ -52,10 +52,15 @@ function fabricPort () {
 
 test('FabricNetwork.normalizeFabricAddress validates host:port and migrates https', () => {
   assert.strictEqual(FabricNetwork.isFabricAddress('relay.goon.vc:7777'), true);
+  assert.strictEqual(FabricNetwork.isFabricAddress('hub.fabric.pub:7777'), true);
   assert.strictEqual(FabricNetwork.isFabricAddress('https://relay.goon.vc'), false);
   assert.strictEqual(FabricNetwork.normalizeFabricAddress('relay.goon.vc:7777'), 'relay.goon.vc:7777');
   assert.strictEqual(FabricNetwork.normalizeFabricAddress('https://relay.goon.vc/', { migrate: true }), 'relay.goon.vc:7777');
   assert.strictEqual(FabricNetwork.normalizeFabricAddress('https://relay.goon.vc/', { migrate: false }), null);
+  assert.deepStrictEqual(FabricNetwork.DEFAULT_SEEDS, ['hub.fabric.pub:7777', 'relay.goon.vc:7777']);
+  assert.strictEqual(FabricNetwork.isNetworkHubAddress('hub.fabric.pub:7777'), true);
+  assert.strictEqual(FabricNetwork.isNetworkHubAddress('relay.goon.vc:7777'), true);
+  assert.strictEqual(FabricNetwork.isNetworkHubAddress('example.com:7777'), false);
 });
 
 test('group-scoped mission broadcast is filtered for non-members', async () => {
@@ -422,5 +427,73 @@ test('Fabric peer: foreign contract-namespace CONTRACT_MESSAGE is ignored', asyn
     await nodeB.stop();
     fs.rmSync(dirA, { recursive: true, force: true });
     fs.rmSync(dirB, { recursive: true, force: true });
+  }
+});
+
+test('ensureFabric with nickname set does not stack-overflow (alias publish re-entrancy)', async () => {
+  const alice = createIdentity();
+  const dir = tmpDir('sc-fab-nick-');
+  const port = fabricPort();
+  const svc = new LiveRelay({
+    port: 0,
+    settingsDir: dir,
+    peers: [],
+    fabric: { enable: true, listen: true, port, interface: '127.0.0.1' },
+    missions: { enable: false }
+  });
+  await svc.start();
+  try {
+    svc._nickname = 'Neorion';
+    svc.setIdentity(alice);
+    // Desktop unlock path: refreshFabric → ensureFabric while nickname is already loaded.
+    await assert.doesNotReject(() => svc._refreshFabric());
+    await waitFor(() => svc.fabricNetwork && svc.fabricNetwork.ready);
+    assert.strictEqual(svc._peerAliasByPubkey[alice.pubkey], 'Neorion');
+    // Settings update path still works (ensure → send, no recurse).
+    await assert.doesNotReject(() => svc._publishPeerAlias('WingLead'));
+    assert.strictEqual(svc._peerAliasByPubkey[alice.pubkey], 'WingLead');
+  } finally {
+    await svc.stop();
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('publishing chat with nickname set does not re-enter ensureFabric', async () => {
+  const alice = createIdentity();
+  const dir = tmpDir('sc-fab-chat-nick-');
+  const port = fabricPort();
+  const svc = new LiveRelay({
+    port: 0,
+    settingsDir: dir,
+    peers: [],
+    fabric: { enable: true, listen: true, port, interface: '127.0.0.1' },
+    missions: { enable: false }
+  });
+  await svc.start();
+  try {
+    svc._nickname = 'Neorion';
+    svc.setIdentity(alice);
+    await waitFor(() => svc.fabricNetwork && svc.fabricNetwork.ready);
+    let ensures = 0;
+    const orig = svc._ensureFabricBody.bind(svc);
+    svc._ensureFabricBody = async (...args) => {
+      ensures += 1;
+      return orig(...args);
+    };
+    const record = {
+      id: 'chat-1',
+      channel: 'global',
+      body: 'o7 after nickname',
+      author: alice.pubkey,
+      handle: 'Neorion',
+      ts: new Date().toISOString()
+    };
+    await assert.doesNotReject(() => svc._publishChat(record));
+    await assert.doesNotReject(() => svc._publishChat(Object.assign({}, record, { id: 'chat-2', body: 'second' })));
+    // Ready peer: chat hot path must not call ensure body at all.
+    assert.strictEqual(ensures, 0, 'chat must not re-run ensureFabric when peer is ready');
+  } finally {
+    await svc.stop();
+    fs.rmSync(dir, { recursive: true, force: true });
   }
 });

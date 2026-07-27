@@ -10,6 +10,7 @@ const React = require('react');
 const Onboarding = require('./Onboarding');
 const Identity = require('./Identity');
 const FabricLoginModal = require('./FabricLoginModal');
+const GroupOfferModal = require('./GroupOfferModal');
 const SiteLogin = require('./SiteLogin');
 const Chat = require('./Chat');
 const GlobalChatDock = require('./GlobalChatDock');
@@ -303,6 +304,7 @@ class Dashboard extends React.Component {
       nickname: null,
       // Game.log visibility + rules + re-parse
       loginfo: null,
+      corpus: null,
       reparse: null,
       rules: [],
       activeRules: new Set(), // rule ids toggled for highlighting
@@ -381,6 +383,7 @@ class Dashboard extends React.Component {
         missions: d.missions || [],
         kills: d.kills || [],
         loginfo: d.loginfo || null,
+        corpus: d.corpus || this.state.corpus,
         reparse: d.reparse || null
       });
     } catch (_) {
@@ -438,11 +441,86 @@ class Dashboard extends React.Component {
       .then((j) => {
         this.setState({
           analytics: j,
+          corpus: j.corpus || this.state.corpus,
           azMonths: this.state.azMonths || new Set(j.availableMonths || []),
           azLoading: false
         });
       })
       .catch(() => this.setState({ azLoading: false }));
+  }
+
+  async syncCorpus () {
+    try {
+      await fetch('/services/star-citizen/corpus/sync', { method: 'POST' });
+      await this.poll();
+      this.fetchAnalytics();
+    } catch (_) { /* offline */ }
+  }
+
+  renderMyLogs () {
+    const corpus = this.state.corpus || (this.state.analytics && this.state.analytics.corpus) || null;
+    const fmt = (b) => {
+      if (!Number.isFinite(b) || b <= 0) return '0 B';
+      if (b >= 1048576) return (b / 1048576).toFixed(1) + ' MB';
+      if (b >= 1024) return Math.round(b / 1024) + ' KB';
+      return b + ' B';
+    };
+    const shortPath = (p) => {
+      if (!p) return '';
+      const parts = String(p).split(/[\\/]+/);
+      if (parts.length <= 4) return p;
+      return '…/' + parts.slice(-4).join('/');
+    };
+    if (!corpus) {
+      return React.createElement('section', { className: 'panel full' },
+        React.createElement('h2', null, 'My logs ',
+          React.createElement('span', { className: 'sub' }, '— locating Game.log + logbackups…')
+        )
+      );
+    }
+    const files = corpus.files || [];
+    const pending = corpus.pendingFiles || 0;
+    return React.createElement('section', { className: 'panel full' },
+      React.createElement('h2', null, 'My logs ',
+        React.createElement('span', { className: 'sub' },
+          `${corpus.fileCount || 0} files · ${fmt(corpus.totalSize)} · ${pending ? pending + ' pending sync' : 'cursors up to date'}`
+        ),
+        React.createElement('button', {
+          className: 'btn', type: 'button', style: { marginLeft: 8 },
+          onClick: () => this.syncCorpus()
+        }, 'Re-scan logs')
+      ),
+      React.createElement('div', { style: { padding: '8px 14px 14px' } },
+        corpus.ownerPubkey
+          ? React.createElement('div', { className: 'sub', style: { marginBottom: 8 } },
+            'Owner key ', React.createElement('code', null, String(corpus.ownerPubkey).slice(0, 16) + '…'))
+          : React.createElement('div', { className: 'sub', style: { marginBottom: 8 } },
+            'Unlock identity to stamp this corpus as yours (local analyze works either way).'),
+        files.length === 0
+          ? React.createElement('div', { className: 'empty' },
+            'No Game.log or logbackups found yet. Set SC_LOGFILE / Settings path, or start the game once. Linux/Proton installs are scanned under Steam compatdata.')
+          : React.createElement('div', { style: { maxHeight: 220, overflow: 'auto' } },
+            files.map((f) => React.createElement('div', {
+              key: f.path,
+              style: {
+                display: 'flex', gap: 10, alignItems: 'baseline',
+                fontSize: 12, padding: '4px 0', borderBottom: '1px solid var(--line)'
+              }
+            },
+              React.createElement('span', { className: 'chip ' + (f.synced ? 'on' : ''), style: { minWidth: 64, textAlign: 'center' } },
+                f.role === 'live' ? 'live' : (f.synced ? 'synced' : 'pending')),
+              React.createElement('span', { className: 'sub', title: f.path, style: { flex: 1 } }, shortPath(f.path)),
+              f.channel ? React.createElement('span', { className: 'chip' }, f.channel) : null,
+              React.createElement('span', { className: 'sub' }, fmt(f.size))
+            ))
+          ),
+        corpus.historyCounts
+          ? React.createElement('div', { className: 'sub', style: { marginTop: 10 } },
+            `History: ${corpus.historyCounts.missions} missions · ${corpus.historyCounts.deaths} deaths · ${corpus.historyCounts.sessions} sessions · ${corpus.historyCounts.players} pilots`
+            + (corpus.lastSyncAt ? ` · flushed ${shortTime(corpus.lastSyncAt)}` : ''))
+          : null
+      )
+    );
   }
 
   showTab (tab, { fromHash = false } = {}) {
@@ -711,6 +789,7 @@ class Dashboard extends React.Component {
 
     if (!D) {
       return React.createElement('main', null,
+        this.renderMyLogs(),
         React.createElement('section', { className: 'panel full' },
           React.createElement('div', { className: 'kpis' },
             React.createElement('div', { className: 'empty', style: { gridColumn: '1 / -1' } },
@@ -818,6 +897,7 @@ class Dashboard extends React.Component {
     };
 
     return React.createElement('main', { onClick: onAzClick },
+      this.renderMyLogs(),
       React.createElement('section', { className: 'panel full' },
         React.createElement('h2', null, '🔎 Analyze ',
           React.createElement('span', { className: 'sub' }, '— cumulative history (all scanned logs); every filter cross-filters all panels')
@@ -1225,6 +1305,7 @@ class Dashboard extends React.Component {
         onReady: (pubkey) => this.setState({ identityPubkey: pubkey, identityExists: !!pubkey, identityLocked: false })
       }),
       React.createElement(FabricLoginModal, null),
+      React.createElement(GroupOfferModal, null),
       this.state.showSettings
         ? React.createElement(Settings, {
           onClose: () => this.setState({ showSettings: false }),

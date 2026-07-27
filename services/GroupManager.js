@@ -12,12 +12,12 @@
  * is set). Public groups can be shared; visitors apply to join; the creator
  * accepts or rejects. Private groups are members-only.
  *
- * Persistence: uses `types/Store.js` → `@fabric/core` LevelDB under
+ * Persistence: uses `types/Store.js` (composes `@fabric/core` Store;
+ * `/collections/*` paths) under
  * `stores/gooncitizen/register` (Hub-style named store root).
  */
 
 const crypto = require('crypto');
-const path = require('path');
 const EventEmitter = require('events');
 
 const Group = require('../types/Group');
@@ -61,6 +61,71 @@ class GroupManager extends EventEmitter {
   }
 
   _id (prefix = 'group') { this._counter += 1; return `${prefix}-${Date.now().toString(36)}-${this._counter}`; }
+
+  _groupDefinition (groupIdOrData) {
+    const data = typeof groupIdOrData === 'string'
+      ? this.store.get('groups', groupIdOrData)
+      : groupIdOrData;
+    if (!data) return null;
+    if (data._contractDefinition && isGroupContractDefinition(data._contractDefinition)) {
+      return data._contractDefinition;
+    }
+    if (!data.contractId && !data.id) return null;
+    try {
+      return groupContractDefinition({
+        groupId: data.id,
+        creator: data.creator,
+        validators: data.members,
+        threshold: data.threshold,
+        createdAt: data.createdAt,
+        meta: {
+          name: data.name,
+          visibility: data.visibility,
+          slug: data.slug || null,
+          parentId: data.parentId || null
+        }
+      });
+    } catch (_) {
+      return null;
+    }
+  }
+
+  _syncGroupStatechain (contractId, definition) {
+    if (!contractId || !definition) return null;
+    const groupStatechain = require('../functions/groupStatechain');
+    const { gooncitizenContractId } = require('../contracts/gooncitizen');
+    return groupStatechain.publishFoldedContent(this.store, contractId, definition, {
+      name: GROUP_CONTRACT_NAME,
+      parentContractId: gooncitizenContractId()
+    });
+  }
+
+  /**
+   * Append an accepted membership event to the group Statechain journal and fold.
+   * @param {string} groupId
+   * @param {{ id: string, type: string, message: object, acceptedAt?: string }} entry
+   */
+  _appendGroupStatechain (groupId, entry) {
+    try {
+      const data = this.store.get('groups', groupId);
+      if (!data || !data.contractId) return null;
+      const definition = this._groupDefinition(data);
+      if (!definition) return null;
+      const groupStatechain = require('../functions/groupStatechain');
+      const { gooncitizenContractId } = require('../contracts/gooncitizen');
+      return groupStatechain.appendAccepted(
+        this.store,
+        data.contractId,
+        entry,
+        definition,
+        { name: GROUP_CONTRACT_NAME, parentContractId: gooncitizenContractId() }
+      );
+    } catch (err) {
+      this.emit('warning', '[GroupManager] group statechain append failed:',
+        err && err.message ? err.message : err);
+      return null;
+    }
+  }
 
   _audit (actor, action, entityId, summary) {
     const chain = this.audit;
@@ -222,6 +287,12 @@ class GroupManager extends EventEmitter {
     json._contractDefinition = definition;
     this.store.put('groups', json.id, json);
     this._audit(source || definition.creator, 'group.ingest', json.id, `contract ${contractId.slice(0, 12)}…`);
+    try {
+      this._syncGroupStatechain(contractId, definition);
+    } catch (err) {
+      this.emit('warning', '[GroupManager] contract sidechain provision failed:',
+        err && err.message ? err.message : err);
+    }
     this.emit('group:ingested', { group: new Group(json).toJSON(), created: true, source });
     return { group: new Group(json).toJSON(), created: true };
   }
@@ -295,6 +366,21 @@ class GroupManager extends EventEmitter {
       });
     }
     this._audit(actor, `group.change.${action}`, json.id, change.member || '');
+    this._appendGroupStatechain(json.id, {
+      id: changeId || this._id('gchg'),
+      type: 'GroupChange',
+      message: {
+        id: changeId,
+        action,
+        groupId: json.id,
+        contractId: json.contractId,
+        actor,
+        member: change.member || null,
+        patch: change.patch || null,
+        ts: change.ts || new Date().toISOString()
+      },
+      acceptedAt: change.ts || new Date().toISOString()
+    });
     this.emit('group:changed', { group: json, change, source: actor });
     return { group: json, applied: true };
   }
@@ -448,30 +534,9 @@ class GroupManager extends EventEmitter {
     this.store.put('groups', group.id, json);
     this._audit(creator, 'group.create', group.id, `${group.name} (${members.length} member(s), ${group.visibility}${parentId ? `, parent=${parentId}` : ''})`);
 
-    // D-016 / ADR-001: provision a local contract Statechain for the Group
-    // (same layout as Hub `sidechains/<contractId>/`).
+    // D-016 / ADR-001: provision local contract Statechain + folded genesis state.
     try {
-      const contractSidechain = require('../functions/contractSidechain');
-      const { gooncitizenContractId } = require('../contracts/gooncitizen');
-      const registerPath = (this.store && this.store.path) || this.settings.dir || null;
-      const storeRoot = registerPath
-        ? path.dirname(registerPath)
-        : (process.env.SC_SETTINGS_DIR || path.join(process.cwd(), 'stores', 'gooncitizen'));
-      contractSidechain.ensureLocalContractChain(storeRoot, contractId, {
-        name: GROUP_CONTRACT_NAME,
-        parentContractId: gooncitizenContractId()
-      });
-      contractSidechain.publishContent(storeRoot, contractId, {
-        '@type': 'GoonCitizenGroupState',
-        groupId: id,
-        contractId,
-        meta: definition.meta || {},
-        members: members.slice(),
-        proposedPolicy: definition.proposedPolicy || null
-      }, {
-        name: GROUP_CONTRACT_NAME,
-        parentContractId: gooncitizenContractId()
-      });
+      this._syncGroupStatechain(contractId, definition);
     } catch (err) {
       this.emit('warning', '[GroupManager] contract sidechain provision failed:',
         err && err.message ? err.message : err);
@@ -529,6 +594,12 @@ class GroupManager extends EventEmitter {
     };
     this.emit('group:updated', json);
     this.emit('group:local-change', change);
+    this._appendGroupStatechain(groupId, {
+      id: change.id,
+      type: 'GroupChange',
+      message: change,
+      acceptedAt: change.ts
+    });
     return new Group(this.store.get('groups', groupId)).toJSON();
   }
 
@@ -562,6 +633,12 @@ class GroupManager extends EventEmitter {
     };
     this.emit('group:member-added', { groupId, pubkey, actor });
     this.emit('group:local-change', change);
+    this._appendGroupStatechain(groupId, {
+      id: change.id,
+      type: 'GroupChange',
+      message: change,
+      acceptedAt: change.ts
+    });
     return new Group(this.store.get('groups', groupId)).toJSON();
   }
 
@@ -597,6 +674,12 @@ class GroupManager extends EventEmitter {
     };
     this.emit('group:member-removed', { groupId, pubkey, actor });
     this.emit('group:local-change', change);
+    this._appendGroupStatechain(groupId, {
+      id: change.id,
+      type: 'GroupChange',
+      message: change,
+      acceptedAt: change.ts
+    });
     return new Group(this.store.get('groups', groupId)).toJSON();
   }
 
@@ -630,6 +713,12 @@ class GroupManager extends EventEmitter {
     };
     this.store.put('groupapplications', id, app);
     this._audit(applicantId, 'group.application.submit', groupId, id);
+    this._appendGroupStatechain(groupId, {
+      id,
+      type: 'GroupApplication',
+      message: app,
+      acceptedAt: app.createdAt
+    });
     this.emit('group:application', app);
     return app;
   }
@@ -652,6 +741,19 @@ class GroupManager extends EventEmitter {
     if (data.decision === 'accept') {
       app.status = 'accepted';
       this.store.put('groupapplications', app.id, app);
+      this._appendGroupStatechain(app.groupId, {
+        id: `${app.id}:decision`,
+        type: 'GroupApplicationDecision',
+        message: {
+          applicationId: app.id,
+          applicantId: app.applicantId,
+          decision: 'accept',
+          status: 'accepted',
+          decidedBy: data.actor,
+          decidedAt: app.decidedAt
+        },
+        acceptedAt: app.decidedAt
+      });
       await this.addMember(app.groupId, app.applicantId, data.actor);
       this._audit(data.actor, 'group.application.accept', app.groupId, app.applicantId);
       this.emit('group:application-accepted', app);
@@ -659,6 +761,20 @@ class GroupManager extends EventEmitter {
       app.status = 'rejected';
       app.reason = data.reason || null;
       this.store.put('groupapplications', app.id, app);
+      this._appendGroupStatechain(app.groupId, {
+        id: `${app.id}:decision`,
+        type: 'GroupApplicationDecision',
+        message: {
+          applicationId: app.id,
+          applicantId: app.applicantId,
+          decision: 'reject',
+          status: 'rejected',
+          reason: app.reason,
+          decidedBy: data.actor,
+          decidedAt: app.decidedAt
+        },
+        acceptedAt: app.decidedAt
+      });
       this._audit(data.actor, 'group.application.reject', app.groupId, app.applicantId);
       this.emit('group:application-rejected', app);
     } else {

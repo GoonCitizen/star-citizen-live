@@ -21,11 +21,11 @@ module.exports = {
     port: 3041
   },
 
-  // Fabric P2P peering (AMP/Message over TCP/NOISE). Default seed is the org relay.
+  // Fabric P2P peering (AMP/Message over TCP/NOISE). Default seeds are network hubs.
   fabric: {
     listen: true,
     port: 7777,
-    peers: ['relay.goon.vc:7777']
+    peers: ['hub.fabric.pub:7777', 'relay.goon.vc:7777']
   },
 
   // Discord Integration
