@@ -10,6 +10,8 @@ const { showDesktopNotification } = require('../functions/desktopNotify');
 
 const BASE = '/services/star-citizen';
 const LS_SEEN = 'gc.missionBroadcast.seen';
+const LS_INBOX_SEEN = 'gc.inboxNotify.seen';
+const DESKTOP_INBOX_KINDS = new Set(['FederationInvite', 'GroupOffer']);
 
 const CSS = `
   .mbb-stack{position:fixed;left:16px;bottom:16px;z-index:32;display:flex;flex-direction:column;gap:10px;
@@ -40,6 +42,18 @@ function saveSeen (set) {
   try { localStorage.setItem(LS_SEEN, JSON.stringify(Array.from(set).slice(-100))); } catch (_) { /* ignore */ }
 }
 
+function loadInboxSeen () {
+  try {
+    return new Set(JSON.parse(localStorage.getItem(LS_INBOX_SEEN) || '[]'));
+  } catch (_) {
+    return new Set();
+  }
+}
+
+function saveInboxSeen (set) {
+  try { localStorage.setItem(LS_INBOX_SEEN, JSON.stringify(Array.from(set).slice(-200))); } catch (_) { /* ignore */ }
+}
+
 function shortKey (pk) {
   return pk ? pk.slice(0, 8) + '…' : '?';
 }
@@ -54,6 +68,7 @@ class MissionBroadcastBanner extends React.Component {
     this.state = { pending: [], busyId: null, error: null, token: null };
     this._timer = null;
     this._seen = loadSeen();
+    this._inboxSeen = loadInboxSeen();
     this._bootstrapped = false;
     this._unsubAction = null;
   }
@@ -63,14 +78,21 @@ class MissionBroadcastBanner extends React.Component {
     this._timer = setInterval(() => this.tick(), 4000);
     if (window.electronAPI && typeof window.electronAPI.onNotifyAction === 'function') {
       this._unsubAction = window.electronAPI.onNotifyAction((data) => {
-        if (!data || data.kind !== 'missionbroadcast') return;
-        if (data.action === 'accept' || data.index === 0) this.accept(data.id);
-        else if (data.action === 'ignore' || data.index === 1) this.ignore(data.id);
+        if (!data) return;
+        if (data.kind === 'missionbroadcast') {
+          if (data.action === 'accept' || data.index === 0) this.accept(data.id);
+          else if (data.action === 'ignore' || data.index === 1) this.ignore(data.id);
+          return;
+        }
+        if (data.kind === 'federationinvite' || data.kind === 'groupoffer') {
+          if (typeof window !== 'undefined') window.location.hash = 'notifications';
+        }
       });
     }
     if (window.electronAPI && typeof window.electronAPI.onNotifyClick === 'function') {
       this._unsubClick = window.electronAPI.onNotifyClick((data) => {
-        if (data && data.kind === 'missionbroadcast' && typeof window !== 'undefined') {
+        if (!data || typeof window === 'undefined') return;
+        if (data.kind === 'missionbroadcast' || data.kind === 'federationinvite' || data.kind === 'groupoffer') {
           window.location.hash = 'notifications';
         }
       });
@@ -120,23 +142,28 @@ class MissionBroadcastBanner extends React.Component {
       ]);
       const pending = res.data || [];
       const notifyEnabled = res.notify !== false;
+      const inboxItems = (inboxRes && inboxRes.data) || [];
       this.setState({ pending });
       // Bell badge uses the full register inbox (broadcasts + apps + invites).
       const inboxPending = typeof (inboxRes && inboxRes.pending) === 'number'
         ? inboxRes.pending
-        : (inboxRes && inboxRes.data ? inboxRes.data.filter((i) => i.actionable).length : pending.length);
+        : inboxItems.filter((i) => i.actionable).length || pending.length;
       this.reportPending(inboxPending);
 
       if (!this._bootstrapped) {
         for (const b of pending) this._seen.add(b.id);
+        for (const row of inboxItems) this._inboxSeen.add(row.id);
         saveSeen(this._seen);
+        saveInboxSeen(this._inboxSeen);
         this._bootstrapped = true;
         return;
       }
 
       if (!notifyEnabled) {
         for (const b of pending) this._seen.add(b.id);
+        for (const row of inboxItems) this._inboxSeen.add(row.id);
         saveSeen(this._seen);
+        saveInboxSeen(this._inboxSeen);
         return;
       }
 
@@ -161,6 +188,28 @@ class MissionBroadcastBanner extends React.Component {
         });
       }
       saveSeen(this._seen);
+
+      for (const row of inboxItems) {
+        if (!row || !DESKTOP_INBOX_KINDS.has(row.kind)) continue;
+        if (row.status !== 'pending' || !row.actionable) continue;
+        if (this._inboxSeen.has(row.id)) continue;
+        this._inboxSeen.add(row.id);
+        const who = row.handle || shortKey(row.source);
+        const isInvite = row.kind === 'FederationInvite';
+        await showDesktopNotification({
+          id: row.id,
+          kind: isInvite ? 'federationinvite' : 'groupoffer',
+          title: isInvite ? 'Group invite' : 'Group offer',
+          body: `${who}: ${row.title || (isInvite ? 'You were invited to a group' : 'Group share')}`,
+          actions: [
+            { id: 'open', text: 'Open' }
+          ],
+          onClick: () => {
+            if (typeof window !== 'undefined') window.location.hash = 'notifications';
+          }
+        });
+      }
+      saveInboxSeen(this._inboxSeen);
     } catch (_) { /* offline */ }
   }
 

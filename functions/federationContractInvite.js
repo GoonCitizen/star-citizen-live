@@ -100,7 +100,18 @@ function buildFederationContractInviteJson (fields) {
   const publishSessionId = fields && fields.publishSessionId != null && String(fields.publishSessionId).trim()
     ? String(fields.publishSessionId).trim().slice(0, 128)
     : null;
-  const extended = !!(spendingTerms || proposedPolicy || termsSummary || publishSessionId);
+  // Direct (1:1) invite target + group labels — GoonCitizen extension on v2.
+  const inviteePubkey = fields && fields.inviteePubkey != null && String(fields.inviteePubkey).trim()
+    ? String(fields.inviteePubkey).trim().toLowerCase()
+    : null;
+  const groupId = fields && fields.groupId != null && String(fields.groupId).trim()
+    ? String(fields.groupId).trim().slice(0, 128)
+    : null;
+  const groupName = fields && fields.groupName != null && String(fields.groupName).trim()
+    ? String(fields.groupName).trim().slice(0, 80)
+    : null;
+  const extended = !!(spendingTerms || proposedPolicy || termsSummary || publishSessionId
+    || inviteePubkey || groupId || groupName);
   const doc = {
     type: FEDERATION_CONTRACT_INVITE,
     v: extended ? 2 : 1,
@@ -116,6 +127,9 @@ function buildFederationContractInviteJson (fields) {
   if (proposedPolicy) doc.proposedPolicy = proposedPolicy;
   if (termsSummary) doc.termsSummary = termsSummary;
   if (publishSessionId) doc.publishSessionId = publishSessionId;
+  if (inviteePubkey) doc.inviteePubkey = inviteePubkey;
+  if (groupId) doc.groupId = groupId;
+  if (groupName) doc.groupName = groupName;
   return JSON.stringify(doc);
 }
 

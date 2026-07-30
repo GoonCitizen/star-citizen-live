@@ -92,6 +92,21 @@ test('groupContractDefinition is deterministic and Hub invite JSON parses', () =
   assert.strictEqual(parsed.v, 2);
   assert.strictEqual(parsed.contractId, id1);
   assert.ok(parsed.proposedPolicy);
+
+  const bob = createIdentity();
+  const directJson = buildFederationContractInviteJson({
+    inviteId: 'inv-direct-1',
+    inviterHubId: alice.pubkey,
+    contractId: id1,
+    inviteePubkey: bob.pubkey,
+    groupId: 'group-fixture-1',
+    groupName: 'Fixture',
+    note: 'you specifically'
+  });
+  const direct = parseFederationContractInvite(directJson);
+  assert.ok(direct);
+  assert.strictEqual(direct.inviteePubkey, bob.pubkey.toLowerCase());
+  assert.strictEqual(direct.groupName, 'Fixture');
 });
 
 test('Fabric: group create publishes Federation contract; membership + share converge', async () => {
@@ -187,5 +202,101 @@ test('Fabric: group create publishes Federation contract; membership + share con
     await nodeB.stop();
     fs.rmSync(dirA, { recursive: true, force: true });
     fs.rmSync(dirB, { recursive: true, force: true });
+  }
+});
+
+test('Fabric: direct group invite (inviteePubkey) persists inbox only on invitee', async () => {
+  const alice = createIdentity();
+  const bob = createIdentity();
+  const carol = createIdentity();
+  const portA = fabricPort();
+  const portB = portA + 13;
+  const portC = portA + 17;
+  const dirA = tmpDir('sc-ginv-a-');
+  const dirB = tmpDir('sc-ginv-b-');
+  const dirC = tmpDir('sc-ginv-c-');
+
+  const nodeB = new LiveRelay({
+    port: 0,
+    settingsDir: dirB,
+    peers: [],
+    missions: { enable: true },
+    fabric: { enable: true, listen: true, port: portB, peers: [], peersDb: null, relayAppMessages: true }
+  });
+  await nodeB.start();
+  nodeB.setIdentity(bob);
+  await waitFor(() => nodeB.fabricNetwork && nodeB.fabricNetwork.ready);
+
+  const nodeC = new LiveRelay({
+    port: 0,
+    settingsDir: dirC,
+    peers: [{ address: `127.0.0.1:${portB}`, enabled: true }],
+    missions: { enable: true },
+    fabric: { enable: true, listen: true, port: portC, peers: [], peersDb: null, relayAppMessages: true }
+  });
+  await nodeC.start();
+  nodeC.setIdentity(carol);
+  await waitFor(() => nodeC.fabricNetwork && nodeC.fabricNetwork.ready);
+
+  const nodeA = new LiveRelay({
+    port: 0,
+    settingsDir: dirA,
+    peers: [{ address: `127.0.0.1:${portB}`, enabled: true }],
+    missions: { enable: true },
+    fabric: { enable: true, listen: true, port: portA, peers: [], peersDb: null }
+  });
+  await nodeA.start();
+  const httpA = nodeA.server.address().port;
+  nodeA.setIdentity(alice);
+  await waitFor(() => nodeA.fabricNetwork && nodeA.fabricNetwork.ready);
+  await waitFor(() => (
+    nodeA.fabricNetwork.status().fabricConnected >= 1 &&
+    nodeB.fabricNetwork.status().fabricConnected >= 1
+  ));
+
+  try {
+    const created = await request(httpA, 'POST', `${BASE}/groups`, {
+      name: 'Invite Wing',
+      members: [alice.pubkey],
+      threshold: 1,
+      creator: alice.pubkey
+    });
+    assert.strictEqual(created.status, 200, JSON.stringify(created.body));
+    const groupId = created.body.data.id;
+
+    const invite = await request(httpA, 'POST', `${BASE}/groups/${groupId}/invites`, {
+      note: 'join Invite Wing',
+      inviteePubkey: bob.pubkey,
+      actor: alice.pubkey
+    });
+    assert.strictEqual(invite.status, 200, JSON.stringify(invite.body));
+    assert.strictEqual(invite.body.data.type, 'FederationContractInvite');
+    assert.strictEqual(String(invite.body.data.inviteePubkey).toLowerCase(), bob.pubkey.toLowerCase());
+    assert.ok(invite.body.data.relayed);
+
+    await waitFor(() => nodeB.registerStore
+      && nodeB.registerStore.get('groupinvites', invite.body.data.inviteId));
+    const stored = nodeB.registerStore.get('groupinvites', invite.body.data.inviteId);
+    assert.strictEqual(stored.direction, 'inbound');
+    assert.strictEqual(String(stored.inviteePubkey).toLowerCase(), bob.pubkey.toLowerCase());
+
+    const inboxId = `inbox-fi-${invite.body.data.inviteId}`;
+    await waitFor(() => nodeB.registerStore.get('inbox', inboxId));
+    const inbox = nodeB.registerStore.get('inbox', inboxId);
+    assert.strictEqual(inbox.kind, 'FederationInvite');
+    assert.strictEqual(inbox.actionable, true);
+    assert.ok(/Invite Wing/i.test(inbox.title));
+
+    // Carol (not the invitee) must not persist the targeted invite.
+    await sleep(800);
+    assert.equal(nodeC.registerStore.get('groupinvites', invite.body.data.inviteId), null);
+    assert.equal(nodeC.registerStore.get('inbox', inboxId), null);
+  } finally {
+    await nodeA.stop();
+    await nodeB.stop();
+    await nodeC.stop();
+    fs.rmSync(dirA, { recursive: true, force: true });
+    fs.rmSync(dirB, { recursive: true, force: true });
+    fs.rmSync(dirC, { recursive: true, force: true });
   }
 });

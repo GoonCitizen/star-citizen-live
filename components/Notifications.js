@@ -210,6 +210,34 @@ class Notifications extends React.Component {
     return this.state.items;
   }
 
+  async actFederationInvite (item, accept) {
+    if (this.state.busyId) return;
+    const refs = item.refs || {};
+    const inviteId = refs.inviteId;
+    const groupId = refs.groupId;
+    if (!inviteId || !groupId) {
+      this.setState({ error: 'Invite is missing group or invite id' });
+      return;
+    }
+    this.setState({ busyId: item.id, error: null });
+    try {
+      if (!this.state.token) await this.ensureSession();
+      const res = await fetch(
+        `${BASE}/groups/${encodeURIComponent(groupId)}/invites/${encodeURIComponent(inviteId)}/${accept ? 'accept' : 'reject'}`,
+        { method: 'POST', headers: this.headers(), body: '{}' }
+      );
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error || `HTTP ${res.status}`);
+      this.setState({ busyId: null });
+      await this.refresh();
+      if (accept && typeof window !== 'undefined') {
+        window.location.href = `/groups/${encodeURIComponent(groupId)}`;
+      }
+    } catch (e) {
+      this.setState({ busyId: null, error: e.message });
+    }
+  }
+
   renderActions (item) {
     if (item.kind === 'MissionBroadcast' && item.status === 'pending') {
       return React.createElement('div', { className: 'nt-row' },
@@ -223,6 +251,24 @@ class Notifications extends React.Component {
           disabled: this.state.busyId === item.id,
           onClick: () => this.actBroadcast(item, 'ignore')
         }, 'Ignore'),
+        React.createElement('button', {
+          className: 'nt-btn ghost',
+          onClick: () => openTarget(item)
+        }, 'Open')
+      );
+    }
+    if (item.kind === 'FederationInvite' && item.status === 'pending') {
+      return React.createElement('div', { className: 'nt-row' },
+        React.createElement('button', {
+          className: 'nt-btn good',
+          disabled: this.state.busyId === item.id || !(item.refs && item.refs.inviteId && item.refs.groupId),
+          onClick: () => this.actFederationInvite(item, true)
+        }, this.state.busyId === item.id ? '…' : 'Accept'),
+        React.createElement('button', {
+          className: 'nt-btn ghost',
+          disabled: this.state.busyId === item.id || !(item.refs && item.refs.inviteId && item.refs.groupId),
+          onClick: () => this.actFederationInvite(item, false)
+        }, 'Decline'),
         React.createElement('button', {
           className: 'nt-btn ghost',
           onClick: () => openTarget(item)

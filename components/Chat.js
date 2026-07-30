@@ -71,7 +71,7 @@ const CSS = `
   .chat-mem-hint{color:var(--muted);font-size:11.5px;padding:10px 14px;line-height:1.5}
   .chat-mem-wrap{position:relative}
   /* Fixed so overflow:auto on .chat-members cannot clip the popover. */
-  .chat-mem-card{position:fixed;z-index:40;width:260px;
+  .chat-mem-card{position:fixed;z-index:40;width:280px;
     background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px 13px;
     box-shadow:0 12px 28px rgba(0,0,0,.45);display:grid;gap:8px;cursor:default;pointer-events:auto}
   .chat-mem-card .nm{font-size:14px;font-weight:650}
@@ -86,6 +86,13 @@ const CSS = `
     font-size:12px;font-weight:600;cursor:pointer}
   .chat-mem-card .btn.ghost{background:var(--panel2);border:1px solid var(--line);color:var(--text)}
   .chat-mem-card .btn:disabled{opacity:.45;cursor:default}
+  .chat-mem-card .invite{display:grid;gap:6px;padding-top:4px;border-top:1px solid var(--line)}
+  .chat-mem-card .invite label{font-size:11px;color:var(--muted)}
+  .chat-mem-card .invite select{width:100%;background:var(--bg);border:1px solid var(--line);color:var(--text);
+    border-radius:7px;padding:6px 8px;font-size:12px}
+  .chat-mem-card .invite .hint{font-size:11px;color:var(--muted);line-height:1.4}
+  .chat-mem-card .invite .ok{font-size:11.5px;color:var(--good)}
+  .chat-mem-card .invite .err{font-size:11.5px;color:var(--kill)}
   /* Group page (and similar): messages + compose only, no channel/member rails. */
   .chat-wrap.chat-embedded{grid-template-columns:1fr;height:min(440px,55vh);padding:0;gap:0}
   .chat-wrap.chat-embedded .chat-side,
@@ -101,6 +108,10 @@ const CSS = `
 
 function shortKey (pk) {
   return pk ? pk.slice(0, 8) + '…' : '?';
+}
+
+function identityBridge () {
+  return (typeof window !== 'undefined' && window.electronAPI && window.electronAPI.identity) || null;
 }
 
 function shortTime (ts) {
@@ -148,7 +159,15 @@ class Chat extends React.Component {
       hoverPubkey: null,
       hoverRect: null, // DOMRect-like for fixed popover placement
       profileCache: {},
-      openDmChannels: [] // { key, label, kind, peerPubkey } opened from the member card
+      openDmChannels: [], // { key, label, kind, peerPubkey } opened from the member card
+      inviteOpen: false,
+      inviteGroups: [],
+      inviteGroupId: '',
+      inviteLoading: false,
+      inviteBusy: false,
+      inviteError: null,
+      inviteOk: null,
+      authToken: null
     };
     this._timer = null;
     this._hoverTimer = null;
@@ -210,6 +229,98 @@ class Chat extends React.Component {
     window.location.href = `/profiles/${encodeURIComponent(pubkey)}`;
   }
 
+  async ensureAuth () {
+    if (this.state.authToken) return this.state.authToken;
+    const bridge = identityBridge();
+    if (!bridge) return null;
+    try {
+      const info = await bridge.get();
+      if (!info || !info.unlocked || !bridge.signEnvelope) return null;
+      const envelope = await bridge.signEnvelope({ intent: 'login', ts: new Date().toISOString() });
+      if (!envelope || envelope.error) return null;
+      const res = await fetch(`${BASE}/auth`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(envelope)
+      });
+      if (!res.ok) return null;
+      const json = await res.json();
+      const token = json.data && json.data.token;
+      if (token) this.setState({ authToken: token });
+      return token || null;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  async openInvitePicker () {
+    const me = this.props.identityPubkey;
+    if (!me || !this.state.hoverPubkey || this.state.hoverPubkey === me) return;
+    this.setState({
+      inviteOpen: true,
+      inviteLoading: true,
+      inviteError: null,
+      inviteOk: null,
+      inviteGroups: [],
+      inviteGroupId: ''
+    });
+    try {
+      const token = await this.ensureAuth();
+      const headers = { 'Content-Type': 'application/json' };
+      if (token) headers.Authorization = `Bearer ${token}`;
+      const res = await fetch(`${BASE}/groups`, { headers });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error || `HTTP ${res.status}`);
+      const target = this.state.hoverPubkey;
+      const groups = (json.data || []).filter((g) => {
+        if (!Array.isArray(g.members) || !g.members.includes(me)) return false;
+        if (target && g.members.includes(target)) return false;
+        return true;
+      });
+      const preferred = this.props.groupId && groups.some((g) => g.id === this.props.groupId)
+        ? this.props.groupId
+        : (groups[0] ? groups[0].id : '');
+      this.setState({
+        inviteLoading: false,
+        inviteGroups: groups,
+        inviteGroupId: preferred
+      });
+    } catch (e) {
+      this.setState({ inviteLoading: false, inviteError: e.message || String(e) });
+    }
+  }
+
+  async sendGroupInvite () {
+    const groupId = this.state.inviteGroupId;
+    const invitee = this.state.hoverPubkey;
+    const me = this.props.identityPubkey;
+    if (!groupId || !invitee || !me || this.state.inviteBusy) return;
+    this.setState({ inviteBusy: true, inviteError: null, inviteOk: null });
+    try {
+      const token = await this.ensureAuth();
+      const headers = { 'Content-Type': 'application/json' };
+      if (token) headers.Authorization = `Bearer ${token}`;
+      const g = (this.state.inviteGroups || []).find((x) => x.id === groupId);
+      const res = await fetch(`${BASE}/groups/${encodeURIComponent(groupId)}/invites`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          inviteePubkey: invitee,
+          note: `You're invited to join ${(g && g.name) || 'our group'}`
+        })
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error || `HTTP ${res.status}`);
+      const data = json.data || {};
+      const mesh = data.relayed
+        ? `Invite sent to the network (${data.peers || 0} peer connection(s)).`
+        : (`Invite saved` + (data.relayError ? ` — mesh: ${data.relayError}` : ''));
+      this.setState({ inviteBusy: false, inviteOk: mesh });
+    } catch (e) {
+      this.setState({ inviteBusy: false, inviteError: e.message || String(e) });
+    }
+  }
+
   scheduleHover (pubkey, el) {
     if (this._hoverTimer) clearTimeout(this._hoverTimer);
     const rect = el && el.getBoundingClientRect
@@ -222,7 +333,10 @@ class Chat extends React.Component {
         hoverPubkey: pubkey,
         hoverRect: rect
           ? { top: rect.top, left: rect.left, right: rect.right, bottom: rect.bottom, width: rect.width, height: rect.height }
-          : null
+          : null,
+        inviteOpen: false,
+        inviteError: null,
+        inviteOk: null
       });
       this.ensureProfile(pubkey);
     }, 120);
@@ -474,8 +588,47 @@ class Chat extends React.Component {
           e.stopPropagation();
           this.openProfile(pubkey);
         }
-      }, 'Profile')
-    )
+      }, 'Profile'),
+      !isSelf && me
+        ? React.createElement('button', {
+          type: 'button',
+          className: 'btn ghost',
+          title: 'Send a direct group invitation',
+          onClick: (e) => {
+            e.stopPropagation();
+            this.openInvitePicker();
+          }
+        }, this.state.inviteOpen ? 'Invite ▾' : 'Invite to group')
+        : null
+    ),
+    this.state.inviteOpen && !isSelf
+      ? React.createElement('div', { className: 'invite' },
+        React.createElement('label', null, 'Choose a group'),
+        this.state.inviteLoading
+          ? React.createElement('div', { className: 'hint' }, 'loading your groups…')
+          : (this.state.inviteGroups.length
+            ? React.createElement(React.Fragment, null,
+              React.createElement('select', {
+                value: this.state.inviteGroupId,
+                onChange: (e) => this.setState({ inviteGroupId: e.target.value, inviteOk: null, inviteError: null }),
+                onClick: (e) => e.stopPropagation()
+              }, this.state.inviteGroups.map((g) => React.createElement('option', { key: g.id, value: g.id }, g.name))),
+              React.createElement('button', {
+                type: 'button',
+                className: 'btn',
+                disabled: !this.state.inviteGroupId || this.state.inviteBusy,
+                onClick: (e) => {
+                  e.stopPropagation();
+                  this.sendGroupInvite();
+                }
+              }, this.state.inviteBusy ? 'Sending…' : 'Send invite')
+            )
+            : React.createElement('div', { className: 'hint' },
+              'No groups available — create one on the Groups tab, or they may already be a member.')),
+        this.state.inviteOk ? React.createElement('div', { className: 'ok' }, this.state.inviteOk) : null,
+        this.state.inviteError ? React.createElement('div', { className: 'err' }, this.state.inviteError) : null
+      )
+      : null
     );
   }
 

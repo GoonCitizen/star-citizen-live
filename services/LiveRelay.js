@@ -2560,7 +2560,8 @@ class StarCitizenService extends EventEmitter {
         try {
           const data = await this.inviteToGroupFederation(group.id, actor, {
             note: d.note,
-            inviteId: d.inviteId
+            inviteId: d.inviteId,
+            inviteePubkey: d.inviteePubkey || d.invitee || d.pubkey || null
           });
           return send(200, { type: 'FederationContractInvite', data });
         } catch (e) {
@@ -4512,10 +4513,12 @@ class StarCitizenService extends EventEmitter {
   }
 
   /**
-   * Publish a Hub-shaped FederationContractInvite under the group's contract.
+   * Publish a Hub-shaped FederationContractInvite under the group's contract
+   * (and GoonCitizen genesis when targeting an invitee so they receive it
+   * without already knowing the group).
    * @param {string} groupId
    * @param {string} actor Member inviting
-   * @param {{ note?: string, inviteId?: string }} [opts]
+   * @param {{ note?: string, inviteId?: string, inviteePubkey?: string }} [opts]
    */
   async inviteToGroupFederation (groupId, actor, opts = {}) {
     if (!this.groupManager) throw Object.assign(new Error('Group system not available'), { code: 'UNAVAILABLE' });
@@ -4527,14 +4530,33 @@ class StarCitizenService extends EventEmitter {
     if (!this._identity) throw new Error('Unlock your identity to invite');
     const contractId = await this._ensureGroupContractId(groupId);
     if (!contractId) throw new Error('group Federation contract is not ready');
+    const PUBKEY_RE = /^0[23][0-9a-f]{64}$/;
+    let invitee = opts.inviteePubkey != null ? String(opts.inviteePubkey).trim().toLowerCase() : null;
+    if (invitee) {
+      if (!PUBKEY_RE.test(invitee)) {
+        const e = new Error('invalid invitee pubkey'); e.code = 'BAD_REQUEST'; throw e;
+      }
+      if (invitee === String(actor).toLowerCase()) {
+        const e = new Error('cannot invite yourself'); e.code = 'BAD_REQUEST'; throw e;
+      }
+      if (group.includes(invitee)) {
+        const e = new Error('already a member of this group'); e.code = 'BAD_REQUEST'; throw e;
+      }
+    } else {
+      invitee = null;
+    }
     const { buildFederationContractInvite } = require('../functions/federationContractInvite');
     const { normalizeProposedPolicy } = require('../contracts/gooncitizenGroup');
-    const inviteId = opts.inviteId || idFor(`invite:${groupId}:${Date.now()}:${actor}`);
+    const { gooncitizenContractId } = require('../contracts/gooncitizen');
+    const inviteId = opts.inviteId || idFor(`invite:${groupId}:${Date.now()}:${actor}:${invitee || ''}`);
     const invite = buildFederationContractInvite({
       inviteId,
       inviterHubId: actor,
       contractId,
       note: opts.note || `Join group ${group.name}`,
+      inviteePubkey: invitee || undefined,
+      groupId: group.id,
+      groupName: group.name,
       proposedPolicy: normalizeProposedPolicy({
         validators: group.members,
         threshold: group.threshold
@@ -4551,29 +4573,52 @@ class StarCitizenService extends EventEmitter {
       });
     }
     this.fabricNetwork.setIdentity(this._identity);
+    // Prefer a live peer so direct invites actually hit the mesh.
+    if (!this.fabricNetwork.ready) {
+      await this._ensureFabric().catch(() => null);
+    }
     // Sign for clipboard even if peer is not ready; relay when possible.
     const msg = this.fabricNetwork.signContractMessage(contractId, 'FederationContractInvite', invite, { relay: false });
+    let relayed = false;
+    let relayError = null;
     if (this.fabricNetwork.ready) {
       try {
+        if (!(this.fabricNetwork.status().fabricConnected > 0)) {
+          this.fabricNetwork.setPeers(this._fabricPeerAddresses());
+        }
         this.fabricNetwork.publishFederationInvite(contractId, invite);
+        // Genesis namespace so invitees who have never seen this group still get it.
+        this.fabricNetwork.publishFederationInvite(gooncitizenContractId(), invite);
+        relayed = true;
       } catch (e) {
+        relayError = e && e.message ? e.message : String(e);
         this.emit('error', e);
       }
+    } else {
+      relayError = 'Fabric peer not ready — unlock identity and wait for peering';
     }
     const encoded = this.fabricNetwork.encodeOpaqueMessage(msg);
-    if (this.registerStore) {
-      this.registerStore.put('groupinvites', inviteId, Object.assign({}, invite, {
-        groupId,
-        status: 'pending',
-        createdAt: new Date().toISOString(),
-        protocolUrl: encoded.protocolUrl,
-        messageHex: encoded.messageHex
-      }));
-    }
-    return Object.assign({}, invite, {
-      groupId,
+    const stored = Object.assign({}, invite, {
+      groupId: group.id,
+      groupName: group.name,
+      status: 'pending',
+      createdAt: new Date().toISOString(),
       protocolUrl: encoded.protocolUrl,
-      messageHex: encoded.messageHex
+      messageHex: encoded.messageHex,
+      direction: 'outbound'
+    });
+    if (this.registerStore) {
+      this.registerStore.put('groupinvites', inviteId, stored);
+    }
+    const st = this.fabricNetwork.status();
+    return Object.assign({}, invite, {
+      groupId: group.id,
+      groupName: group.name,
+      protocolUrl: encoded.protocolUrl,
+      messageHex: encoded.messageHex,
+      relayed,
+      relayError,
+      peers: st.fabricConnected || 0
     });
   }
 
@@ -4660,6 +4705,21 @@ class StarCitizenService extends EventEmitter {
     if (!invite || !invite.inviteId) {
       return { kind: 'FederationContractInvite', invite: null, pending: false };
     }
+    // Dedup: inviter already persisted outbound; ignore mesh echo.
+    if (this.registerStore && this.registerStore.get('groupinvites', invite.inviteId)) {
+      return { kind: 'FederationContractInvite', invite, pending: false, duplicate: true };
+    }
+    const me = this._identity && this._identity.pubkey
+      ? String(this._identity.pubkey).toLowerCase()
+      : null;
+    const invitee = invite.inviteePubkey ? String(invite.inviteePubkey).toLowerCase() : null;
+    // Targeted invite: only the invitee keeps a persistent copy + inbox row.
+    if (invitee && (!me || me !== invitee)) {
+      return { kind: 'FederationContractInvite', invite, pending: false, skipped: 'not-invitee' };
+    }
+    if (me && invite.inviterHubId && String(invite.inviterHubId).toLowerCase() === me) {
+      return { kind: 'FederationContractInvite', invite, pending: false, skipped: 'self-inviter' };
+    }
     const contractId = invite.contractId || (meta && meta.contract) || null;
     let group = null;
     let created = false;
@@ -4677,10 +4737,12 @@ class StarCitizenService extends EventEmitter {
       }
     }
     const storedInvite = Object.assign({}, invite, {
-      groupId: group ? group.id : null,
+      groupId: (group && group.id) || invite.groupId || null,
+      groupName: invite.groupName || (group && group.name) || null,
       contractId: contractId || null,
       status: 'pending',
       source: source || null,
+      direction: 'inbound',
       receivedAt: new Date().toISOString()
     });
     if (this.registerStore) {

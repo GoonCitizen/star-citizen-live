@@ -78,6 +78,20 @@ test('registerInbox maps audits and broadcasts', () => {
   assert.strictEqual(mb.kind, 'MissionBroadcast');
   assert.strictEqual(mb.actionable, true);
   assert.ok(registerInbox.isNotification(mb));
+
+  const fi = registerInbox.entryFromFederationInvite({
+    inviteId: 'inv-x',
+    inviterHubId: '02' + 'ab'.repeat(32),
+    groupId: 'g1',
+    groupName: 'Wing Alpha',
+    inviteePubkey: '02' + 'cd'.repeat(32),
+    status: 'pending',
+    note: 'come fly'
+  });
+  assert.strictEqual(fi.kind, 'FederationInvite');
+  assert.strictEqual(fi.title, 'Invite to Wing Alpha');
+  assert.strictEqual(fi.refs.inviteePubkey, '02' + 'cd'.repeat(32));
+  assert.ok(registerInbox.isNotification(fi));
 });
 
 test('notifications vs mission/group activity scopes', async () => {

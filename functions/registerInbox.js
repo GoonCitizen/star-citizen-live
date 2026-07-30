@@ -286,21 +286,24 @@ function entryFromGroupOffer (payload) {
 
 function entryFromFederationInvite (invite, source = null) {
   if (!invite || !invite.inviteId) return null;
+  const groupName = invite.groupName || null;
   return normalizeEntry({
     id: `inbox-fi-${invite.inviteId}`,
     kind: 'FederationInvite',
     status: invite.status || 'pending',
     actionable: (invite.status || 'pending') === 'pending',
     ts: invite.createdAt || invite.receivedAt || new Date().toISOString(),
-    title: invite.note || 'Federation invite',
-    body: invite.contractId ? `contract ${String(invite.contractId).slice(0, 16)}…` : null,
+    title: groupName ? `Invite to ${groupName}` : (invite.note || 'Group invite'),
+    body: invite.note || (invite.contractId ? `contract ${String(invite.contractId).slice(0, 16)}…` : null),
     source: source || invite.inviterHubId || null,
     resolvedAt: invite.resolvedAt || null,
     resolvedBy: invite.resolvedBy || null,
     refs: {
       inviteId: invite.inviteId,
       groupId: invite.groupId || null,
-      contractId: invite.contractId || null
+      contractId: invite.contractId || null,
+      inviteePubkey: invite.inviteePubkey || null,
+      groupName
     },
     dedupeKey: invite.inviteId
   });

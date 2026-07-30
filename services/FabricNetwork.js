@@ -204,6 +204,11 @@ function attachAppHandlers (peer, handlers = {}, _opts = {}) {
           // Network-wide GroupOffer / MissionBroadcast-in-GroupShare discovery
           // (same CONTRACT_MESSAGE type, GoonCitizen genesis namespace).
           handlers.onGroupShare(object, signer, meta);
+        } else if (appType === CONTRACT_BODY_TYPES.FederationContractInvite && typeof handlers.onFederationInvite === 'function') {
+          // Direct group invites (inviteePubkey) discoverable without prior group contract.
+          handlers.onFederationInvite(object, signer, meta);
+        } else if (appType === CONTRACT_BODY_TYPES.FederationContractInviteResponse && typeof handlers.onFederationInviteResponse === 'function') {
+          handlers.onFederationInviteResponse(object, signer, meta);
         }
         return;
       }
