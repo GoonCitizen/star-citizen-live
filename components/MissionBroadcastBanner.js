@@ -136,12 +136,17 @@ class MissionBroadcastBanner extends React.Component {
 
   async tick () {
     try {
-      const [res, inboxRes] = await Promise.all([
+      const [res, inboxRes, settingsRes] = await Promise.all([
         fetch(`${BASE}/missionbroadcasts?pending=1`).then((r) => r.json()),
-        fetch(`${BASE}/inbox?scope=notifications&pending=1`).then((r) => r.json()).catch(() => null)
+        fetch(`${BASE}/inbox?scope=notifications&pending=1`).then((r) => r.json()).catch(() => null),
+        fetch('/settings').then((r) => (r.ok ? r.json() : null)).catch(() => null)
       ]);
       const pending = res.data || [];
-      const notifyEnabled = res.notify !== false;
+      // Mission broadcasts keep their dedicated toggle; group invites/offers
+      // only need desktop notifications enabled (spoke invites are easy to miss).
+      const missionNotify = res.notify !== false;
+      const settings = (settingsRes && settingsRes.settings) || settingsRes || {};
+      const desktopNotify = settings.notifyDesktop !== false;
       const inboxItems = (inboxRes && inboxRes.data) || [];
       this.setState({ pending });
       // Bell badge uses the full register inbox (broadcasts + apps + invites).
@@ -150,44 +155,60 @@ class MissionBroadcastBanner extends React.Component {
         : inboxItems.filter((i) => i.actionable).length || pending.length;
       this.reportPending(inboxPending);
 
+      const freshCutoff = Date.now() - (5 * 60 * 1000);
+      const isFreshInbox = (row) => {
+        const t = Date.parse(row && row.ts);
+        return Number.isFinite(t) && t >= freshCutoff;
+      };
+
       if (!this._bootstrapped) {
         for (const b of pending) this._seen.add(b.id);
-        for (const row of inboxItems) this._inboxSeen.add(row.id);
+        // Still toast brand-new invites that arrived while the app was starting
+        // (bootstrap would otherwise swallow them forever).
+        for (const row of inboxItems) {
+          if (DESKTOP_INBOX_KINDS.has(row.kind) && row.actionable && row.status === 'pending' && isFreshInbox(row)) {
+            continue; // leave unseen for the notify loop below
+          }
+          this._inboxSeen.add(row.id);
+        }
         saveSeen(this._seen);
         saveInboxSeen(this._inboxSeen);
         this._bootstrapped = true;
-        return;
+        // Fall through so fresh invites can notify on first tick.
       }
 
-      if (!notifyEnabled) {
-        for (const b of pending) this._seen.add(b.id);
-        for (const row of inboxItems) this._inboxSeen.add(row.id);
+      if (missionNotify) {
+        for (const b of pending) {
+          if (this._seen.has(b.id)) continue;
+          this._seen.add(b.id);
+          const m = b.mission || {};
+          const who = b.handle || shortKey(b.source);
+          const reward = m.reward ? ` · ${Number(m.reward).toLocaleString()} sats` : '';
+          await showDesktopNotification({
+            id: b.id,
+            kind: 'missionbroadcast',
+            title: 'Mission broadcast',
+            body: `${who}: ${m.title || 'Untitled'}${reward}`,
+            actions: [
+              { id: 'accept', text: 'Accept' },
+              { id: 'ignore', text: 'Ignore' }
+            ],
+            onClick: () => {
+              if (typeof window !== 'undefined') window.location.hash = 'notifications';
+            }
+          });
+        }
         saveSeen(this._seen);
+      } else {
+        for (const b of pending) this._seen.add(b.id);
+        saveSeen(this._seen);
+      }
+
+      if (!desktopNotify) {
+        for (const row of inboxItems) this._inboxSeen.add(row.id);
         saveInboxSeen(this._inboxSeen);
         return;
       }
-
-      for (const b of pending) {
-        if (this._seen.has(b.id)) continue;
-        this._seen.add(b.id);
-        const m = b.mission || {};
-        const who = b.handle || shortKey(b.source);
-        const reward = m.reward ? ` · ${Number(m.reward).toLocaleString()} sats` : '';
-        await showDesktopNotification({
-          id: b.id,
-          kind: 'missionbroadcast',
-          title: 'Mission broadcast',
-          body: `${who}: ${m.title || 'Untitled'}${reward}`,
-          actions: [
-            { id: 'accept', text: 'Accept' },
-            { id: 'ignore', text: 'Ignore' }
-          ],
-          onClick: () => {
-            if (typeof window !== 'undefined') window.location.hash = 'notifications';
-          }
-        });
-      }
-      saveSeen(this._seen);
 
       for (const row of inboxItems) {
         if (!row || !DESKTOP_INBOX_KINDS.has(row.kind)) continue;

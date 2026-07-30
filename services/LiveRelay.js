@@ -3341,6 +3341,9 @@ class StarCitizenService extends EventEmitter {
     this._fabricTransition = prev
       .then(() => (this._identity ? this._refreshFabric() : this._stopFabric()))
       .catch((e) => this.emit('error', e));
+    if (this._identity) {
+      try { this._flushPendingFederationInvites(); } catch (e) { this.emit('error', e); }
+    }
   }
 
   /** @deprecated Use {@link #_fabricPeerAddresses}; kept for older tests. */
@@ -3501,20 +3504,40 @@ class StarCitizenService extends EventEmitter {
           Object.assign({}, object, { pubkey: signer })
         );
       },
-      onDirectChat: (object, source) => {
-        if (!this.chatManager || !object) return;
+      onDirectChat: (object, source, meta) => {
+        if (!object) return;
         const ChatManager = require('../services/ChatManager');
         const author = resolveSignerPubkey(source) || source || null;
-        if (!author || !object.body) return;
+        if (!author) return;
         const channel = object.channel || ChatManager.dmChannelKey(object.peerA, object.peerB);
         if (!channel || !ChatManager.parseDmChannel(channel)) return;
         const me = this._identity && this._identity.pubkey;
         // Only keep DMs addressed to this node (or authored here).
-        if (me && !this.chatManager.canAccess(channel, me, { enforceMembership: true })) return;
+        if (me && this.chatManager && !this.chatManager.canAccess(channel, me, { enforceMembership: true })) return;
+        // Group invites also ride DirectChat so spoke↔spoke via a shared hub
+        // still lands when CONTRACT_MESSAGE fan-out is flaky / peer offline briefly.
+        const embedded = object.invite
+          || (() => {
+            try {
+              const p = typeof object.body === 'string' ? JSON.parse(object.body) : null;
+              return (p && p.type === 'FederationContractInvite') ? p : null;
+            } catch (_) { return null; }
+          })();
+        if (embedded && embedded.type === 'FederationContractInvite') {
+          try {
+            this._ingestFederationInvite(embedded, author, meta || {});
+          } catch (e) { this.emit('error', e); }
+        }
+        if (!this.chatManager || object.body == null || object.body === '') return;
+        // Don't dump raw invite JSON into the DM transcript.
+        let body = object.body;
+        if (embedded && typeof body === 'string' && body.trim().charAt(0) === '{') {
+          body = `Group invite: ${embedded.groupName || embedded.note || 'open Notifications to accept'}`;
+        }
         try {
           this.chatManager.ingest(author, {
             channel,
-            body: object.body,
+            body,
             author: object.author || author,
             handle: object.handle || this._peerAliasByPubkey[author] || null,
             ts: object.ts || new Date().toISOString()
@@ -4530,17 +4553,23 @@ class StarCitizenService extends EventEmitter {
     if (!this._identity) throw new Error('Unlock your identity to invite');
     const contractId = await this._ensureGroupContractId(groupId);
     if (!contractId) throw new Error('group Federation contract is not ready');
-    const PUBKEY_RE = /^0[23][0-9a-f]{64}$/;
+    const { pubkeysMatch, pubkeyXOnly } = identityLib();
+    const PUBKEY_RE = /^(0[23][0-9a-f]{64}|[0-9a-f]{64})$/;
     let invitee = opts.inviteePubkey != null ? String(opts.inviteePubkey).trim().toLowerCase() : null;
     if (invitee) {
       if (!PUBKEY_RE.test(invitee)) {
         const e = new Error('invalid invitee pubkey'); e.code = 'BAD_REQUEST'; throw e;
       }
-      if (invitee === String(actor).toLowerCase()) {
+      if (pubkeysMatch(invitee, actor)) {
         const e = new Error('cannot invite yourself'); e.code = 'BAD_REQUEST'; throw e;
       }
-      if (group.includes(invitee)) {
+      if (group.members && group.members.some((m) => pubkeysMatch(m, invitee))) {
         const e = new Error('already a member of this group'); e.code = 'BAD_REQUEST'; throw e;
+      }
+      // Prefer compressed form when the invitee is already a known member/author.
+      // X-only wire ids are accepted and matched via pubkeysMatch on ingest.
+      if (pubkeyXOnly(invitee) && !/^0[23]/.test(invitee)) {
+        /* keep x-only — destination matches with pubkeysMatch */
       }
     } else {
       invitee = null;
@@ -4589,6 +4618,26 @@ class StarCitizenService extends EventEmitter {
         this.fabricNetwork.publishFederationInvite(contractId, invite);
         // Genesis namespace so invitees who have never seen this group still get it.
         this.fabricNetwork.publishFederationInvite(gooncitizenContractId(), invite);
+        // Dual-path: DirectChat to the invitee (same hub flood as DMs) so
+        // spoke↔spoke delivery does not depend on group-contract awareness.
+        if (invitee) {
+          const ChatManager = require('../services/ChatManager');
+          const channel = ChatManager.dmChannelKey(actor, invitee);
+          if (channel) {
+            const dm = ChatManager.parseDmChannel(channel);
+            this.fabricNetwork.publishDirectChat({
+              id: `invite-dm:${inviteId}`,
+              channel,
+              peerA: dm.a,
+              peerB: dm.b,
+              author: actor,
+              body: `Group invite: ${group.name} — open Notifications to accept`,
+              handle: null,
+              ts: new Date().toISOString(),
+              invite
+            });
+          }
+        }
         relayed = true;
       } catch (e) {
         relayError = e && e.message ? e.message : String(e);
@@ -4696,10 +4745,39 @@ class StarCitizenService extends EventEmitter {
     });
   }
 
+  _queuePendingFederationInvite (invite, source, meta) {
+    if (!invite || !invite.inviteId) return;
+    if (!this._pendingFederationInvites) this._pendingFederationInvites = new Map();
+    this._pendingFederationInvites.set(invite.inviteId, {
+      invite,
+      source: source || null,
+      meta: meta || {},
+      queuedAt: Date.now()
+    });
+    // Bound memory if unlock never happens.
+    if (this._pendingFederationInvites.size > 64) {
+      const oldest = this._pendingFederationInvites.keys().next().value;
+      this._pendingFederationInvites.delete(oldest);
+    }
+  }
+
+  _flushPendingFederationInvites () {
+    const pending = this._pendingFederationInvites;
+    if (!pending || !pending.size || !this._identity) return;
+    const rows = Array.from(pending.values());
+    pending.clear();
+    for (const row of rows) {
+      try {
+        this._ingestFederationInvite(row.invite, row.source, row.meta);
+      } catch (e) { this.emit('error', e); }
+    }
+  }
+
   _ingestFederationInvite (object, source, meta) {
     const {
       parseFederationContractInviteLoose
     } = require('../functions/federationContractInvite');
+    const { pubkeysMatch } = identityLib();
     const invite = parseFederationContractInviteLoose(object)
       || parseFederationContractInviteLoose(JSON.stringify(object));
     if (!invite || !invite.inviteId) {
@@ -4710,14 +4788,23 @@ class StarCitizenService extends EventEmitter {
       return { kind: 'FederationContractInvite', invite, pending: false, duplicate: true };
     }
     const me = this._identity && this._identity.pubkey
-      ? String(this._identity.pubkey).toLowerCase()
+      ? String(this._identity.pubkey)
       : null;
-    const invitee = invite.inviteePubkey ? String(invite.inviteePubkey).toLowerCase() : null;
+    const invitee = invite.inviteePubkey ? String(invite.inviteePubkey) : null;
     // Targeted invite: only the invitee keeps a persistent copy + inbox row.
-    if (invitee && (!me || me !== invitee)) {
-      return { kind: 'FederationContractInvite', invite, pending: false, skipped: 'not-invitee' };
+    // Match compressed ↔ x-only (wire authors / chat hover ids often differ).
+    if (invitee) {
+      if (!me) {
+        // Identity locked — queue until unlock rather than drop (spoke may
+        // receive the frame while the wallet is locked).
+        this._queuePendingFederationInvite(invite, source, meta);
+        return { kind: 'FederationContractInvite', invite, pending: false, skipped: 'identity-locked' };
+      }
+      if (!pubkeysMatch(me, invitee)) {
+        return { kind: 'FederationContractInvite', invite, pending: false, skipped: 'not-invitee' };
+      }
     }
-    if (me && invite.inviterHubId && String(invite.inviterHubId).toLowerCase() === me) {
+    if (me && invite.inviterHubId && pubkeysMatch(me, invite.inviterHubId)) {
       return { kind: 'FederationContractInvite', invite, pending: false, skipped: 'self-inviter' };
     }
     const contractId = invite.contractId || (meta && meta.contract) || null;

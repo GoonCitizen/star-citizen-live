@@ -205,6 +205,91 @@ test('Fabric: group create publishes Federation contract; membership + share con
   }
 });
 
+test('Fabric: star topology hub relays targeted invite spoke→hub→spoke', async () => {
+  const alice = createIdentity();
+  const bob = createIdentity();
+  const hubId = createIdentity();
+  const portHub = fabricPort();
+  const portA = portHub + 21;
+  const portB = portHub + 23;
+  const dirHub = tmpDir('sc-ginv-hub-');
+  const dirA = tmpDir('sc-ginv-spoke-a-');
+  const dirB = tmpDir('sc-ginv-spoke-b-');
+
+  const hub = new LiveRelay({
+    port: 0,
+    settingsDir: dirHub,
+    peers: [],
+    missions: { enable: true },
+    fabric: { enable: true, listen: true, port: portHub, peers: [], peersDb: null, relayAppMessages: true }
+  });
+  await hub.start();
+  hub.setIdentity(hubId);
+  await waitFor(() => hub.fabricNetwork && hub.fabricNetwork.ready);
+
+  const nodeB = new LiveRelay({
+    port: 0,
+    settingsDir: dirB,
+    peers: [{ address: `127.0.0.1:${portHub}`, enabled: true }],
+    missions: { enable: true },
+    fabric: { enable: true, listen: true, port: portB, peers: [], peersDb: null }
+  });
+  await nodeB.start();
+  nodeB.setIdentity(bob);
+  await waitFor(() => nodeB.fabricNetwork && nodeB.fabricNetwork.ready);
+
+  const nodeA = new LiveRelay({
+    port: 0,
+    settingsDir: dirA,
+    peers: [{ address: `127.0.0.1:${portHub}`, enabled: true }],
+    missions: { enable: true },
+    fabric: { enable: true, listen: true, port: portA, peers: [], peersDb: null }
+  });
+  await nodeA.start();
+  const httpA = nodeA.server.address().port;
+  nodeA.setIdentity(alice);
+  await waitFor(() => nodeA.fabricNetwork && nodeA.fabricNetwork.ready);
+  await waitFor(() => (
+    hub.fabricNetwork.status().fabricConnected >= 2 &&
+    nodeA.fabricNetwork.status().fabricConnected >= 1 &&
+    nodeB.fabricNetwork.status().fabricConnected >= 1
+  ));
+
+  try {
+    const created = await request(httpA, 'POST', `${BASE}/groups`, {
+      name: 'Spoke Wing',
+      members: [alice.pubkey],
+      threshold: 1,
+      creator: alice.pubkey
+    });
+    assert.strictEqual(created.status, 200, JSON.stringify(created.body));
+    const groupId = created.body.data.id;
+
+    const invite = await request(httpA, 'POST', `${BASE}/groups/${groupId}/invites`, {
+      note: 'via hub',
+      inviteePubkey: bob.pubkey,
+      actor: alice.pubkey
+    });
+    assert.strictEqual(invite.status, 200, JSON.stringify(invite.body));
+    assert.ok(invite.body.data.relayed);
+
+    await waitFor(() => nodeB.registerStore
+      && nodeB.registerStore.get('groupinvites', invite.body.data.inviteId));
+    const inboxId = `inbox-fi-${invite.body.data.inviteId}`;
+    await waitFor(() => nodeB.registerStore.get('inbox', inboxId));
+    assert.strictEqual(nodeB.registerStore.get('inbox', inboxId).kind, 'FederationInvite');
+    // Hub must not keep a targeted invite addressed to Bob.
+    assert.equal(hub.registerStore.get('groupinvites', invite.body.data.inviteId), null);
+  } finally {
+    await nodeA.stop();
+    await nodeB.stop();
+    await hub.stop();
+    fs.rmSync(dirA, { recursive: true, force: true });
+    fs.rmSync(dirB, { recursive: true, force: true });
+    fs.rmSync(dirHub, { recursive: true, force: true });
+  }
+});
+
 test('Fabric: direct group invite (inviteePubkey) persists inbox only on invitee', async () => {
   const alice = createIdentity();
   const bob = createIdentity();
