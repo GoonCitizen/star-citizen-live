@@ -41,6 +41,7 @@ const {
 } = require('../functions/fabricMessageLog');
 const starjumpFleet = require('../functions/starjumpFleet');
 const shipCatalog = require('../functions/shipCatalog');
+const registerInbox = require('../functions/registerInbox');
 
 // Lines worth surfacing in the monitor - combat/death hints AND mission/objective
 // activity. Includes wording the parser may not recognize yet, so we can keep
@@ -216,6 +217,7 @@ class StarCitizenService extends EventEmitter {
         this._publishGroupChange(change).catch((e) => this.emit('error', e));
       });
     }
+    this._wireRegisterInbox();
 
     // Chat: Hub-style ChatMessage records — global channel + one per group.
     // Global posts use P2P_CHAT_MESSAGE; group posts use GroupChat CONTRACT_MESSAGE.
@@ -677,6 +679,41 @@ class StarCitizenService extends EventEmitter {
       profile: this._profile,
       pubkey: this._identity ? this._identity.pubkey : null
     });
+  }
+
+  /**
+   * Profile page payload keyed by Fabric pubkey (chat members, presence roster).
+   * Works even when the peer is not in the configured TCP roster.
+   * @param {string} pubkey
+   * @returns {object|null}
+   */
+  _profileDetailByPubkey (pubkey) {
+    const pk = String(pubkey || '').trim();
+    if (!/^0[23][0-9a-fA-F]{64}$/.test(pk) && !/^[0-9a-fA-F]{64}$/.test(pk)) return null;
+    const isSelf = !!(this._identity && this._identity.pubkey === pk);
+    const rosterPeer = this._peersWithStatus().find((p) => p.pubkey === pk) || null;
+    const cached = this._peerProfilesByPubkey[pk] || null;
+    const alias = this._peerAliasByPubkey[pk] || (rosterPeer && rosterPeer.alias) || null;
+    const local = this._localProfile();
+    const remotePresence = this._peerPresenceByPubkey[pk] || null;
+    return {
+      pubkey: pk,
+      peer: rosterPeer,
+      profile: isSelf
+        ? local
+        : (cached || {
+          type: peerProfile.PEER_PROFILE_TYPE,
+          nickname: alias || null,
+          bio: null,
+          scHandle: null,
+          pubkey: pk,
+          updatedAt: null
+        }),
+      presence: isSelf ? this.getPresenceStatus().presence : remotePresence,
+      meshAlias: alias || null,
+      linkedDevice: this._linkedDeviceForPubkey(pk),
+      self: isSelf
+    };
   }
 
   _linkedDeviceForPubkey (pubkey) {
@@ -1430,6 +1467,108 @@ class StarCitizenService extends EventEmitter {
   }
 
   /**
+   * Persist browseable register/gossip events into the inbox collection
+   * (Notifications UI). Complements audit chains — does not replace them.
+   */
+  _wireRegisterInbox () {
+    if (this._inboxWired) return;
+    this._inboxWired = true;
+    if (this.missionManager) {
+      this.missionManager.on('audit', (entry) => {
+        const row = registerInbox.entryFromMissionAudit(entry);
+        if (row) this._appendInbox(row);
+      });
+      this.missionManager.on('application:accepted', (app) => {
+        this._resolveInboxWhere(
+          (r) => r.kind === 'MissionApplication' && r.refs && r.refs.applicationId === app.id,
+          { status: 'accepted', actionable: false, resolvedAt: new Date().toISOString() }
+        );
+      });
+      this.missionManager.on('application:rejected', (app) => {
+        this._resolveInboxWhere(
+          (r) => r.kind === 'MissionApplication' && r.refs && r.refs.applicationId === app.id,
+          { status: 'rejected', actionable: false, resolvedAt: new Date().toISOString() }
+        );
+      });
+      this.missionManager.on('claim:validated', (validation) => {
+        const claimId = validation && validation.claimId;
+        if (!claimId) return;
+        this._resolveInboxWhere(
+          (r) => r.kind === 'MissionClaim' && r.refs && r.refs.claimId === claimId,
+          { status: 'accepted', actionable: false, resolvedAt: new Date().toISOString() }
+        );
+      });
+      this.missionManager.on('claim:rejected', (validation) => {
+        const claimId = validation && validation.claimId;
+        if (!claimId) return;
+        this._resolveInboxWhere(
+          (r) => r.kind === 'MissionClaim' && r.refs && r.refs.claimId === claimId,
+          { status: 'rejected', actionable: false, resolvedAt: new Date().toISOString() }
+        );
+      });
+    }
+    if (this.groupManager) {
+      this.groupManager.on('audit', (entry) => {
+        const row = registerInbox.entryFromGroupAudit(entry);
+        if (row) this._appendInbox(row);
+      });
+      this.groupManager.on('group:application-accepted', (app) => {
+        this._resolveInboxWhere(
+          (r) => r.kind === 'GroupApplication' && (
+            (r.refs && r.refs.applicationId === app.id) ||
+            (r.refs && r.refs.groupId === app.groupId && r.source === app.applicantId)
+          ),
+          { status: 'accepted', actionable: false, resolvedAt: app.decidedAt || new Date().toISOString() }
+        );
+      });
+      this.groupManager.on('group:application-rejected', (app) => {
+        this._resolveInboxWhere(
+          (r) => r.kind === 'GroupApplication' && (
+            (r.refs && r.refs.applicationId === app.id) ||
+            (r.refs && r.refs.groupId === app.groupId && r.source === app.applicantId)
+          ),
+          { status: 'rejected', actionable: false, resolvedAt: app.decidedAt || new Date().toISOString() }
+        );
+      });
+    }
+  }
+
+  _appendInbox (partial) {
+    if (!this.registerStore || !partial) return null;
+    const enriched = registerInbox.enrichRefs(this.registerStore, partial);
+    const { entry, created } = registerInbox.append(this.registerStore, enriched);
+    if (created && entry) this.emit('inbox:item', entry);
+    return entry;
+  }
+
+  _resolveInboxWhere (pred, patchObj) {
+    if (!this.registerStore || typeof pred !== 'function') return;
+    for (const row of this.registerStore.all('inbox') || []) {
+      if (!pred(row)) continue;
+      registerInbox.patch(this.registerStore, row.id, patchObj);
+    }
+  }
+
+  _syncInboxMissionBroadcast (rec) {
+    const row = registerInbox.entryFromMissionBroadcast(rec);
+    if (!row) return null;
+    const prev = this.registerStore && this.registerStore.get('inbox', row.id);
+    if (prev) {
+      return registerInbox.patch(this.registerStore, row.id, {
+        status: row.status,
+        actionable: row.actionable,
+        resolvedAt: row.resolvedAt,
+        resolvedBy: row.resolvedBy,
+        refs: row.refs,
+        title: row.title,
+        body: row.body,
+        reward: row.reward
+      });
+    }
+    return this._appendInbox(row);
+  }
+
+  /**
    * Receive a peer mission broadcast: upsert the mission register entry and
    * keep a pending offer for the UI (desktop notify + Accept / Ignore).
    * Idempotent on (source, missionId, broadcastAt).
@@ -1487,6 +1626,7 @@ class StarCitizenService extends EventEmitter {
       this.state.missionbroadcasts = this.state.missionbroadcasts || {};
       this.state.missionbroadcasts[id] = record;
     }
+    this._syncInboxMissionBroadcast(record);
     if (record.status === 'pending') this.emit('mission:broadcast', record);
     return { id, created: true };
   }
@@ -1677,7 +1817,10 @@ class StarCitizenService extends EventEmitter {
       if (siteLogin === true) return;
       // GET /sessions → same dashboard (header SiteLogin buttons).
       const serveSpa = siteLogin === 'spa' ||
-        (req.method === 'GET' && (pathname === '/' || pathname === `${base}/ui` || pathname === '/groups' || /^\/groups\/[^/]+$/.test(pathname)));
+        (req.method === 'GET' && (pathname === '/' || pathname === `${base}/ui` ||
+          pathname === '/groups' || /^\/groups\/[^/]+$/.test(pathname) ||
+          pathname === '/profiles' || /^\/profiles\/[^/]+$/.test(pathname) ||
+          pathname === '/missions' || /^\/missions\/[^/]+$/.test(pathname)));
       if (serveSpa) {
         let html;
         try {
@@ -2006,6 +2149,12 @@ class StarCitizenService extends EventEmitter {
           if (req.method === 'GET') {
             return send(200, { type: 'PeerProfile', data: this._localProfile() });
           }
+        }
+        let profileMatch;
+        if ((profileMatch = pathname.match(new RegExp(`^(?:${base})?/profiles/([^/]+)$`))) && req.method === 'GET') {
+          const detail = this._profileDetailByPubkey(decodeURIComponent(profileMatch[1]));
+          if (!detail) return send(404, { error: 'Profile not found (invalid pubkey)' });
+          return send(200, { type: 'PeerProfileDetail', data: detail });
         }
         if (pathname === `${base}/presence` || pathname === '/presence') {
           if (req.method === 'GET') {
@@ -2704,6 +2853,7 @@ class StarCitizenService extends EventEmitter {
           rec.resolvedAt = new Date().toISOString();
           rec.resolvedBy = actor;
           this._putMissionBroadcast(rec);
+          this._syncInboxMissionBroadcast(rec);
           return send(200, { type: 'MissionBroadcast', data: rec });
         }
         if (!actor) return send(401, { error: 'Unlock your identity to accept' });
@@ -2714,10 +2864,48 @@ class StarCitizenService extends EventEmitter {
           rec.resolvedBy = actor;
           rec.applicationId = app.id;
           this._putMissionBroadcast(rec);
+          this._syncInboxMissionBroadcast(rec);
           return send(200, { type: 'MissionBroadcast', data: rec, application: app });
         } catch (e) {
           return send(/not found/i.test(e.message) ? 404 : 400, { error: e.message });
         }
+      }
+      if (pathname === `${base}/inbox` && req.method === 'GET') {
+        const pendingOnly = url.searchParams.get('pending') === '1';
+        const kind = url.searchParams.get('kind') || null;
+        const scope = url.searchParams.get('scope') || null;
+        const missionId = url.searchParams.get('missionId') || null;
+        const groupId = url.searchParams.get('groupId') || null;
+        const notificationsOnly = scope === 'notifications' || url.searchParams.get('notifications') === '1';
+        const data = registerInbox.list(this.registerStore, {
+          pendingOnly,
+          kind,
+          missionId,
+          groupId,
+          notificationsOnly,
+          backfill: true
+        }).filter((r) => r.status !== 'self');
+        return send(200, {
+          type: 'Collection',
+          data,
+          pending: registerInbox.pendingCount(this.registerStore)
+        });
+      }
+      if ((mr = pathname.match(new RegExp(`^${base}/inbox/([^/]+)/(dismiss|ignore)$`))) && req.method === 'POST') {
+        const row = this.registerStore && this.registerStore.get('inbox', decodeURIComponent(mr[1]));
+        if (!row) return send(404, { error: 'Inbox item not found' });
+        if (row.kind === 'MissionBroadcast' && row.refs && row.refs.broadcastId) {
+          // Prefer the dedicated broadcast accept/ignore endpoints for missions.
+          return send(400, { error: 'Use /missionbroadcasts/:id/ignore for mission offers' });
+        }
+        const actor = this._actor(req, null) || (this._identity && this._identity.pubkey) || null;
+        const updated = registerInbox.patch(this.registerStore, row.id, {
+          status: 'ignored',
+          actionable: false,
+          resolvedAt: new Date().toISOString(),
+          resolvedBy: actor
+        });
+        return send(200, { type: registerInbox.INBOX_TYPE, data: updated });
       }
       if ((mr = pathname.match(new RegExp(`^${base}/missions/([^/]+)/claim$`))) && req.method === 'POST') {
         if (!requireAuth()) return;
@@ -3311,6 +3499,28 @@ class StarCitizenService extends EventEmitter {
           this._peerPresenceByPubkey[signer],
           Object.assign({}, object, { pubkey: signer })
         );
+      },
+      onDirectChat: (object, source) => {
+        if (!this.chatManager || !object) return;
+        const ChatManager = require('../services/ChatManager');
+        const author = resolveSignerPubkey(source) || source || null;
+        if (!author || !object.body) return;
+        const channel = object.channel || ChatManager.dmChannelKey(object.peerA, object.peerB);
+        if (!channel || !ChatManager.parseDmChannel(channel)) return;
+        const me = this._identity && this._identity.pubkey;
+        // Only keep DMs addressed to this node (or authored here).
+        if (me && !this.chatManager.canAccess(channel, me, { enforceMembership: true })) return;
+        try {
+          this.chatManager.ingest(author, {
+            channel,
+            body: object.body,
+            author: object.author || author,
+            handle: object.handle || this._peerAliasByPubkey[author] || null,
+            ts: object.ts || new Date().toISOString()
+          });
+        } catch (e) {
+          if (!/must match|unknown channel|invalid/i.test(e.message || '')) this.emit('error', e);
+        }
       },
       onPeeringCandidate: (ev) => {
         if (!ev || !Array.isArray(ev.addresses)) return;
@@ -4127,6 +4337,20 @@ class StarCitizenService extends EventEmitter {
         return;
       }
       const ChatManager = require('../services/ChatManager');
+      const dm = ChatManager.parseDmChannel(channel);
+      if (dm) {
+        this.fabricNetwork.publishDirectChat({
+          id: record.id,
+          channel,
+          peerA: dm.a,
+          peerB: dm.b,
+          author: record.author,
+          body: record.body,
+          handle: record.handle || null,
+          ts: record.ts
+        });
+        return;
+      }
       const groupId = ChatManager.groupIdOf(channel);
       if (!groupId) return;
       const contractId = await this._ensureGroupContractId(groupId);
@@ -4183,16 +4407,34 @@ class StarCitizenService extends EventEmitter {
       });
     }
     this.fabricNetwork.setIdentity(this._identity);
-    const relay = opts.relay !== false && this.fabricNetwork.ready;
+    // Prefer a live peer so Share actually hits the mesh (not clipboard-only).
+    if (opts.relay !== false && !this.fabricNetwork.ready) {
+      await this._ensureFabric().catch(() => null);
+    }
     const msg = this.fabricNetwork.signContractMessage(contractId, 'GroupShare', offer, { relay: false });
-    if (relay) {
+    let relayed = false;
+    let relayError = null;
+    if (opts.relay !== false) {
       try {
+        if (!(this.fabricNetwork.status().fabricConnected > 0)) {
+          this.fabricNetwork.setPeers(this._fabricPeerAddresses());
+        }
+        if (!this.fabricNetwork.ready) {
+          throw new Error('Fabric peer not ready — unlock identity and wait for peering');
+        }
+        // Group namespace (members / known contracts) + GoonCitizen genesis
+        // so peers who have never seen this group still receive the offer.
         this.fabricNetwork.publishGroupShare(contractId, offer);
+        const { gooncitizenContractId } = require('../contracts/gooncitizen');
+        this.fabricNetwork.publishGroupShare(gooncitizenContractId(), offer);
+        relayed = true;
       } catch (e) {
+        relayError = e && e.message ? e.message : String(e);
         this.emit('error', e);
       }
     }
     const encoded = this.fabricNetwork.encodeOpaqueMessage(msg);
+    const st = this.fabricNetwork.status();
     return {
       kind: GROUP_SHARE_KIND_OFFER,
       offerId: offer.offerId,
@@ -4201,7 +4443,10 @@ class StarCitizenService extends EventEmitter {
       protocolUrl: encoded.protocolUrl,
       messageHex: encoded.messageHex,
       pagePath: g.path || `/groups/${g.slug || g.id}`,
-      visibility: g.visibility
+      visibility: g.visibility,
+      relayed,
+      relayError,
+      peers: st.fabricConnected || 0
     };
   }
 
@@ -4260,6 +4505,8 @@ class StarCitizenService extends EventEmitter {
       source: source || null,
       contractId: object.contractId || (meta && meta.contract) || null
     };
+    const inboxRow = registerInbox.entryFromGroupOffer(payload);
+    if (inboxRow) this._appendInbox(inboxRow);
     this.emit('group:offer', payload);
     return payload;
   }
@@ -4378,6 +4625,26 @@ class StarCitizenService extends EventEmitter {
       stored.responderPubkey = actor;
       stored.groupId = group.id;
       this.registerStore.put('groupinvites', inviteId, stored);
+      const inboxRow = registerInbox.entryFromFederationInvite(stored, stored.source || stored.inviterHubId);
+      if (inboxRow) {
+        const prev = this.registerStore.get('inbox', inboxRow.id);
+        if (prev) {
+          registerInbox.patch(this.registerStore, inboxRow.id, {
+            status: stored.status,
+            actionable: false,
+            resolvedAt: stored.respondedAt,
+            resolvedBy: actor,
+            refs: Object.assign({}, prev.refs || {}, { groupId: group.id })
+          });
+        } else {
+          this._appendInbox(Object.assign({}, inboxRow, {
+            status: stored.status,
+            actionable: false,
+            resolvedAt: stored.respondedAt,
+            resolvedBy: actor
+          }));
+        }
+      }
     }
     return Object.assign({}, response, {
       group: joined || (typeof group.toJSON === 'function' ? group.toJSON() : group)
@@ -4409,15 +4676,18 @@ class StarCitizenService extends EventEmitter {
         }
       }
     }
+    const storedInvite = Object.assign({}, invite, {
+      groupId: group ? group.id : null,
+      contractId: contractId || null,
+      status: 'pending',
+      source: source || null,
+      receivedAt: new Date().toISOString()
+    });
     if (this.registerStore) {
-      this.registerStore.put('groupinvites', invite.inviteId, Object.assign({}, invite, {
-        groupId: group ? group.id : null,
-        contractId: contractId || null,
-        status: 'pending',
-        source: source || null,
-        receivedAt: new Date().toISOString()
-      }));
+      this.registerStore.put('groupinvites', invite.inviteId, storedInvite);
     }
+    const inboxRow = registerInbox.entryFromFederationInvite(storedInvite, source);
+    if (inboxRow) this._appendInbox(inboxRow);
     this.emit('group:invite', invite);
     return {
       kind: 'FederationContractInvite',

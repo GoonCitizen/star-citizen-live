@@ -9,7 +9,9 @@
  */
 
 const React = require('react');
+const Chat = require('./Chat');
 const GroupFabricInspector = require('./GroupFabricInspector');
+const RegisterEventLog = require('./RegisterEventLog');
 
 const BASE = '/services/star-citizen';
 const ADVANCED_MODE_KEY = 'gooncitizen.advancedMode';
@@ -56,6 +58,9 @@ const CSS = `
   .gpage-app code{font-size:11px;word-break:break-all}
   .gpage-toggle{display:flex;align-items:center;gap:10px;font-size:13px}
   .gpage-toggle input{accent-color:var(--accent)}
+  .gpage-chat .body{padding:0}
+  .gpage-chat .chat-wrap{border-radius:0}
+  ${RegisterEventLog.CSS || ''}
 `;
 
 function identityBridge () {
@@ -72,9 +77,11 @@ class GroupPage extends React.Component {
     this.state = {
       token: null,
       pubkey: null,
+      nickname: null,
       group: null,
       applications: [],
       presenceRoster: {},
+      events: [],
       loading: true,
       error: null,
       notice: null,
@@ -121,7 +128,11 @@ class GroupPage extends React.Component {
       });
       if (!res.ok) return null;
       const json = await res.json();
-      this.setState({ token: json.data.token, pubkey: json.data.pubkey });
+      this.setState({
+        token: json.data.token,
+        pubkey: json.data.pubkey,
+        nickname: (info && info.nickname) || null
+      });
       return json.data.token;
     } catch (_) { return null; }
   }
@@ -153,8 +164,15 @@ class GroupPage extends React.Component {
         const pr = await fetch(`${BASE}/presence/roster`, { headers: this.headers(token) });
         if (pr.ok) presenceRoster = ((await pr.json()).data) || {};
       } catch (_) { /* optional */ }
+      let events = [];
+      try {
+        const er = await fetch(`${BASE}/inbox?groupId=${encodeURIComponent(group.id)}`, {
+          headers: this.headers(token)
+        });
+        if (er.ok) events = ((await er.json()).data) || [];
+      } catch (_) { /* optional */ }
       this.setState({
-        group, applications, presenceRoster, loading: false,
+        group, applications, presenceRoster, events, loading: false,
         slugEdit: group.slug || '',
         notice: null
       });
@@ -183,22 +201,31 @@ class GroupPage extends React.Component {
       });
       const json = await res.json();
       if (!res.ok) throw new Error(json.error || `HTTP ${res.status}`);
-      const url = (json.data && json.data.protocolUrl) || '';
+      const data = json.data || {};
+      const url = data.protocolUrl || '';
       if (!url) throw new Error('no protocolUrl');
+      const mesh = data.relayed
+        ? `Broadcast to network (${data.peers || 0} peer connection(s)). `
+        : (`Mesh broadcast failed` + (data.relayError ? `: ${data.relayError}` : '') + '. ');
       try {
         await navigator.clipboard.writeText(url);
         this.setState({
           busy: false,
-          notice: 'Fabric GroupOffer copied. Page URL (secondary): ' + this.shareUrl()
+          notice: mesh + 'fabric:… offer copied. Page: ' + this.shareUrl(),
+          error: data.relayed ? null : (data.relayError || 'Share copied locally but not broadcast')
         });
       } catch (_) {
-        this.setState({ busy: false, notice: url });
+        this.setState({
+          busy: false,
+          notice: mesh + url,
+          error: data.relayed ? null : (data.relayError || null)
+        });
       }
     } catch (e) {
       const url = this.shareUrl();
       try {
         await navigator.clipboard.writeText(url);
-        this.setState({ busy: false, notice: 'Page link copied (Fabric share failed: ' + e.message + ').' });
+        this.setState({ busy: false, notice: 'Page link copied (Fabric share failed: ' + e.message + ').', error: e.message });
       } catch (_) {
         this.setState({ busy: false, error: e.message, notice: url });
       }
@@ -415,9 +442,46 @@ class GroupPage extends React.Component {
       this.state.notice ? React.createElement('div', { className: 'gpage-ok' }, this.state.notice) : null,
       this.renderVisitorApply(),
       this.renderCreatorSettings(),
+      this.renderChat(),
       this.renderApplications(),
       this.renderMembers(),
+      this.renderActivity(),
       this.renderFabricInspector()
+    );
+  }
+
+  renderChat () {
+    const g = this.state.group;
+    if (!g) return null;
+    if (g.role !== 'member' && g.role !== 'creator') {
+      return React.createElement('div', { className: 'gpage-panel gpage-chat' },
+        React.createElement('h2', null, 'Chat'),
+        React.createElement('div', { className: 'body', style: { padding: '14px 16px', color: 'var(--muted)', fontSize: 13, lineHeight: 1.5 } },
+          'Group chat is for members. Apply to join to read and post here.')
+      );
+    }
+    return React.createElement('div', { className: 'gpage-panel gpage-chat' },
+      React.createElement('h2', null, 'Chat'),
+      React.createElement('div', { className: 'body' },
+        React.createElement(Chat, {
+          groupId: g.id,
+          embedded: true,
+          identityPubkey: this.state.pubkey,
+          nickname: this.state.nickname
+        })
+      )
+    );
+  }
+
+  renderActivity () {
+    return React.createElement('div', { className: 'gpage-panel' },
+      React.createElement('h2', null, 'Activity'),
+      React.createElement('div', { className: 'body' },
+        React.createElement(RegisterEventLog, {
+          items: this.state.events,
+          empty: 'No group events yet — join applications, membership changes, and invites will appear here.'
+        })
+      )
     );
   }
 

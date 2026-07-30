@@ -3,13 +3,9 @@
 /**
  * Chat — org chat brought forward from the Hub (ChatMessage types).
  *
- * Channel list on the left: Global plus a dedicated channel per group.
- * Messages sync over the Fabric Peer: local posts are Schnorr-attributed to
- * your identity and published as `P2P_CHAT_MESSAGE` wire Messages; remote
- * messages arrive via the Peer ingest handlers (D-010).
- *
- * Global chat is also always available via `GlobalChatDock` on other tabs;
- * this page remains the full channel browser (global + groups).
+ * Channel list on the left: Global, group channels, and DM threads.
+ * Member list (right) and message authors: hover for profile preview + Message
+ * (DM); click opens the peer profile page. Messages sync over the Fabric Peer.
  */
 
 const React = require('react');
@@ -17,37 +13,51 @@ const React = require('react');
 const BASE = '/services/star-citizen';
 
 const CSS = `
-  .chat-wrap{max-width:1280px;margin:0 auto;padding:18px;display:grid;grid-template-columns:220px 1fr 220px;gap:14px;
-    height:calc(100vh - 170px);min-height:420px}
-  .chat-side{background:var(--panel);border:1px solid var(--line);border-radius:12px;overflow:auto}
-  .chat-side h3{font-size:12px;color:var(--muted);margin:0;padding:12px 14px 6px;text-transform:uppercase;letter-spacing:.4px}
+  /* Fill the window canvas (Dashboard toggles body.chat-fill). Sidebars + messages scroll internally. */
+  .chat-wrap{width:100%;max-width:none;margin:0;padding:12px 14px;display:grid;
+    grid-template-columns:minmax(180px,220px) minmax(0,1fr) minmax(180px,220px);gap:12px;
+    height:100%;min-height:0;overflow:hidden;box-sizing:border-box}
+  .chat-side{background:var(--panel);border:1px solid var(--line);border-radius:12px;overflow:auto;
+    min-height:0;min-width:0}
+  .chat-side h3{font-size:12px;color:var(--muted);margin:0;padding:12px 14px 6px;text-transform:uppercase;letter-spacing:.4px;
+    position:sticky;top:0;background:var(--panel);z-index:1}
   .chat-ch{display:flex;gap:8px;align-items:center;width:100%;text-align:left;background:none;border:none;
     color:var(--text);padding:9px 14px;font-size:13px;cursor:pointer;border-left:3px solid transparent}
   .chat-ch:hover{background:var(--panel2)}
   .chat-ch.on{background:var(--panel2);border-left-color:var(--accent)}
   .chat-ch .n{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   .chat-ch .c{color:var(--muted);font-size:11px}
-  .chat-main{background:var(--panel);border:1px solid var(--line);border-radius:12px;display:flex;flex-direction:column;min-width:0}
-  .chat-head{padding:12px 16px;border-bottom:1px solid var(--line);font-size:13px;font-weight:600;display:flex;gap:10px;align-items:center}
+  .chat-main{background:var(--panel);border:1px solid var(--line);border-radius:12px;display:flex;flex-direction:column;
+    min-width:0;min-height:0;overflow:hidden}
+  .chat-head{padding:12px 16px;border-bottom:1px solid var(--line);font-size:13px;font-weight:600;display:flex;gap:10px;align-items:center;
+    flex:0 0 auto}
   .chat-head .sub{color:var(--muted);font-weight:400;font-size:12px}
-  .chat-msgs{flex:1;overflow:auto;padding:12px 16px;display:flex;flex-direction:column;gap:10px}
+  .chat-msgs{flex:1 1 auto;min-height:0;overflow:auto;padding:12px 16px;display:flex;flex-direction:column;gap:10px}
   .chat-msg .m{display:flex;gap:8px;align-items:baseline}
+  .chat-msg .chat-author{display:inline-flex;gap:8px;align-items:baseline;cursor:pointer;
+    border-radius:4px;padding:1px 3px;margin:-1px -3px}
+  .chat-msg .chat-author:hover{background:rgba(56,139,253,.08)}
+  .chat-msg .chat-author:focus{outline:1px solid var(--accent);outline-offset:1px}
   .chat-msg .who{font-weight:600;font-size:12.5px}
   .chat-msg .who.me{color:var(--accent)}
-  .chat-msg .key{color:var(--muted);font-size:10.5px;font-family:'Cascadia Code',Consolas,monospace;cursor:help}
+  .chat-msg .key{color:var(--muted);font-size:10.5px;font-family:'Cascadia Code',Consolas,monospace}
   .chat-msg .t{color:var(--muted);font-size:10.5px;font-variant-numeric:tabular-nums}
   .chat-msg .b{font-size:13.5px;line-height:1.5;word-break:break-word;white-space:pre-wrap}
   .chat-empty{color:var(--muted);font-style:italic;text-align:center;margin:auto;font-size:13px;line-height:1.7}
-  .chat-compose{display:flex;gap:8px;padding:12px 14px;border-top:1px solid var(--line)}
+  .chat-compose{display:flex;gap:8px;padding:12px 14px;border-top:1px solid var(--line);flex:0 0 auto}
   .chat-compose input{flex:1;background:var(--bg);border:1px solid var(--line);color:var(--text);
-    border-radius:8px;padding:10px 12px;font-size:13.5px}
+    border-radius:8px;padding:10px 12px;font-size:13.5px;min-width:0}
   .chat-send{background:var(--accent);border:none;color:#fff;border-radius:8px;padding:0 18px;
     font-size:13px;font-weight:600;cursor:pointer}
   .chat-send:disabled{opacity:.45;cursor:default}
-  .chat-err{background:rgba(248,81,73,.12);color:var(--kill);border-radius:7px;margin:0 14px 10px;padding:8px 11px;font-size:12.5px}
-  .chat-members{background:var(--panel);border:1px solid var(--line);border-radius:12px;overflow:auto;display:flex;flex-direction:column}
-  .chat-members h3{font-size:12px;color:var(--muted);margin:0;padding:12px 14px 6px;text-transform:uppercase;letter-spacing:.4px}
-  .chat-mem{display:grid;gap:2px;padding:8px 12px;border-bottom:1px solid #20262f}
+  .chat-err{background:rgba(248,81,73,.12);color:var(--kill);border-radius:7px;margin:0 14px 10px;padding:8px 11px;font-size:12.5px;
+    flex:0 0 auto}
+  .chat-members{background:var(--panel);border:1px solid var(--line);border-radius:12px;overflow:auto;display:flex;
+    flex-direction:column;min-height:0;min-width:0}
+  .chat-members h3{font-size:12px;color:var(--muted);margin:0;padding:12px 14px 6px;text-transform:uppercase;letter-spacing:.4px;
+    position:sticky;top:0;background:var(--panel);z-index:1}
+  .chat-mem{display:grid;gap:2px;padding:8px 12px;border-bottom:1px solid #20262f;cursor:pointer}
+  .chat-mem:hover{background:rgba(56,139,253,.06)}
   .chat-mem:last-child{border-bottom:none}
   .chat-mem .row{display:flex;gap:8px;align-items:center;min-width:0}
   .chat-mem .dot{width:7px;height:7px;border-radius:50%;flex:none;background:var(--muted)}
@@ -59,7 +69,34 @@ const CSS = `
   .chat-mem .ship b{color:var(--text);font-weight:600}
   .chat-mem .tag{font-size:10px;font-weight:700;padding:1px 6px;border-radius:4px;background:rgba(56,139,253,.12);color:var(--accent)}
   .chat-mem-hint{color:var(--muted);font-size:11.5px;padding:10px 14px;line-height:1.5}
-  @media(max-width:980px){.chat-wrap{grid-template-columns:1fr;height:auto}.chat-side,.chat-members{max-height:180px}}
+  .chat-mem-wrap{position:relative}
+  /* Fixed so overflow:auto on .chat-members cannot clip the popover. */
+  .chat-mem-card{position:fixed;z-index:40;width:260px;
+    background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px 13px;
+    box-shadow:0 12px 28px rgba(0,0,0,.45);display:grid;gap:8px;cursor:default;pointer-events:auto}
+  .chat-mem-card .nm{font-size:14px;font-weight:650}
+  .chat-mem-card .pk{font-size:10.5px;color:var(--muted);font-family:'Cascadia Code',Consolas,monospace;word-break:break-all}
+  .chat-mem-card .bio{font-size:12.5px;line-height:1.45;color:var(--text);max-height:4.2em;overflow:hidden}
+  .chat-mem-card .meta{font-size:12px;color:var(--muted);line-height:1.4;display:flex;flex-wrap:wrap;gap:4px;align-items:center}
+  .chat-mem-card .meta b{color:var(--text);font-weight:600}
+  .chat-mem-card .dot{width:7px;height:7px;border-radius:50%;flex:none;background:var(--muted)}
+  .chat-mem-card .dot.on{background:var(--good);box-shadow:0 0 0 2px rgba(63,185,80,.25)}
+  .chat-mem-card .actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:2px}
+  .chat-mem-card .btn{background:var(--accent);border:none;color:#fff;border-radius:7px;padding:6px 11px;
+    font-size:12px;font-weight:600;cursor:pointer}
+  .chat-mem-card .btn.ghost{background:var(--panel2);border:1px solid var(--line);color:var(--text)}
+  .chat-mem-card .btn:disabled{opacity:.45;cursor:default}
+  /* Group page (and similar): messages + compose only, no channel/member rails. */
+  .chat-wrap.chat-embedded{grid-template-columns:1fr;height:min(440px,55vh);padding:0;gap:0}
+  .chat-wrap.chat-embedded .chat-side,
+  .chat-wrap.chat-embedded .chat-members{display:none}
+  .chat-wrap.chat-embedded .chat-main{border-radius:0;border:none;min-height:0}
+  @media(max-width:980px){
+    .chat-wrap{grid-template-columns:1fr;grid-template-rows:minmax(120px,22%) minmax(0,1fr) minmax(120px,22%);gap:10px}
+    .chat-wrap.chat-embedded{grid-template-rows:minmax(0,1fr);height:min(440px,55vh)}
+    .chat-side,.chat-members{max-height:none}
+    .chat-mem-card{width:min(260px,calc(100vw - 24px))}
+  }
 `;
 
 function shortKey (pk) {
@@ -71,22 +108,58 @@ function shortTime (ts) {
   return m ? m[1] : '';
 }
 
+/** Match ChatManager.dmChannelKey (sorted pubkey pair). */
+function dmChannelKey (a, b) {
+  const x = String(a || '').trim();
+  const y = String(b || '').trim();
+  if (!x || !y || x === y) return null;
+  const [lo, hi] = [x, y].sort((p, q) => p.localeCompare(q));
+  return `dm:${lo}:${hi}`;
+}
+
+const PREFERRED_CHANNEL_KEY = 'gc.chat.channel';
+
+function initialChannel (props) {
+  if (props && props.groupId) return 'group:' + props.groupId;
+  if (props && props.channel) return props.channel;
+  try {
+    const pref = sessionStorage.getItem(PREFERRED_CHANNEL_KEY);
+    if (pref) {
+      sessionStorage.removeItem(PREFERRED_CHANNEL_KEY);
+      return pref;
+    }
+  } catch (_) { /* ignore */ }
+  return 'global';
+}
+
 class Chat extends React.Component {
   constructor (props) {
     super(props);
     this.state = {
       channels: [],
-      channel: 'global',
+      channel: initialChannel(props),
       messages: [],
       draft: '',
       error: null,
       sending: false,
       loading: true,
       members: [],
-      membersLabel: 'Members'
+      membersLabel: 'Members',
+      hoverPubkey: null,
+      hoverRect: null, // DOMRect-like for fixed popover placement
+      profileCache: {},
+      openDmChannels: [] // { key, label, kind, peerPubkey } opened from the member card
     };
     this._timer = null;
+    this._hoverTimer = null;
     this._msgsRef = React.createRef();
+    this._memRefs = {};
+  }
+
+  lockedChannel () {
+    if (this.props.groupId) return 'group:' + this.props.groupId;
+    if (this.props.channel) return this.props.channel;
+    return null;
   }
 
   componentDidMount () {
@@ -94,8 +167,19 @@ class Chat extends React.Component {
     this._timer = setInterval(() => this.refresh(), 3000);
   }
 
+  componentDidUpdate (prevProps) {
+    const next = this.lockedChannel();
+    const prev = prevProps.groupId
+      ? 'group:' + prevProps.groupId
+      : (prevProps.channel || null);
+    if (next && next !== prev && next !== this.state.channel) {
+      this.setState({ channel: next, messages: [], members: [], loading: true }, () => this.refresh());
+    }
+  }
+
   componentWillUnmount () {
     if (this._timer) clearInterval(this._timer);
+    if (this._hoverTimer) clearTimeout(this._hoverTimer);
   }
 
   async refresh () {
@@ -104,7 +188,11 @@ class Chat extends React.Component {
         fetch(`${BASE}/chat/channels`).then((r) => r.json()),
         fetch(`${BASE}/chat/messages?channel=${encodeURIComponent(this.state.channel)}&limit=200`).then((r) => r.json())
       ]);
-      const channels = chRes.data || [];
+      const fromApi = chRes.data || [];
+      const keys = new Set(fromApi.map((c) => c.key));
+      const channels = fromApi.concat(
+        (this.state.openDmChannels || []).filter((c) => c && c.key && !keys.has(c.key))
+      );
       const messages = msgRes.data || [];
       const el = this._msgsRef.current;
       const pinned = el && (el.scrollHeight - el.scrollTop - el.clientHeight < 60);
@@ -115,6 +203,119 @@ class Chat extends React.Component {
     } catch (_) {
       this.setState({ loading: false });
     }
+  }
+
+  openProfile (pubkey) {
+    if (!pubkey) return;
+    window.location.href = `/profiles/${encodeURIComponent(pubkey)}`;
+  }
+
+  scheduleHover (pubkey, el) {
+    if (this._hoverTimer) clearTimeout(this._hoverTimer);
+    const rect = el && el.getBoundingClientRect
+      ? el.getBoundingClientRect()
+      : (this._memRefs[pubkey] && this._memRefs[pubkey].getBoundingClientRect
+        ? this._memRefs[pubkey].getBoundingClientRect()
+        : null);
+    this._hoverTimer = setTimeout(() => {
+      this.setState({
+        hoverPubkey: pubkey,
+        hoverRect: rect
+          ? { top: rect.top, left: rect.left, right: rect.right, bottom: rect.bottom, width: rect.width, height: rect.height }
+          : null
+      });
+      this.ensureProfile(pubkey);
+    }, 120);
+  }
+
+  scheduleHoverLeave () {
+    if (this._hoverTimer) clearTimeout(this._hoverTimer);
+    this._hoverTimer = setTimeout(() => {
+      this.setState({ hoverPubkey: null, hoverRect: null });
+    }, 280);
+  }
+
+  cancelHoverLeave () {
+    if (this._hoverTimer) clearTimeout(this._hoverTimer);
+  }
+
+  cardStyle () {
+    const r = this.state.hoverRect;
+    if (!r) return { top: 80, right: 16 };
+    const cardW = 260;
+    const gap = 8;
+    // Prefer to the right of message authors (left of the pane); fall back left of members rail.
+    let left = r.right + gap;
+    if (left + cardW > window.innerWidth - 8) {
+      left = r.left - cardW - gap;
+    }
+    if (left < 8) left = Math.min(r.right + gap, window.innerWidth - cardW - 8);
+    let top = r.top;
+    const maxTop = window.innerHeight - 220;
+    if (top > maxTop) top = Math.max(8, maxTop);
+    return { top, left };
+  }
+
+  renderAuthor (author, handle) {
+    if (!author) return null;
+    const me = this.props.identityPubkey || null;
+    return React.createElement('span', {
+      className: 'chat-author',
+      title: 'Hover for preview · click for profile',
+      role: 'link',
+      tabIndex: 0,
+      onMouseEnter: (e) => this.scheduleHover(author, e.currentTarget),
+      onMouseLeave: () => this.scheduleHoverLeave(),
+      onClick: () => this.openProfile(author),
+      onKeyDown: (e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          this.openProfile(author);
+        }
+      }
+    },
+    React.createElement('span', { className: 'who' + (me && author === me ? ' me' : '') },
+      handle || shortKey(author)),
+    // Pubkey always visible — nickname is a label, never a substitute for the actor id.
+    React.createElement('span', { className: 'key', title: author }, shortKey(author))
+    );
+  }
+
+  async ensureProfile (pubkey) {
+    if (!pubkey || this.state.profileCache[pubkey]) return;
+    try {
+      const res = await fetch(`${BASE}/profiles/${encodeURIComponent(pubkey)}`);
+      const json = await res.json();
+      if (!res.ok) return;
+      this.setState((s) => ({
+        profileCache: Object.assign({}, s.profileCache, { [pubkey]: json.data || null })
+      }));
+    } catch (_) { /* ignore */ }
+  }
+
+  openDm (peerPubkey, handle) {
+    const me = this.props.identityPubkey;
+    if (!me || !peerPubkey || me === peerPubkey) return;
+    const key = dmChannelKey(me, peerPubkey);
+    if (!key) return;
+    // Embedded group chat has no channel rail — hand off to the Chat tab.
+    if (this.props.embedded) {
+      try { sessionStorage.setItem(PREFERRED_CHANNEL_KEY, key); } catch (_) { /* ignore */ }
+      window.location.href = '/#chat';
+      return;
+    }
+    const ch = {
+      key,
+      label: 'DM ' + (handle || shortKey(peerPubkey)),
+      kind: 'dm',
+      peerPubkey
+    };
+    this.setState((s) => {
+      const openDmChannels = (s.openDmChannels || []).some((c) => c.key === key)
+        ? s.openDmChannels
+        : (s.openDmChannels || []).concat([ch]);
+      return { openDmChannels, hoverPubkey: null, channel: key, messages: [], loading: true };
+    }, () => this.refresh());
   }
 
   async refreshMembers (channels, messages) {
@@ -192,6 +393,7 @@ class Chat extends React.Component {
   }
 
   pick (key) {
+    if (this.lockedChannel()) return;
     this.setState({ channel: key, messages: [], members: [], loading: true }, () => this.refresh());
   }
 
@@ -215,6 +417,68 @@ class Chat extends React.Component {
     }
   }
 
+  renderMemberCard () {
+    const pubkey = this.state.hoverPubkey;
+    if (!pubkey) return null;
+    const m = (this.state.members || []).find((row) => row.pubkey === pubkey) || { pubkey };
+    const me = this.props.identityPubkey || null;
+    const detail = this.state.profileCache[pubkey] || null;
+    const profile = (detail && detail.profile) || {};
+    const presence = (detail && detail.presence) || null;
+    const ship = (presence && presence.ship) || m.ship;
+    const shipLabel = ship && (ship.name || ship.slug);
+    const online = presence ? !!presence.online : !!m.online;
+    const nickname = profile.nickname || m.handle || null;
+    const scHandle = profile.scHandle || null;
+    const bio = profile.bio || null;
+    const isSelf = !!(me && pubkey === me);
+
+    return React.createElement('div', {
+      className: 'chat-mem-card',
+      style: this.cardStyle(),
+      onMouseEnter: () => this.cancelHoverLeave(),
+      onMouseLeave: () => this.scheduleHoverLeave(),
+      onClick: (e) => e.stopPropagation()
+    },
+    React.createElement('div', { className: 'nm' }, nickname || shortKey(pubkey)),
+    React.createElement('div', { className: 'pk', title: pubkey }, pubkey),
+    React.createElement('div', { className: 'meta' },
+      React.createElement('span', { className: 'dot' + (online ? ' on' : '') }),
+      React.createElement('span', null, online ? 'online' : 'offline'),
+      scHandle ? React.createElement('span', null, '· SC ', React.createElement('b', null, scHandle)) : null,
+      shipLabel
+        ? React.createElement('span', null, '· ', React.createElement('b', null, shipLabel),
+          ship.type ? ` (${ship.type})` : '')
+        : null,
+      m.role === 'creator' ? React.createElement('span', null, '· creator') : null
+    ),
+    bio ? React.createElement('div', { className: 'bio' }, bio) : null,
+    !detail
+      ? React.createElement('div', { className: 'meta' }, 'loading profile…')
+      : null,
+    React.createElement('div', { className: 'actions' },
+      React.createElement('button', {
+        type: 'button',
+        className: 'btn',
+        disabled: isSelf || !me,
+        title: isSelf ? 'That\'s you' : (me ? 'Open a direct message' : 'Unlock identity to DM'),
+        onClick: (e) => {
+          e.stopPropagation();
+          this.openDm(pubkey, nickname || m.handle);
+        }
+      }, isSelf ? 'You' : 'Message'),
+      React.createElement('button', {
+        type: 'button',
+        className: 'btn ghost',
+        onClick: (e) => {
+          e.stopPropagation();
+          this.openProfile(pubkey);
+        }
+      }, 'Profile')
+    )
+    );
+  }
+
   renderMembers () {
     const me = this.props.identityPubkey || null;
     const members = this.state.members || [];
@@ -225,29 +489,49 @@ class Chat extends React.Component {
         ? members.map((m) => {
           const ship = m.ship;
           const shipLabel = ship && (ship.name || ship.slug);
-          return React.createElement('div', { className: 'chat-mem', key: m.pubkey },
-            React.createElement('div', { className: 'row' },
-              React.createElement('span', { className: 'dot' + (m.online ? ' on' : '') }),
-              React.createElement('span', {
-                className: 'nm' + (me && m.pubkey === me ? ' me' : ''),
-                title: m.pubkey
-              }, m.handle || shortKey(m.pubkey)),
-              m.role === 'creator'
-                ? React.createElement('span', { className: 'tag' }, 'creator')
-                : null
-            ),
-            React.createElement('div', { className: 'pk', title: m.pubkey }, shortKey(m.pubkey)),
-            shipLabel
-              ? React.createElement('div', { className: 'ship' },
-                React.createElement('b', null, shipLabel),
-                ship.type ? ` · ${ship.type}` : '')
+          return React.createElement('div', {
+            className: 'chat-mem-wrap',
+            key: m.pubkey,
+            ref: (el) => { this._memRefs[m.pubkey] = el; },
+            onMouseEnter: (e) => this.scheduleHover(m.pubkey, e.currentTarget),
+            onMouseLeave: () => this.scheduleHoverLeave()
+          },
+          React.createElement('div', {
+            className: 'chat-mem',
+            title: 'Hover for preview · click for profile',
+            role: 'link',
+            tabIndex: 0,
+            onClick: () => this.openProfile(m.pubkey),
+            onKeyDown: (e) => {
+              if ((e.key === 'Enter' || e.key === ' ') && m.pubkey) {
+                e.preventDefault();
+                this.openProfile(m.pubkey);
+              }
+            }
+          },
+          React.createElement('div', { className: 'row' },
+            React.createElement('span', { className: 'dot' + (m.online ? ' on' : '') }),
+            React.createElement('span', {
+              className: 'nm' + (me && m.pubkey === me ? ' me' : ''),
+              title: m.pubkey
+            }, m.handle || shortKey(m.pubkey)),
+            m.role === 'creator'
+              ? React.createElement('span', { className: 'tag' }, 'creator')
               : null
+          ),
+          React.createElement('div', { className: 'pk', title: m.pubkey }, shortKey(m.pubkey)),
+          shipLabel
+            ? React.createElement('div', { className: 'ship' },
+              React.createElement('b', null, shipLabel),
+              ship.type ? ` · ${ship.type}` : '')
+            : null
+          )
           );
         })
         : React.createElement('div', { className: 'chat-mem-hint' },
           this.state.channel === 'global'
-            ? 'Peers sharing presence (and recent chat authors) appear here.'
-            : 'Group members appear here once the group is loaded.')
+            ? 'Peers sharing presence (and recent chat authors) appear here — hover for profile / DM, click for full page.'
+            : 'Group members appear here once the group is loaded — hover for profile / DM, click for full page.')
     );
   }
 
@@ -255,37 +539,52 @@ class Chat extends React.Component {
     const me = this.props.identityPubkey || null;
     const active = this.state.channels.find((c) => c.key === this.state.channel);
 
-    return React.createElement('div', { className: 'chat-wrap' },
-      React.createElement('div', { className: 'chat-side' },
-        React.createElement('h3', null, 'Channels'),
-        this.state.channels.map((ch) => React.createElement('button', {
-          className: 'chat-ch' + (ch.key === this.state.channel ? ' on' : ''),
-          key: ch.key,
-          onClick: () => this.pick(ch.key)
-        },
-        React.createElement('span', null, ch.kind === 'global' ? '🌐' : '👥'),
-        React.createElement('span', { className: 'n' }, ch.label),
-        ch.count ? React.createElement('span', { className: 'c' }, ch.count) : null
-        )),
-        !this.state.channels.some((c) => c.kind === 'group')
-          ? React.createElement('div', { style: { color: 'var(--muted)', fontSize: 11.5, padding: '8px 14px', lineHeight: 1.5 } },
-            'Each group gets its own channel — create or join one on the Groups tab.')
-          : null
-      ),
+    const embedded = !!this.props.embedded;
+    const headLabel = embedded
+      ? 'Group chat'
+      : (active
+        ? (active.kind === 'global'
+          ? '🌐 Global'
+          : (active.kind === 'dm' ? '✉️ ' + active.label : '👥 ' + active.label))
+        : this.state.channel);
+    const headSub = embedded
+      ? 'members only · same channel as Chat tab'
+      : (active && active.kind === 'group'
+        ? 'members only'
+        : (active && active.kind === 'dm'
+          ? 'direct — only you and them'
+          : 'network — relayed via your Fabric peers'));
+
+    return React.createElement('div', { className: 'chat-wrap' + (embedded ? ' chat-embedded' : '') },
+      embedded
+        ? null
+        : React.createElement('div', { className: 'chat-side' },
+          React.createElement('h3', null, 'Channels'),
+          this.state.channels.map((ch) => React.createElement('button', {
+            className: 'chat-ch' + (ch.key === this.state.channel ? ' on' : ''),
+            key: ch.key,
+            onClick: () => this.pick(ch.key)
+          },
+          React.createElement('span', null,
+            ch.kind === 'global' ? '🌐' : (ch.kind === 'dm' ? '✉️' : '👥')),
+          React.createElement('span', { className: 'n' }, ch.label),
+          ch.count ? React.createElement('span', { className: 'c' }, ch.count) : null
+          )),
+          !this.state.channels.some((c) => c.kind === 'group')
+            ? React.createElement('div', { style: { color: 'var(--muted)', fontSize: 11.5, padding: '8px 14px', lineHeight: 1.5 } },
+              'Each group gets its own channel — create or join one on the Groups tab. Hover a member to start a DM.')
+            : null
+        ),
       React.createElement('div', { className: 'chat-main' },
         React.createElement('div', { className: 'chat-head' },
-          active ? (active.kind === 'global' ? '🌐 Global' : '👥 ' + active.label) : this.state.channel,
-          React.createElement('span', { className: 'sub' },
-            active && active.kind === 'group' ? 'members only' : 'network — relayed via your Fabric peers')
+          headLabel,
+          React.createElement('span', { className: 'sub' }, headSub)
         ),
         React.createElement('div', { className: 'chat-msgs', ref: this._msgsRef },
           this.state.messages.length
             ? this.state.messages.map((m) => React.createElement('div', { className: 'chat-msg', key: m.id },
               React.createElement('div', { className: 'm' },
-                React.createElement('span', { className: 'who' + (me && m.author === me ? ' me' : '') },
-                  m.handle || shortKey(m.author)),
-                // Pubkey always visible — nickname is a label, never a substitute for the actor id.
-                React.createElement('span', { className: 'key', title: m.author }, shortKey(m.author)),
+                this.renderAuthor(m.author, m.handle),
                 React.createElement('span', { className: 't' }, shortTime(m.ts))
               ),
               React.createElement('div', { className: 'b' }, m.body)
@@ -311,7 +610,8 @@ class Chat extends React.Component {
           }, this.state.sending ? '…' : 'Send')
         )
       ),
-      this.renderMembers()
+      embedded ? null : this.renderMembers(),
+      this.renderMemberCard()
     );
   }
 }

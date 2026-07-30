@@ -38,7 +38,8 @@ const CSS = `
   .mi-m{border-bottom:1px solid #20262f;padding:12px 16px;display:grid;gap:8px}
   .mi-m:last-child{border-bottom:none}
   .mi-mh{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
-  .mi-title{font-weight:600;font-size:14px;flex:1;min-width:140px}
+  .mi-title{font-weight:600;font-size:14px;flex:1;min-width:140px;cursor:pointer;color:var(--text);text-decoration:none;background:none;border:none;padding:0;font:inherit;text-align:left}
+  .mi-title:hover{color:var(--accent)}
   .mi-tag{font-size:10.5px;font-weight:700;padding:2px 8px;border-radius:5px}
   .mi-tag.open{background:rgba(59,130,246,.18);color:var(--accent)}
   .mi-tag.assigned{background:rgba(210,153,34,.18);color:var(--warn)}
@@ -244,12 +245,22 @@ class Missions extends React.Component {
     return React.createElement('div', { className: 'mi-m', key: m.id },
       React.createElement('div', { className: 'mi-mh' },
         React.createElement('span', { className: 'mi-tag ' + (m.status || 'open') }, m.status),
-        React.createElement('span', { className: 'mi-title' }, m.title),
+        React.createElement('button', {
+          type: 'button',
+          className: 'mi-title',
+          title: 'Open mission page',
+          onClick: () => { window.location.href = `/missions/${encodeURIComponent(m.id)}`; }
+        }, m.title),
         m.reward ? React.createElement('span', { className: 'mi-tag btc' }, '₿ ' + SATS(m.reward)) : null,
         m.groupId ? React.createElement('span', { className: 'mi-tag open' }, 'group') : null,
         m.authorities ? React.createElement('span', { style: { color: 'var(--muted)', fontSize: 11 } }, `${m.authorities.threshold}-of-${m.authorities.keys.length} authorities`) : null
       ),
-      React.createElement('div', { className: 'mi-meta' }, m.id + (m.assigneeId ? ` · assignee ${m.assigneeId.slice(0, 12)}…` : '')),
+      React.createElement('div', {
+        className: 'mi-meta',
+        style: { cursor: 'pointer' },
+        title: 'Open mission page',
+        onClick: () => { window.location.href = `/missions/${encodeURIComponent(m.id)}`; }
+      }, m.id + (m.assigneeId ? ` · assignee ${m.assigneeId.slice(0, 12)}…` : '')),
       React.createElement('div', { className: 'mi-row' },
         m.status === 'open' && isCreator
           ? React.createElement(React.Fragment, { key: 'bcast' },
@@ -259,9 +270,9 @@ class Missions extends React.Component {
               title: 'Notify all connected Fabric peers that this mission is open',
               onClick: () => this.act(
                 () => this.post(`/missions/${m.id}/broadcast`, { scope: 'global' }),
-                'Broadcast sent to the network.'
+                'Shared to the network.'
               )
-            }, 'Broadcast to network'),
+            }, 'Share to network'),
             m.groupId
               ? React.createElement('button', {
                 className: 'mi-btn ghost',
@@ -269,9 +280,9 @@ class Missions extends React.Component {
                 title: 'Notify members of this mission\'s group and its subgroups (hub still relays; non-members filter on receive)',
                 onClick: () => this.act(
                   () => this.post(`/missions/${m.id}/broadcast`, { scope: 'group', groupId: m.groupId }),
-                  'Broadcast sent to the group.'
+                  'Shared to the group.'
                 )
-              }, 'Broadcast to group')
+              }, 'Share to group')
               : null
           )
           : null,

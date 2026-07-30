@@ -107,6 +107,32 @@ test('GET /peers/:id returns local profile detail + profile settings', async () 
     // Self profile is visible via /profile even when inspecting hubs.
     assert.strictEqual(svc._localProfile().nickname, 'PilotOne');
 
+    const byPk = await request(port, 'GET', `/services/star-citizen/profiles/${id.pubkey}`);
+    assert.strictEqual(byPk.status, 200, JSON.stringify(byPk.body));
+    assert.strictEqual(byPk.body.type, 'PeerProfileDetail');
+    assert.strictEqual(byPk.body.data.self, true);
+    assert.strictEqual(byPk.body.data.profile.nickname, 'PilotOne');
+    assert.strictEqual(byPk.body.data.profile.scHandle, 'PilotOne');
+
+    const badPk = await request(port, 'GET', '/services/star-citizen/profiles/not-a-key');
+    assert.strictEqual(badPk.status, 404);
+
+    async function spaGet (reqPath) {
+      return new Promise((resolve, reject) => {
+        http.get({ host: '127.0.0.1', port, path: reqPath }, (res) => {
+          let buf = '';
+          res.on('data', (c) => { buf += c; });
+          res.on('end', () => resolve({ status: res.statusCode, type: res.headers['content-type'], body: buf }));
+        }).on('error', reject);
+      });
+    }
+    const spaProfile = await spaGet(`/profiles/${id.pubkey}`);
+    assert.strictEqual(spaProfile.status, 200);
+    assert.match(spaProfile.type || '', /text\/html/);
+    const spaMission = await spaGet('/missions/example-mission-id');
+    assert.strictEqual(spaMission.status, 200);
+    assert.match(spaMission.type || '', /text\/html/);
+
     // Gossip discovery promotes non-hub peers onto the roster (logs off).
     svc._considerDiscoveredPeers(['wingmate.example:7777', 'hub.fabric.pub:7777'], 'gossip');
     assert.ok(svc.peers.some((p) => p.address === 'wingmate.example:7777' && p.discovered === true));

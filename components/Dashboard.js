@@ -35,25 +35,58 @@ const { FEED_CATEGORIES, FEED_SOURCES, filterLiveFeed } = require('../functions/
 const featureEnabled = (key) => FEATURES[key] !== false;
 
 // Top-level features, listed along the top of the dashboard (Hub-style).
+// Order is product-facing: Home → Fleet → Missions → Groups → Network → Chat.
 // Feature-flagged tabs (see constants.FEATURES) are filtered out when disabled.
 const TABS = [
   ['home', 'Home'],
-  ['live', 'Feed'],
-  ['missions', 'Missions'],
-  ['wallet', 'Wallet'],
-  ['library', 'Library'],
   ['fleet', 'Fleet'],
-  ['chat', 'Chat'],
+  ['missions', 'Missions'],
   ['groups', 'Groups'],
-  ['peers', 'Peers'],
-  ['messages', 'Messages']
+  ['network', 'Network'],
+  ['chat', 'Chat'],
+  ['wallet', 'Wallet'],
+  ['library', 'Library']
 ].filter(([k]) => featureEnabled(k));
-// Advanced-only tabs — hidden unless "Advanced mode" is enabled in Settings.
-const ADVANCED_TABS = new Set(['peers', 'messages']);
+
+// Network sub-views (Feed + Peers always; Messages when Advanced mode is on).
+const NETWORK_VIEWS = [
+  ['feed', 'Feed'],
+  ['peers', 'Peers']
+];
+const NETWORK_ADVANCED_VIEWS = [
+  ['messages', 'Messages']
+];
+
+// Advanced-only top-level tabs — none today (Peers/Messages live under Network).
+const ADVANCED_TABS = new Set();
 
 // Notifications is opened from the header bell (not a primary feature tab).
-// Legacy #analyze hash redirects to Home (activity panels live there now).
-const TAB_KEYS = TABS.map(([k]) => k).concat(['notifications', 'analyze']);
+// Legacy #analyze / #live / #peers / #messages hash aliases resolve in resolveHash().
+const TAB_KEYS = TABS.map(([k]) => k).concat(['notifications', 'analyze', 'live', 'peers', 'messages', 'feed']);
+
+/** @returns {{ tab: string, networkView: string|null }} */
+function resolveHash (rawHash, advancedMode) {
+  const h = String(rawHash || '').replace(/^#/, '');
+  if (!h || h === 'analyze') return { tab: 'home', networkView: null };
+  if (h === 'live' || h === 'feed') return { tab: 'network', networkView: 'feed' };
+  if (h === 'peers') return { tab: 'network', networkView: 'peers' };
+  if (h === 'messages') {
+    return advancedMode
+      ? { tab: 'network', networkView: 'messages' }
+      : { tab: 'home', networkView: null };
+  }
+  if (h === 'network' || h.startsWith('network/')) {
+    const view = h.split('/')[1] || 'feed';
+    const allowed = new Set(NETWORK_VIEWS.map(([k]) => k)
+      .concat(advancedMode ? NETWORK_ADVANCED_VIEWS.map(([k]) => k) : []));
+    return { tab: 'network', networkView: allowed.has(view) ? view : 'feed' };
+  }
+  if (TAB_KEYS.includes(h) && TABS.some(([k]) => k === h)) {
+    return { tab: h, networkView: null };
+  }
+  if (h === 'notifications') return { tab: 'notifications', networkView: null };
+  return { tab: 'home', networkView: null };
+}
 
 // Exclusive activity views on Home (tab-like). Filters is a separate flyover.
 const HOME_VIEWS = [
@@ -95,10 +128,18 @@ const CSS = `
     --good:#3fb950; --warn:#d29922; --raw:#6e7681; --kill:#f85149;
   }
   *{box-sizing:border-box}
+  html,body,#root{height:100%}
   body{margin:0;background:var(--bg);color:var(--text);
        font-family:'Segoe UI',system-ui,sans-serif;font-size:14px}
   header{position:sticky;top:0;z-index:5;background:var(--panel);
          border-bottom:1px solid var(--line);padding:12px 18px}
+  /* Chat tab: window is the canvas — header + fill; scroll inside chat panes only. */
+  body.chat-fill{overflow:hidden}
+  body.chat-fill #root{display:flex;flex-direction:column;min-height:0;overflow:hidden}
+  body.chat-fill #root > header{flex:0 0 auto;position:relative}
+  body.chat-fill #root > .chat-wrap{flex:1 1 auto;min-height:0}
+  .network-nav{display:flex;flex-wrap:wrap;align-items:center;gap:8px;padding:14px 18px 0}
+  .network-nav .hint{color:var(--muted);font-size:12px;margin-left:4px}
   .row{display:flex;flex-wrap:wrap;align-items:center;gap:14px}
   h1{font-size:17px;margin:0;font-weight:650}
   .pill{padding:2px 10px;border-radius:999px;font-size:12px;font-weight:600}
@@ -355,15 +396,15 @@ function badge (ev) {
 class Dashboard extends React.Component {
   constructor (props) {
     super(props);
-    const hashTab = (typeof window !== 'undefined' && String(window.location.hash || '').replace(/^#/, '')) || '';
     const advancedMode = readAdvancedMode();
-    const tabAllowed = (t) => TAB_KEYS.includes(t) && (advancedMode || !ADVANCED_TABS.has(t));
-    const initialTab = (hashTab === 'analyze')
-      ? 'home'
-      : (tabAllowed(hashTab) ? hashTab : 'home');
+    const resolved = resolveHash(
+      (typeof window !== 'undefined' && window.location.hash) || '',
+      advancedMode
+    );
     this.state = {
       advancedMode,
-      tab: initialTab,
+      tab: resolved.tab,
+      networkView: resolved.networkView || 'feed',
       status: '…',
       online: false,
       counts: {
@@ -452,6 +493,7 @@ class Dashboard extends React.Component {
     this.fetchRules();
     this.loadNickname();
     this.loadPresenceChip();
+    this.syncChatFillClass();
     this._timer = setInterval(() => {
       if (this.state.auto) this.poll();
     }, 2000);
@@ -466,9 +508,10 @@ class Dashboard extends React.Component {
         if (this.state.tab !== 'home') this.showTab('home', { fromHash: true });
         return;
       }
-      const allowed = TAB_KEYS.includes(h) && (this.state.advancedMode || !ADVANCED_TABS.has(h));
-      const tab = allowed ? h : 'home';
-      if (tab !== this.state.tab) this.showTab(tab, { fromHash: true });
+      const { tab, networkView } = resolveHash(h, this.state.advancedMode);
+      if (tab !== this.state.tab || (tab === 'network' && networkView !== this.state.networkView)) {
+        this.showTab(tab, { fromHash: true, networkView });
+      }
     };
     window.addEventListener('hashchange', this._onHash);
     this._onDocClick = () => {
@@ -492,6 +535,10 @@ class Dashboard extends React.Component {
     }
   }
 
+  componentDidUpdate (_prevProps, prevState) {
+    if (prevState.tab !== this.state.tab) this.syncChatFillClass();
+  }
+
   componentWillUnmount () {
     if (this._onHash) window.removeEventListener('hashchange', this._onHash);
     if (this._onDocClick) document.removeEventListener('click', this._onDocClick);
@@ -500,6 +547,14 @@ class Dashboard extends React.Component {
     if (this._analyticsTimer) clearInterval(this._analyticsTimer);
     if (this._presenceTimer) clearInterval(this._presenceTimer);
     Object.values(this._copiedTimers).forEach(clearTimeout);
+    try { document.body.classList.remove('chat-fill'); } catch (_) { /* ignore */ }
+  }
+
+  /** Chat tab owns the viewport: no document scroll; panes scroll internally. */
+  syncChatFillClass () {
+    try {
+      document.body.classList.toggle('chat-fill', this.state.tab === 'chat');
+    } catch (_) { /* ignore */ }
   }
 
   async loadNickname () {
@@ -888,17 +943,49 @@ class Dashboard extends React.Component {
     );
   }
 
-  showTab (tab, { fromHash = false } = {}) {
+  showTab (tab, { fromHash = false, networkView = null } = {}) {
     if (tab === 'analyze') tab = 'home';
+    if (tab === 'live' || tab === 'feed') {
+      tab = 'network';
+      networkView = networkView || 'feed';
+    } else if (tab === 'peers') {
+      tab = 'network';
+      networkView = networkView || 'peers';
+    } else if (tab === 'messages') {
+      tab = 'network';
+      networkView = networkView || 'messages';
+    }
+    const patch = { tab };
+    if (tab === 'network') {
+      const views = this.networkViewList().map(([k]) => k);
+      const next = networkView || this.state.networkView || 'feed';
+      patch.networkView = views.includes(next) ? next : 'feed';
+    }
     if (!fromHash) {
-      const hash = tab === 'home' ? '' : `#${tab}`;
+      let hash = '';
+      if (tab === 'network') {
+        const v = patch.networkView || 'feed';
+        hash = v === 'feed' ? '#network' : `#network/${v}`;
+      } else if (tab !== 'home') {
+        hash = `#${tab}`;
+      }
       if (window.location.hash !== hash) {
         history.replaceState(null, '', window.location.pathname + window.location.search + hash);
       }
     }
-    this.setState({ tab }, () => {
+    this.setState(patch, () => {
       if (tab === 'home' && !this.state.analytics) this.fetchAnalytics();
     });
+  }
+
+  networkViewList () {
+    return NETWORK_VIEWS.concat(
+      this.state.advancedMode ? NETWORK_ADVANCED_VIEWS : []
+    );
+  }
+
+  setNetworkView (view) {
+    this.showTab('network', { networkView: view });
   }
 
   setHomeView (key) {
@@ -1975,25 +2062,21 @@ class Dashboard extends React.Component {
     };
 
     const cards = [
-      ['live', '📡 Live Feed', 'Watch Game.log events as they happen — missions, objectives, combat and deaths, parsed in real time.',
-        `${sess.missions || 0} missions · ${sess.deaths || 0} deaths this session`],
-      ['library', '📸 Library', 'Periodic reduced-size snapshots of your play sessions — browsable history, ready for image analysis.',
-        'opt-in · configurable interval · auto-purge'],
       ['fleet', '🚀 Fleet', 'Import Starjump / FleetViewer JSON, browse your ships, share to peers, groups, or public.',
         'personal roster · Fabric FleetShare'],
       ['missions', '⭐ Missions', 'Post contracts with Bitcoin rewards — submit completion, authorities approve with Schnorr signatures, coins unlock.',
         'k-of-n approval · escrowed sats'],
-      ['wallet', '₿ Wallet', 'Group multisig addresses and mission escrows — deterministic k-of-n P2WSH from each group\'s roster.',
-        'ledger or bitcoind · regtest first'],
-      ['chat', '💬 Chat', 'Org chat with Hub message types — a global channel plus a dedicated channel for every group.',
-        'ChatMessage · signed · synced via your peers'],
       ['groups', '👥 Groups', 'Member-created squads with k-of-n Schnorr decisions. Share a public group page; others apply to join.',
         'pages at /groups/:id (or a custom URL)'],
-      ['peers', '🌐 Peers', 'Fabric Network peer management — push your signed event batches to org hubs like goon.vc.',
-        'Fabric Protocol · idempotent delivery'],
-      ['messages', '📨 Messages', 'Complete Fabric AMP Message log — every signed wire Message in or out. Not Game.log.',
-        'advanced · filter · pause · clear']
-    ].filter(([tab]) => featureEnabled(tab) && (this.state.advancedMode || !ADVANCED_TABS.has(tab)));
+      ['network', '🌐 Network', 'Live feed of Game.log and peer events, plus Fabric peer management — hubs, log sharing, and mesh status.',
+        `${sess.missions || 0} missions · ${sess.deaths || 0} deaths this session · Feed + Peers`],
+      ['chat', '💬 Chat', 'Org chat with Hub message types — a global channel plus a dedicated channel for every group.',
+        'ChatMessage · signed · synced via your peers'],
+      ['library', '📸 Library', 'Periodic reduced-size snapshots of your play sessions — browsable history, ready for image analysis.',
+        'opt-in · configurable interval · auto-purge'],
+      ['wallet', '₿ Wallet', 'Group multisig addresses and mission escrows — deterministic k-of-n P2WSH from each group\'s roster.',
+        'ledger or bitcoind · regtest first']
+    ].filter(([tab]) => featureEnabled(tab));
 
     const activeFilters = m && m.af && m.af.length
       ? m.af.length + ' filter' + (m.af.length === 1 ? '' : 's') + ' active'
@@ -2045,7 +2128,7 @@ class Dashboard extends React.Component {
       !view
         ? React.createElement('section', { className: 'panel full' },
           React.createElement('h2', null, 'Features ',
-            React.createElement('span', { className: 'sub' }, '— jump to Feed, Missions, Groups, and the rest')
+            React.createElement('span', { className: 'sub' }, '— jump to Fleet, Missions, Groups, Network, Chat')
           ),
           React.createElement('div', { className: 'home-grid' },
             cards.map(([tab, title, desc, stat]) => React.createElement('button', {
@@ -2064,9 +2147,42 @@ class Dashboard extends React.Component {
     );
   }
 
+  renderNetwork () {
+    const view = this.state.networkView || 'feed';
+    const views = this.networkViewList();
+    return React.createElement(React.Fragment, null,
+      React.createElement('div', { className: 'network-nav' },
+        views.map(([key, label]) => React.createElement('button', {
+          key,
+          type: 'button',
+          className: 'tab ' + (view === key ? 'on' : ''),
+          onClick: () => this.setNetworkView(key)
+        }, label)),
+        React.createElement('span', { className: 'hint' },
+          view === 'feed'
+            ? 'Live Game.log + peer event stream'
+            : (view === 'peers'
+              ? 'Fabric hubs, connections, and log sharing'
+              : 'AMP wire Message log'))
+      ),
+      view === 'peers'
+        ? React.createElement(Peers, {
+          showProfileActivity: this.state.showProfileActivity,
+          analytics: this.state.analytics
+        })
+        : (view === 'messages' && this.state.advancedMode
+          ? React.createElement(FabricMessages, null)
+          : this.renderLive())
+    );
+  }
+
   renderTab () {
     switch (this.state.tab) {
-      case 'live': return this.renderLive();
+      case 'network':
+      case 'live':
+      case 'peers':
+      case 'messages':
+        return this.renderNetwork();
       case 'missions': return React.createElement(Missions, {
         identityPubkey: this.state.identityPubkey,
         analytics: this.state.analytics
@@ -2083,15 +2199,9 @@ class Dashboard extends React.Component {
       });
       case 'groups': return React.createElement(Groups, {
         identityPubkey: this.state.identityPubkey,
+        nickname: this.state.nickname,
         advancedMode: this.state.advancedMode
       });
-      case 'peers': return this.state.advancedMode
-        ? React.createElement(Peers, {
-          showProfileActivity: this.state.showProfileActivity,
-          analytics: this.state.analytics
-        })
-        : this.renderHome();
-      case 'messages': return this.state.advancedMode ? React.createElement(FabricMessages, null) : this.renderHome();
       case 'notifications': return React.createElement(Notifications, {
         onPendingCount: (n) => {
           if (n !== this.state.notifyPending) this.setState({ notifyPending: n });
@@ -2138,9 +2248,15 @@ class Dashboard extends React.Component {
                 next.tab = 'home';
                 try { if (window.location.hash) history.replaceState(null, '', window.location.pathname + window.location.search); } catch (_) { /* ignore */ }
               }
-              // Drop advanced-only Home views when leaving advanced mode.
+              // Drop advanced-only Home / Network views when leaving advanced mode.
               if (!on && (s.homeView === 'tree' || s.homeView === 'rules')) {
                 next.homeView = null;
+              }
+              if (!on && s.tab === 'network' && s.networkView === 'messages') {
+                next.networkView = 'feed';
+                try {
+                  history.replaceState(null, '', window.location.pathname + window.location.search + '#network');
+                } catch (_) { /* ignore */ }
               }
               return next;
             });
@@ -2194,7 +2310,7 @@ class Dashboard extends React.Component {
               className: 'bell' + (this.state.tab === 'notifications' ? ' on' : ''),
               title: this.state.notifyPending
                 ? `${this.state.notifyPending} pending notification${this.state.notifyPending === 1 ? '' : 's'} — open history`
-                : 'Notifications — mission broadcasts and inbox history',
+                : 'Notifications — inbound mission shares, join requests, and invites',
               onClick: () => this.showTab('notifications')
             },
             '🔔',

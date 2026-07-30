@@ -4,7 +4,7 @@
  * Settings modal — operator relay settings.
  *
  * Mirrors the Hub's settings surface (`GET /settings`, `PUT /settings/:name`).
- * Peer management lives on the top-level Peers tab (`components/Peers.js`),
+ * Peer management lives under Network → Peers (`components/Peers.js`),
  * revealed via the "Advanced mode" toggle here (client-only preference).
  */
 
@@ -220,7 +220,7 @@ class Settings extends React.Component {
 
             React.createElement('div', { className: 'st-sec' },
               React.createElement('h3', null, 'Relay'),
-              React.createElement('div', { className: 'd' }, 'Where the game log comes from. Leave blank to auto-detect the freshest Game.log across drives and channels. To import historical log folders or individual files, use Feed → Import logs.'),
+              React.createElement('div', { className: 'd' }, 'Where the game log comes from. Leave blank to auto-detect the freshest Game.log across drives and channels. To import historical log folders or individual files, use Network → Feed → Import logs.'),
               this.field('Game.log path', 'logfile', 'auto-detect (e.g. C:\\...\\StarCitizen\\LIVE\\Game.log)'),
               (window.electronAPI && window.electronAPI.dialog && window.electronAPI.dialog.openLogFile)
                 ? React.createElement('div', { className: 'st-row', style: { marginTop: -4, marginBottom: 10 } },
@@ -393,7 +393,7 @@ class Settings extends React.Component {
             React.createElement('div', { className: 'st-sec' },
               React.createElement('h3', null, 'Advanced mode'),
               React.createElement('div', { className: 'd' },
-                'Reveal advanced features: Peers (Fabric Network management) and Messages (complete AMP wire Message log — Fabric Messages only, not Game.log). Stored in this browser.'),
+                'Reveal advanced Network → Messages (complete AMP wire Message log — Fabric Messages only, not Game.log) and Home views (Activity Tree, Parser rules). Stored in this browser.'),
               React.createElement('label', { style: { display: 'flex', gap: 8, alignItems: 'center', fontSize: 13, cursor: 'pointer' } },
                 React.createElement('input', {
                   type: 'checkbox',
@@ -404,14 +404,14 @@ class Settings extends React.Component {
                     }
                   }
                 }),
-                'Enable advanced mode (Peers + Fabric Messages)'
+                'Enable advanced mode (Network Messages + Home tools)'
               )
             ),
 
             React.createElement('div', { className: 'st-sec' },
               React.createElement('h3', null, 'Fabric Network'),
               React.createElement('div', { className: 'd' },
-                'Fabric peers (hub.fabric.pub:7777 and relay.goon.vc:7777 are seeded by default) receive your signed wire Messages over TCP/NOISE. Log events stay private until you authorize sharing — prefer per-peer grants on the Peers tab, or enable global below.'),
+                'Fabric peers (hub.fabric.pub:7777 and relay.goon.vc:7777 are seeded by default) receive your signed wire Messages over TCP/NOISE. Log events stay private until you authorize sharing — prefer per-peer grants under Network → Peers, or enable global below.'),
               React.createElement('label', { style: { display: 'flex', gap: 8, alignItems: 'center', fontSize: 13, cursor: 'pointer', marginBottom: 10 } },
                 React.createElement('input', {
                   type: 'checkbox',
@@ -426,30 +426,28 @@ class Settings extends React.Component {
                 'Share logs to global — push my parsed game events to every connected Fabric peer'
               ),
               React.createElement('div', { className: 'd', style: { marginTop: -4, marginBottom: 10 } },
-                'Default is off. Per-peer “Share logs” on Peers is the usual path for authorizing a network hub.'),
+                'Default is off. Per-peer “Share logs” on Network → Peers is the usual path for authorizing a network hub.'),
               React.createElement('div', { className: 'st-row' },
                 React.createElement('span', { style: { fontSize: 12.5, color: 'var(--muted)' } },
                   this.state.peerCount
                     ? `${this.state.peerCount} peer${this.state.peerCount === 1 ? '' : 's'} configured`
                     : 'no peers configured'),
+                React.createElement('button', {
+                  className: 'st-btn ghost',
+                  onClick: () => {
+                    this.props.onClose();
+                    window.location.hash = 'network/peers';
+                  }
+                }, 'Open Network'),
                 this.props.advancedMode
-                  ? React.createElement(React.Fragment, null,
-                    React.createElement('button', {
-                      className: 'st-btn ghost',
-                      onClick: () => {
-                        this.props.onClose();
-                        window.location.hash = 'peers';
-                      }
-                    }, 'Open Peers'),
-                    React.createElement('button', {
-                      className: 'st-btn ghost',
-                      onClick: () => {
-                        this.props.onClose();
-                        window.location.hash = 'messages';
-                      }
-                    }, 'Fabric Messages')
-                  )
-                  : React.createElement('span', { style: { fontSize: 11.5, color: 'var(--muted)' } }, 'enable Advanced mode for Peers + Messages')
+                  ? React.createElement('button', {
+                    className: 'st-btn ghost',
+                    onClick: () => {
+                      this.props.onClose();
+                      window.location.hash = 'network/messages';
+                    }
+                  }, 'Fabric Messages')
+                  : null
               )
             ),
 

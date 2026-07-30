@@ -11,6 +11,7 @@
  */
 
 const React = require('react');
+const Chat = require('./Chat');
 const GroupFabricInspector = require('./GroupFabricInspector');
 
 const BASE = '/services/star-citizen';
@@ -56,6 +57,9 @@ const CSS = `
   .gp-tag.public{background:rgba(63,185,80,.15);color:var(--good)}
   .gp-tag.private{background:rgba(110,118,129,.18);color:var(--muted)}
   .gp-actions{display:flex;flex-wrap:wrap;gap:8px;padding:10px 14px;border-top:1px solid var(--line)}
+  .gp-chat{border-top:1px solid var(--line)}
+  .gp-chat h3{font-size:12px;color:var(--muted);margin:0;padding:12px 14px 6px;text-transform:uppercase;letter-spacing:.4px}
+  .gp-chat .chat-wrap{border-radius:0}
 `;
 
 function identityBridge () {
@@ -228,23 +232,32 @@ class Groups extends React.Component {
       });
       const json = await res.json();
       if (!res.ok) throw new Error(json.error || `HTTP ${res.status}`);
-      const url = (json.data && json.data.protocolUrl) || '';
+      const data = json.data || {};
+      const url = data.protocolUrl || '';
       if (!url) throw new Error('no protocolUrl in share response');
+      const mesh = data.relayed
+        ? `Broadcast to network (${data.peers || 0} peer connection(s)). `
+        : (`Mesh broadcast failed` + (data.relayError ? `: ${data.relayError}` : '') + '. ');
       try {
         await navigator.clipboard.writeText(url);
         this.setState({
           busy: false,
-          notice: 'Fabric GroupOffer copied (fabric:… message). Legacy page: ' + this.shareUrl(g)
+          notice: mesh + 'fabric:… offer copied. Page: ' + this.shareUrl(g),
+          error: data.relayed ? null : (data.relayError || 'Share copied locally but not broadcast')
         });
       } catch (_) {
-        this.setState({ busy: false, notice: url });
+        this.setState({
+          busy: false,
+          notice: mesh + url,
+          error: data.relayed ? null : (data.relayError || null)
+        });
       }
     } catch (e) {
-      // Fallback to HTTP page URL if Fabric share fails
+      // Fallback to HTTP page URL if Fabric share fails entirely
       const url = this.shareUrl(g);
       try {
         await navigator.clipboard.writeText(url);
-        this.setState({ busy: false, notice: 'Share link copied (Fabric share failed: ' + e.message + ').' });
+        this.setState({ busy: false, notice: 'Page link copied (Fabric share failed: ' + e.message + ').', error: e.message });
       } catch (_) {
         this.setState({ busy: false, error: e.message, notice: url });
       }
@@ -398,7 +411,29 @@ class Groups extends React.Component {
         )
         : (memberList
           ? React.createElement('div', { className: 'gp-hint' }, 'Only members can manage this group.')
-          : null)
+          : null),
+      this.renderChat(g, canManage)
+    );
+  }
+
+  renderChat (g, canManage) {
+    if (!g) return null;
+    if (!canManage) {
+      return React.createElement('div', { className: 'gp-chat' },
+        React.createElement('h3', null, 'Chat'),
+        React.createElement('div', { className: 'gp-hint' },
+          'Group chat is for members. Join the group to read and post here.')
+      );
+    }
+    return React.createElement('div', { className: 'gp-chat' },
+      React.createElement('h3', null, 'Chat'),
+      React.createElement(Chat, {
+        key: g.id,
+        groupId: g.id,
+        embedded: true,
+        identityPubkey: this.state.pubkey || this.props.identityPubkey || null,
+        nickname: this.props.nickname || null
+      })
     );
   }
 

@@ -1,7 +1,7 @@
 'use strict';
 
 /**
- * Peers — Fabric Network peer management (top-level feature).
+ * Peers — Fabric Network peer management (Network → Peers).
  *
  * Peers are Fabric `host:port` addresses (AMP/Message over TCP/NOISE). The
  * default seeds are `hub.fabric.pub:7777` and `relay.goon.vc:7777`. Local
@@ -271,7 +271,18 @@ class Peers extends React.Component {
           React.createElement('button', {
             className: 'pr-btn ghost',
             onClick: () => this.setState({ inspectId: null, detail: null })
-          }, '← Back to roster')
+          }, '← Back to roster'),
+          (() => {
+            const roster = (this.state.peers || []).find((p) => p.id === this.state.inspectId);
+            const pk = (profile && profile.pubkey) || (peer && peer.pubkey) ||
+              (roster && roster.pubkey) || null;
+            if (!pk) return null;
+            return React.createElement('button', {
+              className: 'pr-btn ghost',
+              type: 'button',
+              onClick: () => { window.location.href = `/profiles/${encodeURIComponent(pk)}`; }
+            }, 'Open profile page');
+          })()
         ),
         this.state.detailLoading || !d
           ? React.createElement('div', { className: 'pr-hint' }, 'loading profile…')

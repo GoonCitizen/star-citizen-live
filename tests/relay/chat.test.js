@@ -68,6 +68,31 @@ test('ChatManager: global + per-group channels with membership access', async ()
   assert.throws(() => cm.post({ channel: 'group:nope', body: 'x', author: a.pubkey }), /unknown channel/);
 });
 
+test('ChatManager: DM channels are participant-only and publishable', async () => {
+  const a = createIdentity(); const b = createIdentity(); const eve = createIdentity();
+  const store = new Store({});
+  const cm = new ChatManager({ store });
+
+  const key = ChatManager.dmChannelKey(a.pubkey, b.pubkey);
+  assert.ok(key && key.startsWith('dm:'));
+  assert.strictEqual(ChatManager.dmChannelKey(b.pubkey, a.pubkey), key);
+  assert.strictEqual(cm.canAccess(key, a.pubkey, { enforceMembership: true }), true);
+  assert.strictEqual(cm.canAccess(key, b.pubkey, { enforceMembership: true }), true);
+  assert.strictEqual(cm.canAccess(key, eve.pubkey, { enforceMembership: true }), false);
+
+  const msg = cm.post({ channel: key, body: 'ping', author: a.pubkey, handle: 'Alice' });
+  assert.strictEqual(msg.channel, key);
+  assert.throws(() => cm.post({ channel: key, body: 'nope', author: eve.pubkey }), /participant/);
+
+  const chans = cm.channelsFor(b.pubkey, { enforceMembership: true });
+  assert.ok(chans.some((c) => c.kind === 'dm' && c.key === key));
+  assert.ok(!cm.channelsFor(eve.pubkey, { enforceMembership: true }).some((c) => c.key === key));
+
+  const opened = cm.openDm(a.pubkey, b.pubkey);
+  assert.strictEqual(opened.key, key);
+  assert.strictEqual(opened.peerPubkey, b.pubkey);
+});
+
 test('ChatManager.ingest rejects impersonation (author must be the batch signer)', async () => {
   const a = createIdentity(); const b = createIdentity();
   const store = new Store({});

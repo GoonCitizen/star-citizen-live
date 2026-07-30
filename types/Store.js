@@ -24,10 +24,13 @@ const COLLECTIONS = [
   'missions', 'applications', 'claims', 'validations', 'audit',
   'groups', 'groupapplications', 'groupaudit',
   'groupsidechains', // per-group Statechain STATE + JOURNAL (functions/groupStatechain.js)
+  'groupinvites', // FederationContractInvite rows (survive restart)
+  'groupchanges', // applied GroupChange dedupe / history
   'settings', // operator settings records { id: key, value } (functions/settingsStore.js)
   'snapshots', // screenshot metadata { id, ts, file, bytes, width, height } (services/SnapshotManager.js)
   'chatmessages', // Hub-style ChatMessage records (services/ChatManager.js)
   'missionbroadcasts', // peer mission offers (Broadcast → Accept / Ignore)
+  'inbox', // unified browseable register / gossip inbox (functions/registerInbox.js)
   'fleets' // Starjump / FleetViewer personal fleets (functions/starjumpFleet.js)
 ];
 

@@ -114,11 +114,18 @@ class MissionBroadcastBanner extends React.Component {
 
   async tick () {
     try {
-      const res = await fetch(`${BASE}/missionbroadcasts?pending=1`).then((r) => r.json());
+      const [res, inboxRes] = await Promise.all([
+        fetch(`${BASE}/missionbroadcasts?pending=1`).then((r) => r.json()),
+        fetch(`${BASE}/inbox?scope=notifications&pending=1`).then((r) => r.json()).catch(() => null)
+      ]);
       const pending = res.data || [];
       const notifyEnabled = res.notify !== false;
       this.setState({ pending });
-      this.reportPending(pending.length);
+      // Bell badge uses the full register inbox (broadcasts + apps + invites).
+      const inboxPending = typeof (inboxRes && inboxRes.pending) === 'number'
+        ? inboxRes.pending
+        : (inboxRes && inboxRes.data ? inboxRes.data.filter((i) => i.actionable).length : pending.length);
+      this.reportPending(inboxPending);
 
       if (!this._bootstrapped) {
         for (const b of pending) this._seen.add(b.id);
@@ -233,7 +240,10 @@ class MissionBroadcastBanner extends React.Component {
             }, 'Ignore'),
             React.createElement('button', {
               className: 'mbb-btn ghost',
-              onClick: () => { window.location.hash = 'missions'; }
+              onClick: () => {
+                if (m.id) window.location.href = `/missions/${encodeURIComponent(m.id)}`;
+                else window.location.hash = 'missions';
+              }
             }, 'View')
           )
         );

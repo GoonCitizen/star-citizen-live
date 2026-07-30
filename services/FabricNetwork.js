@@ -198,6 +198,12 @@ function attachAppHandlers (peer, handlers = {}, _opts = {}) {
           handlers.onFleetShare(object, signer, meta);
         } else if (appType === PRESENCE_TYPE && typeof handlers.onPeerPresence === 'function') {
           handlers.onPeerPresence(object, signer, meta);
+        } else if (appType === 'DirectChat' && typeof handlers.onDirectChat === 'function') {
+          handlers.onDirectChat(object, signer, meta);
+        } else if (appType === CONTRACT_BODY_TYPES.GroupShare && typeof handlers.onGroupShare === 'function') {
+          // Network-wide GroupOffer / MissionBroadcast-in-GroupShare discovery
+          // (same CONTRACT_MESSAGE type, GoonCitizen genesis namespace).
+          handlers.onGroupShare(object, signer, meta);
         }
         return;
       }
@@ -612,6 +618,10 @@ class FabricNetwork extends EventEmitter {
         this.emit('peerPresence', { object, source, meta });
         this._forward('onPeerPresence', object, source, meta);
       },
+      onDirectChat: (object, source, meta) => {
+        this.emit('directChat', { object, source, meta });
+        this._forward('onDirectChat', object, source, meta);
+      },
       onProposal: (payload, source, meta) => {
         this.emit('contractProposal', { payload, source, meta });
         this._forward('onProposal', payload, source, meta);
@@ -888,6 +898,17 @@ class FabricNetwork extends EventEmitter {
   publishPeerPresence (presenceObject) {
     if (!presenceObject || typeof presenceObject !== 'object') return null;
     return this._publishContractMessage(gooncitizenContractId(), PRESENCE_TYPE, presenceObject);
+  }
+
+  /**
+   * Publish a 1:1 DirectChat under the GoonCitizen contract namespace.
+   * @param {Object} payload { channel, peerA, peerB, author, body, handle?, ts, id? }
+   */
+  publishDirectChat (payload) {
+    if (!payload || !payload.body || !payload.author || !payload.channel) {
+      throw new Error('DirectChat payload required');
+    }
+    return this._publishContractMessage(gooncitizenContractId(), 'DirectChat', Object.assign({}, payload));
   }
 
   /**
