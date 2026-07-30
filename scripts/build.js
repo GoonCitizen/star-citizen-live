@@ -26,6 +26,12 @@ const GroupPage = require('../components/GroupPage');
 const Library = require('../components/Library');
 const Missions = require('../components/Missions');
 const Peers = require('../components/Peers');
+const FabricMessages = require('../components/FabricMessages');
+const GroupFabricInspector = require('../components/GroupFabricInspector');
+const ActivityHeatmap = require('../components/ActivityHeatmap');
+const MissionOutcomesChart = require('../components/MissionOutcomesChart');
+const ShipPicker = require('../components/ShipPicker');
+const Fleet = require('../components/Fleet');
 const Settings = require('../components/Settings');
 const Wallet = require('../components/Wallet');
 const FabricLoginModal = require('../components/FabricLoginModal');
@@ -68,6 +74,12 @@ ${GroupPage.CSS}
 ${Library.CSS}
 ${Missions.CSS}
 ${Peers.CSS}
+${FabricMessages.CSS}
+${GroupFabricInspector.CSS}
+${ActivityHeatmap.CSS}
+${MissionOutcomesChart.CSS}
+${ShipPicker.CSS}
+${Fleet.CSS}
 ${Settings.CSS}
 ${Wallet.CSS}
 </style>

@@ -75,8 +75,7 @@ live tail). New work must protect these.
 
 ## 3. Build / run / test commands
 
-Requires **Node.js LTS** (uses the built-in test runner + global `fetch`, so
-Node 18+). **No `npm install` step is needed** — the running service has **zero
+Requires **Node.js 24.15.0** (see `.nvmrc` / `package.json` `engines`). **No `npm install` step is needed** — the running service has **zero
 runtime dependencies** (only Node built-ins: `http`, `crypto`, `events`, `fs`,
 `readline`).
 
@@ -99,9 +98,18 @@ npm run build:installers  # Windows x64 + Debian x64 + macOS
   it (D-014). Type code: `types/Store.js`, `functions/cumulativeHistory.js`,
   `functions/logCorpus.js` (discover all own logs; `GET …/corpus`). Auto-detect
   covers Windows install drives and Linux/macOS Wine/Proton `drive_c` prefixes
-  (`functions/locate.js`).
-- Dashboard home lists features along the top: Live, Analyze, Missions,
-  Wallet, Library, Chat, Groups, Peers. Chat uses Hub message types
+  (`functions/locate.js`).   Feed **Import logs** browses folders and/or hand-picks individual `*.log`
+  files (`GET …/fs`, `POST …/corpus/import`) persisted as settings
+  `corpusDirs` + `corpusFiles` (`functions/fsBrowser.js`); desktop uses
+  native folder/file pickers. Cumulative history also folds QT hops, incap,
+  and CrimeStat. Analyze builds a Fabric Merkle **Activity Tree**
+  (`GET …/activity-tree`) and can publish `GroupActivityTree` into a Group
+  Contract Statechain (`POST …/activity-tree/publish`).
+- Dashboard home lists features along the top: Live (Feed), Missions,
+  Wallet, Library, Chat, Groups, Peers. **Feed** is a chat-style stream
+  (`GET …/monitor` → `feed` / `GET …/feed`) merging parsed Game.log events,
+  peer `SCEventBatch` collections, global/group chat, and mission broadcasts;
+  type/from chips default to All with optional keyword filter. Chat uses Hub message types
   (`ChatMessage` records): **`global`** is Fabric `P2P_CHAT_MESSAGE` with a
   raw UTF-8 text body (no JSON / handle on the wire); each **`group:<id>`**
   channel is `GroupChat` under that Group's Federation `CONTRACT_MESSAGE`
@@ -110,10 +118,11 @@ npm run build:installers  # Windows x64 + Debian x64 + macOS
   remotes arrive via Peer ingest (`services/ChatManager.js` +
   `services/FabricNetwork.js`). The dedicated Chat tab remains; **global chat
   is also always available** via a floating dock on other tabs
-  (`components/GlobalChatDock.js`). Operators set an optional **nickname**
-  (Settings / Identity; Fabric Store key `nickname`) for chat display; the
-  compressed pubkey remains the actor id and is always shown beside the
-  nickname. Mission creators can **Broadcast** an open mission
+  (`components/GlobalChatDock.js`). Operators set an optional **local profile**
+  (Identity; Store keys `nickname` + `profile` `{ bio, scHandle }`) — nickname
+  is `P2P_PEER_ALIAS`, richer fields publish as GoonCitizen `PeerProfile`;
+  Peers → **Inspect** shows `GET /peers/:id` (alias/profile/pubkey). The
+  compressed pubkey remains the actor id. Mission creators can **Broadcast** an open mission
   (`POST …/missions/:id/broadcast` with `{ scope, groupId }` — network-wide
   GoonCitizen `MissionBroadcast`, or group-scoped `GroupShare` on the Group
   Federation contract); receivers get a pending offer with desktop + in-app
@@ -141,10 +150,15 @@ npm run build:installers  # Windows x64 + Debian x64 + macOS
   (`fabric.port`); default seeds are `hub.fabric.pub:7777` and
   `relay.goon.vc:7777` (removable; a saved empty list is respected). Peering is
   AMP/`Message` over TCP/NOISE — not HTTPS uplink. Both hubs selectively relay
-  relevant Fabric messages. Parsed log events (`SCEventBatch` /
-  `GameStateSnapshot`) are **opt-in**: default `shareLogsGlobal` off, or
-  per-peer `shareLogs` on the Peers tab (Hub-style connected/offline badges).
-  Chat and mission broadcasts always publish when the peer is up.
+  relevant Fabric messages. Desktop listens for `P2P_PEERING_OFFER` /
+  `P2P_PEER_GOSSIP`, fills open slots (`Peer._fillPeerSlots`), and may
+  auto-roster discovered non-hub peers (`discovered: true`, logs off). Optional
+  `fabricAdvertiseHost` publishes offers so others can dial you. Peers UI also
+  **observes** Hub HTTP `GET /services/peering` on both hubs (TCP + WebRTC
+  registration counts — browser mesh is not dialed from desktop). Parsed log
+  events (`SCEventBatch` / `GameStateSnapshot`) are **opt-in**: default
+  `shareLogsGlobal` off, or per-peer `shareLogs` on the Peers tab. Chat and
+  mission broadcasts always publish when the peer is up.
 - **Site login (D-011):** LiveRelay hosts Hub-compatible **`/sessions`**
   (`functions/fabricSiteLogin.js`) so `relay.goon.vc` (or any
   `SC_MODE=server` deploy) can sign players in without a separate Hub HTTP

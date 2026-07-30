@@ -26,7 +26,9 @@
     "coverage": "c8 npm test",
     "desktop:dev": "node scripts/desktop.js . --dev",
     "desktop": "node scripts/desktop.js .",
+    "fabric:env": "node scripts/fabric-env.js",
     "make:api": "jsdoc2md --configure jsdoc.json --files types/*.js services/*.js README.md > API.md",
+    "refresh:ships": "node scripts/refresh-ship-catalog.js",
     "replay": "node scripts/replay.js",
     "report:install": "rm -rf node_modules && echo \"\n\" > package-lock.json && echo \"$ npm i\" > reports/install.log && npm i >> reports/install.log",
     "report:todo": "grep --exclude package.json --exclude-dir=.env --exclude-dir=.git --exclude-dir=_book --exclude-dir=stores --exclude-dir=assets --exclude-dir=node_modules --exclude-dir=reports --exclude-dir=coverage --exclude-dir=docs --exclude-dir=libraries -rEI \"TODO|FIXME\" . | sed 's/\\([^:]*:\\)[ ]*/\\1 /' > reports/TODO.txt",
@@ -164,5 +166,8 @@
         ]
       }
     ]
+  },
+  "engines": {
+    "node": "24.15.0"
   }
 }

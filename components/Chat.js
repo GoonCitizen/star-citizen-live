@@ -17,7 +17,7 @@ const React = require('react');
 const BASE = '/services/star-citizen';
 
 const CSS = `
-  .chat-wrap{max-width:1100px;margin:0 auto;padding:18px;display:grid;grid-template-columns:230px 1fr;gap:14px;
+  .chat-wrap{max-width:1280px;margin:0 auto;padding:18px;display:grid;grid-template-columns:220px 1fr 220px;gap:14px;
     height:calc(100vh - 170px);min-height:420px}
   .chat-side{background:var(--panel);border:1px solid var(--line);border-radius:12px;overflow:auto}
   .chat-side h3{font-size:12px;color:var(--muted);margin:0;padding:12px 14px 6px;text-transform:uppercase;letter-spacing:.4px}
@@ -45,7 +45,21 @@ const CSS = `
     font-size:13px;font-weight:600;cursor:pointer}
   .chat-send:disabled{opacity:.45;cursor:default}
   .chat-err{background:rgba(248,81,73,.12);color:var(--kill);border-radius:7px;margin:0 14px 10px;padding:8px 11px;font-size:12.5px}
-  @media(max-width:820px){.chat-wrap{grid-template-columns:1fr;height:auto}.chat-side{max-height:180px}}
+  .chat-members{background:var(--panel);border:1px solid var(--line);border-radius:12px;overflow:auto;display:flex;flex-direction:column}
+  .chat-members h3{font-size:12px;color:var(--muted);margin:0;padding:12px 14px 6px;text-transform:uppercase;letter-spacing:.4px}
+  .chat-mem{display:grid;gap:2px;padding:8px 12px;border-bottom:1px solid #20262f}
+  .chat-mem:last-child{border-bottom:none}
+  .chat-mem .row{display:flex;gap:8px;align-items:center;min-width:0}
+  .chat-mem .dot{width:7px;height:7px;border-radius:50%;flex:none;background:var(--muted)}
+  .chat-mem .dot.on{background:var(--good);box-shadow:0 0 0 2px rgba(63,185,80,.25)}
+  .chat-mem .nm{font-size:12.5px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1}
+  .chat-mem .nm.me{color:var(--accent)}
+  .chat-mem .pk{font-size:10.5px;color:var(--muted);font-family:'Cascadia Code',Consolas,monospace}
+  .chat-mem .ship{font-size:11px;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .chat-mem .ship b{color:var(--text);font-weight:600}
+  .chat-mem .tag{font-size:10px;font-weight:700;padding:1px 6px;border-radius:4px;background:rgba(56,139,253,.12);color:var(--accent)}
+  .chat-mem-hint{color:var(--muted);font-size:11.5px;padding:10px 14px;line-height:1.5}
+  @media(max-width:980px){.chat-wrap{grid-template-columns:1fr;height:auto}.chat-side,.chat-members{max-height:180px}}
 `;
 
 function shortKey (pk) {
@@ -67,7 +81,9 @@ class Chat extends React.Component {
       draft: '',
       error: null,
       sending: false,
-      loading: true
+      loading: true,
+      members: [],
+      membersLabel: 'Members'
     };
     this._timer = null;
     this._msgsRef = React.createRef();
@@ -88,18 +104,95 @@ class Chat extends React.Component {
         fetch(`${BASE}/chat/channels`).then((r) => r.json()),
         fetch(`${BASE}/chat/messages?channel=${encodeURIComponent(this.state.channel)}&limit=200`).then((r) => r.json())
       ]);
+      const channels = chRes.data || [];
+      const messages = msgRes.data || [];
       const el = this._msgsRef.current;
       const pinned = el && (el.scrollHeight - el.scrollTop - el.clientHeight < 60);
-      this.setState({ channels: chRes.data || [], messages: msgRes.data || [], loading: false }, () => {
+      this.setState({ channels, messages, loading: false }, () => {
         if (pinned && this._msgsRef.current) this._msgsRef.current.scrollTop = this._msgsRef.current.scrollHeight;
       });
+      await this.refreshMembers(channels, messages);
     } catch (_) {
       this.setState({ loading: false });
     }
   }
 
+  async refreshMembers (channels, messages) {
+    const active = (channels || this.state.channels).find((c) => c.key === this.state.channel);
+    const msgs = messages || this.state.messages || [];
+    const me = this.props.identityPubkey || null;
+    let roster = {};
+    try {
+      const r = await fetch(`${BASE}/presence/roster`).then((res) => (res.ok ? res.json() : null));
+      roster = (r && r.data) || {};
+    } catch (_) { /* ignore */ }
+
+    const byPk = new Map();
+    const upsert = (pubkey, patch = {}) => {
+      if (!pubkey) return;
+      const prev = byPk.get(pubkey) || { pubkey, handle: null, online: false, ship: null, role: null };
+      byPk.set(pubkey, Object.assign(prev, patch));
+    };
+
+    // Recent chat authors (handles from messages).
+    for (const m of msgs) {
+      upsert(m.author, { handle: m.handle || null });
+    }
+
+    if (active && active.kind === 'group' && active.groupId) {
+      try {
+        const gRes = await fetch(`${BASE}/groups/${encodeURIComponent(active.groupId)}`);
+        const gJson = await gRes.json();
+        const g = gJson && gJson.data;
+        if (g && Array.isArray(g.members)) {
+          for (const pk of g.members) {
+            upsert(pk, {
+              role: pk === g.creator ? 'creator' : 'member'
+            });
+          }
+        }
+      } catch (_) { /* private / unavailable */ }
+    } else {
+      // Global: mesh presence roster + anyone who has spoken.
+      for (const [pk, p] of Object.entries(roster)) {
+        upsert(pk, {
+          handle: (p && p.nickname) || null,
+          online: !!(p && p.online),
+          ship: (p && p.ship) || null
+        });
+      }
+    }
+
+    // Overlay presence for everyone we already listed.
+    for (const [pk, row] of byPk) {
+      const p = roster[pk];
+      if (!p) continue;
+      byPk.set(pk, Object.assign({}, row, {
+        handle: row.handle || p.nickname || null,
+        online: p.online === true,
+        ship: p.ship || row.ship || null
+      }));
+    }
+
+    if (me && !byPk.has(me)) {
+      upsert(me, { handle: this.props.nickname || null, role: active && active.kind === 'group' ? 'you' : null });
+    }
+
+    const members = [...byPk.values()].sort((a, b) => {
+      if (!!b.online !== !!a.online) return b.online ? 1 : -1;
+      const an = (a.handle || a.pubkey || '').toLowerCase();
+      const bn = (b.handle || b.pubkey || '').toLowerCase();
+      return an.localeCompare(bn);
+    });
+
+    this.setState({
+      members,
+      membersLabel: active && active.kind === 'group' ? 'Members' : 'On channel'
+    });
+  }
+
   pick (key) {
-    this.setState({ channel: key, messages: [], loading: true }, () => this.refresh());
+    this.setState({ channel: key, messages: [], members: [], loading: true }, () => this.refresh());
   }
 
   async send () {
@@ -120,6 +213,42 @@ class Chat extends React.Component {
     } catch (e) {
       this.setState({ sending: false, error: e.message });
     }
+  }
+
+  renderMembers () {
+    const me = this.props.identityPubkey || null;
+    const members = this.state.members || [];
+    return React.createElement('div', { className: 'chat-members' },
+      React.createElement('h3', null, this.state.membersLabel,
+        members.length ? ` · ${members.length}` : ''),
+      members.length
+        ? members.map((m) => {
+          const ship = m.ship;
+          const shipLabel = ship && (ship.name || ship.slug);
+          return React.createElement('div', { className: 'chat-mem', key: m.pubkey },
+            React.createElement('div', { className: 'row' },
+              React.createElement('span', { className: 'dot' + (m.online ? ' on' : '') }),
+              React.createElement('span', {
+                className: 'nm' + (me && m.pubkey === me ? ' me' : ''),
+                title: m.pubkey
+              }, m.handle || shortKey(m.pubkey)),
+              m.role === 'creator'
+                ? React.createElement('span', { className: 'tag' }, 'creator')
+                : null
+            ),
+            React.createElement('div', { className: 'pk', title: m.pubkey }, shortKey(m.pubkey)),
+            shipLabel
+              ? React.createElement('div', { className: 'ship' },
+                React.createElement('b', null, shipLabel),
+                ship.type ? ` · ${ship.type}` : '')
+              : null
+          );
+        })
+        : React.createElement('div', { className: 'chat-mem-hint' },
+          this.state.channel === 'global'
+            ? 'Peers sharing presence (and recent chat authors) appear here.'
+            : 'Group members appear here once the group is loaded.')
+    );
   }
 
   render () {
@@ -181,7 +310,8 @@ class Chat extends React.Component {
             onClick: () => this.send()
           }, this.state.sending ? '…' : 'Send')
         )
-      )
+      ),
+      this.renderMembers()
     );
   }
 }

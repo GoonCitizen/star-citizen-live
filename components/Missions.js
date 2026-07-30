@@ -15,6 +15,7 @@
  */
 
 const React = require('react');
+const MissionOutcomesChart = require('./MissionOutcomesChart');
 
 const BASE = '/services/star-citizen';
 
@@ -334,6 +335,16 @@ class Missions extends React.Component {
   render () {
     return React.createElement('div', { className: 'mi-wrap' },
       React.createElement('div', { className: 'mi-panel' },
+        React.createElement('h2', null, '🎯 Game.log outcomes ',
+          React.createElement('span', { className: 'sub' }, '— cumulative from Home → Missions stats')),
+        React.createElement('div', { className: 'mi-body' },
+          React.createElement(MissionOutcomesChart, {
+            analytics: this.props.analytics || null,
+            subtitle: 'Parsed in-game mission ends (not the officer register below).'
+          })
+        )
+      ),
+      React.createElement('div', { className: 'mi-panel' },
         React.createElement('h2', null, '⭐ Mission register',
           React.createElement('span', { className: 'sub' }, '— post work, attach a Bitcoin reward, and unlock it with authority signatures on completion'),
           React.createElement('button', { className: 'mi-btn', onClick: () => this.setState({ showCreate: !this.state.showCreate }) },
@@ -351,6 +362,6 @@ class Missions extends React.Component {
   }
 }
 
-Missions.CSS = CSS;
+Missions.CSS = CSS + (MissionOutcomesChart.CSS || '');
 
 module.exports = Missions;

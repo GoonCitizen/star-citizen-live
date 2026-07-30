@@ -298,6 +298,116 @@ class GroupManager extends EventEmitter {
   }
 
   /**
+   * Materialize (or refresh) a local group shell from a FederationContractInvite
+   * when the full genesis definition is not available. Keyed by contractId so
+   * later GroupChange / CONTRACT_PUBLISH can converge on the same record.
+   *
+   * @param {Object} invite Parsed FederationContractInvite
+   * @param {string|null} [source]
+   * @returns {{ group: Object, created: boolean }|null}
+   */
+  ingestFederationInviteShell (invite, source = null) {
+    if (!invite || !invite.contractId) return null;
+    const policy = normalizeProposedPolicy(invite.proposedPolicy);
+    if (!policy) return null;
+    const contractId = String(invite.contractId).trim();
+    const existing = this.getGroupByContractId(contractId);
+    const creator = String(invite.inviterHubId || policy.validators[0] || '').toLowerCase();
+    const members = policy.validators.slice();
+    if (creator && Group.isValidPubkey(creator) && !members.includes(creator)) {
+      members.unshift(creator);
+    }
+    const name = (invite.note && String(invite.note).trim())
+      ? String(invite.note).trim().slice(0, 80)
+      : 'Invited group';
+
+    if (existing) {
+      const data = this.store.get('groups', existing.id);
+      data.contractId = contractId;
+      if (!data.members || !data.members.length) {
+        data.members = members.slice();
+        data.threshold = Math.min(policy.threshold, members.length);
+      }
+      data.proposedPolicy = normalizeProposedPolicy({ validators: data.members, threshold: data.threshold });
+      data.policyFingerprint = policyFingerprint(data.proposedPolicy);
+      if (!data.creator && creator) data.creator = creator;
+      this.store.put('groups', data.id, data);
+      return { group: new Group(data).toJSON(), created: false };
+    }
+
+    const groupId = `invite-${contractId.slice(0, 16)}`;
+    const group = new Group({
+      id: groupId,
+      name,
+      creator: creator || members[0],
+      members,
+      threshold: Math.min(policy.threshold, members.length),
+      visibility: 'private',
+      createdAt: invite.invitedAt
+        ? new Date(Number(invite.invitedAt)).toISOString()
+        : new Date().toISOString(),
+      contractId,
+      proposedPolicy: policy,
+      policyFingerprint: policyFingerprint(policy)
+    });
+    group.validate();
+    const json = group.toJSON();
+    this.store.put('groups', json.id, json);
+    this._audit(source || creator, 'group.invite-shell', json.id, `contract ${contractId.slice(0, 12)}…`);
+    this.emit('group:ingested', { group: json, created: true, source: source || 'federation-invite' });
+    return { group: json, created: true };
+  }
+
+  /**
+   * Invitee self-join after accepting a pending FederationContractInvite.
+   * Does not require the actor to already be a member (unlike {@link #addMember}).
+   *
+   * @param {string} groupId
+   * @param {string} pubkey Invitee pubkey
+   * @param {Object} invite Stored / parsed invite
+   * @returns {Object} Updated group JSON
+   */
+  async joinFromPendingInvite (groupId, pubkey, invite) {
+    const data = this.store.get('groups', groupId);
+    if (!data) throw Object.assign(new Error('group not found'), { code: 'NOT_FOUND' });
+    if (!Group.isValidPubkey(pubkey)) throw new Error('invalid member pubkey');
+    if (!invite || !invite.inviteId) throw new Error('invite required');
+    if (data.contractId && invite.contractId && data.contractId !== invite.contractId) {
+      throw new Error('invite contract does not match group');
+    }
+    if (data.members.includes(pubkey)) return new Group(data).toJSON();
+
+    data.members = data.members.concat([pubkey]);
+    data.proposedPolicy = normalizeProposedPolicy({ validators: data.members, threshold: data.threshold });
+    data.policyFingerprint = policyFingerprint(data.proposedPolicy);
+    const group = new Group(data);
+    group.validate();
+    const json = group.toJSON();
+    this.store.put('groups', groupId, Object.assign({}, data, json));
+    this._audit(pubkey, 'group.invite.accept', groupId, invite.inviteId);
+    const change = {
+      id: this._id('gchg'),
+      action: 'member.add',
+      groupId,
+      contractId: data.contractId || invite.contractId || null,
+      actor: pubkey,
+      member: pubkey,
+      via: 'FederationContractInvite',
+      inviteId: invite.inviteId,
+      ts: new Date().toISOString()
+    };
+    this.emit('group:member-added', { groupId, pubkey, actor: pubkey, via: 'invite' });
+    this.emit('group:local-change', change);
+    this._appendGroupStatechain(groupId, {
+      id: change.id,
+      type: 'GroupChange',
+      message: change,
+      acceptedAt: change.ts
+    });
+    return new Group(this.store.get('groups', groupId)).toJSON();
+  }
+
+  /**
    * Apply a remote GroupChange. Actions: member.add | member.remove | update.
    * Idempotent where possible.
    * @param {Object} change
@@ -781,6 +891,35 @@ class GroupManager extends EventEmitter {
       throw new Error('decision must be "accept" or "reject"');
     }
     return app;
+  }
+
+  /**
+   * Journal a GroupActivityTree into the group's Statechain (local + inbound).
+   * @param {string} groupId
+   * @param {object} treeBody GroupActivityTree contract object
+   * @param {string|null} source
+   */
+  ingestActivityTree (groupId, treeBody, source = null) {
+    const group = this.getGroup(groupId);
+    if (!group) throw new Error('group not found');
+    if (!treeBody || !treeBody.root) throw new Error('GroupActivityTree root required');
+    const entryId = `activity-tree:${treeBody.root}:${treeBody.generatedAt || ''}:${source || 'local'}`;
+    const result = this._appendGroupStatechain(group.id, {
+      id: entryId,
+      type: 'GroupActivityTree',
+      message: {
+        root: treeBody.root,
+        leafCount: treeBody.leafCount || 0,
+        ownerPubkey: treeBody.ownerPubkey || source || null,
+        generatedAt: treeBody.generatedAt || new Date().toISOString(),
+        counts: treeBody.counts || null,
+        digests: Array.isArray(treeBody.digests) ? treeBody.digests.slice(0, 50000) : []
+      },
+      acceptedAt: treeBody.generatedAt || new Date().toISOString()
+    });
+    this._audit(source || treeBody.ownerPubkey, 'group.activity-tree', group.id, treeBody.root);
+    this.emit('group:activity-tree', { groupId: group.id, tree: treeBody, statechain: result });
+    return result;
   }
 
   /**

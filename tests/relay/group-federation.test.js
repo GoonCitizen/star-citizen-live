@@ -124,8 +124,10 @@ test('Fabric: group create publishes Federation contract; membership + share con
   const httpA = nodeA.server.address().port;
   nodeA.setIdentity(alice);
   await waitFor(() => nodeA.fabricNetwork && nodeA.fabricNetwork.ready);
+  // Both sides must be up before CONTRACT_PUBLISH / GroupChange — under full
+  // suite load, waiting on only one side races NOISE session readiness.
   await waitFor(() => (
-    nodeA.fabricNetwork.status().fabricConnected >= 1 ||
+    nodeA.fabricNetwork.status().fabricConnected >= 1 &&
     nodeB.fabricNetwork.status().fabricConnected >= 1
   ));
 

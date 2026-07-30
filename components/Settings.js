@@ -66,7 +66,6 @@ class Settings extends React.Component {
       notifyChatGroups: true,
       notifyWhenFocused: false,
       notifyMissionBroadcasts: true,
-      nickname: '',
       peerCount: 0,
       busy: false
     };
@@ -102,7 +101,6 @@ class Settings extends React.Component {
         notifyChatGroups: s.notifyChatGroups !== false,
         notifyWhenFocused: !!s.notifyWhenFocused,
         notifyMissionBroadcasts: s.notifyMissionBroadcasts !== false,
-        nickname: s.nickname || '',
         peerCount: Array.isArray(peersRes.data) ? peersRes.data.length : 0
       });
     } catch (e) {
@@ -116,21 +114,6 @@ class Settings extends React.Component {
       await this.put(key, value);
     } catch (err) {
       this.setState({ error: err.message });
-    }
-  }
-
-  async saveNickname () {
-    if (!this.state.editable || this.state.busy) return;
-    this.setState({ busy: true, error: null });
-    try {
-      const json = await this.put('nickname', this.state.nickname.trim() || null);
-      const saved = (json.settings && json.settings.nickname) || '';
-      this.setState({ busy: false, nickname: saved });
-      if (typeof this.props.onNicknameChange === 'function') {
-        this.props.onNicknameChange(saved || null);
-      }
-    } catch (err) {
-      this.setState({ busy: false, error: err.message });
     }
   }
 
@@ -211,6 +194,17 @@ class Settings extends React.Component {
     );
   }
 
+  async pickLogFile () {
+    if (!(window.electronAPI && window.electronAPI.dialog && window.electronAPI.dialog.openLogFile)) return;
+    try {
+      const result = await window.electronAPI.dialog.openLogFile();
+      if (!result || result.canceled || !result.path) return;
+      this.setState({ logfile: result.path });
+    } catch (e) {
+      this.setState({ error: e.message || String(e) });
+    }
+  }
+
   render () {
     const rt = this.state.runtime;
     return React.createElement('div', { className: 'st-overlay', onClick: (e) => { if (e.target === e.currentTarget) this.props.onClose(); } },
@@ -226,8 +220,18 @@ class Settings extends React.Component {
 
             React.createElement('div', { className: 'st-sec' },
               React.createElement('h3', null, 'Relay'),
-              React.createElement('div', { className: 'd' }, 'Where the game log comes from. Leave blank to auto-detect the freshest Game.log across drives and channels.'),
+              React.createElement('div', { className: 'd' }, 'Where the game log comes from. Leave blank to auto-detect the freshest Game.log across drives and channels. To import historical log folders or individual files, use Feed → Import logs.'),
               this.field('Game.log path', 'logfile', 'auto-detect (e.g. C:\\...\\StarCitizen\\LIVE\\Game.log)'),
+              (window.electronAPI && window.electronAPI.dialog && window.electronAPI.dialog.openLogFile)
+                ? React.createElement('div', { className: 'st-row', style: { marginTop: -4, marginBottom: 10 } },
+                  React.createElement('button', {
+                    type: 'button', className: 'st-btn ghost',
+                    style: { padding: '3px 10px', fontSize: 11 },
+                    disabled: !this.state.editable || this.state.busy,
+                    onClick: () => this.pickLogFile()
+                  }, 'Browse for Game.log…')
+                )
+                : null,
               this.field('Channel', 'channel', 'auto (LIVE / PTU / EPTU / HOTFIX / TECH-PREVIEW)'),
               this.field('Discord webhook URL', 'discordWebhook', 'https://discord.com/api/webhooks/… (optional)'),
               React.createElement('div', { className: 'st-row' },
@@ -293,28 +297,20 @@ class Settings extends React.Component {
             ),
 
             React.createElement('div', { className: 'st-sec' },
-              React.createElement('h3', null, 'Nickname'),
+              React.createElement('h3', null, 'Identity & presence'),
               React.createElement('div', { className: 'd' },
-                'Display name for chat. Your public key remains the real identity and is always shown next to it.'),
+                'Nickname, Star Citizen handle, bio, and online status (ship sharing) live on the identity card in the header — click your key / nickname pill.'),
               React.createElement('div', { className: 'st-row' },
-                React.createElement('input', {
-                  type: 'text',
-                  maxLength: 32,
-                  value: this.state.nickname,
-                  placeholder: 'e.g. Neorion',
-                  disabled: !this.state.editable || this.state.busy,
-                  style: {
-                    flex: 1, background: 'var(--bg)', border: '1px solid var(--line)', color: 'var(--text)',
-                    borderRadius: 7, padding: '8px 10px', fontSize: 13, minWidth: 160
-                  },
-                  onChange: (e) => this.setState({ nickname: e.target.value }),
-                  onKeyDown: (e) => { if (e.key === 'Enter') this.saveNickname(); }
-                }),
                 React.createElement('button', {
-                  className: 'st-btn',
-                  disabled: !this.state.editable || this.state.busy,
-                  onClick: () => this.saveNickname()
-                }, 'Save')
+                  className: 'st-btn ghost',
+                  type: 'button',
+                  onClick: () => {
+                    if (typeof this.props.onOpenIdentity === 'function') {
+                      this.props.onClose();
+                      this.props.onOpenIdentity();
+                    }
+                  }
+                }, 'Open Identity')
               )
             ),
 
@@ -377,9 +373,27 @@ class Settings extends React.Component {
             ),
 
             React.createElement('div', { className: 'st-sec' },
+              React.createElement('h3', null, 'Profile activity'),
+              React.createElement('div', { className: 'd' },
+                'Show the Home “When you fly” activity heatmap on Identity and peer profiles. Uses the same cumulative analytics as the stats pages. Stored in this browser.'),
+              React.createElement('label', { style: { display: 'flex', gap: 8, alignItems: 'center', fontSize: 13, cursor: 'pointer' } },
+                React.createElement('input', {
+                  type: 'checkbox',
+                  checked: this.props.showProfileActivity !== false,
+                  onChange: (e) => {
+                    if (typeof this.props.onShowProfileActivityChange === 'function') {
+                      this.props.onShowProfileActivityChange(e.target.checked);
+                    }
+                  }
+                }),
+                'Show activity graph on player profiles'
+              )
+            ),
+
+            React.createElement('div', { className: 'st-sec' },
               React.createElement('h3', null, 'Advanced mode'),
               React.createElement('div', { className: 'd' },
-                'Reveal advanced features. Enables the Peers tab for direct Fabric Network peer management. Stored in this browser.'),
+                'Reveal advanced features: Peers (Fabric Network management) and Messages (complete AMP wire Message log — Fabric Messages only, not Game.log). Stored in this browser.'),
               React.createElement('label', { style: { display: 'flex', gap: 8, alignItems: 'center', fontSize: 13, cursor: 'pointer' } },
                 React.createElement('input', {
                   type: 'checkbox',
@@ -390,7 +404,7 @@ class Settings extends React.Component {
                     }
                   }
                 }),
-                'Enable advanced mode (show Peer management)'
+                'Enable advanced mode (Peers + Fabric Messages)'
               )
             ),
 
@@ -419,14 +433,23 @@ class Settings extends React.Component {
                     ? `${this.state.peerCount} peer${this.state.peerCount === 1 ? '' : 's'} configured`
                     : 'no peers configured'),
                 this.props.advancedMode
-                  ? React.createElement('button', {
-                    className: 'st-btn ghost',
-                    onClick: () => {
-                      this.props.onClose();
-                      window.location.hash = 'peers';
-                    }
-                  }, 'Open Peers')
-                  : React.createElement('span', { style: { fontSize: 11.5, color: 'var(--muted)' } }, 'enable Advanced mode to manage peers')
+                  ? React.createElement(React.Fragment, null,
+                    React.createElement('button', {
+                      className: 'st-btn ghost',
+                      onClick: () => {
+                        this.props.onClose();
+                        window.location.hash = 'peers';
+                      }
+                    }, 'Open Peers'),
+                    React.createElement('button', {
+                      className: 'st-btn ghost',
+                      onClick: () => {
+                        this.props.onClose();
+                        window.location.hash = 'messages';
+                      }
+                    }, 'Fabric Messages')
+                  )
+                  : React.createElement('span', { style: { fontSize: 11.5, color: 'var(--muted)' } }, 'enable Advanced mode for Peers + Messages')
               )
             ),
 

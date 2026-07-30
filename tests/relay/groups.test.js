@@ -279,6 +279,37 @@ test('group page: public/private, custom slug, apply to join, SPA shell', async 
   } finally { await svc.stop(); }
 });
 
+test('GET /groups/:id/statechain returns journal + activityTree tip for members', async () => {
+  const alice = createIdentity();
+  const eve = createIdentity();
+  const svc = new LiveRelay({ port: 0, mode: 'server', missions: { enable: true } });
+  await svc.start();
+  const port = svc.server.address().port;
+  try {
+    const aliceToken = await login(port, alice);
+    const eveToken = await login(port, eve);
+    const created = await request(port, 'POST', `${BASE}/groups`, {
+      name: 'Chain Wing', members: [], threshold: 1, visibility: 'private'
+    }, aliceToken);
+    assert.strictEqual(created.status, 200, JSON.stringify(created.body));
+    const groupId = created.body.data.id;
+    assert.ok(created.body.data.contractId, 'group should have a Federation contractId');
+
+    const memberChain = await request(port, 'GET', `${BASE}/groups/${groupId}/statechain`, null, aliceToken);
+    assert.strictEqual(memberChain.status, 200, JSON.stringify(memberChain.body));
+    assert.strictEqual(memberChain.body.type, 'GroupStatechain');
+    assert.strictEqual(memberChain.body.data.groupId, groupId);
+    assert.strictEqual(memberChain.body.data.contractId, created.body.data.contractId);
+    assert.ok(memberChain.body.data.journal);
+    assert.ok(Array.isArray(memberChain.body.data.journal.entries));
+
+    const outsider = await request(port, 'GET', `${BASE}/groups/${groupId}/statechain`, null, eveToken);
+    assert.strictEqual(outsider.status, 403);
+  } finally {
+    await svc.stop();
+  }
+});
+
 test('GroupManager: slug uniqueness and private apply blocked', async () => {
   const a = createIdentity(); const b = createIdentity();
   const gm = new GroupManager({});

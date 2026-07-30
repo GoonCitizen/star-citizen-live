@@ -22,10 +22,16 @@ module.exports = {
   },
 
   // Fabric P2P peering (AMP/Message over TCP/NOISE). Default seeds are network hubs.
+  // Publishing identity (preferred via env, not committed here):
+  //   FABRIC_XPRV=…           # GoonCitizen publishing key
+  //   FABRIC_SEED='24 words'  # or FABRIC_MNEMONIC — derive XPRV:
+  //     eval "$(node scripts/fabric-env.js)"
   fabric: {
     listen: true,
     port: 7777,
     peers: ['hub.fabric.pub:7777', 'relay.goon.vc:7777']
+    // Optional public hostname for P2P_PEERING_OFFER: set Store key
+    // fabricAdvertiseHost (settings API) — do not commit secrets here.
   },
 
   // Discord Integration

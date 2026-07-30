@@ -12,20 +12,31 @@
 const crypto = require('crypto');
 const Actor = require('@fabric/core/types/actor');
 const { gooncitizenContractId } = require('./gooncitizen');
+const { CONTRACT_BODY_TYPES, isKnownContractBodyType } = require('./applicationMessageTypes');
 
 /** Bump only when the group genesis shape must intentionally move ids. */
-const GOONCITIZEN_GROUP_CONTRACT_VERSION = 1;
+const GOONCITIZEN_GROUP_CONTRACT_VERSION = 2; // +GroupActivityTree message type
 
 const GROUP_CONTRACT_NAME = 'GoonCitizenGroup';
 
-/** App `type` values carried under a group contract namespace. */
+/**
+ * App `type` values under a group contract namespace.
+ * Names must stay stable (Actor id); assert against the shared core catalog.
+ */
 const GROUP_MESSAGE_TYPES = Object.freeze([
-  'GroupChat',
-  'GroupChange',
-  'GroupShare',
-  'FederationContractInvite',
-  'FederationContractInviteResponse'
+  CONTRACT_BODY_TYPES.GroupChat,
+  CONTRACT_BODY_TYPES.GroupChange,
+  CONTRACT_BODY_TYPES.GroupShare,
+  CONTRACT_BODY_TYPES.GroupActivityTree,
+  CONTRACT_BODY_TYPES.FederationContractInvite,
+  CONTRACT_BODY_TYPES.FederationContractInviteResponse
 ]);
+
+for (const t of GROUP_MESSAGE_TYPES) {
+  if (!isKnownContractBodyType(t)) {
+    throw new Error(`[GOONCITIZEN] GROUP_MESSAGE_TYPES entry unknown to applicationNamespaces: ${t}`);
+  }
+}
 
 /**
  * Sort and dedupe compressed secp256k1 pubkeys (hex).

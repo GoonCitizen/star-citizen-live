@@ -11,6 +11,7 @@
  */
 
 const React = require('react');
+const GroupFabricInspector = require('./GroupFabricInspector');
 
 const BASE = '/services/star-citizen';
 const PUBKEY_RE = /^0[23][0-9a-f]{64}$/;
@@ -401,6 +402,19 @@ class Groups extends React.Component {
     );
   }
 
+  renderInspector () {
+    if (!this.props.advancedMode || !this.state.selectedId) return null;
+    const g = this.state.groups.find((x) => x.id === this.state.selectedId);
+    if (!g) return null;
+    const headers = {};
+    if (this.state.token) headers.Authorization = `Bearer ${this.state.token}`;
+    return React.createElement(GroupFabricInspector, {
+      groupId: g.id,
+      contractId: g.contractId || null,
+      headers
+    });
+  }
+
   render () {
     const me = this.state.pubkey;
     return React.createElement('main', null,
@@ -455,7 +469,8 @@ class Groups extends React.Component {
           this.state.notice ? React.createElement('div', { className: 'gp-ok' }, this.state.notice) : null,
           this.renderDetail()
         )
-      )
+      ),
+      this.renderInspector()
     );
   }
 }

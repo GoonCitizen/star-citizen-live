@@ -3,11 +3,12 @@
 /**
  * Cumulative gameplay history — compact, durable, idempotent.
  *
- * Stores ended missions, deaths, sessions, activity heat, and pilots.
- * Never stores raw log lines. Content-addressed record ids make re-scans
- * and live re-apply safe. File cursors (byte offset + mtime) ensure each
- * byte of a Game.log / logbackup is consumed at most once until the file
- * rotates (shrink → rescan from 0; new backup files get a fresh cursor).
+ * Stores ended missions, deaths, sessions, quantum hops, incap, CrimeStat,
+ * activity heat, and pilots. Never stores raw log lines. Content-addressed
+ * record ids make re-scans and live re-apply safe. File cursors (byte offset
+ * + mtime) ensure each byte of a Game.log / logbackup is consumed at most
+ * once until the file rotates (shrink → rescan from 0; new backup files get
+ * a fresh cursor).
  */
 
 const fs = require('fs');
@@ -25,6 +26,9 @@ function emptyHistory () {
     missions: [],
     deaths: [],
     sessions: [],
+    quantum: [],
+    incap: [],
+    crimestat: [],
     heat: {},
     players: [],
     meta: { files: 0, lines: 0, generatedAt: null, lastFlushAt: null }
@@ -53,6 +57,21 @@ function normalizeHistory (raw) {
     if (!s) continue;
     const id = s.id || idFor(['session', s.player, s.ts || ''].join('|'));
     h.sessions.push(Object.assign({}, s, { id }));
+  }
+  for (const q of raw.quantum || []) {
+    if (!q || !q.ts) continue;
+    const id = q.id || idFor(['quantum', q.phase || '', q.player || '', q.ts, q.destination || '', q.vehicle || ''].join('|'));
+    h.quantum.push(Object.assign({}, q, { id }));
+  }
+  for (const i of raw.incap || []) {
+    if (!i || !i.ts) continue;
+    const id = i.id || idFor(['incap', i.player || '', i.ts, i.text || ''].join('|'));
+    h.incap.push(Object.assign({}, i, { id }));
+  }
+  for (const c of raw.crimestat || []) {
+    if (!c || !c.ts) continue;
+    const id = c.id || idFor(['crimestat', c.player || '', c.ts, c.rating || '', c.delta || ''].join('|'));
+    h.crimestat.push(Object.assign({}, c, { id }));
   }
   return h;
 }
@@ -101,7 +120,10 @@ function indexHistory (history) {
   return {
     missions: new Set((history.missions || []).map((m) => m.id).filter(Boolean)),
     deaths: new Set((history.deaths || []).map((d) => d.id).filter(Boolean)),
-    sessions: new Set((history.sessions || []).map((s) => s.id).filter(Boolean))
+    sessions: new Set((history.sessions || []).map((s) => s.id).filter(Boolean)),
+    quantum: new Set((history.quantum || []).map((q) => q.id).filter(Boolean)),
+    incap: new Set((history.incap || []).map((i) => i.id).filter(Boolean)),
+    crimestat: new Set((history.crimestat || []).map((c) => c.id).filter(Boolean))
   };
 }
 
@@ -133,7 +155,6 @@ function applyEvent (history, index, ev, ctx = {}) {
     const d = new Date(t);
     const ym = d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0');
     const k = ym + '|' + ((d.getDay() + 6) % 7) + '|' + d.getHours();
-    // Heat is byte-cursor gated by the caller; each new line may increment.
     history.heat[k] = (history.heat[k] || 0) + 1;
     changed = true;
   }
@@ -144,6 +165,56 @@ function applyEvent (history, index, ev, ctx = {}) {
     if (!index.deaths.has(id)) {
       index.deaths.add(id);
       history.deaths.push({ id, player, ts: ev.timestamp, bodyId: ev.bodyId || null });
+      ensurePlayer(history, player === 'unknown' ? null : player);
+      changed = true;
+    }
+  }
+
+  if (ev.kind === 'player:incap') {
+    const player = handle || ev.player || 'unknown';
+    const id = idFor(['incap', player, ev.timestamp || '', ev.text || ''].join('|'));
+    if (!index.incap.has(id)) {
+      index.incap.add(id);
+      history.incap = history.incap || [];
+      history.incap.push({ id, player, ts: ev.timestamp, text: ev.text || null });
+      ensurePlayer(history, player === 'unknown' ? null : player);
+      changed = true;
+    }
+  }
+
+  if (ev.kind === 'player:crimestat') {
+    const player = handle || ev.player || 'unknown';
+    const id = idFor(['crimestat', player, ev.timestamp || '', ev.rating || '', ev.delta || ''].join('|'));
+    if (!index.crimestat.has(id)) {
+      index.crimestat.add(id);
+      history.crimestat = history.crimestat || [];
+      history.crimestat.push({
+        id,
+        player,
+        ts: ev.timestamp,
+        rating: ev.rating != null ? Number(ev.rating) : null,
+        delta: ev.delta != null ? Number(ev.delta) : null
+      });
+      ensurePlayer(history, player === 'unknown' ? null : player);
+      changed = true;
+    }
+  }
+
+  if (ev.kind === 'quantum:select' || ev.kind === 'quantum:arrive') {
+    const player = handle || ev.player || 'unknown';
+    const phase = ev.kind === 'quantum:select' ? 'select' : 'arrive';
+    const id = idFor(['quantum', phase, player, ev.timestamp || '', ev.destination || '', ev.vehicle || ''].join('|'));
+    if (!index.quantum.has(id)) {
+      index.quantum.add(id);
+      history.quantum = history.quantum || [];
+      history.quantum.push({
+        id,
+        phase,
+        player,
+        ts: ev.timestamp,
+        destination: ev.destination || null,
+        vehicle: ev.vehicle || null
+      });
       ensurePlayer(history, player === 'unknown' ? null : player);
       changed = true;
     }
@@ -198,8 +269,6 @@ function ingestFile (file, history, index, cursors, opts = {}) {
     const generators = Object.assign({}, opts.generators || {});
     let changed = false;
     let lines = 0;
-    // Cursors are always saved at a consumed EOF after complete lines, so a
-    // resume at `start` begins on a line boundary (or at EOF).
     const stream = fs.createReadStream(file, {
       start,
       encoding: 'utf8'
@@ -217,7 +286,6 @@ function ingestFile (file, history, index, cursors, opts = {}) {
     });
 
     rl.on('close', () => {
-      // One session record per log file (first full/partial pass only).
       if (start === 0 && (sessionTs || handle || lines > 0)) {
         const player = handle || 'unknown';
         const id = idFor(['session', key, sessionTs || '', player].join('|'));
@@ -292,16 +360,45 @@ function cumulativeCounts (history) {
   for (const m of h.missions || []) {
     if (m.outcome && outcomes[m.outcome] !== undefined) outcomes[m.outcome] += 1;
   }
+  const quantum = h.quantum || [];
   return {
     missions: (h.missions || []).length,
     deaths: (h.deaths || []).length,
     sessions: (h.sessions || []).length,
     players: (h.players || []).length,
+    quantum: quantum.length,
+    quantumSelect: quantum.filter((q) => q.phase === 'select').length,
+    quantumArrive: quantum.filter((q) => q.phase === 'arrive').length,
+    incap: (h.incap || []).length,
+    crimestat: (h.crimestat || []).length,
     completed: outcomes.Complete,
     abandoned: outcomes.Abandon,
     failed: outcomes.Fail,
     deactivated: outcomes.Deactivate
   };
+}
+
+/** Compact leaf records for Fabric Tree / GroupActivityTree publish. */
+function historyLeaves (history) {
+  const h = normalizeHistory(history);
+  const leaves = [];
+  const push = (kind, row) => {
+    if (!row || !row.id) return;
+    leaves.push({
+      id: row.id,
+      kind,
+      ts: row.ts || null,
+      player: row.player || null
+    });
+  };
+  for (const m of h.missions) push('mission', m);
+  for (const d of h.deaths) push('death', d);
+  for (const q of h.quantum) push('quantum', q);
+  for (const i of h.incap) push('incap', i);
+  for (const c of h.crimestat) push('crimestat', c);
+  for (const s of h.sessions) push('session', s);
+  leaves.sort((a, b) => String(a.id).localeCompare(String(b.id)));
+  return leaves;
 }
 
 /** Default history.json path under a Hub-style store root. */
@@ -329,6 +426,7 @@ module.exports = {
   ingestFile,
   syncFiles,
   cumulativeCounts,
+  historyLeaves,
   historyPath,
   cursorsPath
 };

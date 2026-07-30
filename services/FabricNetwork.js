@@ -22,6 +22,15 @@ const {
   isGroupMessageType,
   GROUP_MESSAGE_TYPES
 } = require('../contracts/gooncitizenGroup');
+const { OUTER, CONTRACT_BODY_TYPES } = require('../contracts/applicationMessageTypes');
+const { PEER_PROFILE_TYPE, peeringAddressesFromObject } = require('../functions/peerProfile');
+const { FLEET_SHARE_TYPE } = require('../functions/starjumpFleet');
+const { PRESENCE_TYPE } = require('../functions/presence');
+const {
+  createFabricMessageLog,
+  summarizeMessage,
+  summarizeBuffer
+} = require('../functions/fabricMessageLog');
 
 const DEFAULT_SEEDS = Object.freeze([
   'hub.fabric.pub:7777',
@@ -29,15 +38,50 @@ const DEFAULT_SEEDS = Object.freeze([
 ]);
 /** @deprecated Prefer DEFAULT_SEEDS — first network hub seed. */
 const DEFAULT_SEED = DEFAULT_SEEDS[0];
-// App `type` values carried inside the GoonCitizen CONTRACT_MESSAGE namespace.
-// MissionCreated is handled at ingest even if omitted from the genesis
-// messageTypes list (that list is frozen into the contract Actor id).
-const APP_RELAY_TYPES = new Set(['MissionCreated', 'MissionBroadcast', 'SCEventBatch', 'GameStateSnapshot']);
+/** Default TCP peer cap (matches @fabric/core MAX_PEERS soft default for slot fill). */
+const DEFAULT_MAX_PEERS = 32;
+/** App `type` values under the GoonCitizen CONTRACT_MESSAGE namespace (core catalog + local). */
+const APP_RELAY_TYPES = new Set([
+  CONTRACT_BODY_TYPES.MissionCreated,
+  CONTRACT_BODY_TYPES.MissionBroadcast,
+  CONTRACT_BODY_TYPES.SCEventBatch,
+  CONTRACT_BODY_TYPES.GameStateSnapshot,
+  PEER_PROFILE_TYPE,
+  FLEET_SHARE_TYPE,
+  PRESENCE_TYPE
+]);
 
 /** True when address is a known network hub seed (selective Fabric relays). */
 function isNetworkHubAddress (address) {
   const host = String(address || '').trim().toLowerCase().split(':')[0];
   return host === 'hub.fabric.pub' || host === 'relay.goon.vc';
+}
+
+/**
+ * True when address uses a loopback host (localhost / 127.0.0.1 / ::1).
+ * Local star-topology tests dial `127.0.0.1:otherPort` on purpose; only
+ * {@link isSelfFabricAddress} must be excluded from the dial list.
+ * @param {*} address
+ * @returns {boolean}
+ */
+function isLoopbackFabricAddress (address) {
+  const host = String(address || '').trim().toLowerCase().split(':')[0];
+  return host === 'localhost' || host === '127.0.0.1' || host === '[::1]' || host === '::1';
+}
+
+/**
+ * True when address dials this process's Fabric listen port on loopback
+ * (self-loop). That breaks star-hub gossip on the desktop.
+ * @param {*} address
+ * @param {number|string} [listenPort]
+ * @returns {boolean}
+ */
+function isSelfFabricAddress (address, listenPort) {
+  if (!isLoopbackFabricAddress(address)) return false;
+  const port = Number(String(address || '').trim().split(':')[1]);
+  const listen = Number(listenPort);
+  if (!Number.isFinite(port) || !Number.isFinite(listen) || listen <= 0) return false;
+  return port === listen;
 }
 
 /**
@@ -140,14 +184,20 @@ function attachAppHandlers (peer, handlers = {}, _opts = {}) {
 
     try {
       if (contract === goonId) {
-        if (appType === 'MissionCreated' && typeof handlers.onMissionCreated === 'function') {
+        if (appType === CONTRACT_BODY_TYPES.MissionCreated && typeof handlers.onMissionCreated === 'function') {
           handlers.onMissionCreated(object, signer, meta);
-        } else if (appType === 'MissionBroadcast' && typeof handlers.onMissionBroadcast === 'function') {
+        } else if (appType === CONTRACT_BODY_TYPES.MissionBroadcast && typeof handlers.onMissionBroadcast === 'function') {
           handlers.onMissionBroadcast(object, signer, meta);
-        } else if (appType === 'SCEventBatch' && typeof handlers.onEventBatch === 'function') {
+        } else if (appType === CONTRACT_BODY_TYPES.SCEventBatch && typeof handlers.onEventBatch === 'function') {
           handlers.onEventBatch(object, signer, meta);
-        } else if (appType === 'GameStateSnapshot' && typeof handlers.onGameStateSnapshot === 'function') {
+        } else if (appType === CONTRACT_BODY_TYPES.GameStateSnapshot && typeof handlers.onGameStateSnapshot === 'function') {
           handlers.onGameStateSnapshot(object, signer, meta);
+        } else if (appType === PEER_PROFILE_TYPE && typeof handlers.onPeerProfile === 'function') {
+          handlers.onPeerProfile(object, signer, meta);
+        } else if (appType === FLEET_SHARE_TYPE && typeof handlers.onFleetShare === 'function') {
+          handlers.onFleetShare(object, signer, meta);
+        } else if (appType === PRESENCE_TYPE && typeof handlers.onPeerPresence === 'function') {
+          handlers.onPeerPresence(object, signer, meta);
         }
         return;
       }
@@ -157,15 +207,17 @@ function attachAppHandlers (peer, handlers = {}, _opts = {}) {
         : false;
       if (!knownGroup && !isGroupMessageType(appType)) return;
 
-      if (appType === 'GroupChat' && typeof handlers.onGroupChat === 'function') {
+      if (appType === CONTRACT_BODY_TYPES.GroupChat && typeof handlers.onGroupChat === 'function') {
         handlers.onGroupChat(object, signer, meta);
-      } else if (appType === 'GroupChange' && typeof handlers.onGroupChange === 'function') {
+      } else if (appType === CONTRACT_BODY_TYPES.GroupChange && typeof handlers.onGroupChange === 'function') {
         handlers.onGroupChange(object, signer, meta);
-      } else if (appType === 'GroupShare' && typeof handlers.onGroupShare === 'function') {
+      } else if (appType === CONTRACT_BODY_TYPES.GroupShare && typeof handlers.onGroupShare === 'function') {
         handlers.onGroupShare(object, signer, meta);
-      } else if (appType === 'FederationContractInvite' && typeof handlers.onFederationInvite === 'function') {
+      } else if (appType === CONTRACT_BODY_TYPES.GroupActivityTree && typeof handlers.onGroupActivityTree === 'function') {
+        handlers.onGroupActivityTree(object, signer, meta);
+      } else if (appType === CONTRACT_BODY_TYPES.FederationContractInvite && typeof handlers.onFederationInvite === 'function') {
         handlers.onFederationInvite(object, signer, meta);
-      } else if (appType === 'FederationContractInviteResponse' && typeof handlers.onFederationInviteResponse === 'function') {
+      } else if (appType === CONTRACT_BODY_TYPES.FederationContractInviteResponse && typeof handlers.onFederationInviteResponse === 'function') {
         handlers.onFederationInviteResponse(object, signer, meta);
       }
     } catch (e) {
@@ -202,7 +254,11 @@ class FabricNetwork extends EventEmitter {
       relayAppMessages: false,
       networking: true,
       reconnectToKnownPeers: false,
-      listenPortAttempts: 20
+      listenPortAttempts: 20,
+      maxPeers: DEFAULT_MAX_PEERS,
+      advertiseHost: null,
+      messageLog: null,
+      messageLogCapacity: undefined
     }, settings);
     this._identity = null;
     this._peer = null;
@@ -210,11 +266,18 @@ class FabricNetwork extends EventEmitter {
     this._handlers = null;
     /** @type {Set<string>} locally known group Federation contract ids */
     this._groupContractIds = new Set();
+    this._slotFillTimer = null;
+    this._lastPeeringOfferAt = 0;
+    this._messageLog = settings.messageLog || createFabricMessageLog({
+      capacity: settings.messageLogCapacity
+    });
   }
 
   static get DEFAULT_SEED () { return DEFAULT_SEED; }
   static get DEFAULT_SEEDS () { return DEFAULT_SEEDS.slice(); }
   static isNetworkHubAddress (v) { return isNetworkHubAddress(v); }
+  static isLoopbackFabricAddress (v) { return isLoopbackFabricAddress(v); }
+  static isSelfFabricAddress (v, listenPort) { return isSelfFabricAddress(v, listenPort); }
   static isFabricAddress (v) { return isFabricAddress(v); }
   static normalizeFabricAddress (v, opts) { return normalizeFabricAddress(v, opts); }
   static attachAppHandlers (peer, handlers, opts) { return attachAppHandlers(peer, handlers, opts); }
@@ -254,6 +317,8 @@ class FabricNetwork extends EventEmitter {
   }
 
   setPeers (addresses) {
+    // Caller (LiveRelay) already excludes self-loop addresses. Loopback to a
+    // *different* port is valid (local hub peer in tests / LAN relays).
     const list = (Array.isArray(addresses) ? addresses : [])
       .map((a) => normalizeFabricAddress(a, { migrate: true }))
       .filter(Boolean);
@@ -270,12 +335,28 @@ class FabricNetwork extends EventEmitter {
           this.emit('warning', `connect ${addr}: ${(e && e.message) || e}`);
         }
       }
+      // Re-dial network hubs that dropped (star gossip depends on them).
+      for (const addr of list) {
+        if (!isNetworkHubAddress(addr)) continue;
+        const connected = Object.keys(this._peer.connections || {})
+          .some((id) => FabricNetwork.connectionMatchesAddress(id, addr));
+        if (connected) continue;
+        try {
+          this._peer._upsertPeerRegistry(addr, { address: addr });
+          this._peer._connect(addr);
+        } catch (e) {
+          this.emit('warning', `reconnect hub ${addr}: ${(e && e.message) || e}`);
+        }
+      }
     }
   }
 
   status () {
     const peer = this._peer;
     const connectionIds = peer && peer.connections ? Object.keys(peer.connections) : [];
+    const log = this._messageLog && typeof this._messageLog.status === 'function'
+      ? this._messageLog.status()
+      : null;
     return {
       enable: this.settings.enable !== false,
       listening: !!(peer && this.settings.listen),
@@ -285,7 +366,47 @@ class FabricNetwork extends EventEmitter {
       fabricConnections: connectionIds.slice(),
       fabricPeers: (this.settings.peers || []).slice(),
       ready: this.ready,
-      groupContracts: this._groupContractIds.size
+      groupContracts: this._groupContractIds.size,
+      messageLog: log
+    };
+  }
+
+  /** Shared Fabric wire-message ring buffer (advanced UI). */
+  get messageLog () {
+    return this._messageLog;
+  }
+
+  /**
+   * Record a Fabric AMP Message (instance or wire buffer) in the advanced log.
+   * @param {'in'|'out'} direction
+   * @param {object|Buffer} messageOrBuffer
+   * @param {{ peer?: string|null, via?: string|null }} [meta]
+   */
+  recordMessage (direction, messageOrBuffer, meta = {}) {
+    if (!this._messageLog) return null;
+    try {
+      const summary = Buffer.isBuffer(messageOrBuffer)
+        ? summarizeBuffer(messageOrBuffer, { direction, peer: meta.peer || null, via: meta.via || null })
+        : summarizeMessage(messageOrBuffer, { direction, peer: meta.peer || null, via: meta.via || null });
+      if (!summary) return null;
+      return this._messageLog.append(summary);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  _attachMessageLog (peer) {
+    if (!peer || typeof peer._handleFabricMessage !== 'function' || peer._goonMessageLogAttached) return;
+    peer._goonMessageLogAttached = true;
+    const orig = peer._handleFabricMessage.bind(peer);
+    const self = this;
+    peer._handleFabricMessage = function (buffer, origin = null, socket = null) {
+      const peerName = origin && (origin.name != null ? origin.name : origin);
+      self.recordMessage('in', buffer, {
+        peer: peerName != null ? String(peerName) : null,
+        via: 'peer'
+      });
+      return orig(buffer, origin, socket);
     };
   }
 
@@ -330,6 +451,10 @@ class FabricNetwork extends EventEmitter {
   _signAndRelay (vectorType, body, opts = {}) {
     const msg = this._signMessage(vectorType, body, opts);
     const shouldRelay = opts.relay !== false;
+    this.recordMessage('out', msg, {
+      via: shouldRelay && this.ready ? 'relay' : 'local',
+      peer: Array.isArray(opts.to) && opts.to.length ? opts.to.join(',') : null
+    });
     if (!shouldRelay) return msg;
     if (!this.ready) return msg;
     const peer = this._peer;
@@ -366,7 +491,9 @@ class FabricNetwork extends EventEmitter {
       actor: { publicKey: pubkey, id: pubkey },
       object
     };
-    return this._signMessage('CONTRACT_MESSAGE', body, opts);
+    const msg = this._signMessage(OUTER.CONTRACT_MESSAGE, body, opts);
+    this.recordMessage('out', msg, { via: 'local' });
+    return msg;
   }
 
   /**
@@ -413,6 +540,9 @@ class FabricNetwork extends EventEmitter {
       ? this.settings.peersDb
       : null;
 
+    const maxPeers = Number(this.settings.maxPeers) > 0
+      ? Number(this.settings.maxPeers)
+      : DEFAULT_MAX_PEERS;
     const peer = new Peer({
       listen: this.settings.listen !== false,
       port: Number(this.settings.port) || 7777,
@@ -423,7 +553,10 @@ class FabricNetwork extends EventEmitter {
       reconnectToKnownPeers: this.settings.reconnectToKnownPeers === true,
       listenPortAttempts: this.settings.listenPortAttempts || 20,
       key: { xprv: key.xprv },
-      upnp: false
+      upnp: false,
+      constraints: {
+        peers: { max: maxPeers }
+      }
     });
 
     peer.on('error', (e) => this.emit('error', e));
@@ -432,6 +565,7 @@ class FabricNetwork extends EventEmitter {
     peer.on('ready', (info) => this.emit('ready', info));
     peer.on('connections:open', (ev) => this.emit('connections:open', ev));
     peer.on('connections:close', (ev) => this.emit('connections:close', ev));
+    this._attachMessageLog(peer);
 
     this._rawInbound = new Set();
     this._stoppingPeer = false;
@@ -465,6 +599,18 @@ class FabricNetwork extends EventEmitter {
       onPeerAlias: (ev, source, meta) => {
         this.emit('peerAlias', { ev, source, meta });
         this._forward('onPeerAlias', ev, source, meta);
+      },
+      onPeerProfile: (object, source, meta) => {
+        this.emit('peerProfile', { object, source, meta });
+        this._forward('onPeerProfile', object, source, meta);
+      },
+      onFleetShare: (object, source, meta) => {
+        this.emit('fleetShare', { object, source, meta });
+        this._forward('onFleetShare', object, source, meta);
+      },
+      onPeerPresence: (object, source, meta) => {
+        this.emit('peerPresence', { object, source, meta });
+        this._forward('onPeerPresence', object, source, meta);
       },
       onProposal: (payload, source, meta) => {
         this.emit('contractProposal', { payload, source, meta });
@@ -500,16 +646,136 @@ class FabricNetwork extends EventEmitter {
 
     peer.on('connections:open', () => {
       try { this.publishContract(); } catch (_) { /* not ready / no peers yet */ }
+      this.fillPeerSlots();
+    });
+    peer.on('connections:close', () => {
+      this.fillPeerSlots();
+      this.maybePublishPeeringOffer();
+    });
+
+    // Core enqueues P2P_PEERING_OFFER candidates but does not always dial; we
+    // drain slots and surface gossip addresses for roster discovery.
+    peer.on('peeringOffer', (ev) => {
+      this._ingestPeeringEvent(ev, 'offer');
+    });
+    peer.on('peeringGossip', (ev) => {
+      this._ingestPeeringEvent(ev, 'gossip');
     });
 
     await peer.start();
     this._peer = peer;
+    this._startSlotFillTimer();
     console.log(`[STAR-CITIZEN] fabric peer listening on ${peer.settings.port} (id ${String(peer.key.pubkey).slice(0, 12)}…)`);
     try { this.publishContract(); } catch (_) { /* best-effort */ }
+    this.fillPeerSlots();
+    this.maybePublishPeeringOffer({ force: true });
     return this;
   }
 
+  _startSlotFillTimer () {
+    if (this._slotFillTimer) return;
+    this._slotFillTimer = setInterval(() => {
+      try {
+        this.fillPeerSlots();
+        this.maybePublishPeeringOffer();
+      } catch (e) {
+        this.emit('warning', `slot fill: ${(e && e.message) || e}`);
+      }
+    }, 20000);
+    if (this._slotFillTimer.unref) this._slotFillTimer.unref();
+  }
+
+  _stopSlotFillTimer () {
+    if (this._slotFillTimer) {
+      clearInterval(this._slotFillTimer);
+      this._slotFillTimer = null;
+    }
+  }
+
+  /**
+   * Enqueue host:port from offer/gossip and dial open slots.
+   * @param {{ message?: object }} ev
+   * @param {'offer'|'gossip'} kind
+   */
+  _ingestPeeringEvent (ev, kind) {
+    const message = ev && ev.message;
+    const object = (message && (message.object || message)) || {};
+    const addrs = peeringAddressesFromObject(object).filter((addr) => {
+      if (isSelfFabricAddress(addr, this.settings.port)) return false;
+      if (isLoopbackFabricAddress(addr) && !this.settings.allowLoopbackDiscovery) return false;
+      return true;
+    });
+    for (const addr of addrs) {
+      const [host, port] = String(addr).split(':');
+      if (this._peer && typeof this._peer._enqueuePeeringCandidate === 'function') {
+        try { this._peer._enqueuePeeringCandidate(host, Number(port)); } catch (_) { /* ignore */ }
+      }
+    }
+    this.fillPeerSlots();
+    if (addrs.length) {
+      const payload = { addresses: addrs, kind, origin: ev && ev.origin };
+      this.emit('peeringCandidate', payload);
+      this._forward('onPeeringCandidate', payload);
+    }
+  }
+
+  /**
+   * Dial queued peering candidates into open connection slots.
+   * @returns {number} remaining candidate count
+   */
+  fillPeerSlots () {
+    const peer = this._peer;
+    if (!peer || typeof peer._fillPeerSlots !== 'function') return 0;
+    try { peer._fillPeerSlots(); } catch (e) {
+      this.emit('warning', `fillPeerSlots: ${(e && e.message) || e}`);
+    }
+    return Array.isArray(peer.candidates) ? peer.candidates.length : 0;
+  }
+
+  /**
+   * When under capacity and advertiseHost is set, publish P2P_PEERING_OFFER
+   * so hubs / peers can gossip this node into open slots.
+   * @param {{ force?: boolean }} [opts]
+   */
+  maybePublishPeeringOffer (opts = {}) {
+    if (!this.ready) return null;
+    const host = this.settings.advertiseHost
+      ? String(this.settings.advertiseHost).trim()
+      : '';
+    if (!host || isLoopbackFabricAddress(`${host}:1`)) return null;
+    const connCount = Object.keys(this._peer.connections || {}).length;
+    const maxPeers = Number(this.settings.maxPeers) > 0
+      ? Number(this.settings.maxPeers)
+      : DEFAULT_MAX_PEERS;
+    if (connCount >= maxPeers || connCount === 0) return null;
+    const now = Date.now();
+    if (!opts.force && (now - (this._lastPeeringOfferAt || 0)) < 30000) return null;
+    this._lastPeeringOfferAt = now;
+    const port = Number(this._peer.settings.port) || Number(this.settings.port) || 7777;
+    const payload = {
+      type: 'P2P_PEERING_OFFER',
+      actor: { id: this._identity.pubkey },
+      object: {
+        slots: Math.max(1, maxPeers - connCount),
+        transport: 'fabric',
+        host,
+        port
+      }
+    };
+    try {
+      return this._signAndRelay('P2P_PEERING_OFFER', payload);
+    } catch (e) {
+      this.emit('warning', `peering offer: ${(e && e.message) || e}`);
+      return null;
+    }
+  }
+
+  setAdvertiseHost (host) {
+    this.settings.advertiseHost = host || null;
+  }
+
   async stop () {
+    this._stopSlotFillTimer();
     if (this._starting) {
       try { await this._starting; } catch (_) { /* start failed — nothing to stop */ }
     }
@@ -548,7 +814,7 @@ class FabricNetwork extends EventEmitter {
 
   publishContract () {
     if (!this.ready) return null;
-    return this._signAndRelay('CONTRACT_PUBLISH', gooncitizenContractDefinition());
+    return this._signAndRelay(OUTER.CONTRACT_PUBLISH, gooncitizenContractDefinition());
   }
 
   /**
@@ -561,7 +827,7 @@ class FabricNetwork extends EventEmitter {
     }
     const id = groupContractId(definition);
     this.setGroupContractKnown(id, true);
-    return this._signAndRelay('CONTRACT_PUBLISH', definition);
+    return this._signAndRelay(OUTER.CONTRACT_PUBLISH, definition);
   }
 
   /**
@@ -574,7 +840,7 @@ class FabricNetwork extends EventEmitter {
     if (!record || !record.body || !record.author) throw new Error('chat record required');
     const pubkey = this._identity && this._identity.pubkey;
     if (pubkey && record.author !== pubkey) throw new Error('chat author must be local identity');
-    return this._signAndRelay('P2P_CHAT_MESSAGE', String(record.body));
+    return this._signAndRelay(OUTER.P2P_CHAT_MESSAGE, String(record.body));
   }
 
   /**
@@ -590,6 +856,71 @@ class FabricNetwork extends EventEmitter {
       return true;
     }
     return this._signAndRelay('P2P_PEER_ALIAS', name);
+  }
+
+  /**
+   * Broadcast local social profile under the GoonCitizen contract namespace.
+   * @param {object} profile from {@link buildLocalProfile}
+   */
+  publishPeerProfile (profile) {
+    if (!profile || typeof profile !== 'object') return null;
+    return this._publishContractMessage(gooncitizenContractId(), PEER_PROFILE_TYPE, {
+      nickname: profile.nickname || null,
+      bio: profile.bio || null,
+      scHandle: profile.scHandle || null,
+      updatedAt: profile.updatedAt || new Date().toISOString()
+    });
+  }
+
+  /**
+   * Broadcast a personal Starjump fleet under the GoonCitizen contract.
+   * @param {object} shareObject from {@link buildFleetShareObject}
+   */
+  publishFleetShare (shareObject) {
+    if (!shareObject || typeof shareObject !== 'object') throw new Error('FleetShare object required');
+    return this._publishContractMessage(gooncitizenContractId(), FLEET_SHARE_TYPE, shareObject);
+  }
+
+  /**
+   * Broadcast local online presence + current ship under the GoonCitizen contract.
+   * @param {object} presenceObject from {@link buildPresenceShareObject}
+   */
+  publishPeerPresence (presenceObject) {
+    if (!presenceObject || typeof presenceObject !== 'object') return null;
+    return this._publishContractMessage(gooncitizenContractId(), PRESENCE_TYPE, presenceObject);
+  }
+
+  /**
+   * Look up a peer registry entry by Fabric address (best-effort).
+   * @param {string} address
+   * @returns {{ id: string|null, alias: string|null, nickname: string|null, address: string|null }|null}
+   */
+  lookupPeerRegistry (address) {
+    const peer = this._peer;
+    if (!peer || !address) return null;
+    const registry = (peer._state && peer._state.peers) || {};
+    const addr = String(address).toLowerCase();
+    for (const [id, row] of Object.entries(registry)) {
+      if (!row || typeof row !== 'object') continue;
+      const rowAddr = String(row.address || '').toLowerCase();
+      if (rowAddr && FabricNetwork.connectionMatchesAddress(rowAddr, addr)) {
+        return {
+          id: row.id || id,
+          alias: row.alias || row.nickname || null,
+          nickname: row.nickname || row.alias || null,
+          address: row.address || null
+        };
+      }
+      if (String(id).toLowerCase() === addr) {
+        return {
+          id,
+          alias: row.alias || row.nickname || null,
+          nickname: row.nickname || row.alias || null,
+          address: row.address || null
+        };
+      }
+    }
+    return null;
   }
 
   publishMissionCreated (payload) {
@@ -640,6 +971,15 @@ class FabricNetwork extends EventEmitter {
   }
 
   /**
+   * Publish a Merkle activity tree into a Group Contract namespace.
+   * @param {string} contractId
+   * @param {Object} payload GroupActivityTree body (root, digests, counts, …)
+   */
+  publishGroupActivityTree (contractId, payload) {
+    return this._publishContractMessage(contractId, 'GroupActivityTree', Object.assign({}, payload));
+  }
+
+  /**
    * @param {string} contractId
    * @param {Object} invite FederationContractInvite fields/object
    */
@@ -682,7 +1022,7 @@ class FabricNetwork extends EventEmitter {
       psbtProposalBase64: opts.psbtProposalBase64
     });
     if (opts.purpose) payload.purpose = String(opts.purpose);
-    return this._signAndRelay('CONTRACT_PROPOSAL', payload);
+    return this._signAndRelay(OUTER.CONTRACT_PROPOSAL, payload);
   }
 
   _publishContractMessage (contractId, type, object, opts = {}) {
@@ -700,7 +1040,7 @@ class FabricNetwork extends EventEmitter {
     if (opts.relay !== false && !this.ready) {
       this._requireReady();
     }
-    return this._signAndRelay('CONTRACT_MESSAGE', body, opts);
+    return this._signAndRelay(OUTER.CONTRACT_MESSAGE, body, opts);
   }
 }
 

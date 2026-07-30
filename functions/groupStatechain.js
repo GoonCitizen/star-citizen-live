@@ -31,7 +31,8 @@ const JOURNAL_TYPES = Object.freeze([
   'GroupApplication',
   'GroupApplicationDecision',
   'GroupChange',
-  'FederationContractInviteResponse'
+  'FederationContractInviteResponse',
+  'GroupActivityTree'
 ]);
 
 function normalizeContractId (contractId) {
@@ -167,6 +168,8 @@ function foldGroupState (definition, entries = []) {
   let meta = Object.assign({}, definition.meta || {});
   let threshold = (definition.proposedPolicy && definition.proposedPolicy.threshold) || 1;
   const applications = {};
+  /** Latest published activity tree root under this group namespace (compact). */
+  let activityTree = null;
   const seen = new Set();
 
   const list = (Array.isArray(entries) ? entries : []).slice().sort((a, b) => {
@@ -238,6 +241,15 @@ function foldGroupState (definition, entries = []) {
       if (message.accept && message.responderPubkey) {
         members = _sortMembers(members.concat([String(message.responderPubkey).toLowerCase()]));
       }
+    } else if (type === 'GroupActivityTree') {
+      // Keep the newest publish (by journal clock order) as the group namespace tip.
+      activityTree = {
+        root: message.root || null,
+        leafCount: Number(message.leafCount) || 0,
+        ownerPubkey: message.ownerPubkey || null,
+        generatedAt: message.generatedAt || entry.acceptedAt || null,
+        counts: message.counts && typeof message.counts === 'object' ? message.counts : null
+      };
     }
   }
 
@@ -254,7 +266,8 @@ function foldGroupState (definition, entries = []) {
       acc[k] = applications[k];
       return acc;
     }, {}),
-    proposedPolicy
+    proposedPolicy,
+    activityTree
   };
 }
 

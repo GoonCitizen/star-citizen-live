@@ -9,8 +9,18 @@
  */
 
 const React = require('react');
+const GroupFabricInspector = require('./GroupFabricInspector');
 
 const BASE = '/services/star-citizen';
+const ADVANCED_MODE_KEY = 'gooncitizen.advancedMode';
+
+function readAdvancedMode () {
+  try {
+    return (typeof localStorage !== 'undefined') && localStorage.getItem(ADVANCED_MODE_KEY) === '1';
+  } catch (_) {
+    return false;
+  }
+}
 
 const CSS = `
   .gpage{max-width:820px;margin:0 auto;padding:18px;display:grid;gap:16px}
@@ -64,6 +74,7 @@ class GroupPage extends React.Component {
       pubkey: null,
       group: null,
       applications: [],
+      presenceRoster: {},
       loading: true,
       error: null,
       notice: null,
@@ -137,8 +148,13 @@ class GroupPage extends React.Component {
         const ar = await fetch(`${BASE}/groups/${encodeURIComponent(group.id)}/applications`, { headers: this.headers(token) });
         if (ar.ok) applications = ((await ar.json()).data || []).filter((a) => a.status === 'pending');
       }
+      let presenceRoster = {};
+      try {
+        const pr = await fetch(`${BASE}/presence/roster`, { headers: this.headers(token) });
+        if (pr.ok) presenceRoster = ((await pr.json()).data) || {};
+      } catch (_) { /* optional */ }
       this.setState({
-        group, applications, loading: false,
+        group, applications, presenceRoster, loading: false,
         slugEdit: group.slug || '',
         notice: null
       });
@@ -332,14 +348,30 @@ class GroupPage extends React.Component {
   renderMembers () {
     const g = this.state.group;
     if (!g || !g.members) return null;
+    const roster = this.state.presenceRoster || {};
     return React.createElement('div', { className: 'gpage-panel' },
       React.createElement('h2', null, `Members (${g.members.length}) · ${g.threshold}-of-${g.members.length} decisions`),
       React.createElement('div', { className: 'body' },
-        g.members.map((m) => React.createElement('div', { className: 'gpage-member', key: m },
-          React.createElement('span', { style: { flex: 1 } }, m),
-          m === g.creator ? React.createElement('span', { className: 'gpage-tag public' }, 'creator') : null,
-          m === this.state.pubkey ? React.createElement('span', { className: 'gpage-tag private' }, 'you') : null
-        ))
+        g.members.map((m) => {
+          const p = roster[m];
+          const ship = p && p.ship && (p.ship.name || p.ship.slug);
+          return React.createElement('div', { className: 'gpage-member', key: m },
+            React.createElement('span', { style: { flex: 1 } },
+              shortKey(m),
+              p && p.nickname ? React.createElement('span', {
+                style: { color: 'var(--muted)', marginLeft: 8, fontFamily: 'inherit' }
+              }, p.nickname) : null
+            ),
+            p
+              ? React.createElement('span', {
+                className: 'gpage-tag ' + (p.online ? 'public' : 'private'),
+                title: p.lastEventAt || ''
+              }, p.online ? (ship ? `online · ${ship}` : 'online') : 'offline')
+              : React.createElement('span', { className: 'gpage-tag private', title: 'No PeerPresence shared' }, '—'),
+            m === g.creator ? React.createElement('span', { className: 'gpage-tag public' }, 'creator') : null,
+            m === this.state.pubkey ? React.createElement('span', { className: 'gpage-tag private' }, 'you') : null
+          );
+        })
       )
     );
   }
@@ -384,8 +416,22 @@ class GroupPage extends React.Component {
       this.renderVisitorApply(),
       this.renderCreatorSettings(),
       this.renderApplications(),
-      this.renderMembers()
+      this.renderMembers(),
+      this.renderFabricInspector()
     );
+  }
+
+  renderFabricInspector () {
+    const g = this.state.group;
+    if (!g || !readAdvancedMode()) return null;
+    if (g.role !== 'member' && g.role !== 'creator') return null;
+    const headers = {};
+    if (this.state.token) headers.Authorization = `Bearer ${this.state.token}`;
+    return React.createElement(GroupFabricInspector, {
+      groupId: g.id,
+      contractId: g.contractId || null,
+      headers
+    });
   }
 }
 

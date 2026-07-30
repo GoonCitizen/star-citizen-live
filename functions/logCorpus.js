@@ -72,6 +72,8 @@ function defaultCorpusDirs (opts = {}) {
   };
 
   add(path.join(repoRoot, 'Gamelogs'));
+  // Note: repo `samples/` is not auto-scanned (can be 100MB+). Import it
+  // explicitly via Feed → Import logs (or POST …/corpus/import).
 
   // Prefer LIVE/logbackups, then other channels, under every install base.
   const bases = installBases(opts);
@@ -101,6 +103,7 @@ function defaultCorpusDirs (opts = {}) {
  * @param {{
  *   logfile?: string|null,
  *   extraDirs?: string[],
+ *   extraFiles?: string[],
  *   repoRoot?: string,
  *   includeLiveChannels?: boolean,
  *   existsSync?: function,
@@ -138,6 +141,8 @@ function discoverCorpusFiles (opts = {}) {
   for (const dir of defaultCorpusDirs(opts)) {
     for (const f of findLogs(dir, opts)) push(f);
   }
+
+  for (const f of opts.extraFiles || []) push(f);
 
   if (opts.logfile) push(opts.logfile);
 

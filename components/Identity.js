@@ -17,6 +17,8 @@
  */
 
 const React = require('react');
+const ActivityHeatmap = require('./ActivityHeatmap');
+const ShipPicker = require('./ShipPicker');
 
 const CSS = `
   .id-overlay{position:fixed;inset:0;z-index:45;background:rgba(8,10,14,.75);
@@ -54,6 +56,12 @@ const CSS = `
   .id-tag{font-size:10.5px;font-weight:700;padding:2px 8px;border-radius:5px;margin-left:8px;vertical-align:middle}
   .id-tag.on{background:rgba(63,185,80,.15);color:var(--good)}
   .id-tag.off{background:rgba(110,118,129,.18);color:var(--muted)}
+  .id-field{display:grid;gap:4px;margin-bottom:10px}
+  .id-field label{font-size:12px;color:var(--muted)}
+  .id-field select,.id-field input,.id-field textarea{width:100%;background:var(--bg);border:1px solid var(--line);
+    color:var(--text);border-radius:7px;padding:8px 10px;font-size:13px;box-sizing:border-box}
+  .id-groups{display:flex;flex-wrap:wrap;gap:8px}
+  .id-groups label{display:flex;align-items:center;gap:6px;font-size:12px;color:var(--text);cursor:pointer}
 `;
 
 const AUTOLOCK_OPTIONS = [
@@ -92,44 +100,176 @@ class Identity extends React.Component {
       // forget
       confirmForget: false,
       forgetText: '',
-      // display nickname (persisted in Fabric Store settings; not the key)
+      // display nickname + profile (Fabric Store; not the key)
       nickname: '',
-      nicknameBusy: false
+      bio: '',
+      scHandle: '',
+      nicknameBusy: false,
+      // opt-in PeerPresence
+      sharePresence: false,
+      presenceVisibility: 'private',
+      presenceGroupIds: [],
+      shipOverrideSlug: null,
+      presenceOnline: false,
+      detectedShip: null,
+      shipOverride: null,
+      groups: [],
+      presenceBusy: false,
+      presenceAvailability: 'auto',
+      presenceStatusText: '',
+      statusDraft: '',
+      showKeyTools: false
     };
     this._unsub = null;
+    this._presenceTimer = null;
   }
 
   componentDidMount () {
     this.load();
-    this.loadNickname();
+    this.loadProfile();
+    this.loadPresence();
+    this._presenceTimer = setInterval(() => this.loadPresence(), 15000);
     const b = bridge();
     if (b && b.onChanged) {
       this._unsub = b.onChanged((summary) => this.setState({ info: summary, revealed: null }));
     }
   }
 
-  async loadNickname () {
+  async loadProfile () {
     try {
       const res = await fetch('/settings').then((r) => r.json());
-      this.setState({ nickname: (res.settings && res.settings.nickname) || '' });
+      const profile = (res.settings && res.settings.profile) || {};
+      this.setState({
+        nickname: (res.settings && res.settings.nickname) || '',
+        bio: profile.bio || '',
+        scHandle: profile.scHandle || ''
+      });
     } catch (_) { /* settings unavailable */ }
   }
 
-  async saveNickname () {
+  applyPresenceData (pd) {
+    if (!pd || typeof pd !== 'object') return;
+    const ps = pd.settings || {};
+    const statusText = ps.presenceStatusText || (pd.presence && pd.presence.statusText) || '';
+    const next = {
+      sharePresence: ps.sharePresence === true,
+      presenceVisibility: ps.presenceVisibility || 'private',
+      presenceGroupIds: Array.isArray(ps.presenceGroupIds) ? ps.presenceGroupIds.slice() : [],
+      shipOverrideSlug: ps.shipOverrideSlug || null,
+      presenceAvailability: ps.presenceAvailability || 'auto',
+      presenceStatusText: statusText || '',
+      statusDraft: statusText || '',
+      presenceOnline: pd.online === true,
+      detectedShip: pd.detectedShip || null,
+      shipOverride: pd.shipOverride || null
+    };
+    this.setState(next);
+    if (typeof this.props.onPresenceChange === 'function') {
+      this.props.onPresenceChange({
+        online: next.presenceOnline,
+        sharePresence: next.sharePresence,
+        availability: next.presenceAvailability,
+        statusText: next.presenceStatusText || null,
+        ship: (pd.presence && pd.presence.ship) || null,
+        detectedShip: next.detectedShip,
+        shipOverride: next.shipOverride
+      });
+    }
+  }
+
+  async loadPresence () {
+    try {
+      const [presenceRes, groupsRes] = await Promise.all([
+        fetch('/services/star-citizen/presence').then((r) => (r.ok ? r.json() : null)).catch(() => null),
+        fetch('/services/star-citizen/groups').then((r) => (r.ok ? r.json() : { data: [] })).catch(() => ({ data: [] }))
+      ]);
+      const groups = Array.isArray(groupsRes.data) ? groupsRes.data : (Array.isArray(groupsRes) ? groupsRes : []);
+      this.setState({ groups });
+      if (presenceRes && presenceRes.data) this.applyPresenceData(presenceRes.data);
+    } catch (_) { /* ignore */ }
+  }
+
+  async putPresence (patch) {
+    this.setState({ presenceBusy: true, error: null, notice: null });
+    try {
+      const res = await fetch('/services/star-citizen/presence', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(patch)
+      });
+      const j = await res.json();
+      if (!res.ok) throw new Error(j.error || res.statusText);
+      this.setState({ presenceBusy: false });
+      this.applyPresenceData(j.data || {});
+    } catch (e) {
+      this.setState({ presenceBusy: false, error: e.message });
+    }
+  }
+
+  async setPublishedShip (slug) {
+    const autodetect = !slug;
+    if (!autodetect && this.state.shipOverrideSlug !== slug) {
+      const detected = this.state.detectedShip;
+      const autoLabel = detected && (detected.name || detected.slug)
+        ? (detected.name || detected.slug)
+        : 'autodetect from Game.log';
+      const ok = window.confirm(
+        'Publish a different ship than Game.log autodetection?\n\n' +
+        'Autodetect: ' + autoLabel + '\n' +
+        'You chose: ' + slug + '\n\n' +
+        'Peers will see this override until you switch back to Autodetect.'
+      );
+      if (!ok) return;
+    }
+    this.setState({ presenceBusy: true, error: null, notice: null });
+    try {
+      const res = await fetch('/services/star-citizen/presence/ship', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(autodetect ? { autodetect: true } : { slug })
+      });
+      const j = await res.json();
+      if (!res.ok) throw new Error(j.error || res.statusText);
+      this.setState({ presenceBusy: false });
+      this.applyPresenceData(j.data || {});
+    } catch (e) {
+      this.setState({ presenceBusy: false, error: e.message });
+    }
+  }
+
+  async saveProfile () {
     if (this.state.nicknameBusy) return;
     this.setState({ nicknameBusy: true, error: null, notice: null });
     try {
-      const value = this.state.nickname.trim() || null;
-      const res = await fetch('/settings/nickname', {
+      const nickRes = await fetch('/settings/nickname', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ value })
+        body: JSON.stringify({ value: this.state.nickname.trim() || null })
       });
-      const json = await res.json();
-      if (!res.ok) throw new Error(json.error || `HTTP ${res.status}`);
-      const saved = (json.settings && json.settings.nickname) || '';
-      this.setState({ nickname: saved, nicknameBusy: false, notice: saved ? 'Nickname saved.' : 'Nickname cleared.' });
-      if (typeof this.props.onNicknameChange === 'function') this.props.onNicknameChange(saved || null);
+      const nickJson = await nickRes.json();
+      if (!nickRes.ok) throw new Error(nickJson.error || `HTTP ${nickRes.status}`);
+      const profileRes = await fetch('/settings/profile', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          value: {
+            bio: this.state.bio.trim() || null,
+            scHandle: this.state.scHandle.trim() || null
+          }
+        })
+      });
+      const profileJson = await profileRes.json();
+      if (!profileRes.ok) throw new Error(profileJson.error || `HTTP ${profileRes.status}`);
+      const savedNick = (nickJson.settings && nickJson.settings.nickname) || '';
+      const savedProfile = (profileJson.settings && profileJson.settings.profile) || {};
+      this.setState({
+        nickname: savedNick,
+        bio: savedProfile.bio || '',
+        scHandle: savedProfile.scHandle || '',
+        nicknameBusy: false,
+        notice: 'Profile saved — published to the Fabric mesh when unlocked.'
+      });
+      if (typeof this.props.onNicknameChange === 'function') this.props.onNicknameChange(savedNick || null);
     } catch (e) {
       this.setState({ nicknameBusy: false, error: e.message });
     }
@@ -137,6 +277,7 @@ class Identity extends React.Component {
 
   componentWillUnmount () {
     if (this._unsub) this._unsub();
+    if (this._presenceTimer) clearInterval(this._presenceTimer);
     // Never keep secrets in component state after close.
     this.setState({ revealed: null, revealPassword: '', unlockPassword: '', backupPassword: '' });
   }
@@ -233,78 +374,260 @@ class Identity extends React.Component {
     try { navigator.clipboard.writeText(text); this.setState({ notice: 'Copied.' }); } catch (_) { /* clipboard unavailable */ }
   }
 
-  renderStatus () {
+  renderUnlockBanner () {
     const info = this.state.info;
+    if (!info || info.unlocked) return null;
     return React.createElement('div', { className: 'id-sec' },
-      React.createElement('h3', null, 'Fabric identity',
-        React.createElement('span', { className: 'id-tag ' + (info.unlocked ? 'on' : 'off') }, info.unlocked ? 'unlocked' : 'locked')),
+      React.createElement('h3', null, 'Identity locked',
+        React.createElement('span', { className: 'id-tag off' }, 'locked')),
       React.createElement('div', { className: 'd' },
-        'Your compressed secp256k1 pubkey is your actor id across GoonCitizen and the Fabric Network. ',
-        'The private key stays encrypted on this machine; only Schnorr signatures leave it.'),
-      React.createElement('div', { className: 'id-kv' }, React.createElement('b', null, 'pubkey (actor id) '), React.createElement('br'), info.pubkey || '—'),
-      info.xpub ? React.createElement('div', { className: 'id-kv' }, React.createElement('b', null, 'xpub (watch-only) '), React.createElement('br'), info.xpub) : null,
+        'Unlock to sign mesh messages, share presence, and manage keys.'),
       React.createElement('div', { className: 'id-row' },
-        React.createElement('button', { className: 'id-btn ghost', onClick: () => this.copy(info.pubkey) }, 'Copy pubkey'),
+        React.createElement('input', {
+          className: 'id-input', type: 'password', placeholder: 'password',
+          value: this.state.unlockPassword,
+          onChange: (e) => this.setState({ unlockPassword: e.target.value }),
+          onKeyDown: (e) => { if (e.key === 'Enter') this.unlock(); }
+        }),
+        React.createElement('button', {
+          className: 'id-btn',
+          disabled: !this.state.unlockPassword || this.state.busy,
+          onClick: () => this.unlock()
+        }, 'Unlock')
+      )
+    );
+  }
+
+  renderKeyTools () {
+    const info = this.state.info;
+    if (!info) return null;
+    const open = this.state.showKeyTools;
+    return React.createElement('div', { className: 'id-sec' },
+      React.createElement('div', { className: 'id-row', style: { marginTop: 0 } },
+        React.createElement('button', {
+          className: 'id-btn ghost',
+          type: 'button',
+          onClick: () => this.setState({ showKeyTools: !open, revealed: open ? null : this.state.revealed })
+        }, open ? 'Hide keys & recovery' : 'Keys & recovery…'),
+        info.unlocked
+          ? React.createElement('span', { className: 'id-tag on' }, 'unlocked')
+          : React.createElement('span', { className: 'id-tag off' }, 'locked'),
         info.unlocked
           ? React.createElement('button', { className: 'id-btn ghost', onClick: () => this.lock() }, '🔒 Lock now')
           : null
       ),
-      React.createElement('div', { style: { marginTop: 14 } },
-        React.createElement('h3', { style: { margin: '0 0 4px', fontSize: 13 } }, 'Nickname'),
-        React.createElement('div', { className: 'd', style: { marginBottom: 8 } },
-          'Optional display name for chat and the dashboard. Your pubkey stays the real identity — others always see it next to your nickname.'),
-        React.createElement('div', { className: 'id-row' },
+      open
+        ? React.createElement(React.Fragment, null,
+          React.createElement('div', { className: 'd', style: { marginTop: 10 } },
+            'Technical key material — pubkey, backups, and recovery. Most day-to-day use stays in Profile and Online status above.'),
+          React.createElement('div', { className: 'id-kv' },
+            React.createElement('b', null, 'pubkey (actor id) '), React.createElement('br'), info.pubkey || '—'),
+          info.xpub
+            ? React.createElement('div', { className: 'id-kv' },
+              React.createElement('b', null, 'xpub (watch-only) '), React.createElement('br'), info.xpub)
+            : null,
+          React.createElement('div', { className: 'id-row' },
+            React.createElement('button', { className: 'id-btn ghost', onClick: () => this.copy(info.pubkey) }, 'Copy pubkey')
+          ),
+          React.createElement('div', { className: 'id-row' },
+            React.createElement('span', { style: { fontSize: 12, color: 'var(--muted)' } }, 'Auto-lock after idle'),
+            React.createElement('select', {
+              className: 'id-select',
+              value: info.autoLockMinutes != null ? info.autoLockMinutes : 30,
+              onChange: (e) => this.setAutoLock(Number(e.target.value))
+            }, AUTOLOCK_OPTIONS.map(([v, label]) => React.createElement('option', { key: v, value: v }, label)))
+          ),
+          this.renderReveal(),
+          this.renderBackup(),
+          this.renderForget()
+        )
+        : null
+    );
+  }
+
+  renderProfile () {
+    return React.createElement('div', { className: 'id-sec' },
+      React.createElement('h3', null, 'Profile'),
+      React.createElement('div', { className: 'd' },
+        'What peers see when they inspect you. Nickname is announced as P2P_PEER_ALIAS; bio and SC handle publish as PeerProfile. ',
+        'Your pubkey stays the real identity.'),
+      React.createElement('div', { className: 'id-field' },
+        React.createElement('label', null, 'Nickname'),
+        React.createElement('input', {
+          type: 'text',
+          maxLength: 32,
+          placeholder: 'e.g. Neorion',
+          value: this.state.nickname,
+          onChange: (e) => this.setState({ nickname: e.target.value })
+        })
+      ),
+      React.createElement('div', { className: 'id-field' },
+        React.createElement('label', null, 'Star Citizen handle'),
+        React.createElement('input', {
+          type: 'text',
+          maxLength: 64,
+          placeholder: 'optional',
+          value: this.state.scHandle,
+          onChange: (e) => this.setState({ scHandle: e.target.value })
+        })
+      ),
+      React.createElement('div', { className: 'id-field' },
+        React.createElement('label', null, 'Bio'),
+        React.createElement('textarea', {
+          maxLength: 280,
+          rows: 3,
+          placeholder: 'Short bio (optional, max 280)',
+          style: { resize: 'vertical', fontFamily: 'inherit' },
+          value: this.state.bio,
+          onChange: (e) => this.setState({ bio: e.target.value })
+        })
+      ),
+      React.createElement('div', { className: 'id-row' },
+        React.createElement('button', {
+          className: 'id-btn',
+          disabled: this.state.nicknameBusy,
+          onClick: () => this.saveProfile()
+        }, this.state.nicknameBusy ? '…' : 'Save profile'),
+        (this.state.nickname || this.state.bio || this.state.scHandle)
+          ? React.createElement('button', {
+            className: 'id-btn ghost',
+            disabled: this.state.nicknameBusy,
+            onClick: () => this.setState({ nickname: '', bio: '', scHandle: '' }, () => this.saveProfile())
+          }, 'Clear')
+          : null
+      ),
+      this.renderProfileActivity()
+    );
+  }
+
+  renderProfileActivity () {
+    const show = this.props.showProfileActivity !== false &&
+      ActivityHeatmap.readShowProfileActivity();
+    if (!show) return null;
+    return React.createElement(ActivityHeatmap, {
+      title: 'When you fly',
+      subtitle: 'Same cumulative heatmap as Home → When you fly (this machine’s logs).',
+      analytics: this.props.analytics || null
+    });
+  }
+
+  renderPresence () {
+    const shipLabel =
+      (this.state.shipOverride && (this.state.shipOverride.name || this.state.shipOverride.slug)) ||
+      (this.state.detectedShip && (this.state.detectedShip.name || this.state.detectedShip.slug)) ||
+      null;
+    const busy = this.state.presenceBusy;
+    return React.createElement('div', { className: 'id-sec' },
+      React.createElement('h3', null, 'Online status',
+        React.createElement('span', { className: 'id-tag ' + (this.state.presenceOnline ? 'on' : 'off') },
+          this.state.presenceOnline ? 'online' : 'offline')),
+      React.createElement('div', { className: 'd' },
+        'Opt-in presence for peers, groups, and fleets. Auto uses Game.log activity (last 10 minutes); Online/Offline force the published state. ',
+        'Ship is detected from quantum travel and vehicle-control lines.'),
+      React.createElement('div', { className: 'id-field' },
+        React.createElement('label', null, 'Availability'),
+        React.createElement('select', {
+          value: this.state.presenceAvailability || 'auto',
+          disabled: busy,
+          onChange: (e) => this.putPresence({ presenceAvailability: e.target.value })
+        },
+        React.createElement('option', { value: 'auto' }, 'Auto (Game.log activity)'),
+        React.createElement('option', { value: 'online' }, 'Online'),
+        React.createElement('option', { value: 'offline' }, 'Offline')
+        )
+      ),
+      React.createElement('div', { className: 'id-field' },
+        React.createElement('label', null, 'Status message'),
+        React.createElement('div', { className: 'id-row', style: { marginTop: 0 } },
           React.createElement('input', {
             className: 'id-input',
             type: 'text',
-            maxLength: 32,
-            placeholder: 'e.g. Neorion',
-            value: this.state.nickname,
-            onChange: (e) => this.setState({ nickname: e.target.value }),
-            onKeyDown: (e) => { if (e.key === 'Enter') this.saveNickname(); }
+            maxLength: 64,
+            placeholder: 'Short status (optional)',
+            value: this.state.statusDraft,
+            disabled: busy,
+            onChange: (e) => this.setState({ statusDraft: e.target.value }),
+            onKeyDown: (e) => {
+              if (e.key === 'Enter') this.putPresence({ presenceStatusText: this.state.statusDraft });
+            }
           }),
           React.createElement('button', {
-            className: 'id-btn',
-            disabled: this.state.nicknameBusy,
-            onClick: () => this.saveNickname()
-          }, this.state.nicknameBusy ? '…' : 'Save'),
-          this.state.nickname
-            ? React.createElement('button', {
-              className: 'id-btn ghost',
-              disabled: this.state.nicknameBusy,
-              onClick: () => this.setState({ nickname: '' }, () => this.saveNickname())
-            }, 'Clear')
-            : null
+            className: 'id-btn ghost',
+            disabled: busy,
+            onClick: () => this.putPresence({ presenceStatusText: this.state.statusDraft })
+          }, 'Set')
         )
       ),
-      !info.unlocked
-        ? React.createElement('div', { className: 'id-row' },
-          React.createElement('input', {
-            className: 'id-input', type: 'password', placeholder: 'password',
-            value: this.state.unlockPassword,
-            onChange: (e) => this.setState({ unlockPassword: e.target.value }),
-            onKeyDown: (e) => { if (e.key === 'Enter') this.unlock(); }
-          }),
-          React.createElement('button', { className: 'id-btn', disabled: !this.state.unlockPassword || this.state.busy, onClick: () => this.unlock() }, 'Unlock')
+      React.createElement('div', { className: 'id-row', style: { marginBottom: 10 } },
+        shipLabel
+          ? React.createElement('span', { style: { fontSize: 12.5 } },
+            this.state.shipOverride ? 'Publishing ' : 'Autodetect ',
+            React.createElement('b', null, shipLabel),
+            this.state.shipOverride ? ' (override)' : '')
+          : React.createElement('span', { style: { fontSize: 12, color: 'var(--muted)' } }, 'No ship detected yet')
+      ),
+      React.createElement('label', { style: { display: 'flex', gap: 8, alignItems: 'center', fontSize: 13, cursor: 'pointer', marginBottom: 10 } },
+        React.createElement('input', {
+          type: 'checkbox',
+          checked: this.state.sharePresence,
+          disabled: busy,
+          onChange: (e) => this.putPresence({ sharePresence: e.target.checked })
+        }),
+        'Share online status (and published ship) on the Fabric mesh'
+      ),
+      React.createElement('div', { className: 'id-field' },
+        React.createElement('label', null, 'Visibility'),
+        React.createElement('select', {
+          value: this.state.presenceVisibility,
+          disabled: busy || !this.state.sharePresence,
+          onChange: (e) => this.putPresence({ presenceVisibility: e.target.value })
+        },
+        React.createElement('option', { value: 'private' }, 'Private (local only)'),
+        React.createElement('option', { value: 'peers' }, 'Peers'),
+        React.createElement('option', { value: 'groups' }, 'Groups'),
+        React.createElement('option', { value: 'public' }, 'Public (mesh + groups)')
+        )
+      ),
+      (this.state.presenceVisibility === 'groups' || this.state.presenceVisibility === 'public')
+        ? React.createElement('div', { style: { marginBottom: 10 } },
+          React.createElement('div', { className: 'd', style: { marginBottom: 6 } },
+            'Groups that receive your presence (empty = all groups you belong to):'),
+          React.createElement('div', { className: 'id-groups' },
+            !(this.state.groups || []).length
+              ? React.createElement('span', { style: { fontSize: 12, color: 'var(--muted)' } }, 'No groups yet')
+              : this.state.groups.map((g) => React.createElement('label', { key: g.id },
+                React.createElement('input', {
+                  type: 'checkbox',
+                  checked: this.state.presenceGroupIds.includes(g.id),
+                  disabled: busy || !this.state.sharePresence,
+                  onChange: () => {
+                    const ids = this.state.presenceGroupIds.includes(g.id)
+                      ? this.state.presenceGroupIds.filter((id) => id !== g.id)
+                      : this.state.presenceGroupIds.concat([g.id]);
+                    this.putPresence({ presenceGroupIds: ids });
+                  }
+                }),
+                g.name || g.id
+              ))
+          )
         )
         : null,
-      React.createElement('div', { className: 'id-row' },
-        React.createElement('span', { style: { fontSize: 12, color: 'var(--muted)' } }, 'Auto-lock after idle'),
-        React.createElement('select', {
-          className: 'id-select',
-          value: info.autoLockMinutes != null ? info.autoLockMinutes : 30,
-          onChange: (e) => this.setAutoLock(Number(e.target.value))
-        }, AUTOLOCK_OPTIONS.map(([v, label]) => React.createElement('option', { key: v, value: v }, label))),
-        React.createElement('span', { style: { fontSize: 11, color: 'var(--muted)' } },
-          'clears the key from memory; signing re-arms the timer')
+      React.createElement('div', { className: 'id-field', style: { marginBottom: 0 } },
+        React.createElement(ShipPicker, {
+          label: 'Published ship',
+          disabled: busy,
+          overrideShip: this.state.shipOverride,
+          detectedShip: this.state.detectedShip,
+          onSelect: (slug) => this.setPublishedShip(slug)
+        })
       )
     );
   }
 
   renderReveal () {
     const r = this.state.revealed;
-    return React.createElement('div', { className: 'id-sec' },
-      React.createElement('h3', null, 'Recovery phrase'),
+    return React.createElement('div', { style: { marginTop: 14 } },
+      React.createElement('h3', { style: { margin: '0 0 4px', fontSize: 13 } }, 'Recovery phrase'),
       React.createElement('div', { className: 'd' },
         'Re-enter your password to view the seed phrase or xprv — required even while unlocked, so an open app never exposes the seed.'),
       !r
@@ -351,8 +674,8 @@ class Identity extends React.Component {
   }
 
   renderBackup () {
-    return React.createElement('div', { className: 'id-sec' },
-      React.createElement('h3', null, 'Encrypted backup'),
+    return React.createElement('div', { style: { marginTop: 14 } },
+      React.createElement('h3', { style: { margin: '0 0 4px', fontSize: 13 } }, 'Encrypted backup'),
       React.createElement('div', { className: 'd' },
         'Download a password-sealed backup file (the key material stays encrypted with your password). ',
         'Restore it on another machine via "Import backup".'),
@@ -394,8 +717,8 @@ class Identity extends React.Component {
   }
 
   renderForget () {
-    return React.createElement('div', { className: 'id-sec' },
-      React.createElement('h3', null, 'Danger zone'),
+    return React.createElement('div', { style: { marginTop: 14 } },
+      React.createElement('h3', { style: { margin: '0 0 4px', fontSize: 13 } }, 'Danger zone'),
       !this.state.confirmForget
         ? React.createElement('button', { className: 'id-btn danger', onClick: () => this.setState({ confirmForget: true, forgetText: '' }) }, 'Forget identity on this machine…')
         : React.createElement(React.Fragment, null,
@@ -436,10 +759,10 @@ class Identity extends React.Component {
                 React.createElement('div', { className: 'd' }, 'No identity on this machine yet — restart the app to run onboarding, or import a backup below.'),
                 this.renderBackup())
               : React.createElement(React.Fragment, null,
-                this.renderStatus(),
-                this.renderReveal(),
-                this.renderBackup(),
-                this.renderForget()
+                this.renderUnlockBanner(),
+                this.renderProfile(),
+                this.renderPresence(),
+                this.renderKeyTools()
               ),
         this.state.error ? React.createElement('div', { className: 'id-sec' }, React.createElement('div', { className: 'id-err' }, this.state.error)) : null,
         this.state.notice ? React.createElement('div', { className: 'id-sec' }, React.createElement('div', { className: 'id-ok' }, this.state.notice)) : null

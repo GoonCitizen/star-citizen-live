@@ -57,6 +57,44 @@ test('default peers: hub.fabric.pub and relay.goon.vc are seeded on first boot; 
   } finally { await clean.stop(); }
 });
 
+test('loopback peers are rejected; restore-seeds puts network hubs back', async () => {
+  const fs = require('fs');
+  const os = require('os');
+  const path = require('path');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'sc-peers-heal-'));
+  const svc = new LiveRelay({
+    port: 0,
+    settingsDir: dir,
+    missions: { enable: false },
+    fabric: { enable: false }
+  });
+  await svc.start();
+  const port = svc.server.address().port;
+  try {
+    const bad = await request(port, 'POST', '/peers', { address: '127.0.0.1:7777' });
+    assert.strictEqual(bad.status, 400);
+    assert.match(String(bad.body.error || ''), /loopback/i);
+
+    // Simulate a corrupted roster that only dialed self (forceHubs = UI restore).
+    svc.settings.fabric = Object.assign({}, svc.settings.fabric, { port: 7777 });
+    svc.peers = [
+      { id: 'x', address: 'localhost:7777', enabled: true, shareLogs: false }
+    ];
+    const healed = svc._healPeerRoster({ persist: true, forceHubs: true });
+    assert.ok(healed.removed.includes('localhost:7777'));
+    assert.ok(healed.added.includes('hub.fabric.pub:7777'));
+    assert.ok(healed.added.includes('relay.goon.vc:7777'));
+
+    const restored = await request(port, 'POST', '/peers/restore-seeds', {});
+    assert.strictEqual(restored.status, 200);
+    const addresses = (restored.body.data.peers || []).map((p) => p.address).sort();
+    assert.deepStrictEqual(addresses, ['hub.fabric.pub:7777', 'relay.goon.vc:7777'].sort());
+  } finally {
+    await svc.stop();
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test('shareLogs consent gates the event uplink but not chat', async () => {
   const fs = require('fs');
   const os = require('os');

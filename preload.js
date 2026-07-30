@@ -62,6 +62,13 @@ contextBridge.exposeInMainWorld('electronAPI', {
     pullPending: () => ipcRenderer.invoke('fabric-group-share:pull-pending'),
     resolve: (opts) => ipcRenderer.invoke('fabric-group-share:resolve', opts || {})
   },
+  /** Native OS pickers for importing log folders/files / selecting Game.log. */
+  dialog: {
+    openDirectory: () => ipcRenderer.invoke('dialog:openDirectory'),
+    openLogFiles: () => ipcRenderer.invoke('dialog:openLogFiles'),
+    openLogFile: () => ipcRenderer.invoke('dialog:openLogFile'),
+    openFleetJson: () => ipcRenderer.invoke('dialog:openFleetJson')
+  },
   platform: process.platform,
   versions: {
     node: process.versions.node,

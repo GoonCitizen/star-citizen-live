@@ -289,3 +289,46 @@ test('parseSessionInfo reads build + hardware from header lines', () => {
   assert.deepStrictEqual(parseSessionInfo('31793MB physical memory installed, 9382MB available'), { key: 'ramInstalledMB', value: '31793' });
   assert.strictEqual(parseSessionInfo('just a normal log line'), null);
 });
+
+// --- VERIFIED against samples/ (firon121 Jul 2026 LIVE backups) ---
+
+test('parses quantum:select / arrive / route from samples shapes', () => {
+  const sel = parseLine('<2026-07-23T23:55:53.091Z> [Notice] <Player Selected Quantum Target - Local> [ItemNavigation][CL][416] | NOT AUTH | DRAK_Clipper_734066837132[734066837132]|CSCItemNavigation::OnPlayerSelectedQuantumTarget|Player has selected point rs_ext_cru-leo1 as their destination, routing locally [Team_CGP4][QuantumTravel]');
+  assert.strictEqual(sel.kind, 'quantum:select');
+  assert.strictEqual(sel.destination, 'rs_ext_cru-leo1');
+  assert.ok(sel.vehicle.includes('DRAK_Clipper'));
+
+  const arrive = parseLine('<2026-07-26T05:08:02.800Z> [Notice] <Quantum Drive Arrived - Arrived at Final Destination> [ItemNavigation][CL][9156] | NOT AUTH | RSI_Mantis_738839128122[738839128122]|CSCItemNavigation::OnQuantumDriveArrived|Quantum Drive has arrived at final destination [Team_CGP4][QuantumTravel]');
+  assert.strictEqual(arrive.kind, 'quantum:arrive');
+  assert.ok(arrive.vehicle.includes('RSI_Mantis'));
+
+  const route = parseLine('<2026-07-23T23:55:53.091Z> [Notice] <Calculate Route> [ItemNavigation][CL][416] | NOT AUTH | DRAK_Clipper_734066837132[734066837132]|CSCItemNavigation::CalculateRoute|Projected Start Location is Daymar for route to destination rs_ext_cru-leo1 [Team_CGP4][QuantumTravel]');
+  assert.strictEqual(route.kind, 'quantum:route');
+  assert.strictEqual(route.origin, 'Daymar');
+  assert.strictEqual(route.destination, 'rs_ext_cru-leo1');
+});
+
+test('parses CrimeStat, disconnect, objective markers, stow, party marker', () => {
+  const crime = parseLine('<2026-07-27T14:39:43.477Z> [Notice] <SHUDEvent_OnNotification> Added notification "CrimeStat Rating Increased: " [23] to queue. New queue size: 2, MissionId: [00000000-0000-0000-0000-000000000000], ObjectiveId: [] [Team_CoreGameplayFeatures][Missions][Comms]');
+  assert.strictEqual(crime.kind, 'player:crimestat');
+  assert.strictEqual(crime.rating, '23');
+  assert.strictEqual(crime.delta, 1);
+
+  const disc = parseLine('<2026-07-21T00:00:55.183Z> [Notice] <Channel Disconnected> cause=30010 reason="Nub destroyed" frame=7592 isRemote=0 map="megamap" gamerules="SC_Frontend" hostType="GameClient" remoteAddr=<local>:16 localAddr=<local>:12300 connection={2, 0} session=x node_id=y nickname="firon121" playerGEID=204100515861 uptime_secs=157.980515 [Team_Network][Network][Gateway][Disconnection]');
+  assert.strictEqual(disc.kind, 'session:disconnect');
+  assert.strictEqual(disc.hostType, 'GameClient');
+  assert.strictEqual(disc.nickname, 'firon121');
+
+  const add = parseLine('<2026-07-27T14:47:58.802Z> [Notice] <CObjectiveMarkerComponent::AddToPlayerDataBank> MissionObjectiveMarker_740813697165[740813697165] - Added to DataBank of Player: firon121[204100515861] - ZonePos: x: -1740.210432, y: -6199.644844, z: 6621.807767, missionId[211ab69c-7d1b-497c-94e7-94ba585501ab], objectiveId[3e48e7bd-31bb-27b1-4b1e-e3899b8f0983] [Team_MissionFeatures][Missions]');
+  assert.strictEqual(add.kind, 'mission:objective:marker');
+  assert.strictEqual(add.action, 'add');
+  assert.strictEqual(add.player, 'firon121');
+
+  const stow = parseLine('<2026-07-27T14:41:00.000Z> [Notice] <LandingArea_UnregisterFromExternalSystems_StowingVehicle> [STOWING ON UNREGISTER] LandingArea_ShipElevator_HangarSmallFront_Rund [739591130454] - Attempting to stow current vehicle [737626277967] due to landing area unregistering. Vehicle Zone Host [739591130231], IsAuthorityPossible [0] [Team_MissionFeatures][ATC]');
+  assert.strictEqual(stow.kind, 'vehicle:stow');
+  assert.strictEqual(stow.vehicleId, '737626277967');
+
+  const party = parseLine('<2026-07-26T19:06:28.791Z> [Notice] <CPartyMarkerComponent RWES> Streamed in party marker id 718373411176. TrackedEntityId: 204100515861 [Team_GameServices][EntitySubscription]');
+  assert.strictEqual(party.kind, 'party:marker');
+  assert.strictEqual(party.action, 'in');
+});

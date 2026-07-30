@@ -27,7 +27,8 @@ const COLLECTIONS = [
   'settings', // operator settings records { id: key, value } (functions/settingsStore.js)
   'snapshots', // screenshot metadata { id, ts, file, bytes, width, height } (services/SnapshotManager.js)
   'chatmessages', // Hub-style ChatMessage records (services/ChatManager.js)
-  'missionbroadcasts' // peer mission offers (Broadcast → Accept / Ignore)
+  'missionbroadcasts', // peer mission offers (Broadcast → Accept / Ignore)
+  'fleets' // Starjump / FleetViewer personal fleets (functions/starjumpFleet.js)
 ];
 
 function collectionPath (name) {

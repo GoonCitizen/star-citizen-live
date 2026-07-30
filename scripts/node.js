@@ -20,6 +20,7 @@ const { resolveLogFile } = require('../functions/locate');
 const settingsStore = require('../functions/settingsStore');
 const { storeRoot, registerPath } = require('../functions/storePaths');
 const { Store } = require('../types/Store');
+const { applyFabricEnvConfig, loadRepoDotEnv } = require('../functions/fabricEnvIdentity');
 
 function csv (value) {
   return String(value || '').split(',').map((s) => s.trim()).filter(Boolean);
@@ -102,9 +103,17 @@ async function relaySettings () {
 }
 
 async function main () {
+  loadRepoDotEnv();
+  const { identity, updated, source } = applyFabricEnvConfig(process.env);
+  if (identity) {
+    console.log(`[STAR-CITIZEN] publishing identity: ${identity.pubkey.slice(0, 16)}… (${source}${updated ? ', FABRIC_XPRV stamped' : ''})`);
+  } else {
+    console.log('[STAR-CITIZEN] no FABRIC_XPRV / FABRIC_SEED — Fabric Peer stays down until identity is unlocked');
+  }
   const settings = process.env.SC_MODE === 'server' ? serverSettings() : await relaySettings();
   const service = new LiveRelay(settings);
   await service.start();
+  if (identity) service.setIdentity(identity);
   return { name: 'star-citizen', mode: settings.mode || 'relay', port: settings.port };
 }
 

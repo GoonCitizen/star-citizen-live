@@ -27,8 +27,20 @@ const { channelFromPath } = require('../functions/locate');
 const settingsStore = require('../functions/settingsStore');
 const cumulativeHistory = require('../functions/cumulativeHistory');
 const logCorpus = require('../functions/logCorpus');
+const fsBrowser = require('../functions/fsBrowser');
+const activityTree = require('../functions/activityTree');
 const gooncitizenGameState = require('../functions/gooncitizenGameState');
 const eventChain = require('../functions/eventChain');
+const peerProfile = require('../functions/peerProfile');
+const presence = require('../functions/presence');
+const hubPeeringObserve = require('../functions/hubPeeringObserve');
+const liveFeed = require('../functions/liveFeed');
+const {
+  createFabricMessageLog,
+  summarizeMessage
+} = require('../functions/fabricMessageLog');
+const starjumpFleet = require('../functions/starjumpFleet');
+const shipCatalog = require('../functions/shipCatalog');
 
 // Lines worth surfacing in the monitor - combat/death hints AND mission/objective
 // activity. Includes wording the parser may not recognize yet, so we can keep
@@ -110,10 +122,37 @@ class StarCitizenService extends EventEmitter {
     this.sessions = []; // history of game sessions (one per launch detected)
     this._sessionHandle = null; // the session's player handle (for attributing incaps)
     this._nickname = null; // operator display name for chat (from settings.nickname)
+    /** @type {{ bio: string|null, scHandle: string|null }|null} local social profile */
+    this._profile = null;
+    /** public hostname for P2P_PEERING_OFFER (optional) */
+    this._fabricAdvertiseHost = null;
     /** @type {Record<string, string>} mesh P2P_PEER_ALIAS by author pubkey */
     this._peerAliasByPubkey = Object.create(null);
+    /** @type {Record<string, object>} PeerProfile cache by pubkey */
+    this._peerProfilesByPubkey = Object.create(null);
+    /** @type {Record<string, object>} PeerPresence cache by pubkey */
+    this._peerPresenceByPubkey = Object.create(null);
+    /** ISO timestamp of the last parsed Game.log event (online window). */
+    this._lastLogEventAt = null;
+    /** @type {{ classId: string, vehicleId: string|null, name: string|null, slug: string|null, at: string }|null} */
+    this._detectedShip = null;
+    /** @type {{ slug: string, name: string, at: string }|null} manual ship override */
+    this._shipOverride = null;
+    this._sharePresence = false;
+    this._presenceVisibility = 'private';
+    this._presenceGroupIds = [];
+    this._shipOverrideSlug = null;
+    this._presenceAvailability = 'auto';
+    this._presenceStatusText = null;
+    this._lastPresencePublish = 0;
     /** Last nickname announced on the mesh (dedupe ensure → alias spam). */
     this._lastPublishedAlias = null;
+    /** @type {object|null} cached Hub / WebRTC observe snapshot */
+    this._hubObserve = null;
+    this._hubObserveTimer = null;
+    this._hubObserveInflight = null;
+    /** Max auto-rostered non-hub peers from gossip/offer. */
+    this._maxDiscoveredPeers = 12;
     /** @type {Promise<import('../services/FabricNetwork')|null>|null} */
     this._fabricEnsureInflight = null;
     this._seq = 0;
@@ -131,6 +170,8 @@ class StarCitizenService extends EventEmitter {
     // Loaded from the Fabric Store in start(); managed via REST / Peers UI.
     this.peers = [];
     this.fabricNetwork = null;
+    /** In-memory Fabric AMP Message ring buffer (advanced UI; not Game.log). */
+    this._fabricMessageLog = createFabricMessageLog({ capacity: 500 });
 
     // Safety net: a stray 'error' (e.g. the game rotating Game.log) must never
     // crash the process. Without a listener, EventEmitter throws on 'error'.
@@ -336,16 +377,29 @@ class StarCitizenService extends EventEmitter {
    */
   _loadPersistedSettings () {
     const persisted = settingsStore.loadSettings(this.registerStore);
+    // Explicit constructor `peers: []` keeps an empty roster (tests / custom).
+    const constructorEmpty = Array.isArray(this.settings.peers) && this.settings.peers.length === 0;
+    // Explicit empty save via Peers UI — do not re-seed hubs (removal respected).
+    const persistedCleared = Array.isArray(persisted.peers) && persisted.peers.length === 0;
     if (!this.peers.length && Array.isArray(persisted.peers)) {
       this.peers = persisted.peers.map((p) => this._normalizePeerRecord(p)).filter(Boolean);
     } else if (!this.peers.length && persisted.peers === undefined && this.settings.mode !== 'server') {
       // First boot (peers never configured): seed network Fabric hubs.
-      // A user-saved empty list stays empty — removal is respected. Tests and
-      // custom deployments override the seed via settings.peers.
       const seeds = this.settings.peers !== undefined
         ? this.settings.peers
         : DEFAULT_PEERS;
       this.peers = (seeds || []).map((p) => this._normalizePeerRecord(p)).filter(Boolean);
+    }
+    // Constructor peers (tests / custom deploys): only strip true self-loops.
+    // Persisted desktop roster: drop self-loops and re-seed hubs when none left
+    // (old saves that only dialed localhost break chat gossip).
+    if (!constructorEmpty && this.settings.mode !== 'server') {
+      const fromConstructor = Array.isArray(this.settings.peers) && this.settings.peers.length > 0;
+      if (fromConstructor) {
+        this._healPeerRoster({ persist: false, dropSelf: true });
+      } else if (!persistedCleared) {
+        this._healPeerRoster({ persist: true, dropSelf: true, ensureHubs: true });
+      }
     }
     if (persisted.uplinkIntervalMs) this.settings.uplink.intervalMs = persisted.uplinkIntervalMs;
     if (persisted.fabricPort != null && Number(persisted.fabricPort) > 0) {
@@ -354,13 +408,91 @@ class StarCitizenService extends EventEmitter {
     // Sharing parsed log events: default OFF (explicit authorize on Peers / Settings).
     this._shareLogsGlobal = persisted.shareLogsGlobal === true;
     this._nickname = persisted.nickname || null;
+    this._profile = peerProfile.sanitizeProfile(persisted.profile);
+    this._fabricAdvertiseHost = persisted.fabricAdvertiseHost || null;
     this._notifyMissionBroadcasts = persisted.notifyMissionBroadcasts !== false;
     this._applySnapshotSettings(persisted);
+    this._applyPresenceSettings(persisted);
+  }
+
+  _applyPresenceSettings (persisted = {}) {
+    const share = presence.sanitizePresenceShare({
+      sharePresence: persisted.sharePresence,
+      presenceVisibility: persisted.presenceVisibility,
+      presenceGroupIds: persisted.presenceGroupIds,
+      shipOverrideSlug: persisted.shipOverrideSlug,
+      presenceAvailability: persisted.presenceAvailability,
+      presenceStatusText: persisted.presenceStatusText
+    });
+    this._sharePresence = share.sharePresence;
+    this._presenceVisibility = share.presenceVisibility;
+    this._presenceGroupIds = share.presenceGroupIds.slice();
+    this._shipOverrideSlug = share.shipOverrideSlug;
+    this._presenceAvailability = share.presenceAvailability;
+    this._presenceStatusText = share.presenceStatusText;
+    this._shipOverride = share.shipOverrideSlug
+      ? presence.buildShipOverride(share.shipOverrideSlug)
+      : null;
+  }
+
+  /**
+   * Drop self-loop peers; optionally restore network hub seeds.
+   * `forceHubs` (Peers → Restore network seeds) also strips all loopback and
+   * re-adds hub.fabric.pub + relay.goon.vc.
+   * @param {{ persist?: boolean, dropSelf?: boolean, ensureHubs?: boolean, forceHubs?: boolean }} [opts]
+   * @returns {{ removed: string[], added: string[] }}
+   */
+  _healPeerRoster (opts = {}) {
+    const removed = [];
+    const forceHubs = opts.forceHubs === true;
+    const dropSelf = forceHubs || opts.dropSelf === true;
+    const dropAllLoopback = forceHubs;
+    const listenPort = Number(this.settings.fabric && this.settings.fabric.port) || 7777;
+    const before = this.peers.slice();
+    this.peers = before.filter((p) => {
+      if (!p || !p.address) return false;
+      if (dropAllLoopback && FabricNetwork.isLoopbackFabricAddress(p.address)) {
+        removed.push(p.address);
+        return false;
+      }
+      if (dropSelf && FabricNetwork.isSelfFabricAddress(p.address, listenPort)) {
+        removed.push(p.address);
+        return false;
+      }
+      return true;
+    });
+    const added = [];
+    const ensureHubs = forceHubs || opts.ensureHubs === true;
+    const hasHub = this.peers.some((p) => FabricNetwork.isNetworkHubAddress(p.address));
+    if (ensureHubs && (forceHubs || !hasHub)) {
+      const have = new Set(this.peers.map((p) => p.address));
+      for (const seed of DEFAULT_PEERS) {
+        const address = seed.address;
+        if (have.has(address)) continue;
+        const row = this._normalizePeerRecord(seed);
+        if (!row) continue;
+        this.peers.push(row);
+        have.add(address);
+        added.push(address);
+      }
+    }
+    if (opts.persist && (removed.length || added.length)) {
+      this._persistPeers();
+    }
+    if (removed.length) {
+      console.log(`[STAR-CITIZEN] dropped self/loopback Fabric peers: ${removed.join(', ')}`);
+    }
+    if (added.length) {
+      console.log(`[STAR-CITIZEN] restored network hub seeds: ${added.join(', ')}`);
+    }
+    return { removed, added };
   }
 
   /**
    * Normalize a peer roster entry to `{ id, address, label, enabled, shareLogs }`.
    * Migrates legacy `url: https://host` → `address: host:7777`.
+   * Loopback to another port is valid (local hub in tests). Self-listen
+   * addresses are excluded from dialing ({@link #_fabricPeerAddresses}).
    * @returns {Object|null}
    */
   _normalizePeerRecord (p) {
@@ -377,9 +509,19 @@ class StarCitizenService extends EventEmitter {
       enabled: p.enabled !== false,
       // Opt-in: authorize SCEventBatch / GameStateSnapshot to this peer.
       shareLogs: p.shareLogs === true,
+      discovered: p.discovered === true,
       lastSeen: p.lastSeen || null,
       lastError: p.lastError || null
     };
+  }
+
+  /** Enabled Fabric peer addresses (`host:port`) — excludes self-loop dials. */
+  _fabricPeerAddresses () {
+    const listenPort = Number(this.settings.fabric && this.settings.fabric.port) || 7777;
+    return this.peers
+      .filter((p) => p.enabled !== false && p.address)
+      .map((p) => p.address)
+      .filter((a) => !FabricNetwork.isSelfFabricAddress(a, listenPort));
   }
 
   /** Fabric addresses authorized to receive log events (null = all connected when global on). */
@@ -412,6 +554,51 @@ class StarCitizenService extends EventEmitter {
   }
 
   /**
+   * Unified chat-style activity stream for the Feed tab.
+   * @param {number} [limit]
+   * @returns {{ items: object[], categories: string[][], sources: string[][] }}
+   */
+  _liveFeedSnapshot (limit = 400) {
+    let chat = [];
+    try {
+      if (this.chatManager) {
+        chat = this.chatManager.list('global', { limit: Math.min(limit, 200) });
+        // Include recent group chat too (best-effort; capped).
+        const channels = this.chatManager.channelsFor(
+          this._identity && this._identity.pubkey,
+          { enforceMembership: this.settings.mode === 'server' }
+        );
+        for (const ch of channels) {
+          if (!ch || ch.key === 'global') continue;
+          const more = this.chatManager.list(ch.key, { limit: 40 });
+          chat = chat.concat(more);
+        }
+      }
+    } catch (_) { /* chat optional */ }
+    let broadcasts = [];
+    try {
+      broadcasts = this._listMissionBroadcasts({ pendingOnly: false, viewer: null }) || [];
+    } catch (_) { broadcasts = []; }
+    return liveFeed.buildLiveFeed({
+      chat,
+      broadcasts: broadcasts.slice(-100),
+      kills: this.kills,
+      deaths: this.deaths,
+      incaps: this.incaps,
+      vehicles: this.vehicles,
+      missionlog: this.missionlog,
+      notifications: this.notifications,
+      logins: this.logins,
+      recent: this.recent
+    }, {
+      limit,
+      aliases: this._peerAliasByPubkey || {},
+      profiles: this._peerProfilesByPubkey || {},
+      selfPubkey: (this._identity && this._identity.pubkey) || null
+    });
+  }
+
+  /**
    * Roster + live connection flags for Peers UI (Hub PeerList-inspired).
    * Desktop peering is Fabric TCP/NOISE; browser WebRTC mesh lives on Hub.
    */
@@ -425,14 +612,150 @@ class StarCitizenService extends EventEmitter {
       const connected = connectedSet.some((id) => FabricNetwork.connectionMatchesAddress(id, address));
       const isPrimary = FabricNetwork.isNetworkHubAddress(address) ||
         /hub\.fabric\.pub|relay\.goon\.vc|goon\.vc/i.test(String(p.label || ''));
+      const reg = this.fabricNetwork && typeof this.fabricNetwork.lookupPeerRegistry === 'function'
+        ? this.fabricNetwork.lookupPeerRegistry(address)
+        : null;
+      const pubkey = (reg && reg.id) || null;
+      const cached = pubkey ? this._peerProfilesByPubkey[pubkey] : null;
+      const alias = (pubkey && this._peerAliasByPubkey[pubkey]) ||
+        (reg && (reg.alias || reg.nickname)) ||
+        (cached && cached.nickname) ||
+        null;
       return Object.assign({}, p, {
         shareLogs: p.shareLogs === true,
         connected,
         transport: 'fabric-tcp',
         primary: isPrimary,
+        discovered: p.discovered === true,
+        pubkey,
+        alias,
         status: p.enabled === false ? 'disabled' : (connected ? 'connected' : 'offline')
       });
     });
+  }
+
+  /**
+   * Detailed peer view for inspect UI (roster + mesh profile + registry).
+   * @param {string} peerId
+   * @returns {object|null}
+   */
+  _peerDetail (peerId) {
+    const row = this._peersWithStatus().find((p) => p.id === peerId);
+    if (!row) return null;
+    const pubkey = row.pubkey || null;
+    const profile = pubkey && this._peerProfilesByPubkey[pubkey]
+      ? this._peerProfilesByPubkey[pubkey]
+      : null;
+    const local = this._localProfile();
+    const isSelf = !!(pubkey && this._identity && pubkey === this._identity.pubkey);
+    const remotePresence = pubkey && this._peerPresenceByPubkey[pubkey]
+      ? this._peerPresenceByPubkey[pubkey]
+      : null;
+    return {
+      peer: row,
+      profile: isSelf
+        ? local
+        : (profile || {
+          type: peerProfile.PEER_PROFILE_TYPE,
+          nickname: row.alias || null,
+          bio: null,
+          scHandle: null,
+          pubkey,
+          updatedAt: null
+        }),
+      presence: isSelf ? this.getPresenceStatus().presence : remotePresence,
+      meshAlias: row.alias || null,
+      registry: this.fabricNetwork ? this.fabricNetwork.lookupPeerRegistry(row.address) : null,
+      linkedDevice: this._linkedDeviceForPubkey(pubkey),
+      self: isSelf
+    };
+  }
+
+  _localProfile () {
+    return peerProfile.buildLocalProfile({
+      nickname: this._nickname,
+      profile: this._profile,
+      pubkey: this._identity ? this._identity.pubkey : null
+    });
+  }
+
+  _linkedDeviceForPubkey (pubkey) {
+    if (!pubkey || !this.registerStore) return null;
+    const persisted = settingsStore.loadSettings(this.registerStore);
+    const list = Array.isArray(persisted.linkedDevices) ? persisted.linkedDevices : [];
+    return list.find((d) => d && (d.peerFabricId === pubkey || d.pubkey === pubkey)) || null;
+  }
+
+  /**
+   * Promote gossip/offer addresses onto the roster (shareLogs off) and dial.
+   * @param {string[]} addresses
+   * @param {'offer'|'gossip'} kind
+   */
+  _considerDiscoveredPeers (addresses, kind) {
+    if (!Array.isArray(addresses) || !addresses.length) return;
+    const listenPort = Number(this.settings.fabric && this.settings.fabric.port) || 7777;
+    const have = new Set(this.peers.map((p) => p.address));
+    const discoveredCount = this.peers.filter((p) => p.discovered === true && !FabricNetwork.isNetworkHubAddress(p.address)).length;
+    let added = 0;
+    for (const raw of addresses) {
+      const address = FabricNetwork.normalizeFabricAddress(raw, { migrate: false });
+      if (!address || have.has(address)) continue;
+      if (FabricNetwork.isSelfFabricAddress(address, listenPort)) continue;
+      if (FabricNetwork.isLoopbackFabricAddress(address)) continue;
+      if (FabricNetwork.isNetworkHubAddress(address)) continue;
+      if (discoveredCount + added >= this._maxDiscoveredPeers) break;
+      const peer = {
+        id: idFor(address),
+        address,
+        label: kind === 'gossip' ? 'discovered (gossip)' : 'discovered (offer)',
+        enabled: true,
+        shareLogs: false,
+        discovered: true
+      };
+      this.peers.push(peer);
+      have.add(address);
+      added += 1;
+      this.emit('peer:discovered', peer);
+    }
+    if (added) {
+      this._persistPeers();
+      this._refreshFabric().catch((e) => this.emit('error', e));
+    }
+  }
+
+  /**
+   * Refresh Hub /services/peering observe (TCP + WebRTC registration counts).
+   * @param {{ force?: boolean }} [opts]
+   */
+  async _refreshHubObserve (opts = {}) {
+    if (this._hubObserveInflight) return this._hubObserveInflight;
+    const age = this._hubObserve && this._hubObserve.summary && this._hubObserve.summary.fetchedAt
+      ? Date.now() - Date.parse(this._hubObserve.summary.fetchedAt)
+      : Infinity;
+    if (!opts.force && age < 15000 && this._hubObserve) return this._hubObserve;
+    this._hubObserveInflight = hubPeeringObserve.observeHubPeering(undefined, { timeoutMs: 4000 })
+      .then((snap) => {
+        this._hubObserve = snap;
+        return snap;
+      })
+      .catch((e) => {
+        this._hubObserve = {
+          hubs: [],
+          summary: { observed: 0, online: 0, p2pConnections: 0, webrtcRegistered: 0, error: (e && e.message) || String(e) }
+        };
+        return this._hubObserve;
+      })
+      .finally(() => { this._hubObserveInflight = null; });
+    return this._hubObserveInflight;
+  }
+
+  _startHubObserveTimer () {
+    if (this._hubObserveTimer || this.settings.mode === 'server') return;
+    this._refreshHubObserve().catch(() => {});
+    this._hubObserveTimer = setInterval(() => {
+      this._refreshHubObserve({ force: true }).catch(() => {});
+    }, 60000);
+    if (this._hubObserveTimer.unref) this._hubObserveTimer.unref();
   }
 
   /** Map persisted snapshot* settings onto the SnapshotManager (live). */
@@ -561,11 +884,13 @@ class StarCitizenService extends EventEmitter {
         if (!seen.has(abs)) files.push(abs);
       }
     } else if (this.settings.settingsDir || this.settings.logfile) {
-      // Desktop / npm start: all install channels + logbackups + ./Gamelogs + live log.
+      // Desktop / npm start: all install channels + logbackups + ./Gamelogs +
+      // operator-imported dirs (Analyze file browser) + live log.
       files = logCorpus.discoverCorpusFiles({
         logfile: this.settings.logfile || null,
         repoRoot: path.join(__dirname, '..'),
-        extraDirs: []
+        extraDirs: this._corpusDirs(),
+        extraFiles: this._corpusFiles()
       });
     } else {
       return { changed: false, files: 0, lines: 0 };
@@ -599,6 +924,66 @@ class StarCitizenService extends EventEmitter {
     return Object.assign({}, result, { files: files.length });
   }
 
+  /** Operator-imported directories (Feed file browser). */
+  _corpusDirs () {
+    if (!this.registerStore) return [];
+    const persisted = settingsStore.loadSettings(this.registerStore);
+    return fsBrowser.sanitizeCorpusDirs(persisted.corpusDirs);
+  }
+
+  /** Operator-selected individual log files (Feed file browser). */
+  _corpusFiles () {
+    if (!this.registerStore) return [];
+    const persisted = settingsStore.loadSettings(this.registerStore);
+    return fsBrowser.sanitizeCorpusFiles(persisted.corpusFiles);
+  }
+
+  /**
+   * Persist imported corpus dirs and/or files; optionally sync into history.
+   * @param {{
+   *   dirs?: string[],
+   *   files?: string[],
+   *   sync?: boolean,
+   *   replaceDirs?: boolean,
+   *   replaceFiles?: boolean
+   * }} [opts]
+   */
+  async _importCorpus (opts = {}) {
+    if (!this.registerStore || !this.registerStore.persistent) {
+      throw new Error('No persistent store configured (settingsDir)');
+    }
+    if (opts.dirs !== undefined) {
+      // Allow relative paths (e.g. "samples") resolved from the relay cwd / repo root.
+      const resolved = (opts.dirs || []).map((d) => {
+        if (typeof d !== 'string' || !d.trim()) return d;
+        return path.isAbsolute(d.trim()) ? d.trim() : path.resolve(process.cwd(), d.trim());
+      });
+      const incoming = fsBrowser.sanitizeCorpusDirs(resolved);
+      const next = opts.replaceDirs
+        ? incoming
+        : fsBrowser.sanitizeCorpusDirs(this._corpusDirs().concat(incoming));
+      settingsStore.putSetting(this.registerStore, 'corpusDirs', next.length ? next : null);
+    }
+    if (opts.files !== undefined) {
+      const incoming = fsBrowser.sanitizeCorpusFiles(opts.files);
+      const next = opts.replaceFiles
+        ? incoming
+        : fsBrowser.sanitizeCorpusFiles(this._corpusFiles().concat(incoming));
+      settingsStore.putSetting(this.registerStore, 'corpusFiles', next.length ? next : null);
+    }
+    let result = null;
+    if (opts.sync !== false) {
+      result = await this._syncCumulativeHistory();
+    }
+    return {
+      type: 'LogCorpusImport',
+      importedDirs: this._corpusDirs(),
+      importedFiles: this._corpusFiles(),
+      result,
+      corpus: this._corpusStatus()
+    };
+  }
+
   /** List of log files that feed Analyze (live + backups + corpus). */
   _discoverCorpusFileList () {
     if (this.settings.reparse && Array.isArray(this.settings.reparse.dirs)) {
@@ -618,17 +1003,22 @@ class StarCitizenService extends EventEmitter {
     }
     return logCorpus.discoverCorpusFiles({
       logfile: this.settings.logfile || null,
-      repoRoot: path.join(__dirname, '..')
+      repoRoot: path.join(__dirname, '..'),
+      extraDirs: this._corpusDirs(),
+      extraFiles: this._corpusFiles()
     });
   }
 
   _corpusStatus () {
-    return logCorpus.summarizeCorpus({
+    const summary = logCorpus.summarizeCorpus({
       files: this._discoverCorpusFileList(),
       cursors: this._logCursors,
       history: this.history,
       liveLogfile: this.settings.logfile || null
     });
+    summary.importedDirs = this._corpusDirs();
+    summary.importedFiles = this._corpusFiles();
+    return summary;
   }
 
   /** Fold a live (or ingested) parsed event into durable history. */
@@ -739,13 +1129,28 @@ class StarCitizenService extends EventEmitter {
     const missions = (h.missions || []).concat(liveActive);
     const deaths = h.deaths || [];
     const sessions = h.sessions || [];
+    const quantum = h.quantum || [];
+    const incap = h.incap || [];
+    const crimestat = h.crimestat || [];
     const ymOf = (s) => (typeof s === 'string' && s.length >= 7) ? s.slice(0, 7) : null;
     const months = new Set();
     missions.forEach((m) => { const y = ymOf(m.ts); if (y) months.add(y); });
     deaths.forEach((d) => { const y = ymOf(d.ts); if (y) months.add(y); });
+    quantum.forEach((q) => { const y = ymOf(q.ts); if (y) months.add(y); });
+    incap.forEach((i) => { const y = ymOf(i.ts); if (y) months.add(y); });
+    crimestat.forEach((c) => { const y = ymOf(c.ts); if (y) months.add(y); });
     heatcells.forEach((c) => months.add(c.ym));
-    const players = [...new Set([].concat(h.players || [], this.players.map((p) => p.name), missions.map((m) => m.player), deaths.map((d) => d.player)))].filter(Boolean);
+    const players = [...new Set([].concat(
+      h.players || [],
+      this.players.map((p) => p.name),
+      missions.map((m) => m.player),
+      deaths.map((d) => d.player),
+      quantum.map((q) => q.player),
+      incap.map((i) => i.player),
+      crimestat.map((c) => c.player)
+    ))].filter(Boolean);
 
+    const corpus = this._corpusStatus();
     return {
       type: 'Analytics',
       generatedAt: (h.meta && (h.meta.lastFlushAt || h.meta.generatedAt)) || null,
@@ -755,11 +1160,46 @@ class StarCitizenService extends EventEmitter {
       missions: missions.slice(-20000),
       deaths: deaths.slice(-20000),
       sessions,
+      quantum: quantum.slice(-20000),
+      incap: incap.slice(-20000),
+      crimestat: crimestat.slice(-20000),
       heatcells,
       counts: cumulativeHistory.cumulativeCounts(h),
-      corpus: this._corpusStatus(),
+      corpus,
+      sources: {
+        fileCount: corpus.fileCount || 0,
+        importedDirs: (corpus.importedDirs || []).length,
+        importedFiles: (corpus.importedFiles || []).length,
+        pendingFiles: corpus.pendingFiles || 0
+      },
       ownerPubkey: (h.meta && h.meta.ownerPubkey) || (this._identity && this._identity.pubkey) || null
     };
+  }
+
+  /**
+   * Build (and optionally publish) a Fabric Tree of cumulative history leaves
+   * into a Group Contract namespace.
+   */
+  async publishActivityTreeToGroup (groupId, opts = {}) {
+    if (!this.groupManager) throw new Error('groups unavailable');
+    const group = this.groupManager.getGroup(groupId);
+    if (!group || !group.contractId) throw new Error('group not found or missing contractId');
+    const tree = activityTree.buildActivityTree(this.history, {
+      ownerPubkey: (this._identity && this._identity.pubkey) || null
+    });
+    const body = activityTree.toContractBody(tree, {
+      contractId: group.contractId,
+      groupId: group.id
+    });
+    this.groupManager.ingestActivityTree(group.id, body, body.ownerPubkey);
+    let published = null;
+    if (opts.publish !== false) {
+      await this._ensureFabric();
+      if (this.fabricNetwork && this.fabricNetwork.ready && this._identity) {
+        published = this.fabricNetwork.publishGroupActivityTree(group.contractId, body);
+      }
+    }
+    return { tree: body, published: !!published, groupId: group.id, contractId: group.contractId };
   }
 
   get activities () { return Object.values(this.state.activities); }
@@ -1289,11 +1729,87 @@ class StarCitizenService extends EventEmitter {
         const result = await this._syncCumulativeHistory();
         return send(200, { type: 'LogCorpusSync', result, corpus: this._corpusStatus() });
       }
+      // Import folders and/or individual *.log files into cumulative history (local only).
+      if (req.method === 'POST' && pathname === `${base}/corpus/import`) {
+        if (this.settings.mode === 'server') {
+          return send(400, { error: 'corpus import is a local-player operation' });
+        }
+        const d = await body();
+        const dirs = Array.isArray(d.dirs) ? d.dirs : (d.dir ? [d.dir] : []);
+        const files = Array.isArray(d.files) ? d.files : (d.file ? [d.file] : []);
+        if (!dirs.length && !files.length) {
+          return send(400, { error: 'dirs and/or files required' });
+        }
+        try {
+          const out = await this._importCorpus({
+            dirs: dirs.length ? dirs : undefined,
+            files: files.length ? files : undefined,
+            sync: d.sync !== false
+          });
+          return send(200, out);
+        } catch (e) {
+          return send(400, { error: e.message });
+        }
+      }
+      if (req.method === 'POST' && pathname === `${base}/corpus/remove`) {
+        if (this.settings.mode === 'server') {
+          return send(400, { error: 'corpus remove is a local-player operation' });
+        }
+        const d = await body();
+        const removeDirs = new Set(fsBrowser.sanitizeCorpusDirs(Array.isArray(d.dirs) ? d.dirs : (d.dir ? [d.dir] : [])));
+        const removeFiles = new Set(fsBrowser.sanitizeCorpusFiles(Array.isArray(d.files) ? d.files : (d.file ? [d.file] : [])));
+        if (!removeDirs.size && !removeFiles.size) {
+          return send(400, { error: 'dirs and/or files required' });
+        }
+        try {
+          const out = await this._importCorpus({
+            dirs: removeDirs.size ? this._corpusDirs().filter((p) => !removeDirs.has(p)) : undefined,
+            files: removeFiles.size ? this._corpusFiles().filter((p) => !removeFiles.has(p)) : undefined,
+            replaceDirs: !!removeDirs.size,
+            replaceFiles: !!removeFiles.size,
+            sync: false
+          });
+          return send(200, Object.assign(out, {
+            type: 'LogCorpusRemove',
+            removedDirs: [...removeDirs],
+            removedFiles: [...removeFiles]
+          }));
+        } catch (e) {
+          return send(400, { error: e.message });
+        }
+      }
+      // Read-only directory listing for the Feed / Analyze file browser (local only).
+      if (req.method === 'GET' && pathname === `${base}/fs`) {
+        if (this.settings.mode === 'server') {
+          return send(400, { error: 'filesystem browse is a local-player operation' });
+        }
+        const listing = fsBrowser.listDirectory(url.searchParams.get('path'));
+        return send(listing.error && listing.error === 'path not found' ? 404 : 200, listing);
+      }
+      // Fabric Tree over cumulative history leaves (preview or publish to a Group).
+      if (req.method === 'GET' && pathname === `${base}/activity-tree`) {
+        const tree = activityTree.buildActivityTree(this.history, {
+          ownerPubkey: (this._identity && this._identity.pubkey) || null
+        });
+        return send(200, tree);
+      }
+      if (req.method === 'POST' && pathname === `${base}/activity-tree/publish`) {
+        const d = await body();
+        const groupId = d.groupId || d.id;
+        if (!groupId) return send(400, { error: 'groupId required' });
+        try {
+          const out = await this.publishActivityTreeToGroup(groupId, { publish: d.publish !== false });
+          return send(200, Object.assign({ type: 'GroupActivityTreePublish' }, out));
+        } catch (e) {
+          return send(400, { error: e.message });
+        }
+      }
       // Snapshot for the monitor UI: counts + recent + combat candidates (newest first).
       if (req.method === 'GET' && pathname === `${base}/monitor`) {
         const limit = Math.min(parseInt(url.searchParams.get('limit'), 10) || 250, 1000);
         const newest = (arr) => arr.slice(-limit).reverse();
         const cumulative = cumulativeHistory.cumulativeCounts(this.history);
+        const feed = this._liveFeedSnapshot(limit);
         return send(200, {
           status: this.status, startedAt: this.state.startedAt, now: new Date().toISOString(),
           loginfo: this._logInfo(), reparse: this._reparse, corpus: this._corpusStatus(),
@@ -1302,6 +1818,7 @@ class StarCitizenService extends EventEmitter {
           missionStats: this.missionStats(),
           kills: newest(this.kills),
           deaths: newest(this.deaths),
+          feed,
           counts: {
             // Header / home default to cumulative (all-time local history).
             missions: cumulative.missions,
@@ -1328,6 +1845,11 @@ class StarCitizenService extends EventEmitter {
           recent: newest(this.recent),
           flagged: newest(this.flagged)
         });
+      }
+      // Chat-style unified activity stream (local parse + peer ingest).
+      if (req.method === 'GET' && pathname === `${base}/feed`) {
+        const limit = Math.min(parseInt(url.searchParams.get('limit'), 10) || 400, 2000);
+        return send(200, Object.assign({ type: 'LiveFeed' }, this._liveFeedSnapshot(limit)));
       }
       if (req.method === 'GET' && pathname === base) {
         return send(200, { type: 'StarCitizen', data: {
@@ -1374,6 +1896,13 @@ class StarCitizenService extends EventEmitter {
               fabricConnected: fabricStatus.fabricConnected,
               fabricConnections: fabricStatus.fabricConnections || [],
               fabricReady: fabricStatus.ready,
+              meshAliases: Object.keys(this._peerAliasByPubkey || {}).map((pubkey) => ({
+                pubkey,
+                alias: this._peerAliasByPubkey[pubkey]
+              })),
+              localProfile: this._localProfile(),
+              networkObserve: this._hubObserve,
+              fabricAdvertiseHost: this._fabricAdvertiseHost || null,
               snapshots: this.snapshotManager ? this.snapshotManager.stats() : null
             }
           });
@@ -1401,11 +1930,37 @@ class StarCitizenService extends EventEmitter {
             if (sMatch[1] === 'nickname') {
               this._nickname = updated.nickname || null;
               this._publishPeerAlias(this._nickname).catch((e) => this.emit('error', e));
+              this._publishLocalProfile().catch((e) => this.emit('error', e));
+              requiresRestart = false;
+            }
+            if (sMatch[1] === 'profile') {
+              this._profile = peerProfile.sanitizeProfile(updated.profile);
+              this._publishLocalProfile().catch((e) => this.emit('error', e));
+              requiresRestart = false;
+            }
+            if (sMatch[1] === 'fabricAdvertiseHost') {
+              this._fabricAdvertiseHost = updated.fabricAdvertiseHost || null;
+              if (this.fabricNetwork) this.fabricNetwork.setAdvertiseHost(this._fabricAdvertiseHost);
+              if (this.fabricNetwork) this.fabricNetwork.maybePublishPeeringOffer({ force: true });
               requiresRestart = false;
             }
             if (sMatch[1] === 'notifyMissionBroadcasts') { this._notifyMissionBroadcasts = updated.notifyMissionBroadcasts !== false; requiresRestart = false; }
+            if (sMatch[1] === 'corpusDirs' || sMatch[1] === 'corpusFiles') {
+              // Imported log folders/files apply live — sync into cumulative history.
+              requiresRestart = false;
+              this._syncCumulativeHistory().catch((e) => this.emit('error', e));
+            }
             if (sMatch[1].startsWith('snapshot')) { this._applySnapshotSettings(updated); requiresRestart = false; }
             if (sMatch[1].startsWith('notify')) { requiresRestart = false; }
+            if (sMatch[1] === 'sharePresence' || sMatch[1] === 'presenceVisibility' ||
+              sMatch[1] === 'presenceGroupIds' || sMatch[1] === 'shipOverrideSlug' ||
+              sMatch[1] === 'presenceAvailability' || sMatch[1] === 'presenceStatusText') {
+              this._applyPresenceSettings(updated);
+              if (this._sharePresence) {
+                this.publishPresence().catch((e) => this.emit('error', e));
+              }
+              requiresRestart = false;
+            }
             return send(200, { success: true, settings: updated, requiresRestart });
           } catch (e) { return send(400, { error: e.message }); }
         }
@@ -1415,6 +1970,9 @@ class StarCitizenService extends EventEmitter {
             const d = await body();
             const address = FabricNetwork.normalizeFabricAddress(d.address || d.url, { migrate: false });
             if (!address) return send(400, { error: 'peer address must be host:port (Fabric), e.g. relay.goon.vc:7777' });
+            if (FabricNetwork.isLoopbackFabricAddress(address)) {
+              return send(400, { error: 'loopback peers (localhost / 127.0.0.1) are not dialed — use hub.fabric.pub:7777 or relay.goon.vc:7777' });
+            }
             if (this.peers.some((p) => p.address === address)) return send(400, { error: 'peer already exists' });
             const peer = {
               id: idFor(address),
@@ -1430,10 +1988,113 @@ class StarCitizenService extends EventEmitter {
             return send(200, { type: 'Peer', data: this._peersWithStatus().find((p) => p.id === peer.id) || peer });
           }
         }
+        if (pathname === `${base}/peers/restore-seeds` || pathname === '/peers/restore-seeds') {
+          if (req.method === 'POST') {
+            const result = this._healPeerRoster({ persist: true, forceHubs: true });
+            this._refreshFabric().catch((e) => this.emit('error', e));
+            return send(200, {
+              type: 'PeerRosterHeal',
+              data: {
+                removed: result.removed,
+                added: result.added,
+                peers: this._peersWithStatus()
+              }
+            });
+          }
+        }
+        if (pathname === `${base}/profile` || pathname === '/profile') {
+          if (req.method === 'GET') {
+            return send(200, { type: 'PeerProfile', data: this._localProfile() });
+          }
+        }
+        if (pathname === `${base}/presence` || pathname === '/presence') {
+          if (req.method === 'GET') {
+            return send(200, { type: presence.PRESENCE_TYPE, data: this.getPresenceStatus() });
+          }
+          if (req.method === 'PUT') {
+            const d = await body();
+            try {
+              const result = this.setPresenceSettings(d || {});
+              return send(200, { type: presence.PRESENCE_TYPE, data: result });
+            } catch (e) {
+              return send(400, { error: e.message, code: e.code || null });
+            }
+          }
+        }
+        if (pathname === `${base}/presence/ship` || pathname === '/presence/ship') {
+          if (req.method === 'PUT') {
+            const d = await body();
+            try {
+              const slug = d && d.autodetect === true ? null : (d && d.slug);
+              const result = this.setShipOverride(slug);
+              return send(200, { type: presence.PRESENCE_TYPE, data: result });
+            } catch (e) {
+              return send(400, { error: e.message, code: e.code || null });
+            }
+          }
+        }
+        if (pathname === `${base}/presence/roster` || pathname === '/presence/roster') {
+          if (req.method === 'GET') {
+            return send(200, {
+              type: 'PeerPresenceRoster',
+              data: this.getPresenceRoster()
+            });
+          }
+        }
+        // Fabric AMP Message log (wire Messages only — not Game.log). Advanced UI.
+        if (pathname === `${base}/fabric/messages` || pathname === '/fabric/messages') {
+          if (req.method === 'GET') {
+            const q = url.searchParams;
+            const hideKeepalive = q.get('keepalive') !== '1' && q.get('hideKeepalive') !== '0';
+            const messages = this._fabricMessageLog.list({
+              limit: Number(q.get('limit')) || 200,
+              direction: q.get('dir') || q.get('direction') || null,
+              type: q.get('type') || null,
+              q: q.get('q') || q.get('filter') || null,
+              contract: q.get('contract') || q.get('contractId') || null,
+              hideKeepalive
+            });
+            return send(200, {
+              type: 'FabricMessageLog',
+              data: messages,
+              meta: this._fabricMessageLog.status()
+            });
+          }
+          if (req.method === 'DELETE') {
+            return send(200, { type: 'FabricMessageLog', data: this._fabricMessageLog.clear() });
+          }
+        }
+        if (pathname === `${base}/fabric/messages/clear` || pathname === '/fabric/messages/clear') {
+          if (req.method === 'POST' || req.method === 'DELETE') {
+            return send(200, { type: 'FabricMessageLog', data: this._fabricMessageLog.clear() });
+          }
+        }
+        if (pathname === `${base}/fabric/messages/pause` || pathname === '/fabric/messages/pause') {
+          if (req.method === 'POST') {
+            this._fabricMessageLog.pause();
+            return send(200, { type: 'FabricMessageLog', meta: this._fabricMessageLog.status() });
+          }
+        }
+        if (pathname === `${base}/fabric/messages/resume` || pathname === '/fabric/messages/resume') {
+          if (req.method === 'POST') {
+            this._fabricMessageLog.resume();
+            return send(200, { type: 'FabricMessageLog', meta: this._fabricMessageLog.status() });
+          }
+        }
+        if (pathname === `${base}/network/observe` || pathname === '/network/observe') {
+          if (req.method === 'GET') {
+            const force = url.searchParams.get('refresh') === '1';
+            const snap = await this._refreshHubObserve({ force });
+            return send(200, { type: 'NetworkObserve', data: snap });
+          }
+        }
         let pMatch;
         if ((pMatch = pathname.match(new RegExp(`^(?:${base})?/peers/([^/]+)$`)))) {
           const peer = this.peers.find((p) => p.id === pMatch[1]);
           if (!peer) return send(404, { error: 'Peer not found' });
+          if (req.method === 'GET') {
+            return send(200, { type: 'PeerDetail', data: this._peerDetail(peer.id) });
+          }
           if (req.method === 'DELETE') {
             this.peers = this.peers.filter((p) => p.id !== peer.id);
             this._persistPeers();
@@ -1480,6 +2141,114 @@ class StarCitizenService extends EventEmitter {
         }
         if (req.method === 'GET' && pathname === `${base}/reparse`) {
           return send(200, { type: 'Reparse', data: this._reparse });
+        }
+
+        // ---- Ship catalog + personal fleets (Starjump / custom) ----
+        if (pathname === `${base}/ships` || pathname === '/ships') {
+          if (req.method === 'GET') {
+            const q = url.searchParams.get('q') || url.searchParams.get('query') || '';
+            const limit = Number(url.searchParams.get('limit')) || 40;
+            const ships = q
+              ? shipCatalog.searchShips(q, { limit })
+              : shipCatalog.listShips().slice(0, Math.min(200, Math.max(1, limit)));
+            return send(200, {
+              type: 'ShipCatalog',
+              data: ships,
+              meta: shipCatalog.catalogStatus()
+            });
+          }
+        }
+        if (pathname === `${base}/fleets` || pathname === '/fleets') {
+          if (req.method === 'GET') {
+            const scope = url.searchParams.get('scope') || 'all';
+            return send(200, { type: 'Collection', data: this.listFleets({ scope }) });
+          }
+          if (req.method === 'POST') {
+            const d = await body();
+            try {
+              const isCustom = d.custom === true ||
+                (Array.isArray(d.ships) && d.json == null && !d.path && !d.sample);
+              const fleet = isCustom ? this.createFleet(d) : this.importFleet(d);
+              return send(200, { type: 'Fleet', data: starjumpFleet.summarizeFleet(fleet) });
+            } catch (e) {
+              return send(e.code === 'NOT_FOUND' ? 404 : 400, { error: e.message, code: e.code || null });
+            }
+          }
+        }
+        if (pathname === `${base}/fleets/samples` || pathname === '/fleets/samples') {
+          if (req.method === 'GET') {
+            return send(200, { type: 'Collection', data: this.listFleetSamples() });
+          }
+        }
+        let fleetMatch;
+        if ((fleetMatch = pathname.match(new RegExp(`^(?:${base})?/fleets/([^/]+)/ships$`)))) {
+          const fleetId = decodeURIComponent(fleetMatch[1]);
+          if (req.method === 'POST') {
+            const d = await body();
+            try {
+              const fleet = this.updateFleetShips(fleetId, d || {});
+              return send(200, { type: 'Fleet', data: starjumpFleet.summarizeFleet(fleet) });
+            } catch (e) {
+              const code = e.code === 'NOT_FOUND' ? 404 : (e.code === 'FORBIDDEN' ? 403 : 400);
+              return send(code, { error: e.message, code: e.code || null });
+            }
+          }
+          if (req.method === 'PUT') {
+            const d = await body();
+            try {
+              const fleet = this.updateFleet(fleetId, { ships: (d && d.ships) || d });
+              return send(200, { type: 'Fleet', data: starjumpFleet.summarizeFleet(fleet) });
+            } catch (e) {
+              const code = e.code === 'NOT_FOUND' ? 404 : (e.code === 'FORBIDDEN' ? 403 : 400);
+              return send(code, { error: e.message, code: e.code || null });
+            }
+          }
+        }
+        if ((fleetMatch = pathname.match(new RegExp(`^(?:${base})?/fleets/([^/]+)/ships/([^/]+)$`))) &&
+          req.method === 'DELETE') {
+          try {
+            const fleet = this.updateFleetShips(decodeURIComponent(fleetMatch[1]), {
+              slug: decodeURIComponent(fleetMatch[2]),
+              remove: true
+            });
+            return send(200, { type: 'Fleet', data: starjumpFleet.summarizeFleet(fleet) });
+          } catch (e) {
+            const code = e.code === 'NOT_FOUND' ? 404 : (e.code === 'FORBIDDEN' ? 403 : 400);
+            return send(code, { error: e.message, code: e.code || null });
+          }
+        }
+        if ((fleetMatch = pathname.match(new RegExp(`^(?:${base})?/fleets/([^/]+)$`)))) {
+          const fleetId = decodeURIComponent(fleetMatch[1]);
+          if (req.method === 'GET') {
+            const full = url.searchParams.get('export') === '1';
+            const fleet = this.getFleet(fleetId, { includeExport: full });
+            if (!fleet) return send(404, { error: 'Fleet not found' });
+            return send(200, { type: 'Fleet', data: fleet });
+          }
+          if (req.method === 'PATCH' || req.method === 'PUT') {
+            const d = await body();
+            try {
+              const fleet = this.updateFleet(fleetId, d);
+              return send(200, { type: 'Fleet', data: starjumpFleet.summarizeFleet(fleet) });
+            } catch (e) {
+              return send(e.code === 'NOT_FOUND' ? 404 : 400, { error: e.message, code: e.code || null });
+            }
+          }
+          if (req.method === 'DELETE') {
+            const ok = this.deleteFleet(fleetId);
+            if (!ok) return send(404, { error: 'Fleet not found' });
+            return send(200, { success: true });
+          }
+        }
+        if ((fleetMatch = pathname.match(new RegExp(`^(?:${base})?/fleets/([^/]+)/share$`))) && req.method === 'POST') {
+          const d = await body();
+          try {
+            const result = await this.shareFleet(decodeURIComponent(fleetMatch[1]), d || {});
+            return send(200, { type: 'FleetShare', data: result });
+          } catch (e) {
+            const code = e.code === 'NOT_FOUND' ? 404 : (e.code === 'FORBIDDEN' ? 403 : 400);
+            return send(code, { error: e.message, code: e.code || null });
+          }
         }
 
         // ---- Snapshot library (periodic screen captures; LOCAL relay only) ----
@@ -1678,6 +2447,63 @@ class StarCitizenService extends EventEmitter {
           catch (e) { return send(e.code === 'FORBIDDEN' ? 403 : /not found/i.test(e.message) ? 404 : 400, { error: e.message }); }
         }
       }
+      if ((gmatch = pathname.match(new RegExp(`^${base}/groups/([^/]+)/statechain$`))) && req.method === 'GET') {
+        if (!gm) return send(503, { error: 'Group system not available' });
+        const group = gm.findGroup(gmatch[1]);
+        if (!group) return send(404, { error: 'Group not found' });
+        const view = gm.viewFor(group, viewer);
+        if (!view) return send(403, { error: 'forbidden: this group is private' });
+        const me = viewer || (this._identity && this._identity.pubkey) || null;
+        const isMember = !!(me && Array.isArray(group.members) && group.members.includes(me));
+        if (!isMember && group.visibility !== 'public') {
+          return send(403, { error: 'forbidden: members only' });
+        }
+        if (!group.contractId) {
+          return send(200, {
+            type: 'GroupStatechain',
+            data: {
+              groupId: group.id,
+              contractId: null,
+              clock: 0,
+              stateDigest: null,
+              content: null,
+              journal: { entries: [] },
+              activityTree: null
+            }
+          });
+        }
+        try {
+          const groupStatechain = require('../functions/groupStatechain');
+          const doc = groupStatechain.loadDoc(this.registerStore, group.contractId);
+          const digest = groupStatechain.stateDigestOfContent(doc.content || {});
+          const journalLimit = Math.min(500, Math.max(1, parseInt(url.searchParams.get('limit'), 10) || 100));
+          const entries = (doc.journal.entries || []).slice(-journalLimit).reverse();
+          return send(200, {
+            type: 'GroupStatechain',
+            data: {
+              groupId: group.id,
+              contractId: group.contractId,
+              clock: doc.clock,
+              version: doc.version,
+              stateDigest: digest,
+              content: isMember ? doc.content : {
+                groupId: doc.content && doc.content.groupId,
+                members: doc.content && doc.content.members,
+                activityTree: doc.content && doc.content.activityTree
+              },
+              journal: { entries: isMember ? entries : entries.map((e) => ({
+                id: e.id,
+                type: e.type,
+                clock: e.clock,
+                acceptedAt: e.acceptedAt
+              })) },
+              activityTree: (doc.content && doc.content.activityTree) || null
+            }
+          });
+        } catch (e) {
+          return send(400, { error: e.message });
+        }
+      }
       if ((gmatch = pathname.match(new RegExp(`^${base}/groups/([^/]+)/members$`))) && req.method === 'POST') {
         if (!gm) return send(503, { error: 'Group system not available' });
         if (!requireAuth()) return;
@@ -1705,7 +2531,10 @@ class StarCitizenService extends EventEmitter {
         if (req.method === 'POST') {
           if (!requireAuth()) return;
           const d = await body();
-          const applicant = viewer || d.applicantId;
+          // Local relay: publishing identity is the default applicant when no Bearer.
+          const applicant = viewer
+            || (this._identity && this._identity.pubkey)
+            || d.applicantId;
           try { return send(200, { type: 'GroupApplication', data: await gm.applyToGroup(group.id, applicant, d.message) }); }
           catch (e) { return send(e.code === 'FORBIDDEN' ? 403 : 400, { error: e.message }); }
         }
@@ -2007,6 +2836,10 @@ class StarCitizenService extends EventEmitter {
     const ev = parseLine(entry);
     const id = idFor(entry);
 
+    if (ev.timestamp) this._lastLogEventAt = ev.timestamp;
+    else this._lastLogEventAt = new Date().toISOString();
+    this._updateDetectedShipFromEvent(ev);
+
     // Stamp session build/hardware from header lines (one-shot, additive).
     const sinfo = parseSessionInfo(entry);
     if (sinfo) this.session[sinfo.key] = sinfo.value;
@@ -2036,7 +2869,8 @@ class StarCitizenService extends EventEmitter {
           killerNpc: isNPC(ev.killer), victimNpc: isNPC(ev.victim),
           // who, relative to the relay's player: 'kill' (we got it), 'death' (we died), or 'other'
           involves: ev.killer === this._sessionHandle ? 'kill' : (ev.victim === this._sessionHandle ? 'death' : 'other'),
-          timestamp: ev.timestamp
+          timestamp: ev.timestamp,
+          raw: String(entry)
         };
         this.state.kills[id] = kill;
         this.emit('kill', kill);
@@ -2049,7 +2883,10 @@ class StarCitizenService extends EventEmitter {
         break;
       }
       case 'player:incap': {
-        const inc = { id, kind: ev.kind, player: this._sessionHandle || null, text: ev.text, timestamp: ev.timestamp };
+        const inc = {
+          id, kind: ev.kind, player: this._sessionHandle || null, text: ev.text,
+          timestamp: ev.timestamp, raw: String(entry)
+        };
         this.state.incaps[id] = inc;
         this.emit('player:incap', inc);
         break;
@@ -2057,14 +2894,21 @@ class StarCitizenService extends EventEmitter {
       case 'player:death': {
         // Local-player death (corpse-recovery body marker). One event per death;
         // SC stopped logging kills after 4.3.0, so this is the current-build signal.
-        const d = { id, kind: ev.kind, player: this._sessionHandle || null, bodyId: ev.bodyId, timestamp: ev.timestamp };
+        const d = {
+          id, kind: ev.kind, player: this._sessionHandle || null, bodyId: ev.bodyId,
+          timestamp: ev.timestamp, raw: String(entry)
+        };
         this.state.deaths[id] = d;
         this.emit('player:death', d);
         this._applyHistoryEvent(ev);
         break;
       }
       case 'vehicle:destroy': {
-        const v = { id, vehicle: ev.vehicle, vehicleName: shipName(ev.vehicle), cause: ev.cause, attacker: ev.attacker, fromLevel: ev.fromLevel, toLevel: ev.toLevel, timestamp: ev.timestamp };
+        const v = {
+          id, vehicle: ev.vehicle, vehicleName: shipName(ev.vehicle), cause: ev.cause,
+          attacker: ev.attacker, fromLevel: ev.fromLevel, toLevel: ev.toLevel,
+          timestamp: ev.timestamp, raw: String(entry)
+        };
         this.state.vehicles[id] = v;
         this.emit('vehicle:destroy', v);
         break;
@@ -2077,7 +2921,8 @@ class StarCitizenService extends EventEmitter {
       case 'mission:end': {
         const me = { id, kind: ev.kind, timestamp: ev.timestamp,
           contract: ev.contract, generator: ev.generator, text: ev.text, objectiveId: ev.objectiveId, missionId: ev.missionId,
-          contractId: ev.contractId, completionType: ev.completionType, reason: ev.reason, player: ev.player };
+          contractId: ev.contractId, completionType: ev.completionType, reason: ev.reason, player: ev.player,
+          raw: String(entry) };
         this.state.missionlog[id] = me;
         this._indexMission(ev);
         this.emit(ev.kind, me);
@@ -2086,7 +2931,7 @@ class StarCitizenService extends EventEmitter {
         break;
       }
       case 'hud:notification': {
-        const n = { id, kind: ev.kind, text: ev.text, timestamp: ev.timestamp };
+        const n = { id, kind: ev.kind, text: ev.text, timestamp: ev.timestamp, raw: String(entry) };
         this.state.notifications[id] = n;
         this.emit('notification', n);
         break;
@@ -2309,11 +3154,6 @@ class StarCitizenService extends EventEmitter {
       .catch((e) => this.emit('error', e));
   }
 
-  /** Enabled Fabric peer addresses (`host:port`). */
-  _fabricPeerAddresses () {
-    return this.peers.filter((p) => p.enabled !== false && p.address).map((p) => p.address);
-  }
-
   /** @deprecated Use {@link #_fabricPeerAddresses}; kept for older tests. */
   _uplinkTargets () {
     return this._fabricPeerAddresses();
@@ -2430,6 +3270,10 @@ class StarCitizenService extends EventEmitter {
         const signer = (ev && ev.signer) || resolveSignerPubkey(source) || source || null;
         if (!alias || !signer) return;
         this._peerAliasByPubkey[signer] = alias;
+        this._peerProfilesByPubkey[signer] = peerProfile.mergeRemoteProfile(
+          this._peerProfilesByPubkey[signer],
+          { pubkey: signer, nickname: alias, alias }
+        );
         // Refresh handle on recent local chat rows from this author (best-effort).
         try {
           if (this.chatManager) {
@@ -2442,6 +3286,35 @@ class StarCitizenService extends EventEmitter {
             }
           }
         } catch (_) { /* ignore */ }
+      },
+      onPeerProfile: (object, source) => {
+        const signer = resolveSignerPubkey(source) || source || null;
+        if (!signer || !object) return;
+        this._peerProfilesByPubkey[signer] = peerProfile.mergeRemoteProfile(
+          this._peerProfilesByPubkey[signer],
+          Object.assign({}, object, { pubkey: signer })
+        );
+        if (object.nickname) {
+          const alias = String(object.nickname).trim().slice(0, 64);
+          if (alias) this._peerAliasByPubkey[signer] = alias;
+        }
+      },
+      onFleetShare: (object, source) => {
+        try {
+          this._ingestFleetShare(object, resolveSignerPubkey(source) || source || null);
+        } catch (e) { this.emit('error', e); }
+      },
+      onPeerPresence: (object, source) => {
+        const signer = resolveSignerPubkey(source) || source || null;
+        if (!signer || !object) return;
+        this._peerPresenceByPubkey[signer] = presence.mergeRemotePresence(
+          this._peerPresenceByPubkey[signer],
+          Object.assign({}, object, { pubkey: signer })
+        );
+      },
+      onPeeringCandidate: (ev) => {
+        if (!ev || !Array.isArray(ev.addresses)) return;
+        this._considerDiscoveredPeers(ev.addresses, ev.kind || 'gossip');
       },
       isKnownGroupContract: (id) => !!(this.groupManager && this.groupManager.getGroupByContractId(id)),
       onGroupContractPublish: (object, source) => {
@@ -2505,6 +3378,34 @@ class StarCitizenService extends EventEmitter {
             if (!resolved) return;
             this._ingestMissionBroadcast(resolved, inner);
           }
+          if (kind === starjumpFleet.FLEET_SHARE_TYPE ||
+            (inner && (inner.kind === starjumpFleet.FLEET_SHARE_TYPE || inner.type === starjumpFleet.FLEET_SHARE_TYPE))) {
+            this._ingestFleetShare(inner && inner.kind === starjumpFleet.FLEET_SHARE_TYPE ? inner : (inner || object), resolved);
+          }
+          if (kind === presence.PRESENCE_TYPE ||
+            (inner && (inner.kind === presence.PRESENCE_TYPE || inner.type === presence.PRESENCE_TYPE))) {
+            const doc = inner && inner.kind === presence.PRESENCE_TYPE ? inner : (inner || object);
+            if (resolved && doc) {
+              this._peerPresenceByPubkey[resolved] = presence.mergeRemotePresence(
+                this._peerPresenceByPubkey[resolved],
+                Object.assign({}, doc, { pubkey: resolved })
+              );
+            }
+          }
+        } catch (e) { this.emit('error', e); }
+      },
+      onGroupActivityTree: (object, source, meta) => {
+        if (!this.groupManager || !object) return;
+        try {
+          const contractId = (meta && meta.contract) || object.contractId;
+          const group = (contractId && this.groupManager.getGroupByContractId(contractId))
+            || (object.groupId && this.groupManager.getGroup(object.groupId));
+          if (!group) return;
+          this.groupManager.ingestActivityTree(
+            group.id,
+            object,
+            resolveSignerPubkey(source) || object.ownerPubkey || source
+          );
         } catch (e) { this.emit('error', e); }
       },
       onFederationInvite: (object, source, meta) => {
@@ -2518,6 +3419,465 @@ class StarCitizenService extends EventEmitter {
         } catch (e) { this.emit('error', e); }
       }
     };
+  }
+
+  // ---- Personal fleets (Starjump / FleetViewer) ---------------------------
+
+  _fleetsDir () {
+    return path.join(__dirname, '..', 'data', 'fleets');
+  }
+
+  listFleetSamples () {
+    const dir = this._fleetsDir();
+    let names = [];
+    try { names = fs.readdirSync(dir).filter((n) => n.endsWith('.json')); } catch (_) { return []; }
+    return names.map((name) => {
+      try {
+        const raw = JSON.parse(fs.readFileSync(path.join(dir, name), 'utf8'));
+        const ships = starjumpFleet.extractShips(raw);
+        return {
+          name,
+          shipCount: ships.reduce((n, s) => n + (s.count || 1), 0),
+          uniqueShips: ships.length,
+          sourceType: raw.type || null
+        };
+      } catch (_) {
+        return { name, shipCount: 0, uniqueShips: 0, sourceType: null };
+      }
+    }).sort((a, b) => a.name.localeCompare(b.name));
+  }
+
+  /**
+   * @param {{ scope?: 'all'|'mine'|'shared'|'public' }} [opts]
+   */
+  listFleets (opts = {}) {
+    const me = this._identity && this._identity.pubkey;
+    const scope = String(opts.scope || 'all');
+    let rows = (this.registerStore ? this.registerStore.all('fleets') : []).map((f) => starjumpFleet.summarizeFleet(f)).filter(Boolean);
+    if (scope === 'mine') rows = rows.filter((f) => me && f.ownerPubkey === me && !f.remote);
+    else if (scope === 'shared') rows = rows.filter((f) => f.remote || (f.visibility && f.visibility !== 'private'));
+    else if (scope === 'public') rows = rows.filter((f) => f.visibility === 'public');
+    rows.sort((a, b) => String(b.updatedAt || '').localeCompare(String(a.updatedAt || '')));
+    return rows;
+  }
+
+  getFleet (id, { includeExport = false } = {}) {
+    if (!this.registerStore || !id) return null;
+    const fleet = this.registerStore.get('fleets', id);
+    if (!fleet) return null;
+    const summary = starjumpFleet.summarizeFleet(fleet);
+    if (includeExport && fleet.export) summary.export = fleet.export;
+    return summary;
+  }
+
+  /**
+   * Create an empty or pre-filled custom fleet (editable roster).
+   * @param {{ name?: string, ships?: object[], visibility?: string, groupIds?: string[] }} data
+   */
+  createFleet (data = {}) {
+    if (!this.registerStore) {
+      const e = new Error('store unavailable'); e.code = 'UNAVAILABLE'; throw e;
+    }
+    const owner = this._identity && this._identity.pubkey;
+    const fleet = starjumpFleet.createCustomFleet({
+      name: data.name,
+      ships: Array.isArray(data.ships) ? data.ships : [],
+      ownerPubkey: owner || null,
+      visibility: data.visibility || 'private',
+      groupIds: data.groupIds
+    });
+    this.registerStore.put('fleets', fleet.id, fleet);
+    this.emit('fleet:created', starjumpFleet.summarizeFleet(fleet));
+    return fleet;
+  }
+
+  /**
+   * Import from JSON body, filesystem path, or bundled sample name.
+   * @param {{ json?: object|string, path?: string, sample?: string, name?: string, visibility?: string }} data
+   */
+  importFleet (data = {}) {
+    let raw = data.json != null ? data.json : null;
+    let sourceFile = data.sourceFile || null;
+    if (!raw && data.sample) {
+      const name = path.basename(String(data.sample));
+      if (!name.endsWith('.json') || name.includes('..')) {
+        const e = new Error('invalid sample name'); e.code = 'INVALID_SAMPLE'; throw e;
+      }
+      const file = path.join(this._fleetsDir(), name);
+      if (!fs.existsSync(file)) {
+        const e = new Error('sample not found'); e.code = 'NOT_FOUND'; throw e;
+      }
+      raw = JSON.parse(fs.readFileSync(file, 'utf8'));
+      sourceFile = name;
+    }
+    if (!raw && data.path) {
+      const file = path.resolve(String(data.path));
+      if (!fs.existsSync(file) || !fs.statSync(file).isFile()) {
+        const e = new Error('file not found'); e.code = 'NOT_FOUND'; throw e;
+      }
+      raw = JSON.parse(fs.readFileSync(file, 'utf8'));
+      sourceFile = path.basename(file);
+    }
+    if (raw == null) {
+      const e = new Error('json, path, or sample required'); e.code = 'INVALID'; throw e;
+    }
+    if (!this.registerStore) {
+      const e = new Error('store unavailable'); e.code = 'UNAVAILABLE'; throw e;
+    }
+    const owner = this._identity && this._identity.pubkey;
+    const fleet = starjumpFleet.parseStarjumpExport(raw, {
+      name: data.name,
+      ownerPubkey: owner || null,
+      sourceFile,
+      visibility: data.visibility || 'private',
+      keepExport: true
+    });
+    // Prefer stable id per owner+ships; overwrite prior import of same roster.
+    this.registerStore.put('fleets', fleet.id, fleet);
+    this.emit('fleet:imported', starjumpFleet.summarizeFleet(fleet));
+    return fleet;
+  }
+
+  updateFleet (id, patch = {}) {
+    if (!this.registerStore) {
+      const e = new Error('store unavailable'); e.code = 'UNAVAILABLE'; throw e;
+    }
+    const fleet = this.registerStore.get('fleets', id);
+    if (!fleet) {
+      const e = new Error('Fleet not found'); e.code = 'NOT_FOUND'; throw e;
+    }
+    const me = this._identity && this._identity.pubkey;
+    if (fleet.remote && fleet.ownerPubkey && me && fleet.ownerPubkey !== me) {
+      const e = new Error('cannot edit a peer fleet'); e.code = 'FORBIDDEN'; throw e;
+    }
+    if (patch.name !== undefined) {
+      const name = starjumpFleet.sanitizeName(patch.name);
+      if (name) fleet.name = name;
+    }
+    if (patch.visibility !== undefined) {
+      fleet.visibility = starjumpFleet.sanitizeVisibility(patch.visibility);
+    }
+    if (Array.isArray(patch.groupIds)) {
+      fleet.groupIds = patch.groupIds.map(String).filter(Boolean);
+    }
+    if (Array.isArray(patch.ships)) {
+      starjumpFleet.setFleetShips(fleet, patch.ships, { replace: true });
+    }
+    fleet.updatedAt = new Date().toISOString();
+    this.registerStore.put('fleets', fleet.id, fleet);
+    return fleet;
+  }
+
+  /**
+   * Add, set count, or remove a ship on a fleet.
+   * Body: `{ slug|name, count?, variant?, remove? }` or `{ ships: [...] }` to replace.
+   */
+  updateFleetShips (id, op = {}) {
+    if (!this.registerStore) {
+      const e = new Error('store unavailable'); e.code = 'UNAVAILABLE'; throw e;
+    }
+    const fleet = this.registerStore.get('fleets', id);
+    if (!fleet) {
+      const e = new Error('Fleet not found'); e.code = 'NOT_FOUND'; throw e;
+    }
+    const me = this._identity && this._identity.pubkey;
+    if (fleet.remote && fleet.ownerPubkey && me && fleet.ownerPubkey !== me) {
+      const e = new Error('cannot edit a peer fleet'); e.code = 'FORBIDDEN'; throw e;
+    }
+    if (Array.isArray(op.ships)) {
+      starjumpFleet.setFleetShips(fleet, op.ships, { replace: true });
+    } else {
+      starjumpFleet.applyShipOp(fleet, op);
+    }
+    this.registerStore.put('fleets', fleet.id, fleet);
+    return fleet;
+  }
+
+  deleteFleet (id) {
+    if (!this.registerStore || !id) return false;
+    return this.registerStore.del('fleets', id);
+  }
+
+  _ingestFleetShare (object, sourcePubkey) {
+    if (!this.registerStore || !object) return null;
+    const fleet = starjumpFleet.fleetFromShareObject(object, sourcePubkey);
+    const prev = this.registerStore.get('fleets', fleet.id);
+    if (prev && !prev.remote && prev.ownerPubkey && prev.ownerPubkey === fleet.ownerPubkey) {
+      // Do not clobber our own local export with a peer echo.
+      return prev;
+    }
+    this.registerStore.put('fleets', fleet.id, fleet);
+    this.emit('fleet:shared', starjumpFleet.summarizeFleet(fleet));
+    return fleet;
+  }
+
+  /**
+   * Share a fleet to peers, groups, and/or public mesh.
+   * @param {string} id
+   * @param {{ visibility?: string, groupIds?: string[], includeExport?: boolean, relay?: boolean }} [opts]
+   */
+  async shareFleet (id, opts = {}) {
+    if (!this.registerStore) {
+      const e = new Error('store unavailable'); e.code = 'UNAVAILABLE'; throw e;
+    }
+    const fleet = this.registerStore.get('fleets', id);
+    if (!fleet) {
+      const e = new Error('Fleet not found'); e.code = 'NOT_FOUND'; throw e;
+    }
+    const me = this._identity && this._identity.pubkey;
+    if (!me) {
+      const e = new Error('Unlock your identity to share fleets'); e.code = 'LOCKED'; throw e;
+    }
+    if (fleet.remote && fleet.ownerPubkey && fleet.ownerPubkey !== me) {
+      const e = new Error('cannot re-share a peer fleet from this UI yet'); e.code = 'FORBIDDEN'; throw e;
+    }
+    if (!fleet.ownerPubkey) fleet.ownerPubkey = me;
+
+    const visibility = starjumpFleet.sanitizeVisibility(opts.visibility || fleet.visibility || 'peers');
+    let groupIds = Array.isArray(opts.groupIds) ? opts.groupIds.map(String).filter(Boolean) : (fleet.groupIds || []);
+    if (visibility === 'groups' && !groupIds.length && this.groupManager) {
+      groupIds = (this.groupManager.groups || []).map((g) => g.id);
+    }
+    fleet.visibility = visibility;
+    fleet.groupIds = groupIds;
+    fleet.sharedAt = new Date().toISOString();
+    fleet.updatedAt = fleet.sharedAt;
+    this.registerStore.put('fleets', fleet.id, fleet);
+
+    const shareObject = starjumpFleet.buildFleetShareObject(fleet, {
+      includeExport: opts.includeExport !== false
+    });
+    const published = { peers: false, groups: [], public: false };
+
+    if (visibility === 'private') {
+      return { fleet: starjumpFleet.summarizeFleet(fleet), published, share: shareObject };
+    }
+
+    await this._ensureFabric().catch(() => null);
+    if (!this.fabricNetwork || !this.fabricNetwork.ready) {
+      const e = new Error('Fabric peer not ready — unlock identity and wait for peering');
+      e.code = 'NOT_READY';
+      throw e;
+    }
+
+    if (visibility === 'peers' || visibility === 'public') {
+      this.fabricNetwork.publishFleetShare(shareObject);
+      published.peers = true;
+      if (visibility === 'public') published.public = true;
+    }
+
+    if (visibility === 'groups' || (groupIds.length && visibility === 'public')) {
+      for (const groupId of groupIds) {
+        const group = this.groupManager && this.groupManager.getGroup(groupId);
+        if (!group) continue;
+        if (!group.includes(me)) continue;
+        const contractId = group.contractId || null;
+        if (!contractId) continue;
+        this.fabricNetwork.publishGroupShare(contractId, {
+          kind: starjumpFleet.FLEET_SHARE_TYPE,
+          object: shareObject
+        });
+        published.groups.push(groupId);
+      }
+    }
+
+    return { fleet: starjumpFleet.summarizeFleet(fleet), published, share: shareObject };
+  }
+
+  _updateDetectedShipFromEvent (ev) {
+    if (!ev || !ev.kind) return;
+    const at = ev.timestamp || this._lastLogEventAt || new Date().toISOString();
+    // Quantum travel lines carry the vehicle currently under local control.
+    if (ev.kind && ev.kind.indexOf('quantum:') === 0 && ev.vehicle) {
+      this._detectedShip = presence.buildDetectedShip(ev.vehicle, ev.vehicleId, at);
+      return;
+    }
+    // ClearDriver = just left the seat — still the last piloted ship (keep for presence).
+    if (ev.kind === 'vehicle:control' && ev.vehicle) {
+      this._detectedShip = presence.buildDetectedShip(ev.vehicle, ev.vehicleId, at);
+    }
+  }
+
+  _buildPresenceDocument () {
+    return presence.buildPresenceDocument({
+      pubkey: this._identity ? this._identity.pubkey : null,
+      nickname: this._nickname,
+      lastEventAt: this._lastLogEventAt,
+      detectedShip: this._detectedShip,
+      shipOverride: this._shipOverride,
+      visibility: this._presenceVisibility,
+      groupIds: this._presenceGroupIds,
+      availability: this._presenceAvailability,
+      statusText: this._presenceStatusText
+    });
+  }
+
+  getPresenceStatus () {
+    const doc = this._buildPresenceDocument();
+    return {
+      presence: doc,
+      settings: {
+        sharePresence: this._sharePresence,
+        presenceVisibility: this._presenceVisibility,
+        presenceGroupIds: this._presenceGroupIds.slice(),
+        shipOverrideSlug: this._shipOverrideSlug,
+        presenceAvailability: this._presenceAvailability,
+        presenceStatusText: this._presenceStatusText
+      },
+      detectedShip: this._detectedShip,
+      shipOverride: this._shipOverride,
+      online: doc.online,
+      lastEventAt: this._lastLogEventAt
+    };
+  }
+
+  /**
+   * Cached PeerPresence keyed by pubkey (includes self when sharing).
+   * Remote entries are only those received while peers opted into sharePresence.
+   */
+  getPresenceRoster () {
+    const out = Object.create(null);
+    for (const [pubkey, doc] of Object.entries(this._peerPresenceByPubkey || {})) {
+      if (!pubkey || !doc) continue;
+      out[pubkey] = {
+        // Trust published online (supports force online/offline).
+        online: doc.online === true,
+        statusText: doc.statusText || null,
+        lastEventAt: doc.lastEventAt || null,
+        ship: doc.ship || null,
+        nickname: doc.nickname || null,
+        updatedAt: doc.updatedAt || doc.lastSeen || null
+      };
+    }
+    const me = this._identity && this._identity.pubkey;
+    if (me) {
+      const local = this._buildPresenceDocument();
+      out[me] = {
+        online: local.online,
+        statusText: local.statusText || null,
+        lastEventAt: local.lastEventAt,
+        ship: local.ship,
+        nickname: local.nickname,
+        updatedAt: local.updatedAt,
+        sharing: this._sharePresence === true,
+        visibility: this._presenceVisibility,
+        availability: this._presenceAvailability
+      };
+    }
+    return out;
+  }
+
+  /**
+   * Update presence share settings (persisted to Fabric Store when available).
+   */
+  setPresenceSettings (patch = {}) {
+    if (!this.registerStore) {
+      const e = new Error('store unavailable'); e.code = 'UNAVAILABLE'; throw e;
+    }
+    const next = presence.sanitizePresenceShare(Object.assign({
+      sharePresence: this._sharePresence,
+      presenceVisibility: this._presenceVisibility,
+      presenceGroupIds: this._presenceGroupIds,
+      shipOverrideSlug: this._shipOverrideSlug,
+      presenceAvailability: this._presenceAvailability,
+      presenceStatusText: this._presenceStatusText
+    }, patch));
+    settingsStore.putSetting(this.registerStore, 'sharePresence', next.sharePresence);
+    settingsStore.putSetting(this.registerStore, 'presenceVisibility', next.presenceVisibility);
+    settingsStore.putSetting(this.registerStore, 'presenceGroupIds', next.presenceGroupIds.length ? next.presenceGroupIds : null);
+    settingsStore.putSetting(this.registerStore, 'shipOverrideSlug', next.shipOverrideSlug);
+    settingsStore.putSetting(this.registerStore, 'presenceAvailability', next.presenceAvailability);
+    settingsStore.putSetting(this.registerStore, 'presenceStatusText', next.presenceStatusText);
+    this._applyPresenceSettings(next);
+    if (this._sharePresence) {
+      this.publishPresence().catch((e) => this.emit('error', e));
+    }
+    return this.getPresenceStatus();
+  }
+
+  /**
+   * Manual current-ship override (`slug`) or autodetect (`null`).
+   * @param {string|null} slug
+   */
+  setShipOverride (slug) {
+    if (!this.registerStore) {
+      const e = new Error('store unavailable'); e.code = 'UNAVAILABLE'; throw e;
+    }
+    const normalized = slug === undefined || slug === null || slug === ''
+      ? null
+      : presence.sanitizePresenceShare({ shipOverrideSlug: slug }).shipOverrideSlug;
+    settingsStore.putSetting(this.registerStore, 'shipOverrideSlug', normalized);
+    this._shipOverrideSlug = normalized;
+    this._shipOverride = normalized ? presence.buildShipOverride(normalized) : null;
+    if (this._sharePresence) {
+      this.publishPresence().catch((e) => this.emit('error', e));
+    }
+    return this.getPresenceStatus();
+  }
+
+  /**
+   * Publish PeerPresence to peers / groups per visibility settings.
+   */
+  async publishPresence () {
+    if (!this._sharePresence) {
+      return { presence: this.getPresenceStatus(), published: { peers: false, groups: [], public: false } };
+    }
+    const me = this._identity && this._identity.pubkey;
+    if (!me) {
+      const e = new Error('Unlock your identity to share presence'); e.code = 'LOCKED'; throw e;
+    }
+
+    const doc = this._buildPresenceDocument();
+    if (me) {
+      this._peerPresenceByPubkey[me] = presence.mergeRemotePresence(
+        this._peerPresenceByPubkey[me],
+        doc
+      );
+    }
+
+    const visibility = presence.sanitizeVisibility(this._presenceVisibility);
+    let groupIds = this._presenceGroupIds.slice();
+    if (visibility === 'groups' && !groupIds.length && this.groupManager) {
+      groupIds = (this.groupManager.groups || []).map((g) => g.id);
+    }
+
+    const shareObject = presence.buildPresenceShareObject(doc);
+    const published = { peers: false, groups: [], public: false };
+
+    if (visibility === 'private') {
+      return { presence: this.getPresenceStatus(), published, share: shareObject };
+    }
+
+    await this._ensureFabric().catch(() => null);
+    if (!this.fabricNetwork || !this.fabricNetwork.ready) {
+      const e = new Error('Fabric peer not ready — unlock identity and wait for peering');
+      e.code = 'NOT_READY';
+      throw e;
+    }
+
+    if (visibility === 'peers' || visibility === 'public') {
+      this.fabricNetwork.publishPeerPresence(shareObject);
+      published.peers = true;
+      if (visibility === 'public') published.public = true;
+    }
+
+    if (visibility === 'groups' || (groupIds.length && visibility === 'public')) {
+      for (const groupId of groupIds) {
+        const group = this.groupManager && this.groupManager.getGroup(groupId);
+        if (!group) continue;
+        if (!group.includes(me)) continue;
+        const contractId = group.contractId || null;
+        if (!contractId) continue;
+        this.fabricNetwork.publishGroupShare(contractId, {
+          kind: presence.PRESENCE_TYPE,
+          object: shareObject
+        });
+        published.groups.push(groupId);
+      }
+    }
+
+    this._lastPresencePublish = Date.now();
+    return { presence: this.getPresenceStatus(), published, share: shareObject };
   }
 
   async _ensureFabric () {
@@ -2549,12 +3909,15 @@ class StarCitizenService extends EventEmitter {
         peers: this._fabricPeerAddresses(),
         peersDb,
         relayAppMessages: !!this.settings.fabric.relayAppMessages,
-        reconnectToKnownPeers: false
+        reconnectToKnownPeers: false,
+        advertiseHost: this._fabricAdvertiseHost || null,
+        messageLog: this._fabricMessageLog
       });
       this.fabricNetwork.setHandlers(this._fabricIngestHandlers());
       this.fabricNetwork.on('error', (e) => this.emit('error', e));
     }
     this.fabricNetwork.setIdentity(this._identity);
+    this.fabricNetwork.setAdvertiseHost(this._fabricAdvertiseHost || null);
     this.fabricNetwork.setPeers(this._fabricPeerAddresses());
     if (this.groupManager) {
       this.fabricNetwork.setKnownGroupContracts(this.groupManager.knownContractIds());
@@ -2562,10 +3925,32 @@ class StarCitizenService extends EventEmitter {
     const starting = !this.fabricNetwork.peer;
     if (starting) await this.fabricNetwork.start();
     this._startFabricFlush();
+    this._startHubObserveTimer();
     // Alias publish must never await _ensureFabric (ensure → alias → ensure overflow).
     // Only (re)announce when the peer just came up or the nickname changed.
     this._maybeSendPeerAlias();
+    this._publishLocalProfile().catch((e) => this.emit('error', e));
     return this.fabricNetwork;
+  }
+
+  async _publishLocalProfile () {
+    try {
+      if (!this.fabricNetwork || !this.fabricNetwork.ready) return null;
+      const doc = this._localProfile();
+      // Always refresh self cache for inspect UI.
+      if (doc.pubkey) {
+        this._peerProfilesByPubkey[doc.pubkey] = peerProfile.mergeRemoteProfile(
+          this._peerProfilesByPubkey[doc.pubkey],
+          doc
+        );
+      }
+      // Publish when there is something beyond empty fields.
+      if (!doc.nickname && !doc.bio && !doc.scHandle) return null;
+      return this.fabricNetwork.publishPeerProfile(doc);
+    } catch (e) {
+      this.emit('error', e);
+      return null;
+    }
   }
 
   /**
@@ -2622,6 +4007,10 @@ class StarCitizenService extends EventEmitter {
   async _stopFabric () {
     this._stopUplink();
     this._lastPublishedAlias = null;
+    if (this._hubObserveTimer) {
+      clearInterval(this._hubObserveTimer);
+      this._hubObserveTimer = null;
+    }
     if (this.fabricNetwork) {
       await this.fabricNetwork.stop();
       this.fabricNetwork = null;
@@ -2654,6 +4043,7 @@ class StarCitizenService extends EventEmitter {
     this._uplinkTimer = setInterval(() => {
       this._flushUplink().catch((e) => this.emit('error', e));
       this._maybePublishGameState().catch((e) => this.emit('error', e));
+      this._maybePublishPresence().catch((e) => this.emit('error', e));
     }, interval);
     if (this._uplinkTimer.unref) this._uplinkTimer.unref();
     const seeds = this._fabricPeerAddresses();
@@ -2674,6 +4064,24 @@ class StarCitizenService extends EventEmitter {
     const snap = await this.publishGameStateSnapshot();
     if (snap) this._lastGameStatePublish = now;
     return snap;
+  }
+
+  /**
+   * Periodic PeerPresence publish when sharing is enabled (default 60s cadence).
+   */
+  async _maybePublishPresence () {
+    if (!this._sharePresence) return null;
+    const minMs = Number(this.settings.presencePublishIntervalMs) || 60000;
+    const now = Date.now();
+    if (this._lastPresencePublish && (now - this._lastPresencePublish) < minMs) return null;
+    try {
+      const result = await this.publishPresence();
+      if (result) this._lastPresencePublish = now;
+      return result;
+    } catch (e) {
+      if (e && (e.code === 'NOT_READY' || e.code === 'LOCKED')) return null;
+      throw e;
+    }
   }
 
   _stopUplink () {
@@ -2709,6 +4117,10 @@ class StarCitizenService extends EventEmitter {
       // Hot path: do not re-enter full ensure (setPeers / alias) on every message.
       if (!this.fabricNetwork || !this.fabricNetwork.ready) await this._ensureFabric();
       if (!this.fabricNetwork || !this.fabricNetwork.ready || !record) return;
+      // Star gossip needs at least one hub socket; re-dial seeds if we are lonely.
+      if (!(this.fabricNetwork.status().fabricConnected > 0)) {
+        this.fabricNetwork.setPeers(this._fabricPeerAddresses());
+      }
       const channel = record.channel || 'global';
       if (channel === 'global') {
         this.fabricNetwork.publishChat(record);
@@ -2766,7 +4178,8 @@ class StarCitizenService extends EventEmitter {
         enable: false,
         listen: false,
         peers: [],
-        peersDb: null
+        peersDb: null,
+        messageLog: this._fabricMessageLog
       });
     }
     this.fabricNetwork.setIdentity(this._identity);
@@ -2803,6 +4216,10 @@ class StarCitizenService extends EventEmitter {
     } = require('../functions/groupShareMessage');
     const parsed = parseOpaqueFabricMessage(protocolUrlOrHex);
     if (!parsed.ok) throw new Error(parsed.error || 'invalid fabric message');
+    try {
+      const summary = summarizeMessage(parsed.message, { direction: 'in', via: 'opaque' });
+      if (summary) this._fabricMessageLog.append(summary);
+    } catch (_) { /* best-effort log */ }
     const classified = classifyGroupShareMessage(parsed.message);
     if (classified.kind === 'GroupPublish') {
       const result = this.groupManager.ingestContractPublish(classified.object, 'opaque-share');
@@ -2814,14 +4231,9 @@ class StarCitizenService extends EventEmitter {
       });
     }
     if (classified.kind === 'FederationContractInvite') {
-      this._ingestFederationInvite(classified.object, 'opaque-share', {
+      return this._ingestFederationInvite(classified.object, 'opaque-share', {
         contract: classified.contractId
       });
-      return {
-        kind: 'FederationContractInvite',
-        invite: classified.object,
-        pending: true
-      };
     }
     throw new Error(`unsupported share kind: ${classified.kind || 'unknown'} (expected ${GROUP_SHARE_KIND_OFFER})`);
   }
@@ -2887,7 +4299,8 @@ class StarCitizenService extends EventEmitter {
         enable: false,
         listen: false,
         peers: [],
-        peersDb: null
+        peersDb: null,
+        messageLog: this._fabricMessageLog
       });
     }
     this.fabricNetwork.setIdentity(this._identity);
@@ -2923,9 +4336,17 @@ class StarCitizenService extends EventEmitter {
    */
   async respondToGroupFederationInvite (groupIdOrSlug, inviteId, actor, accept) {
     if (!this.groupManager) throw Object.assign(new Error('Group system not available'), { code: 'UNAVAILABLE' });
-    const group = this.groupManager.findGroup(groupIdOrSlug);
-    if (!group) throw Object.assign(new Error('Group not found'), { code: 'NOT_FOUND' });
+    if (!actor) throw Object.assign(new Error('actor required (unlock identity or authenticate)'), { code: 'FORBIDDEN' });
+    let group = this.groupManager.findGroup(groupIdOrSlug);
     const stored = this.registerStore && this.registerStore.get('groupinvites', inviteId);
+    if (!group && stored && stored.contractId) {
+      group = this.groupManager.getGroupByContractId(stored.contractId);
+    }
+    if (!group && stored) {
+      const shell = this.groupManager.ingestFederationInviteShell(stored, 'invite-accept');
+      group = shell && shell.group;
+    }
+    if (!group) throw Object.assign(new Error('Group not found'), { code: 'NOT_FOUND' });
     const contractId = (stored && stored.contractId) || group.contractId || await this._ensureGroupContractId(group.id);
     if (!contractId) throw new Error('group Federation contract is not ready');
     const { buildFederationContractInviteResponse } = require('../functions/federationContractInvite');
@@ -2934,19 +4355,33 @@ class StarCitizenService extends EventEmitter {
       accept: !!accept,
       responderPubkey: actor
     });
-    await this._ensureFabric();
+    await this._ensureFabric().catch(() => null);
     if (this.fabricNetwork && this.fabricNetwork.ready) {
-      this.fabricNetwork.publishFederationInviteResponse(contractId, response);
+      try {
+        this.fabricNetwork.publishFederationInviteResponse(contractId, response);
+      } catch (e) {
+        this.emit('error', e);
+      }
     }
-    // Membership is applied on the inviting node when the Response is ingested
-    // (addMember → GroupChange). Invitee waits for GroupChange / republish.
+    // Local invitee membership: join immediately so paste-accept is usable
+    // without waiting for the inviter's GroupChange round-trip.
+    let joined = null;
+    if (accept) {
+      joined = await this.groupManager.joinFromPendingInvite(group.id, actor, stored || {
+        inviteId,
+        contractId
+      });
+    }
     if (stored && this.registerStore) {
       stored.status = accept ? 'accepted' : 'rejected';
       stored.respondedAt = new Date().toISOString();
       stored.responderPubkey = actor;
+      stored.groupId = group.id;
       this.registerStore.put('groupinvites', inviteId, stored);
     }
-    return response;
+    return Object.assign({}, response, {
+      group: joined || (typeof group.toJSON === 'function' ? group.toJSON() : group)
+    });
   }
 
   _ingestFederationInvite (object, source, meta) {
@@ -2955,12 +4390,25 @@ class StarCitizenService extends EventEmitter {
     } = require('../functions/federationContractInvite');
     const invite = parseFederationContractInviteLoose(object)
       || parseFederationContractInviteLoose(JSON.stringify(object));
-    if (!invite || !invite.inviteId) return;
-    const contractId = invite.contractId || (meta && meta.contract);
-    const group = this.groupManager && (
-      (contractId && this.groupManager.getGroupByContractId(contractId))
-      || null
-    );
+    if (!invite || !invite.inviteId) {
+      return { kind: 'FederationContractInvite', invite: null, pending: false };
+    }
+    const contractId = invite.contractId || (meta && meta.contract) || null;
+    let group = null;
+    let created = false;
+    if (this.groupManager && contractId) {
+      group = this.groupManager.getGroupByContractId(contractId);
+      if (!group && invite.proposedPolicy) {
+        const shell = this.groupManager.ingestFederationInviteShell(
+          Object.assign({}, invite, { contractId }),
+          source || 'federation-invite'
+        );
+        if (shell) {
+          group = shell.group;
+          created = !!shell.created;
+        }
+      }
+    }
     if (this.registerStore) {
       this.registerStore.put('groupinvites', invite.inviteId, Object.assign({}, invite, {
         groupId: group ? group.id : null,
@@ -2971,6 +4419,14 @@ class StarCitizenService extends EventEmitter {
       }));
     }
     this.emit('group:invite', invite);
+    return {
+      kind: 'FederationContractInvite',
+      invite,
+      group: group || null,
+      created,
+      pending: true,
+      contractId
+    };
   }
 
   _ingestFederationInviteResponse (object, source, meta) {

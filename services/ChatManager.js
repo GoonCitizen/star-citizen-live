@@ -21,12 +21,13 @@
 
 const crypto = require('crypto');
 const EventEmitter = require('events');
+const { OUTER } = require('../contracts/applicationMessageTypes');
 
 const GLOBAL_CHANNEL = 'global';
 const GROUP_PREFIX = 'group:';
 const MAX_BODY = 2000;
 const TYPE = 'ChatMessage';
-const WIRE_TYPE = 'P2P_CHAT_MESSAGE';
+const WIRE_TYPE = OUTER.P2P_CHAT_MESSAGE;
 
 function sha256 (s) { return crypto.createHash('sha256').update(String(s)).digest('hex'); }
 

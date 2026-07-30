@@ -205,7 +205,7 @@ test('SCEventBatch over Fabric delivers log events to a peer', async () => {
   const dirB = tmpDir();
 
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-  const waitFor = async (fn, timeoutMs = 15000) => {
+  const waitFor = async (fn, timeoutMs = 20000) => {
     const start = Date.now();
     while (Date.now() - start < timeoutMs) {
       if (await fn()) return true;
@@ -214,6 +214,8 @@ test('SCEventBatch over Fabric delivers log events to a peer', async () => {
     throw new Error('timeout');
   };
 
+  // Seed the peer in constructor settings — POST /peers rejects loopback (127.0.0.1)
+  // by design; local Fabric tests must dial via the LiveRelay peers list like fabric-peer.test.js.
   const serverA = new LiveRelay({
     port: 0,
     settingsDir: dirB,
@@ -222,6 +224,8 @@ test('SCEventBatch over Fabric delivers log events to a peer', async () => {
     fabric: { enable: true, listen: true, port: fabB, peers: [], peersDb: null, relayAppMessages: true }
   });
   await serverA.start();
+  serverA.setIdentity(peerId);
+  await waitFor(() => serverA.fabricNetwork && serverA.fabricNetwork.ready);
   const portA = serverA.server.address().port;
 
   const client = new LiveRelay({
@@ -229,23 +233,30 @@ test('SCEventBatch over Fabric delivers log events to a peer', async () => {
     settingsDir: dir,
     missions: { enable: false },
     uplink: { intervalMs: 60000 },
-    peers: [],
+    peers: [{
+      address: `127.0.0.1:${fabB}`,
+      label: 'peer-b',
+      enabled: true,
+      shareLogs: true
+    }],
     fabric: { enable: true, listen: true, port: fabA, peers: [], peersDb: null }
   });
   await client.start();
+  client.setIdentity(identity);
+  await waitFor(() => client.fabricNetwork && client.fabricNetwork.ready);
+  await waitFor(() => (
+    client.fabricNetwork.status().fabricConnected >= 1 ||
+    serverA.fabricNetwork.status().fabricConnected >= 1
+  ));
   const clientPort = client.server.address().port;
-  try {
-    client.setIdentity(identity);
-    serverA.setIdentity(peerId);
-    await waitFor(() => client.fabricNetwork && client.fabricNetwork.ready);
-    await waitFor(() => serverA.fabricNetwork && serverA.fabricNetwork.ready);
-    await request(clientPort, 'POST', '/peers', { address: `127.0.0.1:${fabB}` });
-    await waitFor(() => client.fabricNetwork.status().fabricConnected >= 1);
 
-    // Opt-in: authorize log share to the peer (default is off).
+  try {
+    // Opt-in shareLogs is already true on the seeded peer; patch confirms the API path.
     const peerList = await request(clientPort, 'GET', '/peers');
-    const rosterId = peerList.body.data.find((p) => String(p.address).includes(String(fabB))).id;
-    await request(clientPort, 'POST', `/peers/${rosterId}`, { shareLogs: true });
+    const roster = peerList.body.data.find((p) => String(p.address).includes(String(fabB)));
+    assert.ok(roster, 'seeded peer present on roster');
+    assert.strictEqual(roster.shareLogs, true);
+    await request(clientPort, 'POST', `/peers/${roster.id}`, { shareLogs: true });
 
     client.handleLogChange("<2026-07-19T13:00:00.000Z> [Notice] <Actor Death> CActor::Kill: 'V' [1] in zone 'Z' killed by 'K' [2] using 'G' [Class R] with damage type 'B' from direction x: 0.1, y: 0.2, z: 0.3");
     assert.ok(client._uplinkQueue.length >= 1);

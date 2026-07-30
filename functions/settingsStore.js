@@ -10,12 +10,19 @@
 // Only allowlisted keys are persisted, so the collection stays a small,
 // auditable operator config (never secrets like the identity key).
 
+const { sanitizeCorpusDirs, sanitizeCorpusFiles } = require('./fsBrowser');
+const { sanitizeProfile } = require('./peerProfile');
+const { sanitizePresenceShare } = require('./presence');
+
 // Operator-editable keys (mirrors the Hub's allowlisted-settings approach).
 const ALLOWED_KEYS = [
   'logfile',    // explicit Game.log path (null = auto-detect)
   'channel',    // forced SC channel (LIVE/PTU/EPTU/HOTFIX/TECH-PREVIEW)
+  'corpusDirs', // extra directories of *.log to fold into cumulative history (Feed import)
+  'corpusFiles', // individually selected log files (Feed import)
   'peers',      // [{ id, address, label, enabled }] — Fabric host:port peers
   'fabricPort', // local Fabric Peer listen port (default 7777)
+  'fabricAdvertiseHost', // public host for P2P_PEERING_OFFER (slot fill); null = do not announce
   'uplinkIntervalMs',
   'discordWebhook',
   'openAtLogin',
@@ -30,8 +37,15 @@ const ALLOWED_KEYS = [
   'notifyChatGroups',        // notify on new group chat messages (default true)
   'notifyWhenFocused',       // also notify while the app window is focused (default false)
   'nickname',                // operator display name for chat (pubkey remains the actor id)
+  'profile',                 // local social profile { bio, scHandle } (nickname is separate)
   'notifyMissionBroadcasts', // desktop notify when a peer broadcasts a mission (default true)
-  'linkedDevices'            // mutual device-link attestations [{ peerFabricId, label, … }]
+  'linkedDevices',           // mutual device-link attestations [{ peerFabricId, label, … }]
+  'sharePresence',           // publish PeerPresence on Fabric (default false)
+  'presenceVisibility',      // private|peers|groups|public
+  'presenceGroupIds',        // group ids when visibility is groups/public
+  'shipOverrideSlug',        // manual current ship slug; null = autodetect from log
+  'presenceAvailability',    // auto|online|offline (force online/offline vs Game.log)
+  'presenceStatusText'       // short custom status line (max 64)
 ];
 
 const NICKNAME_MAX = 32;
@@ -80,6 +94,39 @@ function putSetting (store, key, value) {
   if (!store) throw new Error('settings store required');
   let next = value === undefined ? null : value;
   if (key === 'nickname') next = sanitizeNickname(next);
+  if (key === 'profile') next = sanitizeProfile(next);
+  if (key === 'fabricAdvertiseHost') {
+    if (next === undefined || next === null || next === '') next = null;
+    else {
+      const host = String(next).trim().toLowerCase().replace(/^https?:\/\//, '').split('/')[0].split(':')[0];
+      next = host && /^[a-z0-9._-]+$/i.test(host) && host !== 'localhost' && host !== '127.0.0.1'
+        ? host
+        : null;
+    }
+  }
+  if (key === 'corpusDirs') {
+    next = sanitizeCorpusDirs(next);
+    if (!next.length) next = null;
+  }
+  if (key === 'corpusFiles') {
+    next = sanitizeCorpusFiles(next);
+    if (!next.length) next = null;
+  }
+  if (key === 'sharePresence') next = next === true;
+  if (key === 'presenceVisibility') next = sanitizePresenceShare({ presenceVisibility: next }).presenceVisibility;
+  if (key === 'presenceGroupIds') {
+    next = sanitizePresenceShare({ presenceGroupIds: next }).presenceGroupIds;
+    if (!next.length) next = null;
+  }
+  if (key === 'shipOverrideSlug') {
+    next = sanitizePresenceShare({ shipOverrideSlug: next }).shipOverrideSlug;
+  }
+  if (key === 'presenceAvailability') {
+    next = sanitizePresenceShare({ presenceAvailability: next }).presenceAvailability;
+  }
+  if (key === 'presenceStatusText') {
+    next = sanitizePresenceShare({ presenceStatusText: next }).presenceStatusText;
+  }
   store.put('settings', key, { id: key, value: next });
   return loadSettings(store);
 }
@@ -88,6 +135,8 @@ module.exports = {
   ALLOWED_KEYS,
   NICKNAME_MAX,
   sanitizeNickname,
+  sanitizeCorpusDirs,
+  sanitizeCorpusFiles,
   loadSettings,
   putSetting
 };

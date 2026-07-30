@@ -1,0 +1,5291 @@
+{
+  "type": "GoonCitizenShipCatalog",
+  "version": 2,
+  "source": "https://api.star-citizen.wiki/api/vehicles",
+  "generatedAt": "2026-07-29T23:42:18.551Z",
+  "count": 295,
+  "ships": [
+    {
+      "slug": "orig-100i",
+      "name": "100i",
+      "manufacturer": "Origin Jumpworks",
+      "codes": [
+        "ORIG"
+      ],
+      "className": "ORIG_100i",
+      "aliases": [
+        "100i"
+      ],
+      "sources": [
+        "star-citizen-wiki"
+      ],
+      "type": "Exploration",
+      "size": "Small",
+      "isSpaceship": true
+    },
+    {
+      "slug": "orig-125a",
+      "name": "125a",
+      "manufacturer": "Origin Jumpworks",
+      "codes": [
+        "ORIG"
+      ],
+      "className": "ORIG_125a",
+      "aliases": [
+        "125a"
+      ],
+      "sources": [
+        "star-citizen-wiki"
+      ],
+      "type": "Combat",
+      "size": "Small",
+      "isSpaceship": true
+    },
+    {
+      "slug": "orig-135c",
+      "name": "135c",
+      "manufacturer": "Origin Jumpworks",
+      "codes": [
+        "ORIG"
+      ],
+      "className": "ORIG_135c",
+      "aliases": [
+        "135c"
+      ],
+      "sources": [
+        "star-citizen-wiki"
+      ],
+      "type": "Transporter",
+      "size": "Small",
+      "isSpaceship": true
+    },
+    {
+      "slug": "orig-300i",
+      "name": "300i",
+      "manufacturer": "Origin Jumpworks",
+      "codes": [
+        "ORIG"
+      ],
+      "className": "ORIG_300i",
+      "aliases": [
+        "300i"
+      ],
+      "sources": [
+        "star-citizen-wiki"
+      ],
+      "type": "Exploration",
+      "size": "Small",
+      "isSpaceship": true
+    },
+    {
+      "slug": "orig-315p",
+      "name": "315p",
+      "manufacturer": "Origin Jumpworks",
+      "codes": [
+        "ORIG"
+      ],
+      "className": "ORIG_315p",
+      "aliases": [
+        "315p"
+      ],
+      "sources": [
+        "star-citizen-wiki"
+      ],
+      "type": "Exploration",
+      "size": "Small",
+      "isSpaceship": true
+    },
+    {
+      "slug": "orig-325a",
+      "name": "325a",
+      "manufacturer": "Origin Jumpworks",
+      "codes": [
+        "ORIG"
+      ],
+      "className": "ORIG_325a",
+      "aliases": [
+        "325a"
+      ],
+      "sources": [
+        "star-citizen-wiki"
+      ],
+      "type": "Combat",
+      "size": "Small",
+      "isSpaceship": true
+    },
+    {
+      "slug": "orig-350r",
+      "name": "350r",
+      "manufacturer": "Origin Jumpworks",
+      "codes": [
+        "ORIG"
+      ],
+      "className": "ORIG_350r",
+      "aliases": [
+        "350r"
+      ],
+      "sources": [
+        "star-citizen-wiki"
+      ],
+      "type": "competition",
+      "size": "Small",
+      "isSpaceship": true
+    },
+    {
+      "slug": "orig-400i",
+      "name": "400i",
+      "manufacturer": "Origin Jumpworks",
+      "codes": [
+        "ORIG"
+      ],
+      "className": "ORIG_400i",
+      "aliases": [
+        "400i"
+      ],
+      "sources": [
+        "star-citizen-wiki"
+      ],
+      "type": "Exploration",
+      "size": "Large",
+      "isSpaceship": true
+    },
+    {
+      "slug": "orig-600i",
+      "name": "600i",
+      "manufacturer": "Origin Jumpworks",
+      "codes": [
+        "ORIG"
+      ],
+      "className": "ORIG_600i",
+      "aliases": [
+        "600i"
+      ],
+      "sources": [
+        "star-citizen-wiki"
+      ],
+      "type": "Exploration",
+      "size": "Large",
+      "isSpaceship": true
+    },
+    {
+      "slug": "orig-600i-bis2951",
+      "name": "600i 2951 BIS",
+      "manufacturer": "Origin Jumpworks",
+      "codes": [
+        "ORIG"
+      ],
+      "className": "ORIG_600i_BIS2951",
+      "aliases": [
+        "600i-2951-bis"
+      ],
+      "sources": [
+        "star-citizen-wiki"
+      ],
+      "type": "Exploration",
+      "size": "Large",
+      "isSpaceship": true
+    },
+    {
+      "slug": "orig-600i-executive-edition",
+      "name": "600i Executive Edition",
+      "manufacturer": "Origin Jumpworks",
+      "codes": [
+        "ORIG"
+      ],
+      "className": "ORIG_600i_Executive_Edition",
+      "aliases": [
+        "600i-executive",
+        "600i-executive-edition"
+      ],
+      "sources": [
+        "star-citizen-wiki"
+      ],
+      "type": null,
+      "size": null,
+      "isSpaceship": true
+    },
+    {
+      "slug": "orig-600i-touring",
+      "name": "600i Touring",
+      "manufacturer": "Origin Jumpworks",
+      "codes": [
+        "ORIG"
+      ],
+      "className": "ORIG_600i_Touring",
+      "aliases": [
+        "600i-touring"
+      ],
+      "sources": [
+        "star-citizen-wiki"
+      ],
+      "type": "Exploration",
+      "size": "Large",
+      "isSpaceship": true
+    },
+    {
+      "slug": "orig-85x",
+      "name": "85X Limited",
+      "manufacturer": "Origin Jumpworks",
+      "codes": [
+        "ORIG"
+      ],
+      "className": "ORIG_85X",
+      "aliases": [
+        "85x-limited"
+      ],
+      "sources": [
+        "star-citizen-wiki"
+      ],
+      "type": "Exploration",
+      "size": "Small",
+      "isSpaceship": true
+    },
+    {
+      "slug": "orig-890jump",
+      "name": "890 Jump",
+      "manufacturer": "Origin Jumpworks",
+      "codes": [
+        "ORIG"
+      ],
+      "className": "ORIG_890Jump",
+      "aliases": [
+        "890-jump"
+      ],
+      "sources": [
+        "star-citizen-wiki"
+      ],
+      "type": "Exploration",
+      "size": "capital",
+      "isSpaceship": true
+    },
+    {
+      "slug": "crus-spirit-a1",
+      "name": "A1 Spirit",
+      "manufacturer": "Crusader Industries",
+      "codes": [
+        "CRUS"
+      ],
+      "className": "CRUS_Spirit_A1",
+      "aliases": [
+        "a1-spirit"
+      ],
+      "sources": [
+        "star-citizen-wiki"
+      ],
+      "type": "Combat",
+      "size": "Medium",
+      "isSpaceship": true
+    },
+    {
+      "slug": "crus-starlifter-a2",
+      "name": "A2 Hercules Starlifter",
+      "manufacturer": "Crusader Industries",
+      "codes": [
+        "CRUS"
+      ],
+      "className": "CRUS_Starlifter_A2",
+      "aliases": [
+        "a2-hercules-starlifter"
+      ],
+      "sources": [
+        "star-citizen-wiki"
+      ],
+      "type": "Combat",
+      "size": "Large",
+      "isSpaceship": true
+    },
+    {
+      "slug": "crus-starlifter-a2-collector-military",
+      "name": "A2 Hercules Starlifter Wikelo War Special",
+      "manufacturer": "Crusader Industries",
+      "codes": [
+        "CRUS"
+      ],
+      "className": "CRUS_Starlifter_A2_Collector_Military",
+      "aliases": [
+        "a2-hercules-starlifter-wikelo-war-special"
+      ],
+      "sources": [
+        "star-citizen-wiki"
+      ],
+      "type": null,
+      "size": null,
+      "isSpaceship": true
+    },
+    {
+      "slug": "rsi-apollo-medivac",
+      "name": "Apollo Medivac",
+      "manufacturer": "Roberts Space Industries",
+      "codes": [
+        "RSI"
+      ],
+      "className": "RSI_Apollo_Medivac",
+      "aliases": [
+        "apollo-medivac"
+      ],
+      "sources": [
+        "star-citizen-wiki"
+      ],
+      "type": "Support",
+      "size": "Large",
+      "isSpaceship": true
+    },
+    {
+      "slug": "rsi-apollo-triage",
+      "name": "Apollo Triage",
+      "manufacturer": "Roberts Space Industries",
+      "codes": [
+        "RSI"
+      ],
+      "className": "RSI_Apollo_Triage",
+      "aliases": [
+        "apollo-triage"
+      ],
+      "sources": [
+        "star-citizen-wiki"
+      ],
+      "type": "Support",
+      "size": "Large",
+      "isSpaceship": true
+    },
+    {
+      "slug": "rsi-apollo-triage-collector-stealth",
+      "name": "Apollo Triage Wikelo Sneak Special",
+      "manufacturer": "Roberts Space Industries",
+      "codes": [
+        "RSI"
+      ],
+      "className": "RSI_Apollo_Triage_Collector_Stealth",
+      "aliases": [
+        "apollo-triage-wikelo-sneak-special"
+      ],
+      "sources": [
+        "star-citizen-wiki"
+      ],
+      "type": null,
+      "size": null,
+      "isSpaceship": true
+    },
+    {
+      "slug": "crus-starfighter-inferno",
+      "name": "Ares Star Fighter Inferno",
+      "manufacturer": "Crusader Industries",
+      "codes": [
+        "CRUS"
+      ],
+      "className": "CRUS_Starfighter_Inferno",
+      "aliases": [
+        "ares-star-fighter-inferno"
+      ],
+      "sources": [
+        "star-citizen-wiki"
+      ],
+      "type": "Combat",
+      "size": "Medium",
+      "isSpaceship": true
+    },
+    {
+      "slug": "crus-starfighter-inferno-collector-military",
+      "name": "Ares Star Fighter Inferno Wikelo War Special",
+      "manufacturer": "Crusader Industries",
+      "codes": [
+        "CRUS"
+      ],
+      "className": "CRUS_Starfighter_Inferno_Collector_Military",
+      "aliases": [
+        "ares-star-fighter-inferno-wikelo-war-special"
+      ],
+      "sources": [
+        "star-citizen-wiki"
+      ],
+      "type": null,
+      "size": null,
+      "isSpaceship": true
+    },
+    {
+      "slug": "crus-starfighter-ion",
+      "name": "Ares Star Fighter Ion",
+      "manufacturer": "Crusader Industries",
+      "codes": [
+        "CRUS"
+      ],
+      "className": "CRUS_Starfighter_Ion",
+      "aliases": [
+        "ares-star-fighter-ion"
+      ],
+      "sources": [
+        "star-citizen-wiki"
+      ],
+      "type": "Combat",
+      "size": "Medium",
+      "isSpaceship": true
+    },
+    {
+      "slug": "crus-starfighter-ion-collector-stealth",
+      "name": "Ares Star Fighter Ion Wikelo Sneak Special",
+      "manufacturer": "Crusader Industries",
+      "codes": [
+        "CRUS"
+      ],
+      "className": "CRUS_Starfighter_Ion_Collector_Stealth",
+      "aliases": [
+        "ares-star-fighter-ion-wikelo-sneak-special"
+      ],
+      "sources": [
+        "star-citizen-wiki"
+      ],
+      "type": null,
+      "size": null,
+      "isSpaceship": true
+    },
+    {
+      "slug": "argo-atls-geo-ikti",
+      "name": "Argo ATLS GEO IKTI",
+      "manufacturer": "Banu Souli",
+      "codes": [
+        "BANU"
+      ],
+      "className": "ARGO_ATLS_GEO_IKTI",
+      "aliases": [],
+      "sources": [
+        "star-citizen-wiki"
+      ],
+      "type": null,
+      "size": null,
+      "isSpaceship": false
+    },
+    {
+      "slug": "argo-atls-ikti",
+      "name": "Argo ATLS IKTI",
+      "manufacturer": "Banu Souli",
+      "codes": [
+        "BANU"
+      ],
+      "className": "ARGO_ATLS_IKTI",
+      "aliases": [],
+      "sources": [
+        "star-citizen-wiki"
+      ],
+      "type": null,
+      "size": null,
+      "isSpaceship": false
+    },
+    {
+      "slug": "argo-atls-ikti-argos",
+      "name": "Argo ATLS IKTI Rad",
+      "manufacturer": "Banu Souli",
+      "codes": [
+        "BANU"
+      ],
+      "className": "ARGO_ATLS_IKTI_ARGOS",
+      "aliases": [
+        "argo-atls-ikti-rad"
+      ],
+      "sources": [
+        "star-citizen-wiki"
+      ],
+      "type": null,
+      "size": null,
+      "isSpaceship": false
+    },
+    {
+      "slug": "anvl-arrow",
+      "name": "Arrow",
+      "manufacturer": "Anvil Aerospace",
+      "codes": [
+        "ANVL"
+      ],
+      "className": "ANVL_Arrow",
+      "aliases": [
+        "arrow"
+      ],
+      "sources": [
+        "star-citizen-wiki"
+      ],
+      "type": "Combat",
+      "size": "Small",
+      "isSpaceship": true
+    },
+    {
+      "slug": "anvl-asgard",
+      "name": "Asgard",
+      "manufacturer": "Anvil Aerospace",
+      "codes": [
+        "ANVL"
+      ],
+      "className": "ANVL_Asgard",
+      "aliases": [
+        "asgard"
+      ],
+      "sources": [
+        "star-citizen-wiki"
+      ],
+      "type": "Combat",
+      "size": "Large",
+      "isSpaceship": true
+    },
+    {
+      "slug": "anvl-asgard-collector-military",
+      "name": "Asgard Wikelo War Special",
+      "manufacturer": "Anvil Aerospace",
+      "codes": [
+        "ANVL"
+      ],
+      "className": "ANVL_Asgard_Collector_Military",
+      "aliases": [
+        "asgard-wikelo-war-special"
+      ],
+      "sources": [
+        "star-citizen-wiki"
+      ],
+      "type": null,
+      "size": null,
+      "isSpaceship": true
+    },
+    {
+      "slug": "argo-atls",
+      "name": "ATLS",
+      "manufacturer": "Argo Astronautics",
+      "codes": [
+        "ARGO"
+      ],
+      "className": "ARGO_ATLS",
+      "aliases": [
+        "atls"
+      ],
+      "sources": [
+        "star-citizen-wiki"
+      ],
+      "type": "ground",
+      "size": "Medium",
+      "isSpaceship": false
+    },
+    {
+      "slug": "argo-atls-geo-collector-grad03",
+      "name": "ATLS Cool Metal Color",
+      "manufacturer": "Argo Astronautics",
+      "codes": [
+        "ARGO"
+      ],
+      "className": "ARGO_ATLS_GEO_Collector_Grad03",
+      "aliases": [
+        "atls-cool-metal-color"
+      ],
+      "sources": [
+        "star-citizen-wiki"
+      ],
+      "type": "ground",
+      "size": "Medium",
+      "isSpaceship": false
+    },
+    {
+      "slug": "argo-atls-geo",
+      "name": "ATLS GEO",
+      "manufacturer": "Argo Astronautics",
+      "codes": [
+        "ARGO"
+      ],
+      "className": "ARGO_ATLS_GEO",
+      "aliases": [
+        "atls-geo"
+      ],
+      "sources": [
+        "star-citizen-wiki"
+      ],
+      "type": "ground",
+      "size": "Medium",
+      "isSpaceship": false
+    },
+    {
+      "slug": "argo-atls-geo-collector-grad02",
+      "name": "ATLS Orange Line",
+      "manufacturer": "Argo Astronautics",
+      "codes": [
+        "ARGO"
+      ],
+      "className": "ARGO_ATLS_GEO_Collector_Grad02",
+      "aliases": [
+        "atls-orange-line"
+      ],
+      "sources": [
+        "star-citizen-wiki"
+      ],
+      "type": null,
+      "size": null,
+      "isSpaceship": false
+    },
+    {
+      "slug": "argo-atls-geo-collector-grad01",
+      "name": "ATLS Snowland Color",
+      "manufacturer": "Argo Astronautics",
+      "codes": [
+        "ARGO"
+      ],
+      "className": "ARGO_ATLS_GEO_Collector_Grad01",
+      "aliases": [
+        "atls-snowland-color"
+      ],
+      "sources": [
+        "star-citizen-wiki"
+      ],
+      "type": "ground",
+      "size": "Medium",
+      "isSpaceship": false
+    },
+    {
+      "slug": "rsi-aurora-gs-cl",
+      "name": "Aurora Mk I CL",
+      "manufacturer": "Roberts Space Industries",
+      "codes": [
+        "RSI"
+      ],
+      "className": "RSI_Aurora_GS_CL",
+      "aliases": [
+        "aurora-mk-i-cl"
+      ],
+      "sources": [
+        "star-citizen-wiki"
+      ],
+      "type": "Transporter",
+      "size": "Small",
+      "isSpaceship": true
+    },
+    {
+      "slug": "rsi-aurora-gs-es",
+      "name": "Aurora Mk I ES",
+      "manufacturer": "Roberts Space Industries",
+      "codes": [
+        "RSI"
+      ],
+      "className": "RSI_Aurora_GS_ES",
+      "aliases": [
+        "aurora-mk-i-es"
+      ],
+      "sources": [
+        "star-citizen-wiki"
+      ],
+      "type": "Multi-Role",
+      "size": "Small",
+      "isSpaceship": true
+    },
+    {
+      "slug": "rsi-aurora-gs-ln",
+      "name": "Aurora Mk I LN",
+      "manufacturer": "Roberts Space Industries",
+      "codes": [
+        "RSI"
+      ],
+      "className": "RSI_Aurora_GS_LN",
+      "aliases": [
+        "aurora-mk-i-ln"
+      ],
+      "sources": [
+        "star-citizen-wiki"
+      ],
+      "type": "Combat",
+      "size": "Small",
+      "isSpaceship": true
+    },
+    {
+      "slug": "rsi-aurora-gs-lx",
+      "name": "Aurora Mk I LX",
+      "manufacturer": "Roberts Space Industries",
+      "codes": [
+        "RSI"
+      ],
+      "className": "RSI_Aurora_GS_LX",
+      "aliases": [
+        "aurora-mk-i-lx"
+      ],
+      "sources": [
+        "star-citizen-wiki"
+      ],
+      "type": "Exploration",
+      "size": "Small",
+      "isSpaceship": true
+    },
+    {
+      "slug": "rsi-aurora-gs-mr",
+      "name": "Aurora Mk I MR",
+      "manufacturer": "Roberts Space Industries",
+      "codes": [
+        "RSI"
+      ],
+      "className": "RSI_Aurora_GS_MR",
+      "aliases": [
+        "aurora-mk-i-mr"
+      ],
+      "sources": [
+        "star-citizen-wiki"
+      ],
+      "type": "Combat",
+      "size": "Small",
+      "isSpaceship": true
+    },
+    {
+      "slug": "rsi-aurora-gs-se",
+      "name": "Aurora Mk I SE",
+      "manufacturer": "Roberts Space Industries",
+      "codes": [
+        "RSI"
+      ],
+      "className": "RSI_Aurora_GS_SE",
+      "aliases": [
+        "aurora-mk-i-se"
+      ],
+      "sources": [
+        "star-citizen-wiki"
+      ],
+      "type": "Combat",
+      "size": "Small",
+      "isSpaceship": true
+    },
+    {
+      "slug": "rsi-aurora-mk2",
+      "name": "Aurora Mk II",
+      "manufacturer": "Roberts Space Industries",
+      "codes": [
+        "RSI"
+      ],
+      "className": "RSI_Aurora_Mk2",
+      "aliases": [
+        "aurora-mk-ii"
+      ],
+      "sources": [
+        "star-citizen-wiki"
+      ],
+      "type": "Multi-Role",
+      "size": "Small",
+      "isSpaceship": true
+    },
+    {
+      "slug": "aegs-avenger-stalker",
+      "name": "Avenger Stalker",
+      "manufacturer": "Aegis Dynamics",
+      "codes": [
+        "AEGS"
+      ],
+      "className": "AEGS_Avenger_Stalker",
+      "aliases": [
+        "avenger-stalker"
+      ],
+      "sources": [
+        "star-citizen-wiki"
+      ],
+      "type": "Combat",
+      "size": "Small",
+      "isSpaceship": true
+    },
+    {
+      "slug": "aegs-avenger-titan",
+      "name": "Avenger Titan",
+      "manufacturer": "Aegis Dynamics",
+      "codes": [
+        "AEGS"
+      ],
+      "className": "AEGS_Avenger_Titan",
+      "aliases": [
+        "avenger-titan"
+      ],
+      "sources": [
+        "star-citizen-wiki"
+      ],
+      "type": "Transporter",
+      "size": "Small",
+      "isSpaceship": true
+    },
+    {
+      "slug": "aegs-avenger-titan-renegade",
+      "name": "Avenger Titan Renegade",
+      "manufacturer": "Aegis Dynamics",
+      "codes": [
+        "AEGS"
+      ],
+      "className": "AEGS_Avenger_Titan_Renegade",
+      "aliases": [
+        "avenger-titan-renegade"
+      ],
+      "sources": [
+        "star-citizen-wiki"
+      ],
+      "type": "Transporter",
+      "size": "Small",
+      "isSpaceship": true
+    },
+    {
+      "slug": "aegs-avenger-warlock",
+      "name": "Avenger Warlock",
+      "manufacturer": "Aegis Dynamics",
+      "codes": [
+        "AEGS"
+      ],
+      "className": "AEGS_Avenger_Warlock",
+      "aliases": [
+        "avenger-warlock"
+      ],
+      "sources": [
+        "star-citizen-wiki"
+      ],
+      "type": "Combat",
+      "size": "Small",
+      "isSpaceship": true
+    },
+    {
+      "slug": "anvl-ballista",
+      "name": "Ballista",
+      "manufacturer": "Anvil Aerospace",
+      "codes": [
+        "ANVL"
+      ],
+      "className": "ANVL_Ballista",
+      "aliases": [
+        "ballista"
+      ],
+      "sources": [
+        "star-citizen-wiki"
+      ],
+      "type": "Combat",
+      "size": "vehicle",
+      "isSpaceship": false
+    },
+    {
+      "slug": "anvl-ballista-dunestalker",
+      "name": "Ballista Dunestalker",
+      "manufacturer": "Anvil Aerospace",
+      "codes": [
+        "ANVL"
+      ],
+      "className": "ANVL_Ballista_Dunestalker",
+      "aliases": [
+        "ballista-dunestalker"
+      ],
+      "sources": [
+        "star-citizen-wiki"
+      ],
+      "type": "Combat",
+      "size": "vehicle",
+      "isSpaceship": false
+    },
+    {
+      "slug": "anvl-ballista-snowblind",
+      "name": "Ballista Snowblind",
+      "manufacturer": "Anvil Aerospace",
+      "codes": [
+        "ANVL"
+      ],
+      "className": "ANVL_Ballista_Snowblind",
+      "aliases": [
+        "ballista-snowblind"
+      ],
+      "sources": [
+        "star-citizen-wiki"
+      ],
+      "type": "Combat",
+      "size": "vehicle",
+      "isSpaceship": false
+    },
+    {
+      "slug": "glsn-basher",
+      "name": "Basher",
+      "manufacturer": "Grey's Market",
+      "codes": [
+        "GLSN"
+      ],
+      "className": "GLSN_Basher",
+      "aliases": [
+        "basher"
+      ],
+      "sources": [
+        "star-citizen-wiki"
+      ],
+      "type": null,
+      "size": null,
+      "isSpaceship": true
+    },
+    {
+      "slug": "vncl-blade",
+      "name": "Blade",
+      "manufacturer": "Esperia",
+      "codes": [
+        "ESPR"
+      ],
+      "className": "VNCL_Blade",
+      "aliases": [
+        "blade"
+      ],
+      "sources": [
+        "star-citizen-wiki"
+      ],
+      "type": "Combat",
+      "size": "Small",
+      "isSpaceship": true
+    },
+    {
+      "slug": "drak-buccaneer",
+      "name": "Buccaneer",
+      "manufacturer": "Drake Interplanetary",
+      "codes": [
+        "DRAK"
+      ],
+      "className": "DRAK_Buccaneer",
+      "aliases": [
+        "buccaneer"
+      ],
+      "sources": [
+        "star-citizen-wiki"
+      ],
+      "type": "Combat",
+      "size": "Small",
+      "isSpaceship": true
+    },
+    {
+      "slug": "crus-spirit-c1",
+      "name": "C1 Spirit",
+      "manufacturer": "Crusader Industries",
+      "codes": [
+        "CRUS"
+      ],
+      "className": "CRUS_Spirit_C1",
+      "aliases": [
+        "c1-spirit"
+      ],
+      "sources": [
+        "star-citizen-wiki"
+      ],
+      "type": "Transporter",
+      "size": "Medium",
+      "isSpaceship": true
+    },
+    {
+      "slug": "crus-spirit-c1-civilian",
+      "name": "C1 Spirit Wikelo Special",
+      "manufacturer": "Crusader Industries",
+      "codes": [
+        "CRUS"
+      ],
+      "className": "CRUS_Spirit_C1_Civilian",
+      "aliases": [
+        "c1-spirit-wikelo-special"
+      ],
+      "sources": [
+        "star-citizen-wiki"
+      ],
+      "type": null,
+      "size": null,
+      "isSpaceship": true
+    },
+    {
+      "slug": "crus-starlifter-c2",
+      "name": "C2 Hercules Starlifter",
+      "manufacturer": "Crusader Industries",
+      "codes": [
+        "CRUS"
+      ],
+      "className": "CRUS_Starlifter_C2",
+      "aliases": [
+        "c2-hercules-starlifter"
+      ],
+      "sources": [
+        "star-citizen-wiki"
+      ],
+      "type": "Transporter",
+      "size": "Large",
+      "isSpaceship": true
+    },
+    {
+      "slug": "anvl-c8-pisces",
+      "name": "C8 Pisces",
+      "manufacturer": "Anvil Aerospace",
+      "codes": [
+        "ANVL"
+      ],
+      "className": "ANVL_C8_Pisces",
+      "aliases": [
+        "c8-pisces"
+      ],
+      "sources": [
+        "star-citizen-wiki"
+      ],
+      "type": "Exploration",
+      "size": "Small",
+      "isSpaceship": true
+    },
+    {
+      "slug": "anvl-c8r-pisces",
+      "name": "C8R Pisces Rescue",
+      "manufacturer": "Anvil Aerospace",
+      "codes": [
+        "ANVL"
+      ],
+      "className": "ANVL_C8R_Pisces",
+      "aliases": [
+        "c8r-pisces-rescue"
+      ],
+      "sources": [
+        "star-citizen-wiki"
+      ],
+      "type": "Support",
+      "size": "Small",
+      "isSpaceship": true
+    },
+    {
+      "slug": "anvl-c8x-pisces-expedition",
+      "name": "C8X Pisces Expedition",
+      "manufacturer": "Anvil Aerospace",
+      "codes": [
+        "ANVL"
+      ],
+      "className": "ANVL_C8X_Pisces_Expedition",
+      "aliases": [
+        "c8x-pisces-expedition"
+      ],
+      "sources": [
+        "star-citizen-wiki"
+      ],
+      "type": "Exploration",
+      "size": "Small",
+      "isSpaceship": true
+    },
+    {
+      "slug": "anvl-carrack",
+      "name": "Carrack",
+      "manufacturer": "Anvil Aerospace",
+      "codes": [
+        "ANVL"
+      ],
+      "className": "ANVL_Carrack",
+      "aliases": [
+        "carrack"
+      ],
+      "sources": [
+        "star-citizen-wiki"
+      ],
+      "type": "Exploration",
+      "size": "Large",
+      "isSpaceship": true
+    },
+    {
+      "slug": "anvl-carrack-bis2950",
+      "name": "Carrack",
+      "manufacturer": "Anvil Aerospace",
+      "codes": [
+        "ANVL"
+      ],
+      "className": "ANVL_Carrack_BIS2950",
+      "aliases": [
+        "carrack"
+      ],
+      "sources": [
+        "star-citizen-wiki"
+      ],
+      "type": "Exploration",
+      "size": "Large",
+      "isSpaceship": true
+    },
+    {
+      "slug": "anvl-carrack-expedition",
+      "name": "Carrack Expedition",
+      "manufacturer": "Anvil Aerospace",
+      "codes": [
+        "ANVL"
+      ],
+      "className": "ANVL_Carrack_Expedition",
+      "aliases": [
+        "carrack-expedition"
+      ],
+      "sources": [
+        "star-citizen-wiki"
+      ],
+      "type": "Exploration",
+      "size": "Large",
+      "isSpaceship": true
+    },
+    {
+      "slug": "drak-caterpillar",
+      "name": "Caterpillar",
+      "manufacturer": "Drake Interplanetary",
+      "codes": [
+        "DRAK"
+      ],
+      "className": "DRAK_Caterpillar",
+      "aliases": [
+        "caterpillar"
+      ],
+      "sources": [
+        "star-citizen-wiki"
+      ],
+      "type": "Transporter",
+      "size": "Large",
+      "isSpaceship": true
+    },
+    {
+      "slug": "drak-caterpillar-pirate",
+      "name": "Caterpillar Pirate",
+      "manufacturer": "Drake Interplanetary",
+      "codes": [
+        "DRAK"
+      ],
+      "className": "DRAK_Caterpillar_Pirate",
+      "aliases": [
+        "caterpillar-pirate"
+      ],
+      "sources": [
+        "star-citizen-wiki"
+      ],
+      "type": "transport",
+      "size": "Large",
+      "isSpaceship": true
+    },
+    {
+      "slug": "anvl-centurion",
+      "name": "Centurion",
+      "manufacturer": "Anvil Aerospace",
+      "codes": [
+        "ANVL"
+      ],
+      "className": "ANVL_Centurion",
+      "aliases": [
+        "centurion"
+      ],
+      "sources": [
+        "star-citizen-wiki"
+      ],
+      "type": "Combat",
+      "size": "vehicle",
+      "isSpaceship": false
+    },
+    {
+      "slug": "drak-clipper",
+      "name": "Clipper",
+      "manufacturer": "Drake Interplanetary",
+      "codes": [
+        "DRAK"
+      ],
+      "className": "DRAK_Clipper",
+      "aliases": [
+        "clipper"
+      ],
+      "sources": [
+        "star-citizen-wiki"
+      ],
+      "type": "Exploration",
+      "size": "Small",
+      "isSpaceship": true
+    },
+    {
+      "slug": "drak-clipper-collector-military",
+      "name": "Clipper Wikelo War Special",
+      "manufacturer": "Drake Interplanetary",
+      "codes": [
+        "DRAK"
+      ],
+      "className": "DRAK_Clipper_Collector_Military",
+      "aliases": [
+        "clipper-wikelo-war-special"
+      ],
+      "sources": [
+        "star-citizen-wiki"
+      ],
+      "type": null,
+      "size": null,
+      "isSpaceship": true
+    },
+    {
+      "slug": "drak-command-module",
+      "name": "Command Module",
+      "manufacturer": "Drake Interplanetary",
+      "codes": [
+        "DRAK"
+      ],
+      "className": "DRAK_Command_Module",
+      "aliases": [
+        "command-module"
+      ],
+      "sources": [
+        "star-citizen-wiki"
+      ],
+      "type": null,
+      "size": null,
+      "isSpaceship": true
+    },
+    {
+      "slug": "rsi-constellation-andromeda",
+      "name": "Constellation Andromeda",
+      "manufacturer": "Roberts Space Industries",
+      "codes": [
+        "RSI"
+      ],
+      "className": "RSI_Constellation_Andromeda",
+      "aliases": [
+        "constellation-andromeda"
+      ],
+      "sources": [
+        "star-citizen-wiki"
+      ],
+      "type": "Multi-Role",
+      "size": "Large",
+      "isSpaceship": true
+    },
+    {
+      "slug": "rsi-constellation-aquila",
+      "name": "Constellation Aquila",
+      "manufacturer": "Roberts Space Industries",
+      "codes": [
+        "RSI"
+      ],
+      "className": "RSI_Constellation_Aquila",
+      "aliases": [
+        "constellation-aquila"
+      ],
+      "sources": [
+        "star-citizen-wiki"
+      ],
+      "type": "Exploration",
+      "size": "Large",
+      "isSpaceship": true
+    },
+    {
+      "slug": "rsi-constellation-phoenix",
+      "name": "Constellation Phoenix",
+      "manufacturer": "Roberts Space Industries",
+      "codes": [
+        "RSI"
+      ],
+      "className": "RSI_Constellation_Phoenix",
+      "aliases": [
+        "constellation-phoenix"
+      ],
+      "sources": [
+        "star-citizen-wiki"
+      ],
+      "type": "Exploration",
+      "size": "Large",
+      "isSpaceship": true
+    },
+    {
+      "slug": "rsi-constellation-phoenix-emerald",
+      "name": "Constellation Phoenix Emerald",
+      "manufacturer": "Roberts Space Industries",
+      "codes": [
+        "RSI"
+      ],
+      "className": "RSI_Constellation_Phoenix_Emerald",
+      "aliases": [
+        "constellation-phoenix-emerald"
+      ],
+      "sources": [
+        "star-citizen-wiki"
+      ],
+      "type": "Exploration",
+      "size": "Large",
+      "isSpaceship": true
+    },
+    {
+      "slug": "rsi-constellation-taurus",
+      "name": "Constellation Taurus",
+      "manufacturer": "Roberts Space Industries",
+      "codes": [
+        "RSI"
+      ],
+      "className": "RSI_Constellation_Taurus",
+      "aliases": [
+        "constellation-taurus"
+      ],
+      "sources": [
+        "star-citizen-wiki"
+      ],
+      "type": "Transporter",
+      "size": "Large",
+      "isSpaceship": true
+    },
+    {
+      "slug": "rsi-constellation-taurus-military",
+      "name": "Constellation Taurus Wikelo War Special",
+      "manufacturer": "Roberts Space Industries",
+      "codes": [
+        "RSI"
+      ],
+      "className": "RSI_Constellation_Taurus_Military",
+      "aliases": [
+        "constellation-taurus-wikelo-war-special"
+      ],
+      "sources": [
+        "star-citizen-wiki"
+      ],
+      "type": null,
+      "size": null,
+      "isSpaceship": true
+    },
+    {
+      "slug": "drak-corsair",
+      "name": "Corsair",
+      "manufacturer": "Drake Interplanetary",
+      "codes": [
+        "DRAK"
+      ],
+      "className": "DRAK_Corsair",
+      "aliases": [
+        "corsair"
+      ],
+      "sources": [
+        "star-citizen-wiki"
+      ],
+      "type": "Exploration",
+      "size": "Large",
+      "isSpaceship": true
+    },
+    {
+      "slug": "drak-corsair-exec-military",
+      "name": "Corsair PYAM Exec",
+      "manufacturer": "Drake Interplanetary",
+      "codes": [
+        "DRAK"
+      ],
+      "className": "DRAK_Corsair_Exec_Military",
+      "aliases": [
+        "corsair-pyam-exec"
+      ],
+      "sources": [
+        "star-citizen-wiki"
+      ],
+      "type": null,
+      "size": null,
+      "isSpaceship": true
+    },
+    {
+      "slug": "drak-corsair-exec-stealthindustrial",
+      "name": "Corsair PYAM Exec",
+      "manufacturer": "Drake Interplanetary",
+      "codes": [
+        "DRAK"
+      ],
+      "className": "DRAK_Corsair_Exec_StealthIndustrial",
+      "aliases": [
+        "corsair-pyam-exec"
+      ],
+      "sources": [
+        "star-citizen-wiki"
+      ],
+      "type": null,
+      "size": null,
+      "isSpaceship": true
+    },
+    {
+      "slug": "argo-csv-cargo",
+      "name": "CSV-SM",
+      "manufacturer": "Argo Astronautics",
+      "codes": [
+        "ARGO"
+      ],
+      "className": "ARGO_CSV_Cargo",
+      "aliases": [
+        "csv-sm"
+      ],
+      "sources": [
+        "star-citizen-wiki"
+      ],
+      "type": "Transporter",
+      "size": "Medium",
+      "isSpaceship": false
+    },
+    {
+      "slug": "drak-cutlass-black",
+      "name": "Cutlass Black",
+      "manufacturer": "Drake Interplanetary",
+      "codes": [
+        "DRAK"
+      ],
+      "className": "DRAK_Cutlass_Black",
+      "aliases": [
+        "cutlass-black"
+      ],
+      "sources": [
+        "star-citizen-wiki"
+      ],
+      "type": "Multi-Role",
+      "size": "Medium",
+      "isSpaceship": true
+    },
+    {
+      "slug": "drak-cutlass-black-bis2950",
+      "name": "Cutlass Black",
+      "manufacturer": "Drake Interplanetary",
+      "codes": [
+        "DRAK"
+      ],
+      "className": "DRAK_Cutlass_Black_BIS2950",
+      "aliases": [
+        "cutlass-black"
+      ],
+      "sources": [
+        "star-citizen-wiki"
+      ],
+      "type": "Multi-Role",
+      "size": "Medium",
+      "isSpaceship": true
+    },
+    {
+      "slug": "drak-cutlass-black-exec-stealth",
+      "name": "Cutlass Black PYAM Exec",
+      "manufacturer": "Drake Interplanetary",
+      "codes": [
+        "DRAK"
+      ],
+      "className": "DRAK_Cutlass_Black_Exec_Stealth",
+      "aliases": [
+        "cutlass-black-pyam-exec"
+      ],
+      "sources": [
+        "star-citizen-wiki"
+      ],
+      "type": null,
+      "size": null,
+      "isSpaceship": true
+    },
+    {
+      "slug": "drak-cutlass-black-exec-military",
+      "name": "Cutlass Black PYAM Exec",
+      "manufacturer": "Drake Interplanetary",
+      "codes": [
+        "DRAK"
+      ],
+      "className": "DRAK_Cutlass_Black_Exec_Military",
+      "aliases": [
+        "cutlass-black-pyam-exec"
+      ],
+      "sources": [
+        "star-citizen-wiki"
+      ],
+      "type": null,
+      "size": null,
+      "isSpaceship": true
+    },
+    {
+      "slug": "drak-cutlass-blue",
+      "name": "Cutlass Blue",
+      "manufacturer": "Drake Interplanetary",
+      "codes": [
+        "DRAK"
+      ],
+      "className": "DRAK_Cutlass_Blue",
+      "aliases": [
+        "cutlass-blue"
+      ],
+      "sources": [
+        "star-citizen-wiki"
+      ],
+      "type": "Combat",
+      "size": "Medium",
+      "isSpaceship": true
+    },
+    {
+      "slug": "drak-cutlass-blue-bis2950",
+      "name": "Cutlass Blue",
+      "manufacturer": "Drake Interplanetary",
+      "codes": [
+        "DRAK"
+      ],
+      "className": "DRAK_Cutlass_Blue_BIS2950",
+      "aliases": [
+        "cutlass-blue"
+      ],
+      "sources": [
+        "star-citizen-wiki"
+      ],
+      "type": "Combat",
+      "size": "Medium",
+      "isSpaceship": true
+    },
+    {
+      "slug": "drak-cutlass-red-bis2950",
+      "name": "Cutlass Red",
+      "manufacturer": "Drake Interplanetary",
+      "codes": [
+        "DRAK"
+      ],
+      "className": "DRAK_Cutlass_Red_BIS2950",
+      "aliases": [
+        "cutlass-red"
+      ],
+      "sources": [
+        "star-citizen-wiki"
+      ],
+      "type": "Support",
+      "size": "Medium",
+      "isSpaceship": true
+    },
+    {
+      "slug": "drak-cutlass-red",
+      "name": "Cutlass Red",
+      "manufacturer": "Drake Interplanetary",
+      "codes": [
+        "DRAK"
+      ],
+      "className": "DRAK_Cutlass_Red",
+      "aliases": [
+        "cutlass-red"
+      ],
+      "sources": [
+        "star-citizen-wiki"
+      ],
+      "type": "Support",
+      "size": "Medium",
+      "isSpaceship": true
+    },
+    {
+      "slug": "drak-cutlass-steel",
+      "name": "Cutlass Steel",
+      "manufacturer": "Drake Interplanetary",
+      "codes": [
+        "DRAK"
+      ],
+      "className": "DRAK_Cutlass_Steel",
+      "aliases": [
+        "cutlass-steel"
+      ],
+      "sources": [
+        "star-citizen-wiki"
+      ],
+      "type": "Combat",
+      "size": "Medium",
+      "isSpaceship": true
+    },
+    {
+      "slug": "drak-cutter",
+      "name": "Cutter",
+      "manufacturer": "Drake Interplanetary",
+      "codes": [
+        "DRAK"
+      ],
+      "className": "DRAK_Cutter",
+      "aliases": [
+        "cutter"
+      ],
+      "sources": [
+        "star-citizen-wiki"
+      ],
+      "type": "Exploration",
+      "size": "Small",
+      "isSpaceship": true
+    },
+    {
+      "slug": "drak-cutter-rambler",
+      "name": "Cutter Rambler",
+      "manufacturer": "Drake Interplanetary",
+      "codes": [
+        "DRAK"
+      ],
+      "className": "DRAK_Cutter_Rambler",
+      "aliases": [
+        "cutter-rambler"
+      ],
+      "sources": [
+        "star-citizen-wiki"
+      ],
+      "type": "Exploration",
+      "size": "Small",
+      "isSpaceship": true
+    },
+    {
+      "slug": "drak-cutter-scout",
+      "name": "Cutter Scout",
+      "manufacturer": "Drake Interplanetary",
+      "codes": [
+        "DRAK"
+      ],
+      "className": "DRAK_Cutter_Scout",
+      "aliases": [
+        "cutter-scout"
+      ],
+      "sources": [
+        "star-citizen-wiki"
+      ],
+      "type": "Exploration",
+      "size": "Small",
+      "isSpaceship": true
+    },
+    {
+      "slug": "tmbl-cyclone",
+      "name": "Cyclone",
+      "manufacturer": "Tumbril Land Systems",
+      "codes": [
+        "TMBL"
+      ],
+      "className": "TMBL_Cyclone",
+      "aliases": [
+        "cyclone"
+      ],
+      "sources": [
+        "star-citizen-wiki"
+      ],
+      "type": "Combat",
+      "size": "Medium",
+      "isSpaceship": false
+    },
+    {
+      "slug": "tmbl-cyclone-aa",
+      "name": "Cyclone AA",
+      "manufacturer": "Tumbril Land Systems",
+      "codes": [
+        "TMBL"
+      ],
+      "className": "TMBL_Cyclone_AA",
+      "aliases": [
+        "cyclone-aa"
+      ],
+      "sources": [
+        "star-citizen-wiki"
+      ],
+      "type": "Combat",
+      "size": "Medium",
+      "isSpaceship": false
+    },
+    {
+      "slug": "tmbl-cyclone-mt",
+      "name": "Cyclone MT",
+      "manufacturer": "Tumbril Land Systems",
+      "codes": [
+        "TMBL"
+      ],
+      "className": "TMBL_Cyclone_MT",
+      "aliases": [
+        "cyclone-mt"
+      ],
+      "sources": [
+        "star-citizen-wiki"
+      ],
+      "type": "Combat",
+      "size": "Medium",
+      "isSpaceship": false
+    },
+    {
+      "slug": "tmbl-cyclone-rc",
+      "name": "Cyclone RC",
+      "manufacturer": "Tumbril Land Systems",
+      "codes": [
+        "TMBL"
+      ],
+      "className": "TMBL_Cyclone_RC",
+      "aliases": [
+        "cyclone-rc"
+      ],
+      "sources": [
+        "star-citizen-wiki"
+      ],
+      "type": "competition",
+      "size": "Medium",
+      "isSpaceship": false
+    },
+    {
+      "slug": "tmbl-cyclone-rn",
+      "name": "Cyclone RN",
+      "manufacturer": "Tumbril Land Systems",
+      "codes": [
+        "TMBL"
+      ],
+      "className": "TMBL_Cyclone_RN",
+      "aliases": [
+        "cyclone-rn"
+      ],
+      "sources": [
+        "star-citizen-wiki"
+      ],
+      "type": "Exploration",
+      "size": "Medium",
+      "isSpaceship": false
+    },
+    {
+      "slug": "tmbl-cyclone-tr",
+      "name": "Cyclone TR",
+      "manufacturer": "Tumbril Land Systems",
+      "codes": [
+        "TMBL"
+      ],
+      "className": "TMBL_Cyclone_TR",
+      "aliases": [
+        "cyclone-tr"
+      ],
+      "sources": [
+        "star-citizen-wiki"
+      ],
+      "type": "Combat",
+      "size": "Medium",
+      "isSpaceship": false
+    },
+    {
+      "slug": "banu-defender",
+      "name": "Defender",
+      "manufacturer": "Banu Souli",
+      "codes": [
+        "BANU"
+      ],
+      "className": "BANU_Defender",
+      "aliases": [
+        "defender"
+      ],
+      "sources": [
+        "star-citizen-wiki"
+      ],
+      "type": "Combat",
+      "size": "Small",
+      "isSpaceship": true
+    },
+    {
+      "slug": "drak-dragonfly",
+      "name": "Dragonfly",
+      "manufacturer": "Drake Interplanetary",
+      "codes": [
+        "DRAK"
+      ],
+      "className": "DRAK_Dragonfly",
+      "aliases": [
+        "dragonfly"
+      ],
+      "sources": [
+        "star-citizen-wiki"
+      ],
+      "type": "competition",
+      "size": "Small",
+      "isSpaceship": false
+    },
+    {
+      "slug": "drak-dragonfly-pink",
+      "name": "Dragonfly Star Kitten",
+      "manufacturer": "Drake Interplanetary",
+      "codes": [
+        "DRAK"
+      ],
+      "className": "DRAK_Dragonfly_Pink",
+      "aliases": [
+        "dragonfly-star-kitten",
+        "dragonfly-starkitten"
+      ],
+      "sources": [
+        "star-citizen-wiki"
+      ],
+      "type": null,
+      "size": null,
+      "isSpaceship": false
+    },
+    {
+      "slug": "drak-dragonfly-yellow",
+      "name": "Dragonfly Yellowjacket",
+      "manufacturer": "Drake Interplanetary",
+      "codes": [
+        "DRAK"
+      ],
+      "className": "DRAK_Dragonfly_Yellow",
+      "aliases": [
+        "dragonfly-yellowjacket"
+      ],
+      "sources": [
+        "star-citizen-wiki"
+      ],
+      "type": "competition",
+      "size": "Small",
+      "isSpaceship": false
+    },
+    {
+      "slug": "aegs-eclipse-bis2950",
+      "name": "Eclipse",
+      "manufacturer": "Aegis Dynamics",
+      "codes": [
+        "AEGS"
+      ],
+      "className": "AEGS_Eclipse_BIS2950",
+      "aliases": [
+        "eclipse"
+      ],
+      "sources": [
+        "star-citizen-wiki"
+      ],
+      "type": "Combat",
+      "size": "Small",
+      "isSpaceship": true
+    },
+    {
+      "slug": "aegs-eclipse",
+      "name": "Eclipse",
+      "manufacturer": "Aegis Dynamics",
+      "codes": [
+        "AEGS"
+      ],
+      "className": "AEGS_Eclipse",
+      "aliases": [
+        "eclipse"
+      ],
+      "sources": [
+        "star-citizen-wiki"
+      ],
+      "type": "Combat",
+      "size": "Small",
+      "isSpaceship": true
+    },
+    {
+      "slug": "anvl-hornet-f7-mk2-collector-mod",
+      "name": "F7 Hornet Mk Wikelo",
+      "manufacturer": "Anvil Aerospace",
+      "codes": [
+        "ANVL"
+      ],
+      "className": "ANVL_Hornet_F7_Mk2_Collector_Mod",
+      "aliases": [
+        "f7-hornet-mk-wikelo"
+      ],
+      "sources": [
+        "star-citizen-wiki"
+      ],
+      "type": null,
+      "size": null,
+      "isSpaceship": true
+    },
+    {
+      "slug": "anvl-hornet-f7a-mk1",
+      "name": "F7A Hornet Mk I",
+      "manufacturer": "Anvil Aerospace",
+      "codes": [
+        "ANVL"
+      ],
+      "className": "ANVL_Hornet_F7A_Mk1",
+      "aliases": [
+        "f7a-hornet-mk-i"
+      ],
+      "sources": [
+        "star-citizen-wiki"
+      ],
+      "type": "Combat",
+      "size": "Small",
+      "isSpaceship": true
+    },
+    {
+      "slug": "anvl-hornet-f7a-mk2",
+      "name": "F7A Hornet Mk II",
+      "manufacturer": "Anvil Aerospace",
+      "codes": [
+        "ANVL"
+      ],
+      "className": "ANVL_Hornet_F7A_Mk2",
+      "aliases": [
+        "f7a-hornet-mk-ii",
+        "f7a-mkii"
+      ],
+      "sources": [
+        "star-citizen-wiki"
+      ],
+      "type": "Combat",
+      "size": "Small",
+      "isSpaceship": true
+    },
+    {
+      "slug": "anvl-hornet-f7c",
+      "name": "F7C Hornet Mk I",
+      "manufacturer": "Anvil Aerospace",
+      "codes": [
+        "ANVL"
+      ],
+      "className": "ANVL_Hornet_F7C",
+      "aliases": [
+        "f7c-hornet-mk-i"
+      ],
+      "sources": [
+        "star-citizen-wiki"
+      ],
+      "type": "Combat",
+      "size": "Small",
+      "isSpaceship": true
+    },
+    {
+      "slug": "anvl-hornet-f7c-mk2",
+      "name": "F7C Hornet Mk II",
+      "manufacturer": "Anvil Aerospace",
+      "codes": [
+        "ANVL"
+      ],
+      "className": "ANVL_Hornet_F7C_Mk2",
+      "aliases": [
+        "f7c-hornet-mk-ii"
+      ],
+      "sources": [
+        "star-citizen-wiki"
+      ],
+      "type": "Combat",
+      "size": "Small",
+      "isSpaceship": true
+    },
+    {
+      "slug": "anvl-hornet-f7c-wildfire",
+      "name": "F7C Hornet Wildfire Mk I",
+      "manufacturer": "Anvil Aerospace",
+      "codes": [
+        "ANVL"
+      ],
+      "className": "ANVL_Hornet_F7C_Wildfire",
+      "aliases": [
+        "f7c-hornet-wildfire-mk-i"
+      ],
+      "sources": [
+        "star-citizen-wiki"
+      ],
+      "type": "Combat",
+      "size": "Small",
+      "isSpaceship": true
+    },
+    {
+      "slug": "anvl-hornet-f7cm-heartseeker",
+      "name": "F7C-M Hornet Heartseeker Mk I",
+      "manufacturer": "Anvil Aerospace",
+      "codes": [
+        "ANVL"
+      ],
+      "className": "ANVL_Hornet_F7CM_Heartseeker",
+      "aliases": [
+        "f7c-m-hornet-heartseeker-mk-i"
+      ],
+      "sources": [
+        "star-citizen-wiki"
+      ],
+      "type": "Combat",
+      "size": "Small",
+      "isSpaceship": true
+    },
+    {
+      "slug": "anvl-hornet-f7cm-mk2-heartseeker",
+      "name": "F7C-M Hornet Heartseeker Mk II",
+      "manufacturer": "Anvil Aerospace",
+      "codes": [
+        "ANVL"
+      ],
+      "className": "ANVL_Hornet_F7CM_Mk2_Heartseeker",
+      "aliases": [
+        "f7c-m-hornet-heartseeker-mk-ii"
+      ],
+      "sources": [
+        "star-citizen-wiki"
+      ],
+      "type": "Combat",
+      "size": "Small",
+      "isSpaceship": true
+    },
+    {
+      "slug": "anvl-hornet-f7cm",
+      "name": "F7C-M Super Hornet Mk I",
+      "manufacturer": "Anvil Aerospace",
+      "codes": [
+        "ANVL"
+      ],
+      "className": "ANVL_Hornet_F7CM",
+      "aliases": [
+        "f7c-m-super-hornet-mk-i"
+      ],
+      "sources": [
+        "star-citizen-wiki"
+      ],
+      "type": "Combat",
+      "size": "Small",
+      "isSpaceship": true
+    },
+    {
+      "slug": "anvl-hornet-f7cm-mk2",
+      "name": "F7C-M Super Hornet Mk II",
+      "manufacturer": "Anvil Aerospace",
+      "codes": [
+        "ANVL"
+      ],
+      "className": "ANVL_Hornet_F7CM_Mk2",
+      "aliases": [
+        "f7c-m-super-hornet-mk-ii"
+      ],
+      "sources": [
+        "star-citizen-wiki"
+      ],
+      "type": "Combat",
+      "size": "Small",
+      "isSpaceship": true
+    },
+    {
+      "slug": "anvl-hornet-f7cr",
+      "name": "F7C-R Hornet Tracker Mk I",
+      "manufacturer": "Anvil Aerospace",
+      "codes": [
+        "ANVL"
+      ],
+      "className": "ANVL_Hornet_F7CR",
+      "aliases": [
+        "f7c-r-hornet-tracker-mk-i"
+      ],
+      "sources": [
+        "star-citizen-wiki"
+      ],
+      "type": "Exploration",
+      "size": "Small",
+      "isSpaceship": true
+    },
+    {
+      "slug": "anvl-hornet-f7cr-mk2",
+      "name": "F7C-R Hornet Tracker Mk II",
+      "manufacturer": "Anvil Aerospace",
+      "codes": [
+        "ANVL"
+      ],
+      "className": "ANVL_Hornet_F7CR_Mk2",
+      "aliases": [
+        "f7c-r-hornet-tracker-mk-ii"
+      ],
+      "sources": [
+        "star-citizen-wiki"
+      ],
+      "type": "Combat",
+      "size": "Small",
+      "isSpaceship": true
+    },
+    {
+      "slug": "anvl-hornet-f7cs",
+      "name": "F7C-S Hornet Ghost Mk I",
+      "manufacturer": "Anvil Aerospace",
+      "codes": [
+        "ANVL"
+      ],
+      "className": "ANVL_Hornet_F7CS",
+      "aliases": [
+        "f7c-s-hornet-ghost-mk-i"
+      ],
+      "sources": [
+        "star-citizen-wiki"
+      ],
+      "type": "Combat",
+      "size": "Small",
+      "isSpaceship": true
+    },
+    {
+      "slug": "anvl-hornet-f7cs-mk2",
+      "name": "F7C-S Hornet Ghost Mk II",
+      "manufacturer": "Anvil Aerospace",
+      "codes": [
+        "ANVL"
+      ],
+      "className": "ANVL_Hornet_F7CS_Mk2",
+      "aliases": [
+        "f7c-s-hornet-ghost-mk-ii"
+      ],
+      "sources": [
+        "star-citizen-wiki"
+      ],
+      "type": "Combat",
+      "size": "Small",
+      "isSpaceship": true
+    },
+    {
+      "slug": "anvl-lightning-f8",
+      "name": "F8A Lightning",
+      "manufacturer": "Anvil Aerospace",
+      "codes": [
+        "ANVL"
+      ],
+      "className": "ANVL_Lightning_F8",
+      "aliases": [
+        "f8a-lightning"
+      ],
+      "sources": [
+        "star-citizen-wiki"
+      ],
+      "type": "Combat",
+      "size": "Small",
+      "isSpaceship": true
+    },
+    {
+      "slug": "anvl-lightning-f8c",
+      "name": "F8C Lightning",
+      "manufacturer": "Anvil Aerospace",
+      "codes": [
+        "ANVL"
+      ],
+      "className": "ANVL_Lightning_F8C",
+      "aliases": [
+        "f8c-lightning"
+      ],
+      "sources": [
+        "star-citizen-wiki"
+      ],
+      "type": "Combat",
+      "size": "Small",
+      "isSpaceship": true
+    },
+    {
+      "slug": "anvl-lightning-f8c-plat",
+      "name": "F8C Lightning",
+      "manufacturer": "Anvil Aerospace",
+      "codes": [
+        "ANVL"
+      ],
+      "className": "ANVL_Lightning_F8C_Plat",
+      "aliases": [
+        "f8c-lightning"
+      ],
+      "sources": [
+        "star-citizen-wiki"
+      ],
+      "type": "Combat",
+      "size": "Small",
+      "isSpaceship": true
+    },
+    {
+      "slug": "anvl-lightning-f8c-exec",
+      "name": "F8C Lightning Executive Edition",
+      "manufacturer": "Anvil Aerospace",
+      "codes": [
+        "ANVL"
+      ],
+      "className": "ANVL_Lightning_F8C_Exec",
+      "aliases": [
+        "f8c-lightning-executive-edition"
+      ],
+      "sources": [
+        "star-citizen-wiki"
+      ],
+      "type": "Combat",
+      "size": "Small",
+      "isSpaceship": true
+    },
+    {
+      "slug": "anvl-lightning-f8c-exec-stealth",
+      "name": "F8C Lightning PYAM Exec",
+      "manufacturer": "Anvil Aerospace",
+      "codes": [
+        "ANVL"
+      ],
+      "className": "ANVL_Lightning_F8C_Exec_Stealth",
+      "aliases": [
+        "f8c-lightning-pyam-exec"
+      ],
+      "sources": [
+        "star-citizen-wiki"
+      ],
+      "type": null,
+      "size": null,
+      "isSpaceship": true
+    },
+    {
+      "slug": "anvl-lightning-f8c-exec-military",
+      "name": "F8C Lightning PYAM Exec",
+      "manufacturer": "Anvil Aerospace",
+      "codes": [
+        "ANVL"
+      ],
+      "className": "ANVL_Lightning_F8C_Exec_Military",
+      "aliases": [
+        "f8c-lightning-pyam-exec"
+      ],
+      "sources": [
+        "star-citizen-wiki"
+      ],
+      "type": null,
+      "size": null,
+      "isSpaceship": true
+    },
+    {
+      "slug": "anvl-lightning-f8c-collector-stealth",
+      "name": "F8C Lightning Wikelo Sneak Special",
+      "manufacturer": "Anvil Aerospace",
+      "codes": [
+        "ANVL"
+      ],
+      "className": "ANVL_Lightning_F8C_Collector_Stealth",
+      "aliases": [
+        "f8c-lightning-wikelo-sneak-special"
+      ],
+      "sources": [
+        "star-citizen-wiki"
+      ],
+      "type": null,
+      "size": null,
+      "isSpaceship": true
+    },
+    {
+      "slug": "anvl-lightning-f8c-collector-military",
+      "name": "F8C Lightning Wikelo War Special",
+      "manufacturer": "Anvil Aerospace",
+      "codes": [
+        "ANVL"
+      ],
+      "className": "ANVL_Lightning_F8C_Collector_Military",
+      "aliases": [
+        "f8c-lightning-wikelo-war-special"
+      ],
+      "sources": [
+        "star-citizen-wiki"
+      ],
+      "type": null,
+      "size": null,
+      "isSpaceship": true
+    },
+    {
+      "slug": "misc-fury",
+      "name": "Fury",
+      "manufacturer": "Mirai",
+      "codes": [
+        "MRAI"
+      ],
+      "className": "MISC_Fury",
+      "aliases": [
+        "fury"
+      ],
+      "sources": [
+        "star-citizen-wiki"
+      ],
+      "type": "Combat",
+      "size": "snub",
+      "isSpaceship": true
+    },
+    {
+      "slug": "misc-fury-lx",
+      "name": "Fury LX",
+      "manufacturer": "Mirai",
+      "codes": [
+        "MRAI"
+      ],
+      "className": "MISC_Fury_LX",
+      "aliases": [
+        "fury-lx"
+      ],
+      "sources": [
+        "star-citizen-wiki"
+      ],
+      "type": "competition",
+      "size": "snub",
+      "isSpaceship": true
+    },
+    {
+      "slug": "misc-fury-miru",
+      "name": "Fury MX",
+      "manufacturer": "Mirai",
+      "codes": [
+        "MRAI"
+      ],
+      "className": "MISC_Fury_Miru",
+      "aliases": [
+        "fury-mx"
+      ],
+      "sources": [
+        "star-citizen-wiki"
+      ],
+      "type": "Combat",
+      "size": "snub",
+      "isSpaceship": true
+    },
+    {
+      "slug": "anvl-gladiator",
+      "name": "Gladiator",
+      "manufacturer": "Anvil Aerospace",
+      "codes": [
+        "ANVL"
+      ],
+      "className": "ANVL_Gladiator",
+      "aliases": [
+        "gladiator"
+      ],
+      "sources": [
+        "star-citizen-wiki"
+      ],
+      "type": "Combat",
+      "size": "Small",
+      "isSpaceship": true
+    },
+    {
+      "slug": "aegs-gladius",
+      "name": "Gladius",
+      "manufacturer": "Aegis Dynamics",
+      "codes": [
+        "AEGS"
+      ],
+      "className": "AEGS_Gladius",
+      "aliases": [
+        "gladius"
+      ],
+      "sources": [
+        "star-citizen-wiki"
+      ],
+      "type": "Combat",
+      "size": "Small",
+      "isSpaceship": true
+    },
+    {
+      "slug": "aegs-gladius-pir",
+      "name": "Gladius Pirate",
+      "manufacturer": "Aegis Dynamics",
+      "codes": [
+        "AEGS"
+      ],
+      "className": "AEGS_Gladius_PIR",
+      "aliases": [
+        "gladius-pirate"
+      ],
+      "sources": [
+        "star-citizen-wiki"
+      ],
+      "type": "Combat",
+      "size": "Small",
+      "isSpaceship": true
+    },
+    {
+      "slug": "aegs-gladius-valiant",
+      "name": "Gladius Valiant",
+      "manufacturer": "Aegis Dynamics",
+      "codes": [
+        "AEGS"
+      ],
+      "className": "AEGS_Gladius_Valiant",
+      "aliases": [
+        "gladius-valiant"
+      ],
+      "sources": [
+        "star-citizen-wiki"
+      ],
+      "type": "Combat",
+      "size": "Small",
+      "isSpaceship": true
+    },
+    {
+      "slug": "vncl-glaive",
+      "name": "Glaive",
+      "manufacturer": "Esperia",
+      "codes": [
+        "ESPR"
+      ],
+      "className": "VNCL_Glaive",
+      "aliases": [
+        "glaive"
+      ],
+      "sources": [
+        "star-citizen-wiki"
+      ],
+      "type": "Combat",
+      "size": "Medium",
+      "isSpaceship": true
+    },
+    {
+      "slug": "drak-golem",
+      "name": "Golem",
+      "manufacturer": "Drake Interplanetary",
+      "codes": [
+        "DRAK"
+      ],
+      "className": "DRAK_Golem",
+      "aliases": [
+        "golem"
+      ],
+      "sources": [
+        "star-citizen-wiki"
+      ],
+      "type": "Industrial",
+      "size": "Small",
+      "isSpaceship": true
+    },
+    {
+      "slug": "drak-golem-btala",
+      "name": "Golem Alliance",
+      "manufacturer": "Drake Interplanetary",
+      "codes": [
+        "DRAK"
+      ],
+      "className": "DRAK_Golem_BTALA",
+      "aliases": [
+        "golem-alliance"
+      ],
+      "sources": [
+        "star-citizen-wiki"
+      ],
+      "type": null,
+      "size": null,
+      "isSpaceship": true
+    },
+    {
+      "slug": "drak-golem-ox",
+      "name": "Golem OX",
+      "manufacturer": "Drake Interplanetary",
+      "codes": [
+        "DRAK"
+      ],
+      "className": "DRAK_Golem_OX",
+      "aliases": [
+        "golem-ox"
+      ],
+      "sources": [
+        "star-citizen-wiki"
+      ],
+      "type": "Industrial",
+      "size": "Small",
+      "isSpaceship": true
+    },
+    {
+      "slug": "drak-golem-collector-indust",
+      "name": "Golem Wikelo Work Special",
+      "manufacturer": "Drake Interplanetary",
+      "codes": [
+        "DRAK"
+      ],
+      "className": "DRAK_Golem_Collector_Indust",
+      "aliases": [
+        "golem-wikelo-work-special"
+      ],
+      "sources": [
+        "star-citizen-wiki"
+      ],
+      "type": null,
+      "size": null,
+      "isSpaceship": true
+    },
+    {
+      "slug": "mrai-guardian",
+      "name": "Guardian",
+      "manufacturer": "Mirai",
+      "codes": [
+        "MRAI"
+      ],
+      "className": "MRAI_Guardian",
+      "aliases": [
+        "guardian"
+      ],
+      "sources": [
+        "star-citizen-wiki"
+      ],
+      "type": "Combat",
+      "size": "Small",
+      "isSpaceship": true
+    },
+    {
+      "slug": "mrai-guardian-mx",
+      "name": "Guardian MX",
+      "manufacturer": "Mirai",
+      "codes": [
+        "MRAI"
+      ],
+      "className": "MRAI_Guardian_MX",
+      "aliases": [
+        "guardian-mx"
+      ],
+      "sources": [
+        "star-citizen-wiki"
+      ],
+      "type": "Combat",
+      "size": "Small",
+      "isSpaceship": true
+    },
+    {
+      "slug": "mrai-guardian-mx-collector-military",
+      "name": "Guardian MX Wikelo War Special",
+      "manufacturer": "Mirai",
+      "codes": [
+        "MRAI"
+      ],
+      "className": "MRAI_Guardian_MX_Collector_Military",
+      "aliases": [
+        "guardian-mx-wikelo-war-special"
+      ],
+      "sources": [
+        "star-citizen-wiki"
+      ],
+      "type": null,
+      "size": null,
+      "isSpaceship": true
+    },
+    {
+      "slug": "mrai-guardian-qi",
+      "name": "Guardian QI",
+      "manufacturer": "Mirai",
+      "codes": [
+        "MRAI"
+      ],
+      "className": "MRAI_Guardian_QI",
+      "aliases": [
+        "guardian-qi"
+      ],
+      "sources": [
+        "star-citizen-wiki"
+      ],
+      "type": "Combat",
+      "size": "Small",
+      "isSpaceship": true
+    },
+    {
+      "slug": "mrai-guardian-qi-collector-indust",
+      "name": "Guardian QI Wikelo Special",
+      "manufacturer": "Mirai",
+      "codes": [
+        "MRAI"
+      ],
+      "className": "MRAI_Guardian_QI_Collector_Indust",
+      "aliases": [
+        "guardian-qi-wikelo-special"
+      ],
+      "sources": [
+        "star-citizen-wiki"
+      ],
+      "type": null,
+      "size": null,
+      "isSpaceship": true
+    },
+    {
+      "slug": "mrai-guardian-military",
+      "name": "Guardian Wikelo War Special",
+      "manufacturer": "Mirai",
+      "codes": [
+        "MRAI"
+      ],
+      "className": "MRAI_Guardian_Military",
+      "aliases": [
+        "guardian-wikelo-war-special"
+      ],
+      "sources": [
+        "star-citizen-wiki"
+      ],
+      "type": null,
+      "size": null,
+      "isSpaceship": true
+    },
+    {
+      "slug": "aegs-hammerhead-gs",
+      "name": "Hammerhead",
+      "manufacturer": "Aegis Dynamics",
+      "codes": [
+        "AEGS"
+      ],
+      "className": "AEGS_Hammerhead_GS",
+      "aliases": [
+        "hammerhead"
+      ],
+      "sources": [
+        "star-citizen-wiki"
+      ],
+      "type": "Combat",
+      "size": "Large",
+      "isSpaceship": true
+    },
+    {
+      "slug": "aegs-hammerhead",
+      "name": "Hammerhead",
+      "manufacturer": "Aegis Dynamics",
+      "codes": [
+        "AEGS"
+      ],
+      "className": "AEGS_Hammerhead",
+      "aliases": [
+        "hammerhead"
+      ],
+      "sources": [
+        "star-citizen-wiki"
+      ],
+      "type": "Combat",
+      "size": "Large",
+      "isSpaceship": true
+    },
+    {
+      "slug": "aegs-hammerhead-showdown",
+      "name": "Hammerhead 2949 Best In Show Edition",
+      "manufacturer": "Aegis Dynamics",
+      "codes": [
+        "AEGS"
+      ],
+      "className": "AEGS_Hammerhead_Showdown",
+      "aliases": [
+        "hammerhead-2949-best-in-show-edition"
+      ],
+      "sources": [
+        "star-citizen-wiki"
+      ],
+      "type": "Combat",
+      "size": "Large",
+      "isSpaceship": true
+    },
+    {
+      "slug": "anvl-hawk",
+      "name": "Hawk",
+      "manufacturer": "Anvil Aerospace",
+      "codes": [
+        "ANVL"
+      ],
+      "className": "ANVL_Hawk",
+      "aliases": [
+        "hawk"
+      ],
+      "sources": [
+        "star-citizen-wiki"
+      ],
+      "type": "Combat",
+      "size": "Small",
+      "isSpaceship": true
+    },
+    {
+      "slug": "drak-herald",
+      "name": "Herald",
+      "manufacturer": "Drake Interplanetary",
+      "codes": [
+        "DRAK"
+      ],
+      "className": "DRAK_Herald",
+      "aliases": [
+        "herald"
+      ],
+      "sources": [
+        "star-citizen-wiki"
+      ],
+      "type": "Transporter",
+      "size": "Small",
+      "isSpaceship": true
+    },
+    {
+      "slug": "rsi-hermes",
+      "name": "Hermes",
+      "manufacturer": "Roberts Space Industries",
+      "codes": [
+        "RSI"
+      ],
+      "className": "RSI_Hermes",
+      "aliases": [
+        "hermes"
+      ],
+      "sources": [
+        "star-citizen-wiki"
+      ],
+      "type": "Transporter",
+      "size": "Large",
+      "isSpaceship": true
+    },
+    {
+      "slug": "anvl-hornet-f7a-mk2-exec-military",
+      "name": "Hornet F7A Mk II PYAM Exec",
+      "manufacturer": "Anvil Aerospace",
+      "codes": [
+        "ANVL"
+      ],
+      "className": "ANVL_Hornet_F7A_Mk2_Exec_Military",
+      "aliases": [
+        "hornet-f7a-mk-ii-pyam-exec"
+      ],
+      "sources": [
+        "star-citizen-wiki"
+      ],
+      "type": null,
+      "size": null,
+      "isSpaceship": true
+    },
+    {
+      "slug": "anvl-hornet-f7a-mk2-exec-stealth",
+      "name": "Hornet F7A Mk II PYAM Exec",
+      "manufacturer": "Anvil Aerospace",
+      "codes": [
+        "ANVL"
+      ],
+      "className": "ANVL_Hornet_F7A_Mk2_Exec_Stealth",
+      "aliases": [
+        "hornet-f7a-mk-ii-pyam-exec"
+      ],
+      "sources": [
+        "star-citizen-wiki"
+      ],
+      "type": null,
+      "size": null,
+      "isSpaceship": true
+    },
+    {
+      "slug": "cnou-hoverquad",
+      "name": "HoverQuad",
+      "manufacturer": "Consolidated Outland",
+      "codes": [
+        "CNOU"
+      ],
+      "className": "CNOU_HoverQuad",
+      "aliases": [
+        "hoverquad"
+      ],
+      "sources": [
+        "star-citizen-wiki"
+      ],
+      "type": "Exploration",
+      "size": "Small",
+      "isSpaceship": false
+    },
+    {
+      "slug": "anvl-hurricane",
+      "name": "Hurricane",
+      "manufacturer": "Anvil Aerospace",
+      "codes": [
+        "ANVL"
+      ],
+      "className": "ANVL_Hurricane",
+      "aliases": [
+        "hurricane"
+      ],
+      "sources": [
+        "star-citizen-wiki"
+      ],
+      "type": "Combat",
+      "size": "Small",
+      "isSpaceship": true
+    },
+    {
+      "slug": "aegs-idris-m",
+      "name": "Idris-M",
+      "manufacturer": "Aegis Dynamics",
+      "codes": [
+        "AEGS"
+      ],
+      "className": "AEGS_Idris_M",
+      "aliases": [
+        "idris-m"
+      ],
+      "sources": [
+        "star-citizen-wiki"
+      ],
+      "type": "Combat",
+      "size": "capital",
+      "isSpaceship": true
+    },
+    {
+      "slug": "aegs-idris-p-tsg",
+      "name": "Idris-P",
+      "manufacturer": "Aegis Dynamics",
+      "codes": [
+        "AEGS"
+      ],
+      "className": "AEGS_Idris_P_TSG",
+      "aliases": [
+        "idris-p"
+      ],
+      "sources": [
+        "star-citizen-wiki"
+      ],
+      "type": "Combat",
+      "size": "capital",
+      "isSpaceship": true
+    },
+    {
+      "slug": "aegs-idris-p",
+      "name": "Idris-P",
+      "manufacturer": "Aegis Dynamics",
+      "codes": [
+        "AEGS"
+      ],
+      "className": "AEGS_Idris_P",
+      "aliases": [
+        "idris-p"
+      ],
+      "sources": [
+        "star-citizen-wiki"
+      ],
+      "type": "Combat",
+      "size": "capital",
+      "isSpaceship": true
+    },
+    {
+      "slug": "aegs-idris-p-fw-25",
+      "name": "Idris-P",
+      "manufacturer": "Aegis Dynamics",
+      "codes": [
+        "AEGS"
+      ],
+      "className": "AEGS_Idris_P_FW_25",
+      "aliases": [
+        "idris-p"
+      ],
+      "sources": [
+        "star-citizen-wiki"
+      ],
+      "type": "Combat",
+      "size": "capital",
+      "isSpaceship": true
+    },
+    {
+      "slug": "aegs-idris-p-collector-military",
+      "name": "Idris-P Wikelo War Special",
+      "manufacturer": "Aegis Dynamics",
+      "codes": [
+        "AEGS"
+      ],
+      "className": "AEGS_Idris_P_Collector_Military",
+      "aliases": [
+        "idris-p-wikelo-war-special"
+      ],
+      "sources": [
+        "star-citizen-wiki"
+      ],
+      "type": null,
+      "size": null,
+      "isSpaceship": true
+    },
+    {
+      "slug": "crus-intrepid",
+      "name": "Intrepid",
+      "manufacturer": "Crusader Industries",
+      "codes": [
+        "CRUS"
+      ],
+      "className": "CRUS_Intrepid",
+      "aliases": [
+        "intrepid"
+      ],
+      "sources": [
+        "star-citizen-wiki"
+      ],
+      "type": "Starter",
+      "size": "Small",
+      "isSpaceship": true
+    },
+    {
+      "slug": "crus-intrepid-collector-indust",
+      "name": "Intrepid Wikelo Work Special",
+      "manufacturer": "Crusader Industries",
+      "codes": [
+        "CRUS"
+      ],
+      "className": "CRUS_Intrepid_Collector_Indust",
+      "aliases": [
+        "intrepid-wikelo-work-special"
+      ],
+      "sources": [
+        "star-citizen-wiki"
+      ],
+      "type": null,
+      "size": null,
+      "isSpaceship": true
+    },
+    {
+      "slug": "drak-ironclad",
+      "name": "Ironclad",
+      "manufacturer": "Drake Interplanetary",
+      "codes": [
+        "DRAK"
+      ],
+      "className": "DRAK_Ironclad",
+      "aliases": [
+        "ironclad"
+      ],
+      "sources": [
+        "star-citizen-wiki"
+      ],
+      "type": "Transporter",
+      "size": "Large",
+      "isSpaceship": true
+    },
+    {
+      "slug": "drak-ironclad-assault",
+      "name": "Ironclad Assault",
+      "manufacturer": "Drake Interplanetary",
+      "codes": [
+        "DRAK"
+      ],
+      "className": "DRAK_Ironclad_Assault",
+      "aliases": [
+        "ironclad-assault"
+      ],
+      "sources": [
+        "star-citizen-wiki"
+      ],
+      "type": "Combat",
+      "size": "Large",
+      "isSpaceship": true
+    },
+    {
+      "slug": "aegs-javelin",
+      "name": "Javelin",
+      "manufacturer": "Aegis Dynamics",
+      "codes": [
+        "AEGS"
+      ],
+      "className": "AEGS_Javelin",
+      "aliases": [
+        "javelin"
+      ],
+      "sources": [
+        "star-citizen-wiki"
+      ],
+      "type": "Destroyer",
+      "size": "capital",
+      "isSpaceship": true
+    },
+    {
+      "slug": "xian-scout",
+      "name": "Khartu-al",
+      "manufacturer": "Aopoa",
+      "codes": [
+        "XNAA"
+      ],
+      "className": "XIAN_Scout",
+      "aliases": [
+        "khartu-al"
+      ],
+      "sources": [
+        "star-citizen-wiki"
+      ],
+      "type": "Combat",
+      "size": "Medium",
+      "isSpaceship": true
+    },
+    {
+      "slug": "krig-l21-wolf",
+      "name": "L-21 Wolf",
+      "manufacturer": "Kruger Intergalactic",
+      "codes": [
+        "KRIG"
+      ],
+      "className": "KRIG_L21_Wolf",
+      "aliases": [
+        "l-21-wolf"
+      ],
+      "sources": [
+        "star-citizen-wiki"
+      ],
+      "type": "Combat",
+      "size": "Small",
+      "isSpaceship": true
+    },
+    {
+      "slug": "krig-l21-wolf-collector-stealth",
+      "name": "L-21 Wolf Wikelo Sneak Special",
+      "manufacturer": "Kruger Intergalactic",
+      "codes": [
+        "KRIG"
+      ],
+      "className": "KRIG_L21_Wolf_Collector_Stealth",
+      "aliases": [
+        "l-21-wolf-wikelo-sneak-special"
+      ],
+      "sources": [
+        "star-citizen-wiki"
+      ],
+      "type": null,
+      "size": null,
+      "isSpaceship": true
+    },
+    {
+      "slug": "krig-l21-wolf-collector-military",
+      "name": "L-21 Wolf Wikelo War Special",
+      "manufacturer": "Kruger Intergalactic",
+      "codes": [
+        "KRIG"
+      ],
+      "className": "KRIG_L21_Wolf_Collector_Military",
+      "aliases": [
+        "l-21-wolf-wikelo-war-special"
+      ],
+      "sources": [
+        "star-citizen-wiki"
+      ],
+      "type": null,
+      "size": null,
+      "isSpaceship": true
+    },
+    {
+      "slug": "krig-l22-alphawolf",
+      "name": "L-22 Alpha Wolf",
+      "manufacturer": "Kruger Intergalactic",
+      "codes": [
+        "KRIG"
+      ],
+      "className": "KRIG_L22_AlphaWolf",
+      "aliases": [
+        "l-22-alpha-wolf",
+        "l22-alphawolf"
+      ],
+      "sources": [
+        "star-citizen-wiki"
+      ],
+      "type": "Combat",
+      "size": "Small",
+      "isSpaceship": true
+    },
+    {
+      "slug": "krig-l22-alphawolf-collector-military",
+      "name": "L-22 Alpha Wolf Wikelo War Special",
+      "manufacturer": "Kruger Intergalactic",
+      "codes": [
+        "KRIG"
+      ],
+      "className": "KRIG_L22_AlphaWolf_Collector_Military",
+      "aliases": [
+        "l-22-alpha-wolf-wikelo-war-special"
+      ],
+      "sources": [
+        "star-citizen-wiki"
+      ],
+      "type": null,
+      "size": null,
+      "isSpaceship": true
+    },
+    {
+      "slug": "rsi-lynx",
+      "name": "Lynx",
+      "manufacturer": "Roberts Space Industries",
+      "codes": [
+        "RSI"
+      ],
+      "className": "RSI_Lynx",
+      "aliases": [
+        "lynx"
+      ],
+      "sources": [
+        "star-citizen-wiki"
+      ],
+      "type": "Transporter",
+      "size": "vehicle",
+      "isSpaceship": false
+    },
+    {
+      "slug": "crus-starlifter-m2",
+      "name": "M2 Hercules Starlifter",
+      "manufacturer": "Crusader Industries",
+      "codes": [
+        "CRUS"
+      ],
+      "className": "CRUS_Starlifter_M2",
+      "aliases": [
+        "m2-hercules-starlifter"
+      ],
+      "sources": [
+        "star-citizen-wiki"
+      ],
+      "type": "Transporter",
+      "size": "Large",
+      "isSpaceship": true
+    },
+    {
+      "slug": "orig-m50",
+      "name": "M50 Interceptor",
+      "manufacturer": "Origin Jumpworks",
+      "codes": [
+        "ORIG"
+      ],
+      "className": "ORIG_m50",
+      "aliases": [
+        "m50-interceptor"
+      ],
+      "sources": [
+        "star-citizen-wiki"
+      ],
+      "type": "competition",
+      "size": "Small",
+      "isSpaceship": true
+    },
+    {
+      "slug": "orig-m80",
+      "name": "M80",
+      "manufacturer": "Origin Jumpworks",
+      "codes": [
+        "ORIG"
+      ],
+      "className": "ORIG_m80",
+      "aliases": [
+        "m80"
+      ],
+      "sources": [
+        "star-citizen-wiki"
+      ],
+      "type": "Combat",
+      "size": "Small",
+      "isSpaceship": true
+    },
+    {
+      "slug": "rsi-mantis",
+      "name": "Mantis",
+      "manufacturer": "Roberts Space Industries",
+      "codes": [
+        "RSI"
+      ],
+      "className": "RSI_Mantis",
+      "aliases": [
+        "mantis"
+      ],
+      "sources": [
+        "star-citizen-wiki"
+      ],
+      "type": "Combat",
+      "size": "Small",
+      "isSpaceship": true
+    },
+    {
+      "slug": "vncl-mauler",
+      "name": "Mauler Destroyer",
+      "manufacturer": "Vanduul Clans",
+      "codes": [
+        "VNCL"
+      ],
+      "className": "VNCL_Mauler",
+      "aliases": [
+        "mauler-destroyer"
+      ],
+      "sources": [
+        "star-citizen-wiki"
+      ],
+      "type": null,
+      "size": null,
+      "isSpaceship": true
+    },
+    {
+      "slug": "grin-mdc",
+      "name": "MDC",
+      "manufacturer": "Greycat Industrial",
+      "codes": [
+        "GRIN"
+      ],
+      "className": "GRIN_MDC",
+      "aliases": [
+        "mdc"
+      ],
+      "sources": [
+        "star-citizen-wiki"
+      ],
+      "type": "ground",
+      "size": "vehicle",
+      "isSpaceship": false
+    },
+    {
+      "slug": "crus-star-runner",
+      "name": "Mercury Star Runner",
+      "manufacturer": "Crusader Industries",
+      "codes": [
+        "CRUS"
+      ],
+      "className": "CRUS_Star_Runner",
+      "aliases": [
+        "mercury-star-runner"
+      ],
+      "sources": [
+        "star-citizen-wiki"
+      ],
+      "type": "Transporter",
+      "size": "Large",
+      "isSpaceship": true
+    },
+    {
+      "slug": "rsi-meteor",
+      "name": "Meteor",
+      "manufacturer": "Roberts Space Industries",
+      "codes": [
+        "RSI"
+      ],
+      "className": "RSI_Meteor",
+      "aliases": [
+        "meteor"
+      ],
+      "sources": [
+        "star-citizen-wiki"
+      ],
+      "type": "Combat",
+      "size": "Small",
+      "isSpaceship": true
+    },
+    {
+      "slug": "rsi-meteor-collector-military",
+      "name": "Meteor PYAM Exec",
+      "manufacturer": "Roberts Space Industries",
+      "codes": [
+        "RSI"
+      ],
+      "className": "RSI_Meteor_Collector_Military",
+      "aliases": [
+        "meteor-pyam-exec"
+      ],
+      "sources": [
+        "star-citizen-wiki"
+      ],
+      "type": null,
+      "size": null,
+      "isSpaceship": true
+    },
+    {
+      "slug": "rsi-meteor-collector-stealth",
+      "name": "Meteor Wikelo Sneak Special",
+      "manufacturer": "Roberts Space Industries",
+      "codes": [
+        "RSI"
+      ],
+      "className": "RSI_Meteor_Collector_Stealth",
+      "aliases": [
+        "meteor-wikelo-sneak-special"
+      ],
+      "sources": [
+        "star-citizen-wiki"
+      ],
+      "type": null,
+      "size": null,
+      "isSpaceship": true
+    },
+    {
+      "slug": "misc-fortune",
+      "name": "MISC Fortune",
+      "manufacturer": "Musashi Industrial and Starflight Concern",
+      "codes": [
+        "MISC"
+      ],
+      "className": "MISC_Fortune",
+      "aliases": [],
+      "sources": [
+        "star-citizen-wiki"
+      ],
+      "type": "Industrial",
+      "size": "Small",
+      "isSpaceship": true
+    },
+    {
+      "slug": "misc-fortune-collector-industrial",
+      "name": "MISC Fortune Wikelo Special",
+      "manufacturer": "Musashi Industrial and Starflight Concern",
+      "codes": [
+        "MISC"
+      ],
+      "className": "MISC_Fortune_Collector_Industrial",
+      "aliases": [
+        "misc-fortune-wikelo-special"
+      ],
+      "sources": [
+        "star-citizen-wiki"
+      ],
+      "type": null,
+      "size": null,
+      "isSpaceship": true
+    },
+    {
+      "slug": "misc-freelancer",
+      "name": "MISC Freelancer",
+      "manufacturer": "Musashi Industrial and Starflight Concern",
+      "codes": [
+        "MISC"
+      ],
+      "className": "MISC_Freelancer",
+      "aliases": [],
+      "sources": [
+        "star-citizen-wiki"
+      ],
+      "type": "Transporter",
+      "size": "Medium",
+      "isSpaceship": true
+    },
+    {
+      "slug": "misc-freelancer-dur",
+      "name": "MISC Freelancer DUR",
+      "manufacturer": "Musashi Industrial and Starflight Concern",
+      "codes": [
+        "MISC"
+      ],
+      "className": "MISC_Freelancer_DUR",
+      "aliases": [],
+      "sources": [
+        "star-citizen-wiki"
+      ],
+      "type": "Exploration",
+      "size": "Medium",
+      "isSpaceship": true
+    },
+    {
+      "slug": "misc-freelancer-max",
+      "name": "MISC Freelancer MAX",
+      "manufacturer": "Musashi Industrial and Starflight Concern",
+      "codes": [
+        "MISC"
+      ],
+      "className": "MISC_Freelancer_MAX",
+      "aliases": [],
+      "sources": [
+        "star-citizen-wiki"
+      ],
+      "type": "Transporter",
+      "size": "Medium",
+      "isSpaceship": true
+    },
+    {
+      "slug": "misc-freelancer-mis",
+      "name": "MISC Freelancer MIS",
+      "manufacturer": "Musashi Industrial and Starflight Concern",
+      "codes": [
+        "MISC"
+      ],
+      "className": "MISC_Freelancer_MIS",
+      "aliases": [],
+      "sources": [
+        "star-citizen-wiki"
+      ],
+      "type": "Combat",
+      "size": "Medium",
+      "isSpaceship": true
+    },
+    {
+      "slug": "misc-hull-a",
+      "name": "MISC Hull A",
+      "manufacturer": "Musashi Industrial and Starflight Concern",
+      "codes": [
+        "MISC"
+      ],
+      "className": "MISC_Hull_A",
+      "aliases": [],
+      "sources": [
+        "star-citizen-wiki"
+      ],
+      "type": "Transporter",
+      "size": "Small",
+      "isSpaceship": true
+    },
+    {
+      "slug": "misc-hull-b",
+      "name": "MISC Hull B",
+      "manufacturer": "Musashi Industrial and Starflight Concern",
+      "codes": [
+        "MISC"
+      ],
+      "className": "MISC_Hull_B",
+      "aliases": [],
+      "sources": [
+        "star-citizen-wiki"
+      ],
+      "type": "Transporter",
+      "size": "Large",
+      "isSpaceship": true
+    },
+    {
+      "slug": "misc-hull-c",
+      "name": "MISC Hull C",
+      "manufacturer": "Musashi Industrial and Starflight Concern",
+      "codes": [
+        "MISC"
+      ],
+      "className": "MISC_Hull_C",
+      "aliases": [],
+      "sources": [
+        "star-citizen-wiki"
+      ],
+      "type": "Transporter",
+      "size": "Large",
+      "isSpaceship": true
+    },
+    {
+      "slug": "misc-prospector",
+      "name": "MISC Prospector",
+      "manufacturer": "Musashi Industrial and Starflight Concern",
+      "codes": [
+        "MISC"
+      ],
+      "className": "MISC_Prospector",
+      "aliases": [],
+      "sources": [
+        "star-citizen-wiki"
+      ],
+      "type": "Industrial",
+      "size": "Small",
+      "isSpaceship": true
+    },
+    {
+      "slug": "misc-prospector-btala",
+      "name": "MISC Prospector Alliance",
+      "manufacturer": "Musashi Industrial and Starflight Concern",
+      "codes": [
+        "MISC"
+      ],
+      "className": "MISC_Prospector_BTALA",
+      "aliases": [
+        "misc-prospector-alliance"
+      ],
+      "sources": [
+        "star-citizen-wiki"
+      ],
+      "type": null,
+      "size": null,
+      "isSpaceship": true
+    },
+    {
+      "slug": "misc-prospector-collector-indust",
+      "name": "MISC Prospector Wikelo Work Special",
+      "manufacturer": "Musashi Industrial and Starflight Concern",
+      "codes": [
+        "MISC"
+      ],
+      "className": "MISC_Prospector_Collector_Indust",
+      "aliases": [
+        "misc-prospector-wikelo-work-special"
+      ],
+      "sources": [
+        "star-citizen-wiki"
+      ],
+      "type": null,
+      "size": null,
+      "isSpaceship": true
+    },
+    {
+      "slug": "misc-reliant",
+      "name": "MISC Reliant Kore",
+      "manufacturer": "Musashi Industrial and Starflight Concern",
+      "codes": [
+        "MISC"
+      ],
+      "className": "MISC_Reliant",
+      "aliases": [
+        "misc-reliant-kore"
+      ],
+      "sources": [
+        "star-citizen-wiki"
+      ],
+      "type": "Transporter",
+      "size": "Medium",
+      "isSpaceship": true
+    },
+    {
+      "slug": "misc-reliant-mako",
+      "name": "MISC Reliant Mako",
+      "manufacturer": "Musashi Industrial and Starflight Concern",
+      "codes": [
+        "MISC"
+      ],
+      "className": "MISC_Reliant_Mako",
+      "aliases": [],
+      "sources": [
+        "star-citizen-wiki"
+      ],
+      "type": "Support",
+      "size": "Medium",
+      "isSpaceship": true
+    },
+    {
+      "slug": "misc-reliant-sen",
+      "name": "MISC Reliant Sen",
+      "manufacturer": "Musashi Industrial and Starflight Concern",
+      "codes": [
+        "MISC"
+      ],
+      "className": "MISC_Reliant_Sen",
+      "aliases": [],
+      "sources": [
+        "star-citizen-wiki"
+      ],
+      "type": "Industrial",
+      "size": "Medium",
+      "isSpaceship": true
+    },
+    {
+      "slug": "misc-reliant-tana",
+      "name": "MISC Reliant Tana",
+      "manufacturer": "Musashi Industrial and Starflight Concern",
+      "codes": [
+        "MISC"
+      ],
+      "className": "MISC_Reliant_Tana",
+      "aliases": [],
+      "sources": [
+        "star-citizen-wiki"
+      ],
+      "type": "Combat",
+      "size": "Medium",
+      "isSpaceship": true
+    },
+    {
+      "slug": "misc-starfarer",
+      "name": "MISC Starfarer",
+      "manufacturer": "Musashi Industrial and Starflight Concern",
+      "codes": [
+        "MISC"
+      ],
+      "className": "MISC_Starfarer",
+      "aliases": [],
+      "sources": [
+        "star-citizen-wiki"
+      ],
+      "type": "Support",
+      "size": "Large",
+      "isSpaceship": true
+    },
+    {
+      "slug": "misc-starfarer-gemini",
+      "name": "MISC Starfarer Gemini",
+      "manufacturer": "Musashi Industrial and Starflight Concern",
+      "codes": [
+        "MISC"
+      ],
+      "className": "MISC_Starfarer_Gemini",
+      "aliases": [],
+      "sources": [
+        "star-citizen-wiki"
+      ],
+      "type": "Support",
+      "size": "Large",
+      "isSpaceship": true
+    },
+    {
+      "slug": "misc-starlancer-max",
+      "name": "MISC Starlancer MAX",
+      "manufacturer": "Musashi Industrial and Starflight Concern",
+      "codes": [
+        "MISC"
+      ],
+      "className": "MISC_Starlancer_Max",
+      "aliases": [],
+      "sources": [
+        "star-citizen-wiki"
+      ],
+      "type": "transport",
+      "size": "Medium",
+      "isSpaceship": true
+    },
+    {
+      "slug": "misc-starlancer-max-collector-indust",
+      "name": "MISC Starlancer MAX Wikelo Work Special",
+      "manufacturer": "Musashi Industrial and Starflight Concern",
+      "codes": [
+        "MISC"
+      ],
+      "className": "MISC_Starlancer_Max_Collector_Indust",
+      "aliases": [
+        "misc-starlancer-max-wikelo-work-special"
+      ],
+      "sources": [
+        "star-citizen-wiki"
+      ],
+      "type": null,
+      "size": null,
+      "isSpaceship": true
+    },
+    {
+      "slug": "misc-starlancer-tac",
+      "name": "MISC Starlancer TAC",
+      "manufacturer": "Musashi Industrial and Starflight Concern",
+      "codes": [
+        "MISC"
+      ],
+      "className": "MISC_Starlancer_TAC",
+      "aliases": [],
+      "sources": [
+        "star-citizen-wiki"
+      ],
+      "type": "Combat",
+      "size": "Large",
+      "isSpaceship": true
+    },
+    {
+      "slug": "misc-starlancer-tac-collector-military",
+      "name": "MISC Starlancer TAC Wikelo War Special",
+      "manufacturer": "Musashi Industrial and Starflight Concern",
+      "codes": [
+        "MISC"
+      ],
+      "className": "MISC_Starlancer_TAC_Collector_Military",
+      "aliases": [
+        "misc-starlancer-tac-wikelo-war-special"
+      ],
+      "sources": [
+        "star-citizen-wiki"
+      ],
+      "type": null,
+      "size": null,
+      "isSpaceship": true
+    },
+    {
+      "slug": "misc-starlite",
+      "name": "MISC Starlite",
+      "manufacturer": "Musashi Industrial and Starflight Concern",
+      "codes": [
+        "MISC"
+      ],
+      "className": "MISC_Starlite",
+      "aliases": [],
+      "sources": [
+        "star-citizen-wiki"
+      ],
+      "type": "Support",
+      "size": "Small",
+      "isSpaceship": true
+    },
+    {
+      "slug": "argo-mole",
+      "name": "MOLE",
+      "manufacturer": "Argo Astronautics",
+      "codes": [
+        "ARGO"
+      ],
+      "className": "ARGO_MOLE",
+      "aliases": [
+        "mole"
+      ],
+      "sources": [
+        "star-citizen-wiki"
+      ],
+      "type": "Industrial",
+      "size": "Medium",
+      "isSpaceship": true
+    },
+    {
+      "slug": "argo-mole-btala",
+      "name": "MOLE Alliance",
+      "manufacturer": "Argo Astronautics",
+      "codes": [
+        "ARGO"
+      ],
+      "className": "ARGO_MOLE_BTALA",
+      "aliases": [
+        "mole-alliance"
+      ],
+      "sources": [
+        "star-citizen-wiki"
+      ],
+      "type": null,
+      "size": null,
+      "isSpaceship": true
+    },
+    {
+      "slug": "argo-moth",
+      "name": "MOTH",
+      "manufacturer": "Argo Astronautics",
+      "codes": [
+        "ARGO"
+      ],
+      "className": "ARGO_MOTH",
+      "aliases": [
+        "moth"
+      ],
+      "sources": [
+        "star-citizen-wiki"
+      ],
+      "type": "Industrial",
+      "size": "Medium",
+      "isSpaceship": true
+    },
+    {
+      "slug": "argo-mpuv",
+      "name": "MPUV Cargo",
+      "manufacturer": "Argo Astronautics",
+      "codes": [
+        "ARGO"
+      ],
+      "className": "ARGO_MPUV",
+      "aliases": [
+        "mpuv-cargo"
+      ],
+      "sources": [
+        "star-citizen-wiki"
+      ],
+      "type": "Transporter",
+      "size": "Small",
+      "isSpaceship": true
+    },
+    {
+      "slug": "argo-mpuv-transport",
+      "name": "MPUV Personnel",
+      "manufacturer": "Argo Astronautics",
+      "codes": [
+        "ARGO"
+      ],
+      "className": "ARGO_MPUV_Transport",
+      "aliases": [
+        "mpuv-personnel"
+      ],
+      "sources": [
+        "star-citizen-wiki"
+      ],
+      "type": "Transporter",
+      "size": "Small",
+      "isSpaceship": true
+    },
+    {
+      "slug": "argo-mpuv-1t",
+      "name": "MPUV Tractor",
+      "manufacturer": "Argo Astronautics",
+      "codes": [
+        "ARGO"
+      ],
+      "className": "ARGO_MPUV_1T",
+      "aliases": [
+        "mpuv-tractor"
+      ],
+      "sources": [
+        "star-citizen-wiki"
+      ],
+      "type": "Transporter",
+      "size": "Small",
+      "isSpaceship": true
+    },
+    {
+      "slug": "grin-mtc",
+      "name": "MTC",
+      "manufacturer": "Greycat Industrial",
+      "codes": [
+        "GRIN"
+      ],
+      "className": "GRIN_MTC",
+      "aliases": [
+        "mtc"
+      ],
+      "sources": [
+        "star-citizen-wiki"
+      ],
+      "type": "ground",
+      "size": "Medium",
+      "isSpaceship": false
+    },
+    {
+      "slug": "drak-mule",
+      "name": "Mule",
+      "manufacturer": "Drake Interplanetary",
+      "codes": [
+        "DRAK"
+      ],
+      "className": "DRAK_Mule",
+      "aliases": [
+        "mule"
+      ],
+      "sources": [
+        "star-citizen-wiki"
+      ],
+      "type": "Transporter",
+      "size": "Medium",
+      "isSpaceship": false
+    },
+    {
+      "slug": "cnou-mustang-alpha",
+      "name": "Mustang Alpha",
+      "manufacturer": "Consolidated Outland",
+      "codes": [
+        "CNOU"
+      ],
+      "className": "CNOU_Mustang_Alpha",
+      "aliases": [
+        "mustang-alpha"
+      ],
+      "sources": [
+        "star-citizen-wiki"
+      ],
+      "type": "Multi-Role",
+      "size": "Small",
+      "isSpaceship": true
+    },
+    {
+      "slug": "cnou-mustang-beta",
+      "name": "Mustang Beta",
+      "manufacturer": "Consolidated Outland",
+      "codes": [
+        "CNOU"
+      ],
+      "className": "CNOU_Mustang_Beta",
+      "aliases": [
+        "mustang-beta"
+      ],
+      "sources": [
+        "star-citizen-wiki"
+      ],
+      "type": "Exploration",
+      "size": "Small",
+      "isSpaceship": true
+    },
+    {
+      "slug": "cnou-mustang-alpha-citizencon2018",
+      "name": "Mustang CitizenCon 2948 Edition",
+      "manufacturer": "Consolidated Outland",
+      "codes": [
+        "CNOU"
+      ],
+      "className": "CNOU_Mustang_Alpha_CitizenCon2018",
+      "aliases": [
+        "mustang-citizencon-2948-edition"
+      ],
+      "sources": [
+        "star-citizen-wiki"
+      ],
+      "type": "Multi-Role",
+      "size": "Small",
+      "isSpaceship": true
+    },
+    {
+      "slug": "cnou-mustang-delta",
+      "name": "Mustang Delta",
+      "manufacturer": "Consolidated Outland",
+      "codes": [
+        "CNOU"
+      ],
+      "className": "CNOU_Mustang_Delta",
+      "aliases": [
+        "mustang-delta"
+      ],
+      "sources": [
+        "star-citizen-wiki"
+      ],
+      "type": "Combat",
+      "size": "Small",
+      "isSpaceship": true
+    },
+    {
+      "slug": "cnou-mustang-gamma",
+      "name": "Mustang Gamma",
+      "manufacturer": "Consolidated Outland",
+      "codes": [
+        "CNOU"
+      ],
+      "className": "CNOU_Mustang_Gamma",
+      "aliases": [
+        "mustang-gamma"
+      ],
+      "sources": [
+        "star-citizen-wiki"
+      ],
+      "type": "competition",
+      "size": "Small",
+      "isSpaceship": true
+    },
+    {
+      "slug": "cnou-mustang-omega",
+      "name": "Mustang Omega",
+      "manufacturer": "Consolidated Outland",
+      "codes": [
+        "CNOU"
+      ],
+      "className": "CNOU_Mustang_Omega",
+      "aliases": [
+        "mustang-omega"
+      ],
+      "sources": [
+        "star-citizen-wiki"
+      ],
+      "type": "competition",
+      "size": "Small",
+      "isSpaceship": true
+    },
+    {
+      "slug": "cnou-nomad",
+      "name": "Nomad",
+      "manufacturer": "Consolidated Outland",
+      "codes": [
+        "CNOU"
+      ],
+      "className": "CNOU_Nomad",
+      "aliases": [
+        "nomad"
+      ],
+      "sources": [
+        "star-citizen-wiki"
+      ],
+      "type": "Transporter",
+      "size": "Small",
+      "isSpaceship": true
+    },
+    {
+      "slug": "tmbl-nova",
+      "name": "Nova",
+      "manufacturer": "Tumbril Land Systems",
+      "codes": [
+        "TMBL"
+      ],
+      "className": "TMBL_Nova",
+      "aliases": [
+        "nova"
+      ],
+      "sources": [
+        "star-citizen-wiki"
+      ],
+      "type": "Combat",
+      "size": "vehicle",
+      "isSpaceship": false
+    },
+    {
+      "slug": "xian-nox",
+      "name": "Nox",
+      "manufacturer": "Aopoa",
+      "codes": [
+        "XNAA"
+      ],
+      "className": "XIAN_Nox",
+      "aliases": [
+        "nox"
+      ],
+      "sources": [
+        "star-citizen-wiki"
+      ],
+      "type": "competition",
+      "size": "Small",
+      "isSpaceship": false
+    },
+    {
+      "slug": "xian-nox-kue",
+      "name": "Nox Kue",
+      "manufacturer": "Aopoa",
+      "codes": [
+        "XNAA"
+      ],
+      "className": "XIAN_Nox_Kue",
+      "aliases": [
+        "nox-kue"
+      ],
+      "sources": [
+        "star-citizen-wiki"
+      ],
+      "type": "competition",
+      "size": "Small",
+      "isSpaceship": false
+    },
+    {
+      "slug": "xian-nox-collector-mod",
+      "name": "Nox Wikelo Special",
+      "manufacturer": "Aopoa",
+      "codes": [
+        "XNAA"
+      ],
+      "className": "XIAN_Nox_Collector_Mod",
+      "aliases": [
+        "nox-wikelo-special"
+      ],
+      "sources": [
+        "star-citizen-wiki"
+      ],
+      "type": null,
+      "size": null,
+      "isSpaceship": false
+    },
+    {
+      "slug": "krig-p52-merlin",
+      "name": "P-52 Merlin",
+      "manufacturer": "Kruger Intergalactic",
+      "codes": [
+        "KRIG"
+      ],
+      "className": "KRIG_P52_Merlin",
+      "aliases": [
+        "p-52-merlin"
+      ],
+      "sources": [
+        "star-citizen-wiki"
+      ],
+      "type": "Combat",
+      "size": "Small",
+      "isSpaceship": true
+    },
+    {
+      "slug": "krig-p72-archimedes",
+      "name": "P-72 Archimedes",
+      "manufacturer": "Kruger Intergalactic",
+      "codes": [
+        "KRIG"
+      ],
+      "className": "KRIG_P72_Archimedes",
+      "aliases": [
+        "p-72-archimedes"
+      ],
+      "sources": [
+        "star-citizen-wiki"
+      ],
+      "type": "competition",
+      "size": "Small",
+      "isSpaceship": true
+    },
+    {
+      "slug": "krig-p72-archimedes-emerald",
+      "name": "P-72 Archimedes Emerald",
+      "manufacturer": "Kruger Intergalactic",
+      "codes": [
+        "KRIG"
+      ],
+      "className": "KRIG_P72_Archimedes_Emerald",
+      "aliases": [
+        "p-72-archimedes-emerald"
+      ],
+      "sources": [
+        "star-citizen-wiki"
+      ],
+      "type": "competition",
+      "size": "Small",
+      "isSpaceship": true
+    },
+    {
+      "slug": "anvl-paladin",
+      "name": "Paladin",
+      "manufacturer": "Anvil Aerospace",
+      "codes": [
+        "ANVL"
+      ],
+      "className": "ANVL_Paladin",
+      "aliases": [
+        "paladin"
+      ],
+      "sources": [
+        "star-citizen-wiki"
+      ],
+      "type": "Combat",
+      "size": "Medium",
+      "isSpaceship": true
+    },
+    {
+      "slug": "rsi-perseus",
+      "name": "Perseus",
+      "manufacturer": "Roberts Space Industries",
+      "codes": [
+        "RSI"
+      ],
+      "className": "RSI_Perseus",
+      "aliases": [
+        "perseus"
+      ],
+      "sources": [
+        "star-citizen-wiki"
+      ],
+      "type": "Combat",
+      "size": "Large",
+      "isSpaceship": true
+    },
+    {
+      "slug": "drak-pitbull",
+      "name": "Pitbull",
+      "manufacturer": "Drake Interplanetary",
+      "codes": [
+        "DRAK"
+      ],
+      "className": "DRAK_Pitbull",
+      "aliases": [
+        "pitbull"
+      ],
+      "sources": [
+        "star-citizen-wiki"
+      ],
+      "type": "Combat",
+      "size": "Small",
+      "isSpaceship": true
+    },
+    {
+      "slug": "rsi-polaris-collector-military",
+      "name": "Polaris",
+      "manufacturer": "Roberts Space Industries",
+      "codes": [
+        "RSI"
+      ],
+      "className": "RSI_Polaris_Collector_Military",
+      "aliases": [
+        "polaris"
+      ],
+      "sources": [
+        "star-citizen-wiki"
+      ],
+      "type": "Combat",
+      "size": "capital",
+      "isSpaceship": true
+    },
+    {
+      "slug": "rsi-polaris",
+      "name": "Polaris",
+      "manufacturer": "Roberts Space Industries",
+      "codes": [
+        "RSI"
+      ],
+      "className": "RSI_Polaris",
+      "aliases": [
+        "polaris"
+      ],
+      "sources": [
+        "star-citizen-wiki"
+      ],
+      "type": "Combat",
+      "size": "capital",
+      "isSpaceship": true
+    },
+    {
+      "slug": "espr-prowler",
+      "name": "Prowler",
+      "manufacturer": "Esperia",
+      "codes": [
+        "ESPR"
+      ],
+      "className": "ESPR_Prowler",
+      "aliases": [
+        "prowler"
+      ],
+      "sources": [
+        "star-citizen-wiki"
+      ],
+      "type": "Combat",
+      "size": "Medium",
+      "isSpaceship": true
+    },
+    {
+      "slug": "espr-prowler-utility",
+      "name": "Prowler Utility",
+      "manufacturer": "Esperia",
+      "codes": [
+        "ESPR"
+      ],
+      "className": "ESPR_Prowler_Utility",
+      "aliases": [
+        "prowler-utility"
+      ],
+      "sources": [
+        "star-citizen-wiki"
+      ],
+      "type": "Transporter",
+      "size": "Medium",
+      "isSpaceship": true
+    },
+    {
+      "slug": "espr-prowler-utility-collector-indust",
+      "name": "Prowler Utility Wikelo Work Special",
+      "manufacturer": "Esperia",
+      "codes": [
+        "ESPR"
+      ],
+      "className": "ESPR_Prowler_Utility_Collector_Indust",
+      "aliases": [
+        "prowler-utility-wikelo-work-special"
+      ],
+      "sources": [
+        "star-citizen-wiki"
+      ],
+      "type": null,
+      "size": null,
+      "isSpaceship": true
+    },
+    {
+      "slug": "grin-ptv",
+      "name": "PTV",
+      "manufacturer": "Greycat Industrial",
+      "codes": [
+        "GRIN"
+      ],
+      "className": "GRIN_PTV",
+      "aliases": [
+        "ptv"
+      ],
+      "sources": [
+        "star-citizen-wiki"
+      ],
+      "type": "Transporter",
+      "size": "Medium",
+      "isSpaceship": false
+    },
+    {
+      "slug": "mrai-pulse",
+      "name": "Pulse",
+      "manufacturer": "Mirai",
+      "codes": [
+        "MRAI"
+      ],
+      "className": "MRAI_Pulse",
+      "aliases": [
+        "pulse"
+      ],
+      "sources": [
+        "star-citizen-wiki"
+      ],
+      "type": "Combat",
+      "size": "Small",
+      "isSpaceship": false
+    },
+    {
+      "slug": "mrai-pulse-lx",
+      "name": "Pulse LX",
+      "manufacturer": "Mirai",
+      "codes": [
+        "MRAI"
+      ],
+      "className": "MRAI_Pulse_LX",
+      "aliases": [
+        "pulse-lx"
+      ],
+      "sources": [
+        "star-citizen-wiki"
+      ],
+      "type": "Combat",
+      "size": "Small",
+      "isSpaceship": false
+    },
+    {
+      "slug": "argo-raft",
+      "name": "RAFT",
+      "manufacturer": "Argo Astronautics",
+      "codes": [
+        "ARGO"
+      ],
+      "className": "ARGO_RAFT",
+      "aliases": [
+        "raft"
+      ],
+      "sources": [
+        "star-citizen-wiki"
+      ],
+      "type": "Transporter",
+      "size": "Medium",
+      "isSpaceship": true
+    },
+    {
+      "slug": "argo-raft-collector-indust",
+      "name": "RAFT Wikelo Work Special",
+      "manufacturer": "Argo Astronautics",
+      "codes": [
+        "ARGO"
+      ],
+      "className": "ARGO_RAFT_Collector_Indust",
+      "aliases": [
+        "raft-wikelo-work-special"
+      ],
+      "sources": [
+        "star-citizen-wiki"
+      ],
+      "type": null,
+      "size": null,
+      "isSpaceship": true
+    },
+    {
+      "slug": "gama-railen",
+      "name": "Railen",
+      "manufacturer": "Gatac Manufacture",
+      "codes": [
+        "GAMA"
+      ],
+      "className": "GAMA_Railen",
+      "aliases": [
+        "railen"
+      ],
+      "sources": [
+        "star-citizen-wiki"
+      ],
+      "type": "Transporter",
+      "size": "Large",
+      "isSpaceship": true
+    },
+    {
+      "slug": "misc-razor",
+      "name": "Razor",
+      "manufacturer": "Mirai",
+      "codes": [
+        "MRAI"
+      ],
+      "className": "MISC_Razor",
+      "aliases": [
+        "razor"
+      ],
+      "sources": [
+        "star-citizen-wiki"
+      ],
+      "type": "competition",
+      "size": "Small",
+      "isSpaceship": true
+    },
+    {
+      "slug": "misc-razor-ex",
+      "name": "Razor EX",
+      "manufacturer": "Mirai",
+      "codes": [
+        "MRAI"
+      ],
+      "className": "MISC_Razor_EX",
+      "aliases": [
+        "razor-ex"
+      ],
+      "sources": [
+        "star-citizen-wiki"
+      ],
+      "type": "Combat",
+      "size": "Small",
+      "isSpaceship": true
+    },
+    {
+      "slug": "misc-razor-lx",
+      "name": "Razor LX",
+      "manufacturer": "Mirai",
+      "codes": [
+        "MRAI"
+      ],
+      "className": "MISC_Razor_LX",
+      "aliases": [
+        "razor-lx"
+      ],
+      "sources": [
+        "star-citizen-wiki"
+      ],
+      "type": "competition",
+      "size": "Small",
+      "isSpaceship": true
+    },
+    {
+      "slug": "aegs-reclaimer",
+      "name": "Reclaimer",
+      "manufacturer": "Aegis Dynamics",
+      "codes": [
+        "AEGS"
+      ],
+      "className": "AEGS_Reclaimer",
+      "aliases": [
+        "reclaimer"
+      ],
+      "sources": [
+        "star-citizen-wiki"
+      ],
+      "type": "Industrial",
+      "size": "capital",
+      "isSpaceship": true
+    },
+    {
+      "slug": "aegs-reclaimer-showdown",
+      "name": "Reclaimer 2949 Best In Show Edition",
+      "manufacturer": "Aegis Dynamics",
+      "codes": [
+        "AEGS"
+      ],
+      "className": "AEGS_Reclaimer_Showdown",
+      "aliases": [
+        "reclaimer-2949-best-in-show-edition"
+      ],
+      "sources": [
+        "star-citizen-wiki"
+      ],
+      "type": "Industrial",
+      "size": "Large",
+      "isSpaceship": true
+    },
+    {
+      "slug": "aegs-redeemer",
+      "name": "Redeemer",
+      "manufacturer": "Aegis Dynamics",
+      "codes": [
+        "AEGS"
+      ],
+      "className": "AEGS_Redeemer",
+      "aliases": [
+        "redeemer"
+      ],
+      "sources": [
+        "star-citizen-wiki"
+      ],
+      "type": "Combat",
+      "size": "Large",
+      "isSpaceship": true
+    },
+    {
+      "slug": "aegs-retaliator",
+      "name": "Retaliator",
+      "manufacturer": "Aegis Dynamics",
+      "codes": [
+        "AEGS"
+      ],
+      "className": "AEGS_Retaliator",
+      "aliases": [
+        "retaliator",
+        "retaliator-base"
+      ],
+      "sources": [
+        "star-citizen-wiki"
+      ],
+      "type": "Combat",
+      "size": "Large",
+      "isSpaceship": true
+    },
+    {
+      "slug": "grin-roc",
+      "name": "ROC",
+      "manufacturer": "Greycat Industrial",
+      "codes": [
+        "GRIN"
+      ],
+      "className": "GRIN_ROC",
+      "aliases": [
+        "roc"
+      ],
+      "sources": [
+        "star-citizen-wiki"
+      ],
+      "type": "Industrial",
+      "size": "Medium",
+      "isSpaceship": false
+    },
+    {
+      "slug": "grin-roc-ds",
+      "name": "ROC-DS",
+      "manufacturer": "Greycat Industrial",
+      "codes": [
+        "GRIN"
+      ],
+      "className": "GRIN_ROC_DS",
+      "aliases": [
+        "roc-ds"
+      ],
+      "sources": [
+        "star-citizen-wiki"
+      ],
+      "type": "Industrial",
+      "size": "Medium",
+      "isSpaceship": false
+    },
+    {
+      "slug": "aegs-sabre",
+      "name": "Sabre",
+      "manufacturer": "Aegis Dynamics",
+      "codes": [
+        "AEGS"
+      ],
+      "className": "AEGS_Sabre",
+      "aliases": [
+        "sabre"
+      ],
+      "sources": [
+        "star-citizen-wiki"
+      ],
+      "type": "Combat",
+      "size": "Small",
+      "isSpaceship": true
+    },
+    {
+      "slug": "aegs-sabre-comet",
+      "name": "Sabre Comet",
+      "manufacturer": "Aegis Dynamics",
+      "codes": [
+        "AEGS"
+      ],
+      "className": "AEGS_Sabre_Comet",
+      "aliases": [
+        "sabre-comet"
+      ],
+      "sources": [
+        "star-citizen-wiki"
+      ],
+      "type": "Combat",
+      "size": "Small",
+      "isSpaceship": true
+    },
+    {
+      "slug": "aegs-sabre-firebird",
+      "name": "Sabre Firebird",
+      "manufacturer": "Aegis Dynamics",
+      "codes": [
+        "AEGS"
+      ],
+      "className": "AEGS_Sabre_Firebird",
+      "aliases": [
+        "sabre-firebird"
+      ],
+      "sources": [
+        "star-citizen-wiki"
+      ],
+      "type": "Combat",
+      "size": "Small",
+      "isSpaceship": true
+    },
+    {
+      "slug": "aegs-sabre-firebird-collector-milt",
+      "name": "Sabre Firebird Wikelo War Special",
+      "manufacturer": "Aegis Dynamics",
+      "codes": [
+        "AEGS"
+      ],
+      "className": "AEGS_Sabre_Firebird_Collector_Milt",
+      "aliases": [
+        "sabre-firebird-wikelo-war-special"
+      ],
+      "sources": [
+        "star-citizen-wiki"
+      ],
+      "type": null,
+      "size": null,
+      "isSpaceship": true
+    },
+    {
+      "slug": "aegs-sabre-peregrine",
+      "name": "Sabre Peregrine",
+      "manufacturer": "Aegis Dynamics",
+      "codes": [
+        "AEGS"
+      ],
+      "className": "AEGS_Sabre_Peregrine",
+      "aliases": [
+        "sabre-peregrine"
+      ],
+      "sources": [
+        "star-citizen-wiki"
+      ],
+      "type": "competition",
+      "size": "Small",
+      "isSpaceship": true
+    },
+    {
+      "slug": "aegs-sabre-peregrine-collector-competition",
+      "name": "Sabre Peregrine Wikelo Speedy Special",
+      "manufacturer": "Aegis Dynamics",
+      "codes": [
+        "AEGS"
+      ],
+      "className": "AEGS_Sabre_Peregrine_Collector_Competition",
+      "aliases": [
+        "sabre-peregrine-wikelo-speedy-special"
+      ],
+      "sources": [
+        "star-citizen-wiki"
+      ],
+      "type": null,
+      "size": null,
+      "isSpaceship": true
+    },
+    {
+      "slug": "aegs-sabre-raven",
+      "name": "Sabre Raven",
+      "manufacturer": "Aegis Dynamics",
+      "codes": [
+        "AEGS"
+      ],
+      "className": "AEGS_Sabre_Raven",
+      "aliases": [
+        "sabre-raven"
+      ],
+      "sources": [
+        "star-citizen-wiki"
+      ],
+      "type": "Combat",
+      "size": "Small",
+      "isSpaceship": true
+    },
+    {
+      "slug": "rsi-salvation",
+      "name": "Salvation",
+      "manufacturer": "Roberts Space Industries",
+      "codes": [
+        "RSI"
+      ],
+      "className": "RSI_Salvation",
+      "aliases": [
+        "salvation"
+      ],
+      "sources": [
+        "star-citizen-wiki"
+      ],
+      "type": "Industrial",
+      "size": "Small",
+      "isSpaceship": true
+    },
+    {
+      "slug": "xnaa-santokyai",
+      "name": "San'tok.yāi",
+      "manufacturer": "Aopoa",
+      "codes": [
+        "XNAA"
+      ],
+      "className": "XNAA_SanTokYai",
+      "aliases": [
+        "san-tok-y-i"
+      ],
+      "sources": [
+        "star-citizen-wiki"
+      ],
+      "type": "Combat",
+      "size": "Small",
+      "isSpaceship": true
+    },
+    {
+      "slug": "rsi-scorpius",
+      "name": "Scorpius",
+      "manufacturer": "Roberts Space Industries",
+      "codes": [
+        "RSI"
+      ],
+      "className": "RSI_Scorpius",
+      "aliases": [
+        "scorpius"
+      ],
+      "sources": [
+        "star-citizen-wiki"
+      ],
+      "type": "Combat",
+      "size": "Small",
+      "isSpaceship": true
+    },
+    {
+      "slug": "rsi-scorpius-antares",
+      "name": "Scorpius Antares",
+      "manufacturer": "Roberts Space Industries",
+      "codes": [
+        "RSI"
+      ],
+      "className": "RSI_Scorpius_Antares",
+      "aliases": [
+        "scorpius-antares"
+      ],
+      "sources": [
+        "star-citizen-wiki"
+      ],
+      "type": "Combat",
+      "size": "Small",
+      "isSpaceship": true
+    },
+    {
+      "slug": "rsi-scorpius-stealth",
+      "name": "Scorpius Wikelo Sneak Special",
+      "manufacturer": "Roberts Space Industries",
+      "codes": [
+        "RSI"
+      ],
+      "className": "RSI_Scorpius_Stealth",
+      "aliases": [
+        "scorpius-wikelo-sneak-special"
+      ],
+      "sources": [
+        "star-citizen-wiki"
+      ],
+      "type": null,
+      "size": null,
+      "isSpaceship": true
+    },
+    {
+      "slug": "glsn-shiv",
+      "name": "Shiv",
+      "manufacturer": "Grey's Market",
+      "codes": [
+        "GLSN"
+      ],
+      "className": "GLSN_Shiv",
+      "aliases": [
+        "shiv"
+      ],
+      "sources": [
+        "star-citizen-wiki"
+      ],
+      "type": "Combat",
+      "size": "Medium",
+      "isSpaceship": true
+    },
+    {
+      "slug": "anvl-spartan",
+      "name": "Spartan",
+      "manufacturer": "Anvil Aerospace",
+      "codes": [
+        "ANVL"
+      ],
+      "className": "ANVL_Spartan",
+      "aliases": [
+        "spartan"
+      ],
+      "sources": [
+        "star-citizen-wiki"
+      ],
+      "type": "Combat",
+      "size": "vehicle",
+      "isSpaceship": false
+    },
+    {
+      "slug": "argo-srv",
+      "name": "SRV",
+      "manufacturer": "Argo Astronautics",
+      "codes": [
+        "ARGO"
+      ],
+      "className": "ARGO_SRV",
+      "aliases": [
+        "srv"
+      ],
+      "sources": [
+        "star-citizen-wiki"
+      ],
+      "type": "Support",
+      "size": "Medium",
+      "isSpaceship": true
+    },
+    {
+      "slug": "vncl-stinger",
+      "name": "Stinger",
+      "manufacturer": "Esperia",
+      "codes": [
+        "ESPR"
+      ],
+      "className": "VNCL_Stinger",
+      "aliases": [
+        "stinger"
+      ],
+      "sources": [
+        "star-citizen-wiki"
+      ],
+      "type": "Combat",
+      "size": "Medium",
+      "isSpaceship": true
+    },
+    {
+      "slug": "tmbl-storm",
+      "name": "Storm",
+      "manufacturer": "Tumbril Land Systems",
+      "codes": [
+        "TMBL"
+      ],
+      "className": "TMBL_Storm",
+      "aliases": [
+        "storm"
+      ],
+      "sources": [
+        "star-citizen-wiki"
+      ],
+      "type": "Combat",
+      "size": "vehicle",
+      "isSpaceship": false
+    },
+    {
+      "slug": "tmbl-storm-aa",
+      "name": "Storm AA",
+      "manufacturer": "Tumbril Land Systems",
+      "codes": [
+        "TMBL"
+      ],
+      "className": "TMBL_Storm_AA",
+      "aliases": [
+        "storm-aa",
+        "stormaa"
+      ],
+      "sources": [
+        "star-citizen-wiki"
+      ],
+      "type": "Combat",
+      "size": "vehicle",
+      "isSpaceship": false
+    },
+    {
+      "slug": "grin-stv",
+      "name": "STV",
+      "manufacturer": "Greycat Industrial",
+      "codes": [
+        "GRIN"
+      ],
+      "className": "GRIN_STV",
+      "aliases": [
+        "stv"
+      ],
+      "sources": [
+        "star-citizen-wiki"
+      ],
+      "type": "Transporter",
+      "size": "Medium",
+      "isSpaceship": false
+    },
+    {
+      "slug": "gama-syulen",
+      "name": "Syulen",
+      "manufacturer": "Gatac Manufacture",
+      "codes": [
+        "GAMA"
+      ],
+      "className": "GAMA_Syulen",
+      "aliases": [
+        "syulen"
+      ],
+      "sources": [
+        "star-citizen-wiki"
+      ],
+      "type": "Multi-Role",
+      "size": "Medium",
+      "isSpaceship": true
+    },
+    {
+      "slug": "gama-syulen-exec-stealth",
+      "name": "Syulen PYAM Exec",
+      "manufacturer": "Gatac Manufacture",
+      "codes": [
+        "GAMA"
+      ],
+      "className": "GAMA_Syulen_Exec_Stealth",
+      "aliases": [
+        "syulen-pyam-exec"
+      ],
+      "sources": [
+        "star-citizen-wiki"
+      ],
+      "type": null,
+      "size": null,
+      "isSpaceship": true
+    },
+    {
+      "slug": "gama-syulen-exec-military",
+      "name": "Syulen PYAM Exec",
+      "manufacturer": "Gatac Manufacture",
+      "codes": [
+        "GAMA"
+      ],
+      "className": "GAMA_Syulen_Exec_Military",
+      "aliases": [
+        "syulen-pyam-exec"
+      ],
+      "sources": [
+        "star-citizen-wiki"
+      ],
+      "type": null,
+      "size": null,
+      "isSpaceship": true
+    },
+    {
+      "slug": "espr-talon",
+      "name": "Talon",
+      "manufacturer": "Esperia",
+      "codes": [
+        "ESPR"
+      ],
+      "className": "ESPR_Talon",
+      "aliases": [
+        "talon"
+      ],
+      "sources": [
+        "star-citizen-wiki"
+      ],
+      "type": "Combat",
+      "size": "Small",
+      "isSpaceship": true
+    },
+    {
+      "slug": "espr-talon-shrike",
+      "name": "Talon Shrike",
+      "manufacturer": "Esperia",
+      "codes": [
+        "ESPR"
+      ],
+      "className": "ESPR_Talon_Shrike",
+      "aliases": [
+        "talon-shrike"
+      ],
+      "sources": [
+        "star-citizen-wiki"
+      ],
+      "type": "Combat",
+      "size": "Small",
+      "isSpaceship": true
+    },
+    {
+      "slug": "anvl-terrapin",
+      "name": "Terrapin",
+      "manufacturer": "Anvil Aerospace",
+      "codes": [
+        "ANVL"
+      ],
+      "className": "ANVL_Terrapin",
+      "aliases": [
+        "terrapin"
+      ],
+      "sources": [
+        "star-citizen-wiki"
+      ],
+      "type": "Support",
+      "size": "Small",
+      "isSpaceship": true
+    },
+    {
+      "slug": "anvl-terrapin-medic",
+      "name": "Terrapin Medic",
+      "manufacturer": "Anvil Aerospace",
+      "codes": [
+        "ANVL"
+      ],
+      "className": "ANVL_Terrapin_Medic",
+      "aliases": [
+        "terrapin-medic"
+      ],
+      "sources": [
+        "star-citizen-wiki"
+      ],
+      "type": "Support",
+      "size": "Small",
+      "isSpaceship": true
+    },
+    {
+      "slug": "anvl-terrapin-medic-collector-medic",
+      "name": "Terrapin Medic Wikelo Savior Special",
+      "manufacturer": "Anvil Aerospace",
+      "codes": [
+        "ANVL"
+      ],
+      "className": "ANVL_Terrapin_Medic_Collector_Medic",
+      "aliases": [
+        "terrapin-medic-wikelo-savior-special"
+      ],
+      "sources": [
+        "star-citizen-wiki"
+      ],
+      "type": null,
+      "size": null,
+      "isSpaceship": true
+    },
+    {
+      "slug": "aegs-tiburon",
+      "name": "Tiburon",
+      "manufacturer": "Aegis Dynamics",
+      "codes": [
+        "AEGS"
+      ],
+      "className": "AEGS_Tiburon",
+      "aliases": [
+        "tiburon"
+      ],
+      "sources": [
+        "star-citizen-wiki"
+      ],
+      "type": "Combat",
+      "size": "Large",
+      "isSpaceship": true
+    },
+    {
+      "slug": "gama-tyilui",
+      "name": "Tyilui",
+      "manufacturer": "Gatac Manufacture",
+      "codes": [
+        "GAMA"
+      ],
+      "className": "GAMA_Tyilui",
+      "aliases": [
+        "tyilui"
+      ],
+      "sources": [
+        "star-citizen-wiki"
+      ],
+      "type": "Transporter",
+      "size": "Large",
+      "isSpaceship": true
+    },
+    {
+      "slug": "rsi-ursa-rover",
+      "name": "Ursa",
+      "manufacturer": "Roberts Space Industries",
+      "codes": [
+        "RSI"
+      ],
+      "className": "RSI_Ursa_Rover",
+      "aliases": [
+        "ursa"
+      ],
+      "sources": [
+        "star-citizen-wiki"
+      ],
+      "type": "Exploration",
+      "size": "vehicle",
+      "isSpaceship": false
+    },
+    {
+      "slug": "rsi-ursa-rover-emerald",
+      "name": "Ursa Fortuna",
+      "manufacturer": "Roberts Space Industries",
+      "codes": [
+        "RSI"
+      ],
+      "className": "RSI_Ursa_Rover_Emerald",
+      "aliases": [
+        "ursa-fortuna"
+      ],
+      "sources": [
+        "star-citizen-wiki"
+      ],
+      "type": "Exploration",
+      "size": "vehicle",
+      "isSpaceship": false
+    },
+    {
+      "slug": "rsi-ursa-medivac",
+      "name": "Ursa Medivac",
+      "manufacturer": "Roberts Space Industries",
+      "codes": [
+        "RSI"
+      ],
+      "className": "RSI_Ursa_Medivac",
+      "aliases": [
+        "ursa-medivac"
+      ],
+      "sources": [
+        "star-citizen-wiki"
+      ],
+      "type": "Support",
+      "size": "vehicle",
+      "isSpaceship": false
+    },
+    {
+      "slug": "rsi-ursa-medivac-stealth",
+      "name": "Ursa Medivac Wikelo Special",
+      "manufacturer": "Roberts Space Industries",
+      "codes": [
+        "RSI"
+      ],
+      "className": "RSI_Ursa_Medivac_Stealth",
+      "aliases": [
+        "ursa-medivac-wikelo-special"
+      ],
+      "sources": [
+        "star-citizen-wiki"
+      ],
+      "type": null,
+      "size": null,
+      "isSpaceship": false
+    },
+    {
+      "slug": "grin-utv",
+      "name": "UTV",
+      "manufacturer": "Greycat Industrial",
+      "codes": [
+        "GRIN"
+      ],
+      "className": "GRIN_UTV",
+      "aliases": [
+        "utv"
+      ],
+      "sources": [
+        "star-citizen-wiki"
+      ],
+      "type": "Transporter",
+      "size": "Medium",
+      "isSpaceship": false
+    },
+    {
+      "slug": "anvl-valkyrie",
+      "name": "Valkyrie",
+      "manufacturer": "Anvil Aerospace",
+      "codes": [
+        "ANVL"
+      ],
+      "className": "ANVL_Valkyrie",
+      "aliases": [
+        "valkyrie"
+      ],
+      "sources": [
+        "star-citizen-wiki"
+      ],
+      "type": "Combat",
+      "size": "Large",
+      "isSpaceship": true
+    },
+    {
+      "slug": "anvl-valkyrie-bis2950",
+      "name": "Valkyrie",
+      "manufacturer": "Anvil Aerospace",
+      "codes": [
+        "ANVL"
+      ],
+      "className": "ANVL_Valkyrie_BIS2950",
+      "aliases": [
+        "valkyrie"
+      ],
+      "sources": [
+        "star-citizen-wiki"
+      ],
+      "type": "Combat",
+      "size": "Large",
+      "isSpaceship": true
+    },
+    {
+      "slug": "vncl-scythe",
+      "name": "Vanduul Scythe",
+      "manufacturer": "Esperia",
+      "codes": [
+        "ESPR"
+      ],
+      "className": "VNCL_Scythe",
+      "aliases": [
+        "vanduul-scythe"
+      ],
+      "sources": [
+        "star-citizen-wiki"
+      ],
+      "type": "Combat",
+      "size": "Medium",
+      "isSpaceship": true
+    },
+    {
+      "slug": "aegs-vanguard-harbinger",
+      "name": "Vanguard Harbinger",
+      "manufacturer": "Aegis Dynamics",
+      "codes": [
+        "AEGS"
+      ],
+      "className": "AEGS_Vanguard_Harbinger",
+      "aliases": [
+        "vanguard-harbinger"
+      ],
+      "sources": [
+        "star-citizen-wiki"
+      ],
+      "type": "Combat",
+      "size": "Medium",
+      "isSpaceship": true
+    },
+    {
+      "slug": "aegs-vanguard-hoplite",
+      "name": "Vanguard Hoplite",
+      "manufacturer": "Aegis Dynamics",
+      "codes": [
+        "AEGS"
+      ],
+      "className": "AEGS_Vanguard_Hoplite",
+      "aliases": [
+        "vanguard-hoplite"
+      ],
+      "sources": [
+        "star-citizen-wiki"
+      ],
+      "type": "Combat",
+      "size": "Medium",
+      "isSpaceship": true
+    },
+    {
+      "slug": "aegs-vanguard-sentinel",
+      "name": "Vanguard Sentinel",
+      "manufacturer": "Aegis Dynamics",
+      "codes": [
+        "AEGS"
+      ],
+      "className": "AEGS_Vanguard_Sentinel",
+      "aliases": [
+        "vanguard-sentinel"
+      ],
+      "sources": [
+        "star-citizen-wiki"
+      ],
+      "type": "Combat",
+      "size": "Medium",
+      "isSpaceship": true
+    },
+    {
+      "slug": "aegs-vanguard",
+      "name": "Vanguard Warden",
+      "manufacturer": "Aegis Dynamics",
+      "codes": [
+        "AEGS"
+      ],
+      "className": "AEGS_Vanguard",
+      "aliases": [
+        "vanguard-warden"
+      ],
+      "sources": [
+        "star-citizen-wiki"
+      ],
+      "type": "Combat",
+      "size": "Medium",
+      "isSpaceship": true
+    },
+    {
+      "slug": "drak-vulture",
+      "name": "Vulture",
+      "manufacturer": "Drake Interplanetary",
+      "codes": [
+        "DRAK"
+      ],
+      "className": "DRAK_Vulture",
+      "aliases": [
+        "vulture"
+      ],
+      "sources": [
+        "star-citizen-wiki"
+      ],
+      "type": "Industrial",
+      "size": "Small",
+      "isSpaceship": true
+    },
+    {
+      "slug": "orig-x1",
+      "name": "X1",
+      "manufacturer": "Origin Jumpworks",
+      "codes": [
+        "ORIG"
+      ],
+      "className": "ORIG_X1",
+      "aliases": [
+        "x1",
+        "x1-base"
+      ],
+      "sources": [
+        "star-citizen-wiki"
+      ],
+      "type": "Exploration",
+      "size": "Small",
+      "isSpaceship": false
+    },
+    {
+      "slug": "orig-x1-force",
+      "name": "X1 Force",
+      "manufacturer": "Origin Jumpworks",
+      "codes": [
+        "ORIG"
+      ],
+      "className": "ORIG_X1_Force",
+      "aliases": [
+        "x1-force"
+      ],
+      "sources": [
+        "star-citizen-wiki"
+      ],
+      "type": "Combat",
+      "size": "Small",
+      "isSpaceship": false
+    },
+    {
+      "slug": "orig-x1-velocity",
+      "name": "X1 Velocity",
+      "manufacturer": "Origin Jumpworks",
+      "codes": [
+        "ORIG"
+      ],
+      "className": "ORIG_X1_Velocity",
+      "aliases": [
+        "x1-velocity"
+      ],
+      "sources": [
+        "star-citizen-wiki"
+      ],
+      "type": "competition",
+      "size": "Small",
+      "isSpaceship": false
+    },
+    {
+      "slug": "rsi-zeus-cl-collector-indust",
+      "name": "Zeus Mk II CL",
+      "manufacturer": "Roberts Space Industries",
+      "codes": [
+        "RSI"
+      ],
+      "className": "RSI_Zeus_CL_Collector_Indust",
+      "aliases": [
+        "zeus-mk-ii-cl",
+        "zeus-mkii-cl"
+      ],
+      "sources": [
+        "star-citizen-wiki"
+      ],
+      "type": "Transporter",
+      "size": "Medium",
+      "isSpaceship": true
+    },
+    {
+      "slug": "rsi-zeus-cl",
+      "name": "Zeus Mk II CL",
+      "manufacturer": "Roberts Space Industries",
+      "codes": [
+        "RSI"
+      ],
+      "className": "RSI_Zeus_CL",
+      "aliases": [
+        "zeus-mk-ii-cl",
+        "zeus-mkii-cl"
+      ],
+      "sources": [
+        "star-citizen-wiki"
+      ],
+      "type": "Transporter",
+      "size": "Medium",
+      "isSpaceship": true
+    },
+    {
+      "slug": "rsi-zeus-es",
+      "name": "Zeus Mk II ES",
+      "manufacturer": "Roberts Space Industries",
+      "codes": [
+        "RSI"
+      ],
+      "className": "RSI_Zeus_ES",
+      "aliases": [
+        "zeus-mk-ii-es",
+        "zeus-mkii-es"
+      ],
+      "sources": [
+        "star-citizen-wiki"
+      ],
+      "type": "Exploration",
+      "size": "Medium",
+      "isSpaceship": true
+    },
+    {
+      "slug": "rsi-zeus-es-collector-indust",
+      "name": "Zeus Mk II ES Wikelo Work Special",
+      "manufacturer": "Roberts Space Industries",
+      "codes": [
+        "RSI"
+      ],
+      "className": "RSI_Zeus_ES_Collector_Indust",
+      "aliases": [
+        "zeus-mk-ii-es-wikelo-work-special"
+      ],
+      "sources": [
+        "star-citizen-wiki"
+      ],
+      "type": null,
+      "size": null,
+      "isSpaceship": true
+    }
+  ]
+}

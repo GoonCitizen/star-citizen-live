@@ -14,7 +14,7 @@ if (!electron || typeof electron !== 'object' || !electron.app) {
   process.exit(1);
 }
 
-const { app, BrowserWindow, Tray, Menu, nativeImage, ipcMain, shell, Notification } = electron;
+const { app, BrowserWindow, Tray, Menu, nativeImage, ipcMain, shell, Notification, dialog } = electron;
 const path = require('path');
 const fs = require('fs');
 const http = require('http');
@@ -36,6 +36,7 @@ const {
   fetchPendingDeviceLink,
   completeDeviceLinkAsResponder
 } = require('./functions/fabricDeviceLinkClient');
+const { applyFabricEnvConfig, loadRepoDotEnv } = require('./functions/fabricEnvIdentity');
 
 let settings = {};
 try {
@@ -424,6 +425,8 @@ async function startService () {
 
       starCitizenService = new LiveRelay(opts);
       await starCitizenService.start();
+      loadEnvPublishingIdentity();
+      applyIdentityToService();
 
       // If we requested port 0, read the OS-assigned port from the server.
       const bound = starCitizenService.server && starCitizenService.server.address();
@@ -860,10 +863,25 @@ function identityAutoLockMinutes () {
   return Math.min(24 * 60, n);
 }
 
-/** Push the unlocked identity into the running relay for uplink signing. */
+/** Env FABRIC_XPRV / FABRIC_SEED — GoonCitizen publishing identity (wins over UI unlock). */
+let envPublishingIdentity = null;
+
+function loadEnvPublishingIdentity () {
+  loadRepoDotEnv();
+  const { identity, updated, source } = applyFabricEnvConfig(process.env);
+  envPublishingIdentity = identity;
+  if (identity) {
+    console.log('[ELECTRON]', '[STATUS]',
+      `Publishing identity from ${source}: ${identity.pubkey.slice(0, 16)}…` +
+      (updated ? ' (FABRIC_XPRV stamped)' : ''));
+  }
+  return identity;
+}
+
+/** Push publishing identity into the running relay (env > unlocked UI identity). */
 function applyIdentityToService () {
   if (starCitizenService && typeof starCitizenService.setIdentity === 'function') {
-    starCitizenService.setIdentity(unlockedIdentity);
+    starCitizenService.setIdentity(envPublishingIdentity || unlockedIdentity);
   }
 }
 
@@ -1157,6 +1175,72 @@ ipcMain.handle('restart-service', async () => {
     await mainWindow.loadURL(`http://127.0.0.1:${activePort}/`);
   }
   return { success: true, port: activePort };
+});
+
+// --- Filesystem pickers (Feed log import / Settings Game.log path) ---------
+
+ipcMain.handle('dialog:openDirectory', async () => {
+  const win = BrowserWindow.getFocusedWindow() || mainWindow;
+  const result = await dialog.showOpenDialog(win || undefined, {
+    title: 'Import log folder',
+    properties: ['openDirectory', 'multiSelections'],
+    message: 'Choose folders that contain Star Citizen Game.log / logbackup files'
+  });
+  if (result.canceled || !result.filePaths || !result.filePaths.length) {
+    return { canceled: true, paths: [] };
+  }
+  return { canceled: false, paths: result.filePaths };
+});
+
+ipcMain.handle('dialog:openLogFiles', async () => {
+  const win = BrowserWindow.getFocusedWindow() || mainWindow;
+  const result = await dialog.showOpenDialog(win || undefined, {
+    title: 'Import log files',
+    properties: ['openFile', 'multiSelections'],
+    filters: [
+      { name: 'Star Citizen logs', extensions: ['log'] },
+      { name: 'All files', extensions: ['*'] }
+    ],
+    message: 'Choose one or more .log files to import'
+  });
+  if (result.canceled || !result.filePaths || !result.filePaths.length) {
+    return { canceled: true, paths: [] };
+  }
+  return { canceled: false, paths: result.filePaths };
+});
+
+ipcMain.handle('dialog:openLogFile', async () => {
+  const win = BrowserWindow.getFocusedWindow() || mainWindow;
+  const result = await dialog.showOpenDialog(win || undefined, {
+    title: 'Select Game.log',
+    properties: ['openFile'],
+    filters: [
+      { name: 'Star Citizen logs', extensions: ['log'] },
+      { name: 'All files', extensions: ['*'] }
+    ],
+    message: 'Choose the live Game.log to tail'
+  });
+  if (result.canceled || !result.filePaths || !result.filePaths.length) {
+    return { canceled: true, path: null };
+  }
+  return { canceled: false, path: result.filePaths[0] };
+});
+
+ipcMain.handle('dialog:openFleetJson', async () => {
+  const win = BrowserWindow.getFocusedWindow() || mainWindow;
+  const result = await dialog.showOpenDialog(win || undefined, {
+    title: 'Import Starjump / FleetViewer export',
+    properties: ['openFile'],
+    filters: [
+      { name: 'Fleet JSON', extensions: ['json'] },
+      { name: 'All files', extensions: ['*'] }
+    ],
+    message: 'Choose a Starjump or FleetViewer JSON export'
+  });
+  if (result.canceled || !result.filePaths || !result.filePaths.length) {
+    return { canceled: true, path: null };
+  }
+  return { canceled: false, path: result.filePaths[0] };
 });
 
 process.on('uncaughtException', (error) => {
