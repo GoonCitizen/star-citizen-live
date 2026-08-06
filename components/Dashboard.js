@@ -133,11 +133,12 @@ const CSS = `
        font-family:'Segoe UI',system-ui,sans-serif;font-size:14px}
   header{position:sticky;top:0;z-index:5;background:var(--panel);
          border-bottom:1px solid var(--line);padding:12px 18px}
-  /* Chat tab: window is the canvas — header + fill; scroll inside chat panes only. */
+  /* Fill tabs (Chat, Fleet): window is the canvas — header + fill; scroll inside panes only. */
   body.chat-fill{overflow:hidden}
   body.chat-fill #root{display:flex;flex-direction:column;min-height:0;overflow:hidden}
   body.chat-fill #root > header{flex:0 0 auto;position:relative}
-  body.chat-fill #root > .chat-wrap{flex:1 1 auto;min-height:0}
+  body.chat-fill #root > .chat-wrap,
+  body.chat-fill #root > .fl-wrap{flex:1 1 auto;min-height:0;width:100%}
   .network-nav{display:flex;flex-wrap:wrap;align-items:center;gap:8px;padding:14px 18px 0}
   .network-nav .hint{color:var(--muted);font-size:12px;margin-left:4px}
   .row{display:flex;flex-wrap:wrap;align-items:center;gap:14px}
@@ -550,10 +551,11 @@ class Dashboard extends React.Component {
     try { document.body.classList.remove('chat-fill'); } catch (_) { /* ignore */ }
   }
 
-  /** Chat tab owns the viewport: no document scroll; panes scroll internally. */
+  /** Chat / Fleet own the viewport: no document scroll; panes scroll internally. */
   syncChatFillClass () {
     try {
-      document.body.classList.toggle('chat-fill', this.state.tab === 'chat');
+      const fill = this.state.tab === 'chat' || this.state.tab === 'fleet';
+      document.body.classList.toggle('chat-fill', fill);
     } catch (_) { /* ignore */ }
   }
 

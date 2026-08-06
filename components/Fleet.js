@@ -11,11 +11,16 @@ const React = require('react');
 const BASE = '/services/star-citizen';
 
 const CSS = `
-  .fl-wrap{max-width:1100px;margin:0 auto;padding:18px;display:grid;gap:16px}
-  .fl-panel{background:var(--panel);border:1px solid var(--line);border-radius:12px;overflow:hidden}
-  .fl-panel h2{font-size:13px;margin:0;padding:12px 16px;border-bottom:1px solid var(--line);font-weight:600;display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+  /* Fill the window canvas (Dashboard toggles body.chat-fill for Fleet + Chat). */
+  .fl-wrap{width:100%;max-width:none;margin:0;padding:12px 14px;display:grid;
+    grid-template-rows:auto minmax(0,1fr);gap:12px;height:100%;min-height:0;overflow:hidden;box-sizing:border-box}
+  .fl-panel{background:var(--panel);border:1px solid var(--line);border-radius:12px;overflow:hidden;
+    display:flex;flex-direction:column;min-height:0;min-width:0}
+  .fl-panel h2{font-size:13px;margin:0;padding:12px 16px;border-bottom:1px solid var(--line);font-weight:600;display:flex;flex-wrap:wrap;gap:8px;align-items:center;
+    flex:0 0 auto}
   .fl-panel h2 .sub{font-weight:500;color:var(--muted);font-size:12px}
-  .fl-panel .body{padding:14px 16px}
+  .fl-panel .body{padding:14px 16px;flex:1 1 auto;min-height:0;overflow:auto}
+  .fl-toolbar .body{flex:0 0 auto;overflow:visible}
   .fl-hint{color:var(--muted);font-size:12.5px;line-height:1.55;margin:0 0 12px}
   .fl-err{background:rgba(248,81,73,.12);color:var(--kill);border-radius:7px;padding:9px 12px;font-size:13px;margin-bottom:10px}
   .fl-ok{background:rgba(63,185,80,.12);color:var(--good);border-radius:7px;padding:9px 12px;font-size:13px;margin-bottom:10px}
@@ -58,8 +63,11 @@ const CSS = `
   .fl-groups label{display:flex;align-items:center;gap:6px;font-size:12px;color:var(--text);cursor:pointer}
   .fl-empty{color:var(--muted);text-align:center;font-style:italic;padding:28px 0;font-size:13px;line-height:1.7}
   .fl-samples{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
-  .fl-split{display:grid;grid-template-columns:minmax(240px,320px) 1fr;gap:16px}
-  @media (max-width:840px){.fl-split{grid-template-columns:1fr}}
+  .fl-split{display:grid;grid-template-columns:minmax(240px,320px) minmax(0,1fr);gap:12px;min-height:0;overflow:hidden}
+  @media (max-width:840px){
+    .fl-wrap{grid-template-rows:auto minmax(0,1fr);overflow:auto}
+    .fl-split{grid-template-columns:1fr;grid-template-rows:minmax(160px,32%) minmax(0,1fr);min-height:min(60vh,480px)}
+  }
   .fl-search{display:grid;gap:8px}
   .fl-search input{background:var(--bg);border:1px solid var(--line);color:var(--text);
     border-radius:7px;padding:8px 10px;font-size:12.5px;width:100%;box-sizing:border-box}
@@ -630,17 +638,15 @@ class Fleet extends React.Component {
 
   render () {
     return React.createElement('div', { className: 'fl-wrap' },
-      React.createElement('section', { className: 'fl-panel' },
+      React.createElement('section', { className: 'fl-panel fl-toolbar' },
         React.createElement('h2', null, 'Fleet ',
           React.createElement('span', { className: 'sub' },
             '— custom rosters + Starjump / FleetViewer imports')),
         React.createElement('div', { className: 'body' },
-          React.createElement('p', { className: 'fl-hint' },
-            'Build a personal fleet from the known-ship catalog, import a Starjump export, then share to peers, groups, or public.'),
           this.renderPresence(),
           this.state.error ? React.createElement('div', { className: 'fl-err' }, this.state.error) : null,
           this.state.notice ? React.createElement('div', { className: 'fl-ok' }, this.state.notice) : null,
-          React.createElement('div', { className: 'fl-bar' },
+          React.createElement('div', { className: 'fl-bar', style: { marginBottom: this.state.samples.length ? 8 : 0 } },
             React.createElement('input', {
               type: 'text',
               value: this.state.newFleetName,
@@ -686,18 +692,15 @@ class Fleet extends React.Component {
             }, 'Refresh')
           ),
           this.state.samples.length
-            ? React.createElement('div', null,
-              React.createElement('div', { className: 'fl-hint' }, 'Bundled Starjump fleet exports (data/fleets):'),
-              React.createElement('div', { className: 'fl-samples' },
-                this.state.samples.map((s) => React.createElement('button', {
-                  key: s.name,
-                  type: 'button',
-                  className: 'fl-chip',
-                  disabled: this.state.busy,
-                  title: `${s.uniqueShips} unique / ${s.shipCount} ships`,
-                  onClick: () => this.importPayload({ sample: s.name })
-                }, s.name.replace(/\.json$/i, '')))
-              )
+            ? React.createElement('div', { className: 'fl-samples' },
+              this.state.samples.map((s) => React.createElement('button', {
+                key: s.name,
+                type: 'button',
+                className: 'fl-chip',
+                disabled: this.state.busy,
+                title: `${s.uniqueShips} unique / ${s.shipCount} ships`,
+                onClick: () => this.importPayload({ sample: s.name })
+              }, s.name.replace(/\.json$/i, '')))
             )
             : null
         )
