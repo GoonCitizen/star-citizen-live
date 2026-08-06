@@ -8,6 +8,9 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased] — Fabric-free rebuild (`feature/fabric-free-m1`)
 ### Changed
+- **npm git deps:** pin `@fabric/core` / `@fabric/http` / `@fabric/hub` and set
+  **`.npmrc` `allow-git=all`** so nested Hub→http→core git preparation works under
+  npm 12+ (`allow-git=root` still refuses commit-SHA fetches).
 - **Removed the Fabric/p2p framework** and rebuilt the core as a zero-dependency
   Node.js service (`app/server.js`). `npm start` now runs the Fabric-free service;
   the old Fabric entry is kept as `npm run start:fabric` (deprecated). (D-002)

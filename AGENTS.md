@@ -75,11 +75,13 @@ live tail). New work must protect these.
 
 ## 3. Build / run / test commands
 
-Requires **Node.js 24.15.0** (see `.nvmrc` / `package.json` `engines`). **No `npm install` step is needed** — the running service has **zero
-runtime dependencies** (only Node built-ins: `http`, `crypto`, `events`, `fs`,
-`readline`).
+Requires **Node.js 24.15.0** (see `.nvmrc` / `package.json` `engines`). Desktop /
+Fabric mesh paths need **`npm i`** (pins `@fabric/core`, `@fabric/http`,
+`@fabric/hub` from Git). **`.npmrc` sets `allow-git=all`** — npm 12+
+`allow-git=root` still fails during nested git-dep preparation of commit SHAs.
 
 ```bash
+npm i                     # Fabric git deps + Electron (dev); needs allow-git=all
 npm start                 # LiveRelay → http://localhost:3041/  (dashboard home)
 npm run desktop           # Electron shell (Fabric-style; alias: start:desktop)
 npm test                  # node --test tests/relay/*.test.js
