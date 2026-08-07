@@ -1,10 +1,11 @@
 'use strict';
 
 /**
- * Wallet — Bitcoin components brought forward from the Hub, group-multisig
- * aware. Shows the payout backend (ledger vs bitcoind, network), each
- * group's deterministic k-of-n P2WSH address (same address on every
- * member's relay — sorted keys), and all mission escrows with status.
+ * Wallet — Bitcoin components brought forward from the Hub, group-aware.
+ * Shows the payout backend (ledger vs bitcoind, network), each group's
+ * deterministic Taproot (P2TR) spend-ladder address (same on every member's
+ * relay — sorted keys; legacy P2WSH kept under legacyP2wsh), and mission
+ * escrows with status.
  */
 
 const React = require('react');
@@ -12,7 +13,7 @@ const React = require('react');
 const BASE = '/services/star-citizen';
 
 const CSS = `
-  .wa-wrap{max-width:980px;margin:0 auto;padding:18px;display:grid;gap:14px}
+  .wa-wrap{width:100%;max-width:none;margin:0;padding:12px 14px;display:grid;gap:14px;box-sizing:border-box}
   .wa-panel{background:var(--panel);border:1px solid var(--line);border-radius:12px;overflow:hidden}
   .wa-panel h2{font-size:13px;margin:0;padding:12px 16px;border-bottom:1px solid var(--line);font-weight:600;display:flex;gap:8px;align-items:center}
   .wa-panel h2 .sub{color:var(--muted);font-weight:400;font-size:12px;flex:1}

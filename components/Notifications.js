@@ -11,7 +11,7 @@ const React = require('react');
 const BASE = '/services/star-citizen';
 
 const CSS = `
-  .nt-wrap{max-width:860px;margin:0 auto;padding:18px;display:grid;gap:14px}
+  .nt-wrap{width:100%;max-width:none;margin:0;padding:12px 14px;display:grid;gap:14px;box-sizing:border-box}
   .nt-panel{background:var(--panel);border:1px solid var(--line);border-radius:12px;overflow:hidden}
   .nt-panel h2{font-size:13px;margin:0;padding:12px 16px;border-bottom:1px solid var(--line);font-weight:600;
     display:flex;gap:8px;align-items:center}

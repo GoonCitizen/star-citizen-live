@@ -155,7 +155,7 @@ test('shareLogs consent gates the event uplink but not chat', async () => {
   }
 });
 
-test('group wallet: deterministic k-of-n multisig from the group roster', async () => {
+test('group wallet: deterministic k-of-n Taproot (+ legacy P2WSH) from the group roster', async () => {
   const a = createIdentity(); const b = createIdentity(); const c = createIdentity();
   const svc = new LiveRelay({
     port: 0,
@@ -170,10 +170,13 @@ test('group wallet: deterministic k-of-n multisig from the group roster', async 
 
     const res = await request(port, 'GET', `${BASE}/groups/${group.id}/wallet`);
     assert.strictEqual(res.status, 200, JSON.stringify(res.body));
+    assert.strictEqual(res.body.data.mode, 'taproot');
     assert.strictEqual(res.body.data.threshold, 2);
     assert.strictEqual(res.body.data.keys.length, 3);
     assert.deepStrictEqual(res.body.data.keys, [...group.members].sort(), 'sorted keys → deterministic address');
-    assert.ok(res.body.data.address.startsWith('bcrt1q-fake-2of3-'));
+    assert.ok(res.body.data.address, 'Taproot deposit address');
+    assert.ok(res.body.data.legacyP2wsh, 'legacy P2WSH retained for transition');
+    assert.ok(String(res.body.data.legacyP2wsh.address || '').startsWith('bcrt1q-fake-2of3-'));
 
     // Wallet summary endpoint reports the backend.
     const wallet = await request(port, 'GET', `${BASE}/wallet`);

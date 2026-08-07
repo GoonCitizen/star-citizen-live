@@ -11,7 +11,7 @@ const RegisterEventLog = require('./RegisterEventLog');
 const BASE = '/services/star-citizen';
 
 const CSS = `
-  .mpage{max-width:820px;margin:0 auto;padding:18px;display:grid;gap:16px}
+  .mpage{width:100%;max-width:none;margin:0;padding:12px 14px;display:grid;gap:16px;box-sizing:border-box}
   ${RegisterEventLog.CSS || ''}
   .mpage-back{color:var(--muted);font-size:13px;text-decoration:none;cursor:pointer;background:none;border:none;padding:0;font:inherit;text-align:left}
   .mpage-back:hover{color:var(--accent)}

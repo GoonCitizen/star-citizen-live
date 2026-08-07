@@ -34,7 +34,7 @@ function writeAdvancedMode (on) {
 }
 
 const CSS = `
-  .ppage{max-width:720px;margin:0 auto;padding:18px;display:grid;gap:16px}
+  .ppage{width:100%;max-width:none;margin:0;padding:12px 14px;display:grid;gap:16px;box-sizing:border-box}
   .ppage-back{color:var(--muted);font-size:13px;text-decoration:none;cursor:pointer;background:none;border:none;padding:0;font:inherit;text-align:left}
   .ppage-back:hover{color:var(--accent)}
   .ppage-hero{position:relative;background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:22px 24px}

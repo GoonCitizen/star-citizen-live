@@ -14,7 +14,7 @@ const React = require('react');
 const BASE = '/services/star-citizen';
 
 const CSS = `
-  .lib-wrap{max-width:1100px;margin:0 auto;padding:18px;display:grid;gap:16px}
+  .lib-wrap{width:100%;max-width:none;margin:0;padding:12px 14px;display:grid;gap:16px;box-sizing:border-box}
   .lib-bar{display:flex;gap:12px;align-items:center;flex-wrap:wrap;background:var(--panel);
     border:1px solid var(--line);border-radius:12px;padding:12px 16px}
   .lib-bar .stat{color:var(--muted);font-size:12.5px}

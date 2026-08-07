@@ -22,7 +22,7 @@ const {
 } = require('../functions/peerPeeringString');
 
 const CSS = `
-  .pr-wrap{max-width:920px;margin:0 auto;padding:18px;display:grid;gap:16px}
+  .pr-wrap{width:100%;max-width:none;margin:0;padding:12px 14px;display:grid;gap:16px;box-sizing:border-box}
   .pr-panel{background:var(--panel);border:1px solid var(--line);border-radius:12px;overflow:hidden}
   .pr-panel h2{font-size:13px;margin:0;padding:12px 16px;border-bottom:1px solid var(--line);font-weight:600}
   .pr-panel .body{padding:14px 16px}

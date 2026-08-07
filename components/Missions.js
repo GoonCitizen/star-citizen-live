@@ -20,7 +20,7 @@ const MissionOutcomesChart = require('./MissionOutcomesChart');
 const BASE = '/services/star-citizen';
 
 const CSS = `
-  .mi-wrap{max-width:980px;margin:0 auto;padding:18px;display:grid;gap:14px}
+  .mi-wrap{width:100%;max-width:none;margin:0;padding:12px 14px;display:grid;gap:14px;box-sizing:border-box}
   .mi-panel{background:var(--panel);border:1px solid var(--line);border-radius:12px;overflow:hidden}
   .mi-panel h2{font-size:13px;margin:0;padding:12px 16px;border-bottom:1px solid var(--line);font-weight:600;display:flex;gap:8px;align-items:center}
   .mi-panel h2 .sub{color:var(--muted);font-weight:400;font-size:12px;flex:1}

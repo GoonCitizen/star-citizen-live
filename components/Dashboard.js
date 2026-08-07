@@ -139,6 +139,12 @@ const CSS = `
   body.chat-fill #root > header{flex:0 0 auto;position:relative}
   body.chat-fill #root > .chat-wrap,
   body.chat-fill #root > .fl-wrap{flex:1 1 auto;min-height:0;width:100%}
+  /* Full-bleed page shell (Home / Fleet width): no centered max-width column. */
+  .page-shell,.mi-wrap,.wa-wrap,.pr-wrap,.lib-wrap,.fm-wrap,.nt-wrap,
+  .gpage,.mpage,.ppage{
+    width:100%;max-width:none;margin:0;padding:12px 14px;box-sizing:border-box;
+    display:grid;gap:14px
+  }
   .network-nav{display:flex;flex-wrap:wrap;align-items:center;gap:8px;padding:14px 18px 0}
   .network-nav .hint{color:var(--muted);font-size:12px;margin-left:4px}
   .row{display:flex;flex-wrap:wrap;align-items:center;gap:14px}
@@ -183,7 +189,7 @@ const CSS = `
   input[type=text]{background:var(--bg);border:1px solid var(--line);color:var(--text);
        border-radius:6px;padding:6px 9px;font-size:13px;min-width:240px}
   label{display:flex;gap:5px;align-items:center;cursor:pointer;user-select:none}
-  main{padding:16px 18px;display:grid;gap:16px;grid-template-columns:1fr 1fr}
+  main{padding:12px 14px;display:grid;gap:16px;grid-template-columns:1fr 1fr}
   .panel{background:var(--panel);border:1px solid var(--line);border-radius:10px;overflow:hidden;
          display:flex;flex-direction:column;min-height:200px}
   .panel.full{grid-column:1 / -1}

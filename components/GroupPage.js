@@ -25,7 +25,7 @@ function readAdvancedMode () {
 }
 
 const CSS = `
-  .gpage{max-width:820px;margin:0 auto;padding:18px;display:grid;gap:16px}
+  .gpage{width:100%;max-width:none;margin:0;padding:12px 14px;display:grid;gap:16px;box-sizing:border-box}
   .gpage-back{color:var(--muted);font-size:13px;text-decoration:none}
   .gpage-back:hover{color:var(--accent)}
   .gpage-hero{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:22px 24px}
