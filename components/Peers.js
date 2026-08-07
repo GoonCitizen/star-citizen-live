@@ -10,7 +10,8 @@
  * Log sharing is opt-in (D-017): per-peer "Share logs" and/or Settings
  * "Share logs to global". Connection status mirrors Hub PeerList (connected /
  * offline badges). Browser WebRTC mesh (`RegisterWebRTCPeer`) lives on Hub
- * HTTP/WS only — observed here via Hub `/services/peering` counts, not dialed.
+ * HTTP/WS only — observed here via Hub `OPTIONS /` Application Resource Contract
+ * (services.peering + optional live attestation), with GET peering as fallback.
  */
 
 const React = require('react');
@@ -54,6 +55,7 @@ const CSS = `
   .pr-tag.off{background:rgba(110,118,129,.18);color:var(--muted)}
   .pr-tag.warn{background:rgba(210,153,34,.18);color:#d29922}
   .pr-tag.primary{background:rgba(56,139,253,.18);color:#58a6ff}
+  .pr-tag.mut{background:rgba(110,118,129,.14);color:var(--muted);font-weight:600}
   .pr-conns{margin-top:10px;font-size:11.5px;color:var(--muted)}
   .pr-conns code{color:var(--text);font-size:11px}
   .pr-hubs{display:grid;gap:8px;margin-top:10px}
@@ -299,7 +301,8 @@ class Peers extends React.Component {
       React.createElement('h2', null, 'Network hubs (observe)'),
       React.createElement('div', { className: 'body' },
         React.createElement('div', { className: 'pr-hint' },
-          'Hub TCP peers and browser WebRTC registrations on hub.fabric.pub / relay.goon.vc. ',
+          'Discovers hub.fabric.pub / relay.goon.vc via HTTP OPTIONS Application Resource Contract ',
+          '(Fabric contract + peering capability), then reads live TCP / WebRTC registration counts. ',
           'Desktop dials Fabric TCP only; WebRTC counts show clients reachable through the hubs so gossip can fill open slots.'),
         React.createElement('div', { className: 'pr-id', style: { marginTop: 10 } },
           React.createElement('span', { className: 'pr-tag ' + (summary.online ? 'on' : 'off') },
@@ -318,7 +321,16 @@ class Peers extends React.Component {
                 ? React.createElement(React.Fragment, null,
                   React.createElement('span', null, `TCP ${h.p2pConnections || 0}` + (h.p2pMaxPeers != null ? `/${h.p2pMaxPeers}` : '')),
                   React.createElement('span', null, `WebRTC ${h.webrtcRegistered || 0}`),
-                  h.hubAlias ? React.createElement('span', null, h.hubAlias) : null)
+                  h.hubAlias ? React.createElement('span', null, h.hubAlias) : null,
+                  h.application && h.application.contractId
+                    ? React.createElement('span', {
+                      className: 'pr-tag mut',
+                      title: 'Application Resource Contract id'
+                    }, String(h.application.contractId).slice(0, 12) + '…')
+                    : null,
+                  h.discoveredVia
+                    ? React.createElement('span', { className: 'pr-tag mut' }, h.discoveredVia)
+                    : null)
                 : React.createElement('span', { style: { color: 'var(--kill)' } }, h.error || 'unreachable')
             )))
           : React.createElement('div', { className: 'pr-hint', style: { marginTop: 8 } }, 'Observing hubs…')

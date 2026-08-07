@@ -145,9 +145,31 @@ test('broadcastPeering setting gates announce; POST /peers/announce needs advert
   }
 });
 
-test('observeHubPeering parses peering claims via fetch stub', async () => {
-  const fetchStub = async (url) => {
-    assert.ok(String(url).endsWith('/services/peering'));
+test('observeHubPeering discovers via OPTIONS ARC then reads peering', async () => {
+  const calls = [];
+  const fetchStub = async (url, init = {}) => {
+    calls.push({ url: String(url), method: (init.method || 'GET').toUpperCase() });
+    const u = String(url);
+    if ((init.method || 'GET').toUpperCase() === 'OPTIONS') {
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({
+          '@type': 'ApplicationResourceContract',
+          name: 'hub.fabric.pub',
+          contract: { id: 'deadbeef', messageType: 'CONTRACT_PUBLISH' },
+          resources: { Service: { route: '/services' } },
+          services: {
+            peering: {
+              endpointBasePath: '/services/peering',
+              kind: 'PeeringCapability'
+            }
+          },
+          capabilities: { http: { cors: true }, fabric: { p2p: true } }
+        })
+      };
+    }
+    assert.ok(u.endsWith('/services/peering'), `expected peering GET, got ${u}`);
     return {
       ok: true,
       status: 200,
@@ -169,6 +191,45 @@ test('observeHubPeering parses peering claims via fetch stub', async () => {
   assert.strictEqual(snap.summary.online, 1);
   assert.strictEqual(snap.summary.webrtcRegistered, 7);
   assert.strictEqual(snap.hubs[0].p2pConnections, 4);
+  assert.strictEqual(snap.hubs[0].application.contractId, 'deadbeef');
+  assert.strictEqual(snap.hubs[0].discoveredVia, 'options+peering');
+  assert.ok(calls.some((c) => c.method === 'OPTIONS'));
+  assert.ok(calls.some((c) => c.method === 'GET' && c.url.endsWith('/services/peering')));
+});
+
+test('observeHubPeering uses OPTIONS status attestation without peering GET', async () => {
+  const calls = [];
+  const fetchStub = async (url, init = {}) => {
+    calls.push({ url: String(url), method: (init.method || 'GET').toUpperCase() });
+    assert.strictEqual((init.method || 'GET').toUpperCase(), 'OPTIONS');
+    return {
+      ok: true,
+      status: 200,
+      json: async () => ({
+        '@type': 'ApplicationResourceContract',
+        name: 'hub.fabric.pub',
+        contract: { id: 'cafebabe' },
+        resources: {},
+        services: { peering: { endpointBasePath: '/services/peering' } },
+        status: {
+          oracleAttestation: {
+            claim: {
+              kind: 'PeeringCapability',
+              fabricPeerId: 'xyz',
+              hub: { alias: '@fabric/hub' },
+              p2p: { connections: 2, maxPeers: 16, listening: true },
+              webrtc: { registeredPeers: 3, signaling: [] }
+            }
+          }
+        }
+      })
+    };
+  };
+  const snap = await hubPeeringObserve.observeHubPeering(['https://relay.goon.vc'], { fetch: fetchStub });
+  assert.strictEqual(snap.hubs[0].discoveredVia, 'options');
+  assert.strictEqual(snap.hubs[0].p2pConnections, 2);
+  assert.strictEqual(snap.hubs[0].webrtcRegistered, 3);
+  assert.ok(!calls.some((c) => c.method === 'GET'));
 });
 
 test('GET /peers/:id returns local profile detail + profile settings', async () => {
