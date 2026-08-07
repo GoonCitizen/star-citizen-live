@@ -1367,6 +1367,12 @@ class StarCitizenService extends EventEmitter {
         await this._handle(req, res);
         return true;
       }
+      // Hub-compatible discovery: OPTIONS / ARC + GET /services/peering.
+      if (pathname === '/' || pathname === '/services/peering' ||
+          pathname.startsWith('/services/peering/')) {
+        await this._handle(req, res);
+        return true;
+      }
       if (pathname !== base && !pathname.startsWith(`${base}/`)) return false;
       await this._handle(req, res);
       return true;
@@ -2005,6 +2011,10 @@ class StarCitizenService extends EventEmitter {
       const { tryHandleSiteLogin } = require('../functions/fabricSiteLogin');
       const siteLogin = await tryHandleSiteLogin(this, req, res, pathname, body);
       if (siteLogin === true) return;
+      // Hub-compatible peering discovery (OPTIONS ARC + /services/peering).
+      // Must run before the SPA GET `/` branch so OPTIONS is not 404'd.
+      const liveRelayPeeringHttp = require('../functions/liveRelayPeeringHttp');
+      if (liveRelayPeeringHttp.tryHandlePeeringDiscovery(this, req, res, pathname)) return;
       // GET /sessions → same dashboard (header SiteLogin buttons).
       const serveSpa = siteLogin === 'spa' ||
         (req.method === 'GET' && (pathname === '/' || pathname === `${base}/ui` ||
