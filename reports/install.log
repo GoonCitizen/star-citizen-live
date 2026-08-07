@@ -10,7 +10,7 @@ npm warn deprecated uuid@8.3.2: uuid@10 and below is no longer supported.  For E
 npm warn deprecated glob@10.5.0: Old versions of glob are not supported, and contain widely publicized security vulnerabilities, which have been fixed in the current version. Please update. Support for old versions may be purchased (at exorbitant rates) by contacting i@izs.me
 npm warn gitignore-fallback No .npmignore file found, using .gitignore for file exclusion. Consider creating a .npmignore file to explicitly control published files.
 
-added 1168 packages, and audited 1169 packages in 2m
+added 1168 packages, and audited 1169 packages in 4m
 
 153 packages are looking for funding
   run `npm fund` for details

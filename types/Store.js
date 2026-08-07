@@ -47,7 +47,7 @@ class Store {
   constructor ({ path: storePath = null, dir = null } = {}) {
     this.path = storePath || dir || null;
     this.data = {}; // { collectionName: { id: record } }
-    /** @type {import('@fabric/core/types/store')|null} */
+    /** @type {Object|null} */
     this._fabric = null;
     this._started = false;
     this._writeChain = Promise.resolve();

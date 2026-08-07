@@ -61,6 +61,8 @@ class Settings extends React.Component {
       snapshotAutoPurge: true,
       snapshotMaxMB: 256,
       shareLogsGlobal: false,
+      fabricAdvertiseHost: '',
+      broadcastPeering: false,
       notifyDesktop: true,
       notifyChatGlobal: true,
       notifyChatGroups: true,
@@ -96,6 +98,8 @@ class Settings extends React.Component {
         snapshotAutoPurge: s.snapshotAutoPurge !== false,
         snapshotMaxMB: s.snapshotMaxMB || 256,
         shareLogsGlobal: s.shareLogsGlobal === true || (settingsRes.runtime && settingsRes.runtime.shareLogsGlobal === true),
+        fabricAdvertiseHost: s.fabricAdvertiseHost || (settingsRes.runtime && settingsRes.runtime.fabricAdvertiseHost) || '',
+        broadcastPeering: s.broadcastPeering === true || (settingsRes.runtime && settingsRes.runtime.broadcastPeering === true),
         notifyDesktop: s.notifyDesktop !== false,
         notifyChatGlobal: s.notifyChatGlobal !== false,
         notifyChatGroups: s.notifyChatGroups !== false,
@@ -411,7 +415,41 @@ class Settings extends React.Component {
             React.createElement('div', { className: 'st-sec' },
               React.createElement('h3', null, 'Fabric Network'),
               React.createElement('div', { className: 'd' },
-                'Fabric peers (hub.fabric.pub:7777 and relay.goon.vc:7777 are seeded by default) receive your signed wire Messages over TCP/NOISE. Log events stay private until you authorize sharing — prefer per-peer grants under Network → Peers, or enable global below.'),
+                'Native Fabric TCP/NOISE only (pubkey@host:port). Seeds hub.fabric.pub:7777 and relay.goon.vc:7777 are the default rendezvous. Set a public advertise host so others can dial you; announce open slots only when you opt in.'),
+              this.field('Advertise host (public hostname)', 'fabricAdvertiseHost', 'e.g. relay.example.com — no port; listen uses fabricPort'),
+              React.createElement('div', { className: 'st-row', style: { marginTop: -4, marginBottom: 10 } },
+                React.createElement('button', {
+                  type: 'button',
+                  className: 'st-btn ghost',
+                  style: { padding: '3px 10px', fontSize: 11 },
+                  disabled: !this.state.editable || this.state.busy,
+                  onClick: async () => {
+                    this.setState({ busy: true, error: null });
+                    try {
+                      await this.put('fabricAdvertiseHost', String(this.state.fabricAdvertiseHost || '').trim() || null);
+                      this.setState({ busy: false });
+                      await this.load();
+                    } catch (err) {
+                      this.setState({ busy: false, error: err.message });
+                    }
+                  }
+                }, 'Save advertise host')
+              ),
+              React.createElement('label', { style: { display: 'flex', gap: 8, alignItems: 'center', fontSize: 13, cursor: 'pointer', marginBottom: 10 } },
+                React.createElement('input', {
+                  type: 'checkbox',
+                  checked: this.state.broadcastPeering,
+                  disabled: !this.state.editable || this.state.busy,
+                  onChange: async (e) => {
+                    const value = e.target.checked;
+                    this.setState({ broadcastPeering: value });
+                    try { await this.put('broadcastPeering', value); } catch (err) { this.setState({ error: err.message }); }
+                  }
+                }),
+                'Announce open peer slots on the Fabric mesh (P2P_PEERING_OFFER)'
+              ),
+              React.createElement('div', { className: 'd', style: { marginTop: -4, marginBottom: 10 } },
+                'Off by default. Requires advertise host. Network → Peers can also force a one-shot announce.'),
               React.createElement('label', { style: { display: 'flex', gap: 8, alignItems: 'center', fontSize: 13, cursor: 'pointer', marginBottom: 10 } },
                 React.createElement('input', {
                   type: 'checkbox',

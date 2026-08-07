@@ -7,17 +7,43 @@
 
 const React = require('react');
 const ActivityHeatmap = require('./ActivityHeatmap');
+const Identity = require('./Identity');
+const Settings = require('./Settings');
+const {
+  peeringInfoForGoonCitizen,
+  copyPeeringString
+} = require('../functions/peerPeeringString');
 
 const BASE = '/services/star-citizen';
+const ADVANCED_MODE_KEY = 'gooncitizen.advancedMode';
+
+function readAdvancedMode () {
+  try {
+    return (typeof localStorage !== 'undefined') && localStorage.getItem(ADVANCED_MODE_KEY) === '1';
+  } catch (_) {
+    return false;
+  }
+}
+
+function writeAdvancedMode (on) {
+  try {
+    if (typeof localStorage === 'undefined') return;
+    if (on) localStorage.setItem(ADVANCED_MODE_KEY, '1');
+    else localStorage.removeItem(ADVANCED_MODE_KEY);
+  } catch (_) { /* ignore */ }
+}
 
 const CSS = `
   .ppage{max-width:720px;margin:0 auto;padding:18px;display:grid;gap:16px}
   .ppage-back{color:var(--muted);font-size:13px;text-decoration:none;cursor:pointer;background:none;border:none;padding:0;font:inherit;text-align:left}
   .ppage-back:hover{color:var(--accent)}
-  .ppage-hero{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:22px 24px}
-  .ppage-hero h1{margin:0 0 6px;font-size:20px;display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+  .ppage-hero{position:relative;background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:22px 24px}
+  .ppage-hero h1{margin:0 0 6px;font-size:20px;display:flex;flex-wrap:wrap;gap:8px;align-items:center;padding-right:44px}
   .ppage-hero .sub{color:var(--muted);font-size:13px;line-height:1.5;word-break:break-all;
     font-family:'Cascadia Code',Consolas,monospace}
+  .ppage-gear{position:absolute;top:14px;right:14px;background:var(--panel2);border:1px solid var(--line);
+    border-radius:8px;padding:5px 8px;cursor:pointer;font-size:15px;line-height:1}
+  .ppage-gear:hover{border-color:var(--accent)}
   .ppage-panel{background:var(--panel);border:1px solid var(--line);border-radius:12px;overflow:hidden}
   .ppage-panel h2{font-size:13px;margin:0;padding:12px 16px;border-bottom:1px solid var(--line);font-weight:600}
   .ppage-panel .body{padding:14px 16px}
@@ -31,6 +57,9 @@ const CSS = `
   .ppage-tag.off{background:rgba(110,118,129,.18);color:var(--muted)}
   .ppage-tag.you{background:rgba(56,139,253,.18);color:var(--accent)}
   .ppage-hint{color:var(--muted);font-size:12.5px;line-height:1.55}
+  .ppage-copy{margin-top:8px;background:var(--panel2);border:1px solid var(--line);color:var(--text);
+    border-radius:7px;padding:5px 10px;font-size:11.5px;font-weight:600;cursor:pointer}
+  .ppage-copy:hover{border-color:var(--accent);color:var(--accent)}
 `;
 
 function shortKey (pubkey) {
@@ -44,7 +73,12 @@ class ProfilePage extends React.Component {
       loading: true,
       error: null,
       detail: null,
-      analytics: null
+      analytics: null,
+      peeringCopied: false,
+      showSettings: false,
+      showIdentity: false,
+      advancedMode: readAdvancedMode(),
+      showProfileActivity: ActivityHeatmap.readShowProfileActivity()
     };
   }
 
@@ -87,6 +121,23 @@ class ProfilePage extends React.Component {
     else window.location.href = '/#chat';
   }
 
+  peeringInfo (d) {
+    if (d && d.peering && d.peering.string) return d.peering;
+    const sig = typeof window !== 'undefined' ? window.location.host : '';
+    return peeringInfoForGoonCitizen({
+      peer: d && d.peer,
+      profile: d && d.profile,
+      pubkey: d && d.pubkey,
+      signalingHostPort: sig
+    });
+  }
+
+  copyPeering (str) {
+    if (!copyPeeringString(str)) return;
+    this.setState({ peeringCopied: true });
+    window.setTimeout(() => this.setState({ peeringCopied: false }), 1500);
+  }
+
   renderActivity (d) {
     if (!ActivityHeatmap.readShowProfileActivity() || !d) return null;
     const handle = (d.profile && d.profile.scHandle) || null;
@@ -121,10 +172,19 @@ class ProfilePage extends React.Component {
     const name = profile.nickname || d.meshAlias || shortKey(d.pubkey);
     const presence = d.presence;
     const ship = presence && presence.ship;
+    const peering = this.peeringInfo(d);
 
     return React.createElement('div', { className: 'ppage' },
       React.createElement('button', { type: 'button', className: 'ppage-back', onClick: () => this.goBack() }, '← Back'),
       React.createElement('div', { className: 'ppage-hero' },
+        d.self
+          ? React.createElement('button', {
+            type: 'button',
+            className: 'ppage-gear',
+            title: 'Settings — log path, Discord, runtime',
+            onClick: () => this.setState({ showSettings: true })
+          }, '⚙️')
+          : null,
         React.createElement('h1', null,
           name,
           d.self ? React.createElement('span', { className: 'ppage-tag you' }, 'you') : null,
@@ -144,10 +204,29 @@ class ProfilePage extends React.Component {
           React.createElement('div', { className: 'ppage-kv' },
             React.createElement('b', null, 'Star Citizen handle '), React.createElement('br'),
             profile.scHandle || '—'),
-          peer && peer.address
+          peering.string
             ? React.createElement('div', { className: 'ppage-kv' },
-              React.createElement('b', null, 'peer address '), React.createElement('br'), peer.address)
-            : null,
+              React.createElement('b', null, 'peering '), React.createElement('br'),
+              peering.string,
+              React.createElement('div', null,
+                React.createElement('button', {
+                  type: 'button',
+                  className: 'ppage-copy',
+                  title: 'Copy pubkey@host:port for native Fabric dial',
+                  onClick: () => this.copyPeering(peering.string)
+                }, this.state.peeringCopied ? 'Copied' : 'Copy peering string')),
+              React.createElement('div', { className: 'ppage-hint', style: { marginTop: 6 } },
+                peering.signaling
+                  ? 'WebRTC signaling host (this site) — browsers will peer here; native nodes use Fabric TCP when advertised.'
+                  : 'Native Fabric dial pin (pubkey@host:port).'))
+            : (peer && peer.address
+              ? React.createElement('div', { className: 'ppage-kv' },
+                React.createElement('b', null, 'peer address '), React.createElement('br'), peer.address)
+              : (d.self
+                ? React.createElement('div', { className: 'ppage-hint' },
+                  'No dialable peering string yet — set fabricAdvertiseHost in Settings so others can dial you as pubkey@host:port.')
+                : React.createElement('div', { className: 'ppage-hint' },
+                  'No Fabric TCP address known for this peer yet.'))),
           profile.bio
             ? React.createElement('div', null,
               React.createElement('div', { className: 'ppage-hint', style: { marginBottom: 4 } }, 'Bio'),
@@ -172,7 +251,34 @@ class ProfilePage extends React.Component {
             : null,
           this.renderActivity(d)
         )
-      )
+      ),
+      this.state.showSettings
+        ? React.createElement(Settings, {
+          onClose: () => this.setState({ showSettings: false }),
+          onOpenIdentity: () => this.setState({ showSettings: false, showIdentity: true }),
+          advancedMode: this.state.advancedMode,
+          onAdvancedModeChange: (on) => {
+            writeAdvancedMode(on);
+            this.setState({ advancedMode: on });
+          },
+          showProfileActivity: this.state.showProfileActivity,
+          onShowProfileActivityChange: (on) => {
+            ActivityHeatmap.writeShowProfileActivity(on);
+            this.setState({ showProfileActivity: on });
+          }
+        })
+        : null,
+      this.state.showIdentity
+        ? React.createElement(Identity, {
+          onClose: () => {
+            this.setState({ showIdentity: false });
+            this.load();
+          },
+          showProfileActivity: this.state.showProfileActivity,
+          analytics: this.state.analytics,
+          onNicknameChange: () => this.load()
+        })
+        : null
     );
   }
 }

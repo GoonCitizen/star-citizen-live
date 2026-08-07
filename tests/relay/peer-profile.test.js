@@ -46,6 +46,105 @@ test('sanitizeProfile and peeringAddressesFromObject', () => {
   assert.ok(addrs.includes('third.example:7779'));
 });
 
+test('peerPeeringString builds pubkey@host:port for GoonCitizen rows', () => {
+  const peerPeeringString = require('../../functions/peerPeeringString');
+  const hex = `02${'cd'.repeat(32)}`;
+  const info = peerPeeringString.peeringInfoForGoonCitizen({
+    pubkey: hex,
+    peer: { address: 'wing.example:7777', pubkey: hex }
+  });
+  assert.strictEqual(info.string, `${hex}@wing.example:7777`);
+  assert.strictEqual(info.signaling, false);
+
+  const selfInfo = peerPeeringString.peeringInfoForGoonCitizen({
+    pubkey: hex,
+    advertiseHost: 'public.example',
+    listenPort: 7777
+  });
+  assert.strictEqual(selfInfo.string, `${hex}@public.example:7777`);
+});
+
+test('parsePeerDialInput accepts host:port and pubkey@host:port', () => {
+  const peerPeeringString = require('../../functions/peerPeeringString');
+  const hex = `02${'ab'.repeat(32)}`;
+  assert.deepStrictEqual(peerPeeringString.parsePeerDialInput('relay.goon.vc:7777'), {
+    address: 'relay.goon.vc:7777',
+    pubkey: null
+  });
+  assert.deepStrictEqual(peerPeeringString.parsePeerDialInput(`${hex}@wing.example:7777`), {
+    address: 'wing.example:7777',
+    pubkey: hex
+  });
+  assert.strictEqual(peerPeeringString.parsePeerDialInput('not-a-peer'), null);
+  assert.strictEqual(peerPeeringString.parsePeerDialInput('bad@host'), null);
+  assert.strictEqual(peerPeeringString.parsePeerDialInput(''), null);
+});
+
+test('POST /peers accepts pubkey@host:port dial pins', async () => {
+  const dir = tmpDir('sc-dial-');
+  const hex = `02${'ef'.repeat(32)}`;
+  const svc = new LiveRelay({
+    port: 0,
+    settingsDir: dir,
+    peers: [],
+    fabric: { enable: false }
+  });
+  await svc.start();
+  try {
+    const port = svc.server.address().port;
+    const res = await request(port, 'POST', '/peers', {
+      address: `${hex}@wingmate.example:7777`,
+      label: 'wing'
+    });
+    assert.strictEqual(res.status, 200);
+    assert.strictEqual(res.body.data.address, 'wingmate.example:7777');
+    assert.strictEqual(res.body.data.expectedPubkey, hex);
+    const list = await request(port, 'GET', '/peers');
+    const row = list.body.data.find((p) => p.address === 'wingmate.example:7777');
+    assert.ok(row);
+    assert.strictEqual(row.expectedPubkey, hex);
+  } finally {
+    await svc.stop();
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('broadcastPeering setting gates announce; POST /peers/announce needs advertise host', async () => {
+  const dir = tmpDir('sc-announce-');
+  const id = createIdentity();
+  const svc = new LiveRelay({
+    port: 0,
+    settingsDir: dir,
+    peers: [],
+    fabric: { enable: false }
+  });
+  await svc.start();
+  try {
+    svc.setIdentity(id);
+    const port = svc.server.address().port;
+    const settings = await request(port, 'GET', '/settings');
+    assert.ok(settings.body.allowedKeys.includes('broadcastPeering'));
+    assert.strictEqual(settings.body.runtime.broadcastPeering, false);
+
+    const put = await request(port, 'PUT', '/settings/broadcastPeering', { value: true });
+    assert.strictEqual(put.status, 200);
+    assert.strictEqual(put.body.settings.broadcastPeering, true);
+
+    const announceNoHost = await request(port, 'POST', '/peers/announce');
+    assert.strictEqual(announceNoHost.status, 400);
+    assert.match(announceNoHost.body.error || '', /fabricAdvertiseHost/i);
+
+    await request(port, 'PUT', '/settings/fabricAdvertiseHost', { value: 'public.example' });
+    const after = await request(port, 'GET', '/settings');
+    assert.strictEqual(after.body.runtime.fabricAdvertiseHost, 'public.example');
+    assert.ok(after.body.runtime.selfPeering);
+    assert.match(after.body.runtime.selfPeering, /@public\.example:7777$/);
+  } finally {
+    await svc.stop();
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test('observeHubPeering parses peering claims via fetch stub', async () => {
   const fetchStub = async (url) => {
     assert.ok(String(url).endsWith('/services/peering'));
@@ -103,6 +202,8 @@ test('GET /peers/:id returns local profile detail + profile settings', async () 
     assert.strictEqual(detail.status, 200);
     assert.ok(detail.body.data.peer);
     assert.strictEqual(detail.body.data.peer.address, 'hub.fabric.pub:7777');
+    assert.ok(detail.body.data.peering);
+    assert.match(String(detail.body.data.peering.string || ''), /@hub\.fabric\.pub:7777$/);
 
     // Self profile is visible via /profile even when inspecting hubs.
     assert.strictEqual(svc._localProfile().nickname, 'PilotOne');
@@ -113,7 +214,17 @@ test('GET /peers/:id returns local profile detail + profile settings', async () 
     assert.strictEqual(byPk.body.data.self, true);
     assert.strictEqual(byPk.body.data.profile.nickname, 'PilotOne');
     assert.strictEqual(byPk.body.data.profile.scHandle, 'PilotOne');
+    assert.ok(byPk.body.data.peering);
+    // Self without advertise host: empty dial pin until fabricAdvertiseHost is set.
+    assert.strictEqual(byPk.body.data.peering.string, '');
 
+    await request(port, 'PUT', '/settings/fabricAdvertiseHost', { value: 'relay.example' });
+    const byPkAdv = await request(port, 'GET', `/services/star-citizen/profiles/${id.pubkey}`);
+    assert.strictEqual(byPkAdv.status, 200);
+    assert.strictEqual(
+      byPkAdv.body.data.peering.string,
+      `${id.pubkey}@relay.example:7777`
+    );
     const badPk = await request(port, 'GET', '/services/star-citizen/profiles/not-a-key');
     assert.strictEqual(badPk.status, 404);
 

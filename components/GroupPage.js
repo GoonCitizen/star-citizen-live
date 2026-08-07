@@ -377,11 +377,13 @@ class GroupPage extends React.Component {
     if (!g || !g.members) return null;
     const roster = this.state.presenceRoster || {};
     return React.createElement('div', { className: 'gpage-panel' },
-      React.createElement('h2', null, `Members (${g.members.length}) · ${g.threshold}-of-${g.members.length} decisions`),
+      React.createElement('h2', null, `Members (${g.members.length}) · ${g.threshold}-of-${(g.validators || g.members).length} signers`),
       React.createElement('div', { className: 'body' },
         g.members.map((m) => {
           const p = roster[m];
           const ship = p && p.ship && (p.ship.name || p.ship.slug);
+          const signers = g.validators || g.members;
+          const isSigner = signers.includes(m);
           return React.createElement('div', { className: 'gpage-member', key: m },
             React.createElement('span', { style: { flex: 1 } },
               shortKey(m),
@@ -395,6 +397,7 @@ class GroupPage extends React.Component {
                 title: p.lastEventAt || ''
               }, p.online ? (ship ? `online · ${ship}` : 'online') : 'offline')
               : React.createElement('span', { className: 'gpage-tag private', title: 'No PeerPresence shared' }, '—'),
+            React.createElement('span', { className: 'gpage-tag ' + (isSigner ? 'public' : 'private') }, isSigner ? 'signer' : 'reader'),
             m === g.creator ? React.createElement('span', { className: 'gpage-tag public' }, 'creator') : null,
             m === this.state.pubkey ? React.createElement('span', { className: 'gpage-tag private' }, 'you') : null
           );

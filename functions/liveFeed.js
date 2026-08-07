@@ -2,7 +2,7 @@
 
 /**
  * Build a chat-style activity stream from local parse buffers + peer ingest
- * (collections, chat, mission broadcasts). Newest last (Chat UI order).
+ * (collections, chat, mission broadcasts). Newest first.
  *
  * Each item carries:
  *   - body — user-facing summary
@@ -294,6 +294,10 @@ function killFriendlyBody (k) {
 function itemFromChat (m) {
   const who = m.handle || shortKey(m.author) || 'peer';
   const ch = m.channel === 'global' ? 'global' : (m.channel || 'chat');
+  const groupName = m.groupName || m.groupTitle || null;
+  const channelLabel = ch === 'global'
+    ? 'Global'
+    : (groupName || (String(ch).indexOf('group:') === 0 ? String(ch).slice(6, 18) : ch));
   return {
     id: 'chat:' + m.id,
     ts: m.ts || null,
@@ -308,7 +312,10 @@ function itemFromChat (m) {
     meta: ch === 'global' ? 'Global chat' : ch,
     badges: badges(
       badge('player', m.handle || null, 'player'),
-      badge('channel', ch === 'global' ? 'Global' : ch, 'channel')
+      badge('channel', channelLabel, 'channel'),
+      groupName && String(ch).indexOf('group:') === 0
+        ? badge('mission', groupName, 'group')
+        : null
     ),
     raw: null
   };
@@ -359,6 +366,7 @@ function itemFromKill (k) {
     body: killFriendlyBody(k),
     meta: k.damageType || null,
     badges: badges(
+      badge('outcome', label, 'outcome'),
       badge('player', k.killer, 'killer'),
       badge('player', k.victim, 'victim'),
       badge('weapon', k.weapon, 'weapon'),
@@ -384,7 +392,12 @@ function itemFromDeath (d) {
     who: d.player || (d.source ? shortKey(d.source) : null),
     body: `${player} died` + (d.bodyId ? ' (corpse marked for recovery)' : ''),
     meta: null,
-    badges: badges(badge('player', d.player || player, 'player')),
+    badges: badges(
+      badge('player', d.player || player, 'player'),
+      badge('outcome', 'death', 'outcome'),
+      badge('zone', d.zone || d.location, 'zone'),
+      d.bodyId ? badge('status', 'corpse', 'status') : null
+    ),
     raw: d.raw || null
   };
 }
@@ -402,7 +415,11 @@ function itemFromIncap (d) {
     who: d.player || null,
     body: d.text ? `${player} incapacitated — ${d.text}` : `${player} incapacitated`,
     meta: null,
-    badges: badges(badge('player', d.player || player, 'player')),
+    badges: badges(
+      badge('player', d.player || player, 'player'),
+      badge('outcome', 'incapacitated', 'outcome'),
+      badge('zone', d.zone || d.location, 'zone')
+    ),
     raw: d.raw || null
   };
 }
@@ -452,13 +469,16 @@ function itemFromMission (m) {
       badge('type', typeName !== 'Other' ? typeName : null, 'type'),
       badge('faction', faction !== 'Unknown' ? faction : null, 'faction'),
       badge('outcome', outcome, 'outcome'),
-      badge('player', m.player, 'player')
+      badge('player', m.player, 'player'),
+      badge('status', m.kind ? String(m.kind).replace(/^mission:/, '') : null, 'event'),
+      m.missionId ? badge('mission', m.missionId, 'id') : null
     ),
     raw: m.raw || null
   };
 }
 
 function itemFromNotification (n) {
+  const text = n.text || 'HUD notification';
   return {
     id: 'hud:' + n.id,
     ts: n.timestamp || null,
@@ -468,9 +488,13 @@ function itemFromNotification (n) {
     kind: n.kind || 'hud:notification',
     label: 'hud',
     who: null,
-    body: n.text || 'HUD notification',
+    body: text,
     meta: null,
-    badges: badges(),
+    badges: badges(
+      badge('type', n.notificationType || n.type || null, 'type'),
+      badge('status', n.severity || null, 'status'),
+      firstQuoted(n.raw || text) ? badge('mission', firstQuoted(n.raw || text), 'detail') : null
+    ),
     raw: n.raw || null
   };
 }
@@ -488,39 +512,65 @@ function itemFromLogin (l) {
     who: name,
     body: `${name} logged in`,
     meta: null,
-    badges: badges(badge('player', name, 'player')),
+    badges: badges(
+      badge('player', name, 'player'),
+      badge('status', 'login', 'status'),
+      badge('zone', l.zone || l.location || l.server, 'zone')
+    ),
     raw: l.raw || null
   };
 }
 
 function itemFromRecent (ev) {
   const recognized = !!ev.recognized;
-  const category = recognized ? categoryForKind(ev.kind) : 'log';
+  const kind = String(ev.kind || '');
+  const category = recognized ? categoryForKind(kind) : 'log';
   const raw = String(ev.raw || '');
   const body = summarizeRecent(ev);
   const q = firstQuoted(raw);
   const nick = raw.match(/nickname="([^"]+)"/);
+  const level = raw.match(/Loading level\s+(\S+)/i);
+  const eventLabel = recognized
+    ? humanizeKind(kind).split(' · ')[0].slice(0, 18)
+    : (kind === 'log:notice' ? 'notice' : 'log');
   return {
-    id: 'log:' + (ev.seq != null ? ev.seq : '') + ':' + String(ev.timestamp || '') + ':' + String(ev.kind || ''),
+    id: 'log:' + (ev.seq != null ? ev.seq : '') + ':' + String(ev.timestamp || '') + ':' + kind,
     ts: ev.timestamp || null,
     category,
     source: 'local',
     sourceId: null,
-    kind: ev.kind || 'log:raw',
-    label: recognized
-      ? humanizeKind(ev.kind).split(' · ')[0].slice(0, 18)
-      : (ev.kind === 'log:notice' ? 'notice' : 'log'),
-    who: null,
+    kind: kind || 'log:raw',
+    label: eventLabel,
+    who: nick ? nick[1] : null,
     body,
     meta: ev.tag ? String(ev.tag).replace(/^<|>$/g, '') : null,
     badges: badges(
-      (String(ev.kind || '').indexOf('quantum:') === 0)
-        ? badge('destination', q, 'destination')
+      recognized ? badge('type', eventLabel, 'event') : badge('status', 'unrecognized', 'status'),
+      (kind.indexOf('quantum:') === 0) ? badge('destination', q, 'destination') : null,
+      (kind.indexOf('quantum:') === 0)
+        ? badge('status', kind.replace(/^quantum:/, ''), 'quantum')
         : null,
       badge('player', nick && nick[1], 'player'),
       (recognized && category === 'mission')
         ? badge('type', missionType(q || stripLogPrefix(raw)), 'type')
-        : null
+        : null,
+      (recognized && category === 'mission')
+        ? badge('faction', (() => {
+          const f = missionFaction(q || stripLogPrefix(raw));
+          return f !== 'Unknown' ? f : null;
+        })(), 'faction')
+        : null,
+      kind === 'session:level' ? badge('zone', level ? level[1] : q, 'level') : null,
+      kind === 'player:crimestat' ? badge('status', q || 'CrimeStat', 'crimestat') : null,
+      (kind.indexOf('vehicle:') === 0 && kind !== 'vehicle:destroy')
+        ? badge('ship', q, 'ship')
+        : null,
+      (kind.indexOf('inventory:') === 0)
+        ? badge('type', kind.replace(/^inventory:/, ''), 'inventory')
+        : null,
+      kind === 'session:disconnect' ? badge('status', 'disconnect', 'status') : null,
+      kind === 'session:start' ? badge('status', 'session start', 'status') : null,
+      kind === 'session:gamemode' ? badge('status', 'game mode', 'status') : null
     ),
     raw: raw || null,
     verified: ev.verified,
@@ -579,13 +629,13 @@ function buildLiveFeed (inputs = {}, opts = {}) {
   out.sort((a, b) => {
     const at = a.ts || '';
     const bt = b.ts || '';
-    if (at < bt) return -1;
-    if (at > bt) return 1;
-    return String(a.id).localeCompare(String(b.id));
+    if (at > bt) return -1;
+    if (at < bt) return 1;
+    return String(b.id).localeCompare(String(a.id));
   });
 
   return {
-    items: out.slice(-limit),
+    items: out.slice(0, limit),
     categories: FEED_CATEGORIES.map((pair) => pair.slice()),
     sources: FEED_SOURCES.map((pair) => pair.slice())
   };

@@ -3,11 +3,23 @@
 /**
  * Searchable ship catalog picker — used by Identity flyout / modal presence.
  * Same `/ships?q=` typeahead as Fleet’s add-ship search.
+ *
+ * Clear publishes no ship (suppresses Game.log autodetect). Autodetect restores
+ * log-based detection.
  */
 
 const React = require('react');
 
 const BASE = '/services/star-citizen';
+/** Must match `presence.SHIP_NONE_SLUG` (keep local — avoid bundling catalog). */
+const SHIP_NONE_SLUG = '__none__';
+
+function isClearedOverride (ship) {
+  if (!ship) return false;
+  if (ship.cleared === true) return true;
+  const slug = String(ship.slug || '').trim().toLowerCase();
+  return slug === SHIP_NONE_SLUG || slug === 'none' || slug === 'clear';
+}
 
 const CSS = `
   .sp-wrap{display:grid;gap:6px;position:relative}
@@ -15,7 +27,7 @@ const CSS = `
   .sp-current{font-size:12px;color:var(--text);line-height:1.4}
   .sp-current b{font-weight:600}
   .sp-current .muted{color:var(--muted);font-weight:500}
-  .sp-row{display:flex;gap:6px;align-items:center}
+  .sp-row{display:flex;gap:6px;align-items:center;flex-wrap:wrap}
   .sp-row input{flex:1;min-width:0;background:var(--bg);border:1px solid var(--line);color:var(--text);
     border-radius:7px;padding:7px 9px;font-size:12.5px;box-sizing:border-box}
   .sp-row input:disabled{opacity:.45}
@@ -93,55 +105,96 @@ class ShipPicker extends React.Component {
     if (typeof this.props.onSelect === 'function') this.props.onSelect(ship.slug, ship);
   }
 
-  clearOverride () {
+  /** Restore Game.log autodetection (clears any manual override / clear). */
+  useAutodetect () {
     this.setState({ query: '', hits: [], open: false });
     if (typeof this.props.onSelect === 'function') this.props.onSelect(null, null);
+  }
+
+  /** Force-publish no ship (suppresses autodetect until Autodetect is chosen). */
+  clearShip () {
+    this.setState({ query: '', hits: [], open: false });
+    if (typeof this.props.onSelect === 'function') {
+      this.props.onSelect(SHIP_NONE_SLUG, {
+        slug: SHIP_NONE_SLUG,
+        name: null,
+        cleared: true
+      });
+    }
   }
 
   render () {
     const disabled = !!this.props.disabled;
     const override = this.props.overrideShip || null;
     const detected = this.props.detectedShip || null;
-    const published = override || detected;
+    const cleared = isClearedOverride(override);
+    const published = (!cleared && (override || detected)) || null;
     const publishedLabel = published && (published.name || published.slug)
       ? (published.name || published.slug)
       : null;
     const compact = !!this.props.compact;
+    const hasManual = !!override;
+    const canClear = !cleared && !!(publishedLabel || detected);
 
-    return React.createElement('div', { className: 'sp-wrap', ref: this._rootRef },
+    const searchPlaceholder = compact
+      ? (publishedLabel
+        ? (cleared ? 'No ship — search…' : publishedLabel + (override ? ' · manual' : ' · auto'))
+        : 'Ship — search…')
+      : 'Search — polaris, cutlass, anvil…';
+
+    return React.createElement('div', { className: 'sp-wrap' + (compact ? ' compact' : ''), ref: this._rootRef },
       this.props.label !== false
         ? React.createElement('label', null, this.props.label || 'Ship')
         : null,
-      React.createElement('div', { className: 'sp-current' },
-        override
-          ? React.createElement(React.Fragment, null,
-            React.createElement('b', null, publishedLabel),
-            React.createElement('span', { className: 'muted' }, ' · manual'))
-          : (publishedLabel
+      !compact
+        ? React.createElement('div', { className: 'sp-current' },
+          cleared
             ? React.createElement(React.Fragment, null,
-              React.createElement('span', { className: 'muted' }, 'Autodetect · '),
-              React.createElement('b', null, publishedLabel))
-            : React.createElement('span', { className: 'muted' }, 'No ship yet — search to set one'))
-      ),
+              React.createElement('span', { className: 'muted' }, 'No ship'),
+              React.createElement('span', { className: 'muted' }, ' · cleared'))
+            : (override
+              ? React.createElement(React.Fragment, null,
+                React.createElement('b', null, publishedLabel),
+                React.createElement('span', { className: 'muted' }, ' · manual'))
+              : (publishedLabel
+                ? React.createElement(React.Fragment, null,
+                  React.createElement('span', { className: 'muted' }, 'Autodetect · '),
+                  React.createElement('b', null, publishedLabel))
+                : React.createElement('span', { className: 'muted' }, 'No ship yet — search to set one'))
+            )
+        )
+        : null,
       React.createElement('div', { className: 'sp-row' },
         React.createElement('input', {
           type: 'text',
           value: this.state.query,
           disabled,
-          placeholder: 'Search — polaris, cutlass, anvil…',
+          placeholder: searchPlaceholder,
+          title: publishedLabel
+            ? (cleared ? 'No ship published' : ((override ? 'Manual · ' : 'Autodetect · ') + publishedLabel))
+            : undefined,
           onFocus: () => {
             if (!this.state.hits.length) this.search(this.state.query);
             else this.setState({ open: true });
           },
           onChange: (e) => this.search(e.target.value)
         }),
-        override
+        canClear
           ? React.createElement('button', {
             type: 'button',
             className: 'sp-btn',
             disabled,
-            title: 'Clear manual override',
-            onClick: () => this.clearOverride()
+            title: 'Clear published ship (peers see none until you set or autodetect again)',
+            onClick: () => this.clearShip()
+          }, 'Clear')
+          : null,
+        hasManual
+          ? React.createElement('button', {
+            type: 'button',
+            className: 'sp-btn',
+            disabled,
+            title: 'Use Game.log autodetection',
+            onClick: () => this.useAutodetect()
           }, compact ? 'Auto' : 'Autodetect')
           : null
       ),
@@ -152,7 +205,7 @@ class ShipPicker extends React.Component {
             : (this.state.hits.length
               ? this.state.hits.map((s) => React.createElement('div', {
                 key: s.slug,
-                className: 'sp-hit' + (override && override.slug === s.slug ? ' on' : ''),
+                className: 'sp-hit' + (override && !cleared && override.slug === s.slug ? ' on' : ''),
                 onClick: () => this.pick(s)
               },
               React.createElement('div', null,
@@ -180,14 +233,19 @@ class ShipPicker extends React.Component {
             )
         )
         : null,
-      !compact && override
+      !compact && override && !cleared
         ? React.createElement('div', { className: 'sp-warn' },
           'Override active — peers see ', override.name || override.slug, ' instead of autodetect.')
+        : null,
+      !compact && cleared
+        ? React.createElement('div', { className: 'sp-warn' },
+          'Ship cleared — peers see no ship until you pick one or switch back to Autodetect.')
         : null
     );
   }
 }
 
 ShipPicker.CSS = CSS;
+ShipPicker.SHIP_NONE_SLUG = SHIP_NONE_SLUG;
 
 module.exports = ShipPicker;

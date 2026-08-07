@@ -77,6 +77,26 @@ class Wallet extends React.Component {
     try { navigator.clipboard.writeText(text); this.setState({ notice: 'Copied.' }); } catch (_) { /* no clipboard */ }
   }
 
+  async proposeWithdraw (groupId) {
+    try {
+      const res = await fetch(`${BASE}/groups/${encodeURIComponent(groupId)}/withdrawals`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'spend', utxoAgeBlocks: 0 })
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error || res.statusText);
+      const pref = json.data && json.data.prepared && json.data.prepared.preferredTierId;
+      const tiers = (json.data && json.data.prepared && json.data.prepared.activeTiers) || [];
+      const tip = tiers.length
+        ? `Active tier: ${tiers[0].id} (${tiers[0].threshold}-of-n). Address ready — fund UTXO then POST fundedTxHex + destinationAddress.`
+        : 'Withdrawal proposed.';
+      this.setState({ notice: tip + (pref ? ` Preferred: ${pref}` : '') });
+    } catch (e) {
+      this.setState({ notice: e.message || String(e) });
+    }
+  }
+
   render () {
     const w = this.state.wallet;
     return React.createElement('div', { className: 'wa-wrap' },
@@ -102,19 +122,27 @@ class Wallet extends React.Component {
       ),
 
       React.createElement('div', { className: 'wa-panel' },
-        React.createElement('h2', null, '👥 Group multisig ',
-          React.createElement('span', { className: 'sub' }, '— deterministic k-of-n P2WSH per group (sorted member keys: every member derives the same address)')
+        React.createElement('h2', null, '👥 Group Taproot ',
+          React.createElement('span', { className: 'sub' }, '— failover ladder P2TR from signer keys (readers do not change the address)')
         ),
         this.state.groups.length
           ? this.state.groups.map((g) => {
             const gw = this.state.groupWallets[g.id];
+            const nSigners = (g.validators || g.members || []).length;
+            const isCreator = this.props.pubkey && g.creator === this.props.pubkey;
             return React.createElement('div', { className: 'wa-row', key: g.id },
               React.createElement('span', { className: 'wa-name' }, g.name),
-              React.createElement('span', { className: 'wa-tag btc' }, `${g.threshold}-of-${g.members.length}`),
+              React.createElement('span', { className: 'wa-tag btc' }, `${g.threshold}-of-${nSigners}`),
+              gw && gw.mode ? React.createElement('span', { className: 'wa-tag ok' }, gw.mode) : null,
               gw && gw.address
                 ? React.createElement(React.Fragment, null,
                   React.createElement('span', { className: 'wa-addr' }, gw.address),
-                  React.createElement('button', { className: 'wa-btn', onClick: () => this.copy(gw.address) }, 'Copy')
+                  React.createElement('button', { className: 'wa-btn', onClick: () => this.copy(gw.address) }, 'Copy'),
+                  isCreator ? React.createElement('button', {
+                    className: 'wa-btn',
+                    title: 'Propose publisher withdrawal (active non-expired tier)',
+                    onClick: () => this.proposeWithdraw(g.id)
+                  }, 'Withdraw') : null
                 )
                 : React.createElement('span', { className: 'wa-addr', style: { color: 'var(--muted)' } },
                   gw ? (gw.error || gw.note || '…') : 'deriving…')

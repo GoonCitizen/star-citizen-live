@@ -82,7 +82,12 @@ test('summarizeRecent is user-friendly; raw stays on hasRaw items', () => {
 
   assert.ok(feed.items.length >= 4);
   assert.strictEqual(feed.items.filter((i) => i.kind === 'kill').length, 1);
-  assert.strictEqual(feed.items[feed.items.length - 1].category, 'broadcast');
+  // Newest first — broadcast at 12:00:03 is the head of the stream.
+  assert.strictEqual(feed.items[0].category, 'broadcast');
+  assert.ok(feed.items.every((it, i, arr) => {
+    if (i === 0) return true;
+    return String(arr[i - 1].ts || '') >= String(it.ts || '');
+  }));
   const chat = feed.items.find((i) => i.category === 'chat');
   assert.strictEqual(chat.who, 'Neorion');
   assert.strictEqual(chat.hasRaw, false);
@@ -100,10 +105,12 @@ test('summarizeRecent is user-friendly; raw stays on hasRaw items', () => {
   assert.match(mission.body, /Mission started/i);
   assert.ok(mission.badges.some((b) => b.kind === 'type'));
   assert.ok(mission.badges.some((b) => b.kind === 'faction'));
+  assert.ok(mission.badges.some((b) => b.kind === 'status' && b.value === 'start'));
   assert.strictEqual(mission.provenance.origin, 'local');
   const noise = feed.items.find((i) => i.category === 'log');
   assert.ok(noise.body.indexOf('<2026') === -1);
   assert.strictEqual(noise.hasRaw, true);
+  assert.ok(noise.badges.some((b) => b.kind === 'status' && b.value === 'unrecognized'));
 
   const onlyChat = filterLiveFeed(feed.items, { categories: new Set(['chat']) });
   assert.strictEqual(onlyChat.length, 1);

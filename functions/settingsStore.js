@@ -22,7 +22,8 @@ const ALLOWED_KEYS = [
   'corpusFiles', // individually selected log files (Feed import)
   'peers',      // [{ id, address, label, enabled }] — Fabric host:port peers
   'fabricPort', // local Fabric Peer listen port (default 7777)
-  'fabricAdvertiseHost', // public host for P2P_PEERING_OFFER (slot fill); null = do not announce
+  'fabricAdvertiseHost', // public host for dial pin + P2P_PEERING_OFFER; null = no dial endpoint
+  'broadcastPeering',    // opt-in: publish P2P_PEERING_OFFER on the mesh (default false)
   'uplinkIntervalMs',
   'discordWebhook',
   'openAtLogin',
@@ -112,6 +113,7 @@ function putSetting (store, key, value) {
     next = sanitizeCorpusFiles(next);
     if (!next.length) next = null;
   }
+  if (key === 'broadcastPeering') next = next === true;
   if (key === 'sharePresence') next = next === true;
   if (key === 'presenceVisibility') next = sanitizePresenceShare({ presenceVisibility: next }).presenceVisibility;
   if (key === 'presenceGroupIds') {

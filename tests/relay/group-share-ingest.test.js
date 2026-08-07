@@ -89,7 +89,9 @@ test('opaque Federation invite ingest materializes group; accept joins local ide
     inviterHubId: alice.pubkey,
     contractId,
     proposedPolicy: def.proposedPolicy,
-    note: 'Join Share Me'
+    note: 'welcome note should not become the group name',
+    groupId: def.groupId,
+    groupName: 'Share Me'
   }));
   assert.ok(invite);
 
@@ -101,6 +103,8 @@ test('opaque Federation invite ingest materializes group; accept joins local ide
     assert.strictEqual(ingest.body.data.kind, 'FederationContractInvite');
     assert.ok(ingest.body.data.group, 'group shell materialized');
     assert.strictEqual(ingest.body.data.group.contractId, contractId);
+    assert.strictEqual(ingest.body.data.group.id, def.groupId, 'shell keeps inviter groupId');
+    assert.strictEqual(ingest.body.data.group.name, 'Share Me', 'shell keeps inviter groupName');
 
     const groupId = ingest.body.data.group.id;
     const accept = await request(port, 'POST',

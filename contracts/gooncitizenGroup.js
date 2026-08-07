@@ -15,25 +15,47 @@ const { gooncitizenContractId } = require('./gooncitizen');
 const { CONTRACT_BODY_TYPES, isKnownContractBodyType } = require('./applicationMessageTypes');
 
 /** Bump only when the group genesis shape must intentionally move ids. */
-const GOONCITIZEN_GROUP_CONTRACT_VERSION = 2; // +GroupActivityTree message type
+const GOONCITIZEN_GROUP_CONTRACT_VERSION = 4; // +ContractCapabilityGrant/Withdrawal*
 
 const GROUP_CONTRACT_NAME = 'GoonCitizenGroup';
 
 /**
  * App `type` values under a group contract namespace.
  * Names must stay stable (Actor id); assert against the shared core catalog.
+ *
+ * The group's Fabric identity is {@link groupContractId} (Actor id of the
+ * genesis definition). Membership mutations append CONTRACT_MESSAGE journal
+ * rows; tip digests are Schnorr-attested by the member threshold.
  */
+/** Journal catch-up types (core catalog may lag; keep string fallbacks). */
+const GROUP_JOURNAL_TYPES = Object.freeze([
+  CONTRACT_BODY_TYPES.GroupJournalRequest || 'GroupJournalRequest',
+  CONTRACT_BODY_TYPES.GroupJournalBatch || 'GroupJournalBatch',
+  CONTRACT_BODY_TYPES.GroupStateJournal || 'GroupStateJournal'
+]);
+
+const GROUP_CAPABILITY_TYPES = Object.freeze([
+  CONTRACT_BODY_TYPES.ContractCapabilityGrant || 'ContractCapabilityGrant',
+  CONTRACT_BODY_TYPES.ContractWithdrawalRequest || 'ContractWithdrawalRequest',
+  CONTRACT_BODY_TYPES.ContractWithdrawalWitness || 'ContractWithdrawalWitness'
+]);
+
 const GROUP_MESSAGE_TYPES = Object.freeze([
   CONTRACT_BODY_TYPES.GroupChat,
   CONTRACT_BODY_TYPES.GroupChange,
   CONTRACT_BODY_TYPES.GroupShare,
   CONTRACT_BODY_TYPES.GroupActivityTree,
   CONTRACT_BODY_TYPES.FederationContractInvite,
-  CONTRACT_BODY_TYPES.FederationContractInviteResponse
+  CONTRACT_BODY_TYPES.FederationContractInviteResponse,
+  ...GROUP_JOURNAL_TYPES,
+  ...GROUP_CAPABILITY_TYPES
 ]);
 
 for (const t of GROUP_MESSAGE_TYPES) {
-  if (!isKnownContractBodyType(t)) {
+  if (!t) {
+    throw new Error('[GOONCITIZEN] GROUP_MESSAGE_TYPES entry missing');
+  }
+  if (!isKnownContractBodyType(t) && !GROUP_JOURNAL_TYPES.includes(t) && !GROUP_CAPABILITY_TYPES.includes(t)) {
     throw new Error(`[GOONCITIZEN] GROUP_MESSAGE_TYPES entry unknown to applicationNamespaces: ${t}`);
   }
 }
@@ -170,6 +192,8 @@ module.exports = {
   GOONCITIZEN_GROUP_CONTRACT_VERSION,
   GROUP_CONTRACT_NAME,
   GROUP_MESSAGE_TYPES,
+  GROUP_JOURNAL_TYPES,
+  GROUP_CAPABILITY_TYPES,
   canonicalizeValidators,
   normalizeProposedPolicy,
   policyFingerprint,

@@ -10,6 +10,10 @@
  * Collection `groupsidechains` — one record per contract id:
  * `{ id, version, clock, content, journal: { entries }, name?, parentContractId? }`
  *
+ * Each journal row may carry `fabricMessage: { hash, hex, type }` — the signed
+ * AMP CONTRACT_MESSAGE that introduced it — so a newly connected peer can
+ * request a {@link GroupJournalBatch} and replay bit-identical Fabric frames.
+ *
  * Peers that apply the same genesis definition and accepted journal entries
  * converge on the same GoonCitizenGroupState (and thus stateDigest).
  */
@@ -318,6 +322,13 @@ function appendAccepted (store, contractId, entry, definition, meta = {}) {
     acceptedAt: entry.acceptedAt || new Date().toISOString(),
     message: entry.message && typeof entry.message === 'object' ? entry.message : {}
   };
+  if (entry.fabricMessage && typeof entry.fabricMessage === 'object') {
+    row.fabricMessage = {
+      hash: entry.fabricMessage.hash != null ? String(entry.fabricMessage.hash) : null,
+      hex: entry.fabricMessage.hex != null ? String(entry.fabricMessage.hex) : null,
+      type: entry.fabricMessage.type != null ? String(entry.fabricMessage.type) : row.type
+    };
+  }
   doc.journal.entries.push(row);
 
   const content = foldGroupState(definition, doc.journal.entries);
@@ -365,6 +376,122 @@ function publishFoldedContent (store, contractId, definition, meta = {}) {
   };
 }
 
+/**
+ * Attach (or refresh) the wire Fabric Message metadata on an existing journal row.
+ * @param {{ get: Function, put: Function }} store
+ * @param {string} contractId
+ * @param {string} entryId
+ * @param {{ hash?: string, hex?: string, type?: string }} fabricMessage
+ * @returns {object|null} updated row
+ */
+function attachFabricMessage (store, contractId, entryId, fabricMessage) {
+  if (!fabricMessage || typeof fabricMessage !== 'object') return null;
+  const doc = loadDoc(store, contractId);
+  const id = String(entryId || '');
+  const row = doc.journal.entries.find((e) => e && String(e.id) === id);
+  if (!row) return null;
+  row.fabricMessage = {
+    hash: fabricMessage.hash != null ? String(fabricMessage.hash) : (row.fabricMessage && row.fabricMessage.hash) || null,
+    hex: fabricMessage.hex != null ? String(fabricMessage.hex) : (row.fabricMessage && row.fabricMessage.hex) || null,
+    type: fabricMessage.type != null
+      ? String(fabricMessage.type)
+      : ((row.fabricMessage && row.fabricMessage.type) || row.type)
+  };
+  persistDoc(store, doc);
+  return row;
+}
+
+/**
+ * Journal entries at or after `fromClock` (inclusive), sorted by clock.
+ * @param {{ get: Function, put: Function }} store
+ * @param {string} contractId
+ * @param {number} [fromClock=0]
+ * @returns {object[]}
+ */
+function entriesFromClock (store, contractId, fromClock = 0) {
+  const min = Math.max(0, Number(fromClock) || 0);
+  const entries = loadDoc(store, contractId).journal.entries.slice();
+  return entries
+    .filter((e) => (Number(e.clock) || 0) >= min)
+    .sort((a, b) => (Number(a.clock) || 0) - (Number(b.clock) || 0));
+}
+
+/**
+ * Merge remote journal entries into the local Statechain (idempotent by id).
+ * @param {{ get: Function, put: Function }} store
+ * @param {string} contractId
+ * @param {object[]} remoteEntries
+ * @param {object} definition
+ * @param {object} [meta]
+ * @returns {{ applied: number, state: object, head: object, content: object }}
+ */
+function mergeJournalEntries (store, contractId, remoteEntries, definition, meta = {}) {
+  if (!isGroupContractDefinition(definition)) {
+    throw new Error('definition required');
+  }
+  let applied = 0;
+  let last = null;
+  const list = (Array.isArray(remoteEntries) ? remoteEntries : []).slice().sort((a, b) => {
+    return (Number(a.clock) || 0) - (Number(b.clock) || 0);
+  });
+  for (const remote of list) {
+    if (!remote || remote.id == null || !remote.type) continue;
+    if (!JOURNAL_TYPES.includes(String(remote.type))) continue;
+    last = appendAccepted(store, contractId, {
+      id: remote.id,
+      type: remote.type,
+      acceptedAt: remote.acceptedAt,
+      message: remote.message,
+      fabricMessage: remote.fabricMessage || null
+    }, definition, meta);
+    if (last && last.appended) applied += 1;
+  }
+  if (!last) {
+    const published = publishFoldedContent(store, contractId, definition, meta);
+    return { applied: 0, state: published.state, head: published.head, content: published.content };
+  }
+  return {
+    applied,
+    state: last.state,
+    head: last.head,
+    content: last.content
+  };
+}
+
+/**
+ * Build a GroupJournalBatch object for mesh catch-up.
+ * @param {{ get: Function, put: Function }} store
+ * @param {string} contractId
+ * @param {object} definition
+ * @param {number} [fromClock=1]
+ * @param {object} [meta]
+ * @returns {object}
+ */
+function buildJournalBatch (store, contractId, definition, fromClock = 1, meta = {}) {
+  if (!isGroupContractDefinition(definition)) {
+    throw new Error('definition required');
+  }
+  const doc = loadDoc(store, contractId);
+  const content = foldGroupState(definition, doc.journal.entries);
+  const state = { version: doc.version, clock: doc.clock, content };
+  const digest = stateDigestOfContent(content);
+  const entries = entriesFromClock(store, contractId, fromClock);
+  return {
+    type: 'GroupJournalBatch',
+    v: 1,
+    contractId: normalizeContractId(contractId),
+    groupId: String(definition.groupId),
+    groupName: (definition.meta && definition.meta.name) || null,
+    proposedPolicy: definition.proposedPolicy || null,
+    fromClock: Math.max(0, Number(fromClock) || 0),
+    tipClock: Number(state.clock) || 0,
+    stateDigest: digest,
+    entries,
+    name: meta.name || doc.name || GROUP_CONTRACT_NAME,
+    parentContractId: meta.parentContractId || doc.parentContractId || gooncitizenContractId()
+  };
+}
+
 module.exports = {
   COLLECTION,
   JOURNAL_TYPES,
@@ -379,5 +506,9 @@ module.exports = {
   foldGroupState,
   stateDigestOfContent,
   appendAccepted,
-  publishFoldedContent
+  publishFoldedContent,
+  attachFabricMessage,
+  entriesFromClock,
+  mergeJournalEntries,
+  buildJournalBatch
 };

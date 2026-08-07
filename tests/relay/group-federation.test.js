@@ -18,6 +18,7 @@ const {
   parseFederationContractInvite
 } = require('../../functions/federationContractInvite');
 const { createIdentity } = require('../../functions/identity');
+const { fixtureIdentity } = require('./fixtures/identities');
 
 const BASE = '/services/star-citizen';
 
@@ -206,9 +207,9 @@ test('Fabric: group create publishes Federation contract; membership + share con
 });
 
 test('Fabric: star topology hub relays targeted invite spoke→hub→spoke', async () => {
-  const alice = createIdentity();
-  const bob = createIdentity();
-  const hubId = createIdentity();
+  const alice = fixtureIdentity('alice');
+  const bob = fixtureIdentity('bob');
+  const hubId = fixtureIdentity('hub');
   const portHub = fabricPort();
   const portA = portHub + 21;
   const portB = portHub + 23;
@@ -264,6 +265,8 @@ test('Fabric: star topology hub relays targeted invite spoke→hub→spoke', asy
     });
     assert.strictEqual(created.status, 200, JSON.stringify(created.body));
     const groupId = created.body.data.id;
+    const contractId = created.body.data.contractId;
+    assert.ok(contractId, 'group Fabric identity (contractId) present');
 
     const invite = await request(httpA, 'POST', `${BASE}/groups/${groupId}/invites`, {
       note: 'via hub',
@@ -272,6 +275,8 @@ test('Fabric: star topology hub relays targeted invite spoke→hub→spoke', asy
     });
     assert.strictEqual(invite.status, 200, JSON.stringify(invite.body));
     assert.ok(invite.body.data.relayed);
+    assert.strictEqual(invite.body.data.groupId, groupId);
+    assert.strictEqual(invite.body.data.groupName, 'Spoke Wing');
 
     await waitFor(() => nodeB.registerStore
       && nodeB.registerStore.get('groupinvites', invite.body.data.inviteId));
@@ -280,6 +285,41 @@ test('Fabric: star topology hub relays targeted invite spoke→hub→spoke', asy
     assert.strictEqual(nodeB.registerStore.get('inbox', inboxId).kind, 'FederationInvite');
     // Hub must not keep a targeted invite addressed to Bob.
     assert.equal(hub.registerStore.get('groupinvites', invite.body.data.inviteId), null);
+
+    // Invite shell must preserve inviter groupId + groupName (not invite-* / note).
+    await waitFor(() => nodeB.groupManager && nodeB.groupManager.findGroup(groupId));
+    const shell = nodeB.groupManager.findGroup(groupId);
+    assert.strictEqual(shell.id, groupId);
+    assert.strictEqual(shell.name, 'Spoke Wing');
+    assert.strictEqual(shell.contractId, contractId);
+
+    // Accept on Bob → membership converges on both spokes via Response + GroupChange.
+    const httpB = nodeB.server.address().port;
+    const accept = await request(
+      httpB,
+      'POST',
+      `${BASE}/groups/${groupId}/invites/${invite.body.data.inviteId}/accept`,
+      { actor: bob.pubkey }
+    );
+    assert.strictEqual(accept.status, 200, JSON.stringify(accept.body));
+    assert.ok(accept.body.data && accept.body.data.accept === true);
+
+    await waitFor(() => {
+      const gB = nodeB.groupManager && nodeB.groupManager.findGroup(groupId);
+      return gB && (gB.members || []).some((m) => String(m).toLowerCase() === bob.pubkey.toLowerCase());
+    });
+    await waitFor(() => {
+      const gA = nodeA.groupManager && nodeA.groupManager.findGroup(groupId);
+      return gA && (gA.members || []).some((m) => String(m).toLowerCase() === bob.pubkey.toLowerCase());
+    });
+    const membersA = nodeA.groupManager.findGroup(groupId).members.map((m) => String(m).toLowerCase());
+    const membersB = nodeB.groupManager.findGroup(groupId).members.map((m) => String(m).toLowerCase());
+    assert.ok(membersA.includes(alice.pubkey.toLowerCase()));
+    assert.ok(membersA.includes(bob.pubkey.toLowerCase()));
+    assert.ok(membersB.includes(alice.pubkey.toLowerCase()));
+    assert.ok(membersB.includes(bob.pubkey.toLowerCase()));
+    assert.strictEqual(nodeB.registerStore.get('inbox', inboxId).actionable, false);
+    assert.strictEqual(nodeB.registerStore.get('groupinvites', invite.body.data.inviteId).status, 'accepted');
   } finally {
     await nodeA.stop();
     await nodeB.stop();

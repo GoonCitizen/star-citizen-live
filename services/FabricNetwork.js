@@ -27,6 +27,9 @@ const { PEER_PROFILE_TYPE, peeringAddressesFromObject } = require('../functions/
 const { FLEET_SHARE_TYPE } = require('../functions/starjumpFleet');
 const { PRESENCE_TYPE } = require('../functions/presence');
 const {
+  peeringInfoForGoonCitizen
+} = require('../functions/peerPeeringString');
+const {
   createFabricMessageLog,
   summarizeMessage,
   summarizeBuffer
@@ -99,7 +102,8 @@ function isFabricAddress (value) {
  * Normalize operator input to `host:port`. Rejects bare http(s) URLs for new
  * peers; migrates legacy `https://host[/…]` → `host:7777` when `migrate` is set.
  * @param {*} value
- * @param {{ migrate?: boolean }} [opts]
+ * @param {Object} [opts]
+ * @param {boolean} [opts.migrate] Migrate legacy `https://host` → `host:7777`
  * @returns {string|null}
  */
 function normalizeFabricAddress (value, { migrate = false } = {}) {
@@ -128,7 +132,8 @@ function normalizeFabricAddress (value, { migrate = false } = {}) {
  *
  * @param {Object} peer Fabric Peer instance
  * @param {Object} handlers
- * @param {{ relay?: boolean }} [opts]
+ * @param {Object} [opts]
+ * @param {boolean} [opts.relay]
  */
 function attachAppHandlers (peer, handlers = {}, _opts = {}) {
   if (!peer || typeof peer.on !== 'function') {
@@ -226,6 +231,15 @@ function attachAppHandlers (peer, handlers = {}, _opts = {}) {
         handlers.onGroupShare(object, signer, meta);
       } else if (appType === CONTRACT_BODY_TYPES.GroupActivityTree && typeof handlers.onGroupActivityTree === 'function') {
         handlers.onGroupActivityTree(object, signer, meta);
+      } else if ((appType === CONTRACT_BODY_TYPES.GroupJournalRequest || appType === 'GroupJournalRequest') &&
+        typeof handlers.onGroupJournalRequest === 'function') {
+        handlers.onGroupJournalRequest(object, signer, meta);
+      } else if ((appType === CONTRACT_BODY_TYPES.GroupJournalBatch || appType === 'GroupJournalBatch') &&
+        typeof handlers.onGroupJournalBatch === 'function') {
+        handlers.onGroupJournalBatch(object, signer, meta);
+      } else if ((appType === CONTRACT_BODY_TYPES.GroupStateJournal || appType === 'GroupStateJournal') &&
+        typeof handlers.onGroupStateJournal === 'function') {
+        handlers.onGroupStateJournal(object, signer, meta);
       } else if (appType === CONTRACT_BODY_TYPES.FederationContractInvite && typeof handlers.onFederationInvite === 'function') {
         handlers.onFederationInvite(object, signer, meta);
       } else if (appType === CONTRACT_BODY_TYPES.FederationContractInviteResponse && typeof handlers.onFederationInviteResponse === 'function') {
@@ -268,6 +282,7 @@ class FabricNetwork extends EventEmitter {
       listenPortAttempts: 20,
       maxPeers: DEFAULT_MAX_PEERS,
       advertiseHost: null,
+      broadcastPeering: false,
       messageLog: null,
       messageLogCapacity: undefined
     }, settings);
@@ -275,7 +290,8 @@ class FabricNetwork extends EventEmitter {
     this._peer = null;
     this._starting = null;
     this._handlers = null;
-    /** @type {Set<string>} locally known group Federation contract ids */
+    /** Locally known group Federation contract ids. */
+    /** @type {Set} */
     this._groupContractIds = new Set();
     this._slotFillTimer = null;
     this._lastPeeringOfferAt = 0;
@@ -391,7 +407,9 @@ class FabricNetwork extends EventEmitter {
    * Record a Fabric AMP Message (instance or wire buffer) in the advanced log.
    * @param {'in'|'out'} direction
    * @param {object|Buffer} messageOrBuffer
-   * @param {{ peer?: string|null, via?: string|null }} [meta]
+   * @param {Object} [meta]
+   * @param {string|null} [meta.peer]
+   * @param {string|null} [meta.via]
    */
   recordMessage (direction, messageOrBuffer, meta = {}) {
     if (!this._messageLog) return null;
@@ -457,7 +475,10 @@ class FabricNetwork extends EventEmitter {
    * unlocked identity even when the peer is not listening yet.
    * @param {string} vectorType
    * @param {object|string} body
-   * @param {{ to?: string[], relay?: boolean, key?: object }} [opts]
+   * @param {Object} [opts]
+   * @param {string[]} [opts.to]
+   * @param {boolean} [opts.relay]
+   * @param {object} [opts.key]
    */
   _signAndRelay (vectorType, body, opts = {}) {
     const msg = this._signMessage(vectorType, body, opts);
@@ -489,7 +510,8 @@ class FabricNetwork extends EventEmitter {
    * @param {string} contractId
    * @param {string} type
    * @param {object} object
-   * @param {{ relay?: boolean }} [opts]
+   * @param {Object} [opts]
+   * @param {boolean} [opts.relay]
    */
   signContractMessage (contractId, type, object, opts = {}) {
     const pubkey = this._identity && this._identity.pubkey;
@@ -649,6 +671,18 @@ class FabricNetwork extends EventEmitter {
         this.emit('groupShare', { object, source, meta });
         this._forward('onGroupShare', object, source, meta);
       },
+      onGroupJournalRequest: (object, source, meta) => {
+        this.emit('groupJournalRequest', { object, source, meta });
+        this._forward('onGroupJournalRequest', object, source, meta);
+      },
+      onGroupJournalBatch: (object, source, meta) => {
+        this.emit('groupJournalBatch', { object, source, meta });
+        this._forward('onGroupJournalBatch', object, source, meta);
+      },
+      onGroupStateJournal: (object, source, meta) => {
+        this.emit('groupStateJournal', { object, source, meta });
+        this._forward('onGroupStateJournal', object, source, meta);
+      },
       onFederationInvite: (object, source, meta) => {
         this.emit('federationInvite', { object, source, meta });
         this._forward('onFederationInvite', object, source, meta);
@@ -683,7 +717,8 @@ class FabricNetwork extends EventEmitter {
     console.log(`[STAR-CITIZEN] fabric peer listening on ${peer.settings.port} (id ${String(peer.key.pubkey).slice(0, 12)}…)`);
     try { this.publishContract(); } catch (_) { /* best-effort */ }
     this.fillPeerSlots();
-    this.maybePublishPeeringOffer({ force: true });
+    // Opt-in only: do not force on start (broadcastPeering must be on).
+    this.maybePublishPeeringOffer();
     return this;
   }
 
@@ -709,7 +744,8 @@ class FabricNetwork extends EventEmitter {
 
   /**
    * Enqueue host:port from offer/gossip and dial open slots.
-   * @param {{ message?: object }} ev
+   * @param {Object} ev
+   * @param {object} [ev.message]
    * @param {'offer'|'gossip'} kind
    */
   _ingestPeeringEvent (ev, kind) {
@@ -728,7 +764,13 @@ class FabricNetwork extends EventEmitter {
     }
     this.fillPeerSlots();
     if (addrs.length) {
-      const payload = { addresses: addrs, kind, origin: ev && ev.origin };
+      const payload = {
+        addresses: addrs,
+        kind,
+        origin: ev && ev.origin,
+        pubkey: object.pubkey ? String(object.pubkey).trim().toLowerCase() : null,
+        peering: object.peering ? String(object.peering).trim() : null
+      };
       this.emit('peeringCandidate', payload);
       this._forward('onPeeringCandidate', payload);
     }
@@ -748,9 +790,11 @@ class FabricNetwork extends EventEmitter {
   }
 
   /**
-   * When under capacity and advertiseHost is set, publish P2P_PEERING_OFFER
-   * so hubs / peers can gossip this node into open slots.
-   * @param {{ force?: boolean }} [opts]
+   * When under capacity and advertise host + opt-in broadcast are set, publish
+   * P2P_PEERING_OFFER so hubs / peers can gossip this node into open slots.
+   * @param {Object} [opts]
+   * @param {boolean} [opts.force] Skip throttle; still requires advertise host.
+   *   When force=true, skips broadcastPeering gate (Announce now).
    */
   maybePublishPeeringOffer (opts = {}) {
     if (!this.ready) return null;
@@ -758,6 +802,7 @@ class FabricNetwork extends EventEmitter {
       ? String(this.settings.advertiseHost).trim()
       : '';
     if (!host || isLoopbackFabricAddress(`${host}:1`)) return null;
+    if (!opts.force && this.settings.broadcastPeering !== true) return null;
     const connCount = Object.keys(this._peer.connections || {}).length;
     const maxPeers = Number(this.settings.maxPeers) > 0
       ? Number(this.settings.maxPeers)
@@ -767,14 +812,25 @@ class FabricNetwork extends EventEmitter {
     if (!opts.force && (now - (this._lastPeeringOfferAt || 0)) < 30000) return null;
     this._lastPeeringOfferAt = now;
     const port = Number(this._peer.settings.port) || Number(this.settings.port) || 7777;
+    const pubkey = this._identity && this._identity.pubkey
+      ? String(this._identity.pubkey).trim().toLowerCase()
+      : '';
+    const dial = peeringInfoForGoonCitizen({
+      pubkey,
+      advertiseHost: host,
+      listenPort: port
+    });
     const payload = {
       type: 'P2P_PEERING_OFFER',
-      actor: { id: this._identity.pubkey },
+      actor: { id: pubkey || (this._identity && this._identity.pubkey) },
       object: {
         slots: Math.max(1, maxPeers - connCount),
         transport: 'fabric',
         host,
-        port
+        port,
+        pubkey: pubkey || undefined,
+        peering: dial.string || undefined,
+        rendezvous: { hubs: DEFAULT_SEEDS.slice() }
       }
     };
     try {
@@ -785,8 +841,21 @@ class FabricNetwork extends EventEmitter {
     }
   }
 
+  /**
+   * Force one P2P_PEERING_OFFER (Announce now). Requires advertise host.
+   * @param {Object} [opts]
+   * @param {boolean} [opts.force=true]
+   */
+  publishPeeringOffer (opts = {}) {
+    return this.maybePublishPeeringOffer(Object.assign({ force: true }, opts));
+  }
+
   setAdvertiseHost (host) {
     this.settings.advertiseHost = host || null;
+  }
+
+  setBroadcastPeering (on) {
+    this.settings.broadcastPeering = on === true;
   }
 
   async stop () {
@@ -907,7 +976,7 @@ class FabricNetwork extends EventEmitter {
 
   /**
    * Publish a 1:1 DirectChat under the GoonCitizen contract namespace.
-   * @param {Object} payload { channel, peerA, peerB, author, body, handle?, ts, id? }
+   * @param {Object} payload DirectChat fields (`channel`, `peerA`, `peerB`, `author`, `body`, optional `handle` / `ts` / `id`).
    */
   publishDirectChat (payload) {
     if (!payload || !payload.body || !payload.author || !payload.channel) {
@@ -965,7 +1034,8 @@ class FabricNetwork extends EventEmitter {
   /**
    * Publish a compact cumulative game-state snapshot for Hub sidechain sync.
    * @param {Object} snapshot from functions/gooncitizenGameState.buildGameStateSnapshot
-   * @param {{ to?: string[] }} [opts] Optional Fabric addresses; omit to broadcast
+   * @param {Object} [opts] Optional Fabric addresses; omit to broadcast
+   * @param {string[]} [opts.to]
    */
   publishGameStateSnapshot (snapshot, opts = {}) {
     if (!snapshot || typeof snapshot !== 'object') throw new Error('GameStateSnapshot required');
@@ -986,6 +1056,53 @@ class FabricNetwork extends EventEmitter {
    */
   publishGroupChange (contractId, payload) {
     return this._publishContractMessage(contractId, 'GroupChange', Object.assign({}, payload));
+  }
+
+  /**
+   * Request missing Statechain journal rows from peers that know this contract.
+   * @param {string} contractId
+   * @param {Object} [opts]
+   * @param {number} [opts.fromClock]
+   * @param {string} [opts.groupId]
+   */
+  publishGroupJournalRequest (contractId, opts = {}) {
+    const type = CONTRACT_BODY_TYPES.GroupJournalRequest || 'GroupJournalRequest';
+    return this._publishContractMessage(contractId, type, {
+      type,
+      v: 1,
+      contractId: String(contractId),
+      groupId: opts.groupId || null,
+      fromClock: Math.max(0, Number(opts.fromClock) || 0),
+      requestedAt: new Date().toISOString()
+    });
+  }
+
+  /**
+   * Reply with replayable journal entries + tip Schnorr signatures.
+   * @param {string} contractId
+   * @param {object} batch GroupJournalBatch body
+   */
+  publishGroupJournalBatch (contractId, batch) {
+    const type = CONTRACT_BODY_TYPES.GroupJournalBatch || 'GroupJournalBatch';
+    return this._publishContractMessage(
+      contractId,
+      type,
+      Object.assign({ type, v: 1 }, batch || {})
+    );
+  }
+
+  /**
+   * Publish a tip attestation (stateDigest + member Schnorr signatures).
+   * @param {string} contractId
+   * @param {object} tip GroupStateJournal body
+   */
+  publishGroupStateJournal (contractId, tip) {
+    const type = CONTRACT_BODY_TYPES.GroupStateJournal || 'GroupStateJournal';
+    return this._publishContractMessage(
+      contractId,
+      type,
+      Object.assign({ type, v: 1 }, tip || {})
+    );
   }
 
   /**

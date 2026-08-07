@@ -54,6 +54,20 @@ test('buildPresenceDocument prefers ship override over detected ship', () => {
   if (doc.ship.type) assert.equal(typeof doc.ship.type, 'string');
 });
 
+test('cleared ship override suppresses Game.log autodetect', () => {
+  const recent = new Date(Date.now() - 60000).toISOString();
+  const cleared = presence.buildShipOverride(presence.SHIP_NONE_SLUG);
+  assert.equal(cleared.cleared, true);
+  assert.equal(presence.sanitizePresenceShare({ shipOverrideSlug: 'clear' }).shipOverrideSlug,
+    presence.SHIP_NONE_SLUG);
+  const doc = presence.buildPresenceDocument({
+    lastEventAt: recent,
+    detectedShip: { classId: 'DRAK_Clipper_1', name: 'Clipper', slug: 'clipper' },
+    shipOverride: cleared
+  });
+  assert.equal(doc.ship, null);
+});
+
 test('buildShipOverride includes catalog type', () => {
   const ship = presence.buildShipOverride('orig-100i');
   assert.ok(ship);

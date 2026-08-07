@@ -13,8 +13,20 @@ const { shipName } = require('./parser');
 const ONLINE_WINDOW_MS = 10 * 60 * 1000;
 const PRESENCE_TYPE = 'PeerPresence';
 const STATUS_TEXT_MAX = 64;
+/** Stored shipOverrideSlug meaning “publish no ship” (suppresses Game.log autodetect). */
+const SHIP_NONE_SLUG = '__none__';
 const VISIBILITIES = new Set(['private', 'peers', 'groups', 'public']);
 const AVAILABILITIES = new Set(['auto', 'online', 'offline']);
+
+/**
+ * @param {string|null|undefined} slug
+ * @returns {boolean}
+ */
+function isShipClearedSlug (slug) {
+  if (slug === undefined || slug === null) return false;
+  const s = String(slug).trim().toLowerCase();
+  return s === SHIP_NONE_SLUG || s === 'none' || s === 'clear';
+}
 
 /**
  * @param {*} value
@@ -88,6 +100,8 @@ function sanitizePresenceShare (value) {
   if (src.shipOverrideSlug !== undefined) {
     if (src.shipOverrideSlug === null || src.shipOverrideSlug === '') {
       base.shipOverrideSlug = null;
+    } else if (isShipClearedSlug(src.shipOverrideSlug)) {
+      base.shipOverrideSlug = SHIP_NONE_SLUG;
     } else {
       const raw = String(src.shipOverrideSlug).trim();
       if (!raw) base.shipOverrideSlug = null;
@@ -207,10 +221,18 @@ function buildDetectedShip (classId, vehicleId, at) {
 
 /**
  * Resolve manual ship override from a catalog slug.
- * @param {string|null} slug null clears override (autodetect)
+ * @param {string|null} slug null → autodetect; {@link SHIP_NONE_SLUG} → force no ship
  */
 function buildShipOverride (slug) {
   if (slug === undefined || slug === null || slug === '') return null;
+  if (isShipClearedSlug(slug)) {
+    return {
+      slug: SHIP_NONE_SLUG,
+      name: null,
+      cleared: true,
+      at: new Date().toISOString()
+    };
+  }
   const hit = shipCatalog.resolveShip(slug);
   const resolved = hit ? hit.slug : String(slug).trim().toLowerCase();
   return Object.assign({
@@ -227,16 +249,19 @@ function buildPresenceDocument (opts = {}) {
   const availability = sanitizeAvailability(opts.availability);
   const online = resolveOnline(availability, opts.lastEventAt);
   let ship = null;
-  if (opts.shipOverride && opts.shipOverride.slug) {
-    const known = shipCatalog.resolveShip(opts.shipOverride.slug);
+  const override = opts.shipOverride;
+  if (override && (override.cleared === true || isShipClearedSlug(override.slug))) {
+    ship = null;
+  } else if (override && override.slug) {
+    const known = shipCatalog.resolveShip(override.slug);
     ship = Object.assign({
-      slug: opts.shipOverride.slug,
-      name: opts.shipOverride.name || (known && known.name) || opts.shipOverride.slug,
+      slug: override.slug,
+      name: override.name || (known && known.name) || override.slug,
       source: 'override'
     }, catalogShipMeta(known), {
-      type: opts.shipOverride.type || (known && known.type) || null,
-      size: opts.shipOverride.size || (known && known.size) || null,
-      manufacturer: opts.shipOverride.manufacturer || (known && known.manufacturer) || null
+      type: override.type || (known && known.type) || null,
+      size: override.size || (known && known.size) || null,
+      manufacturer: override.manufacturer || (known && known.manufacturer) || null
     });
   } else if (opts.detectedShip && (opts.detectedShip.slug || opts.detectedShip.name || opts.detectedShip.classId)) {
     const known = shipCatalog.resolveShip(
@@ -316,6 +341,7 @@ module.exports = {
   ONLINE_WINDOW_MS,
   PRESENCE_TYPE,
   STATUS_TEXT_MAX,
+  SHIP_NONE_SLUG,
   VISIBILITIES,
   AVAILABILITIES,
   sanitizeVisibility,
@@ -323,6 +349,7 @@ module.exports = {
   sanitizeStatusText,
   sanitizeGroupIds,
   sanitizePresenceShare,
+  isShipClearedSlug,
   isOnline,
   resolveOnline,
   classIdFromVehicle,

@@ -207,8 +207,9 @@ class Identity extends React.Component {
   }
 
   async setPublishedShip (slug) {
-    const autodetect = !slug;
-    if (!autodetect && this.state.shipOverrideSlug !== slug) {
+    const clearing = slug === '__none__' || slug === 'none' || slug === 'clear';
+    const autodetect = slug === null || slug === undefined || slug === '';
+    if (!autodetect && !clearing && this.state.shipOverrideSlug !== slug) {
       const detected = this.state.detectedShip;
       const autoLabel = detected && (detected.name || detected.slug)
         ? (detected.name || detected.slug)
@@ -217,16 +218,19 @@ class Identity extends React.Component {
         'Publish a different ship than Game.log autodetection?\n\n' +
         'Autodetect: ' + autoLabel + '\n' +
         'You chose: ' + slug + '\n\n' +
-        'Peers will see this override until you switch back to Autodetect.'
+        'Peers will see this override until you Clear or switch back to Autodetect.'
       );
       if (!ok) return;
     }
     this.setState({ presenceBusy: true, error: null, notice: null });
     try {
+      const body = autodetect
+        ? { autodetect: true }
+        : (clearing ? { clear: true } : { slug });
       const res = await fetch('/services/star-citizen/presence/ship', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(autodetect ? { autodetect: true } : { slug })
+        body: JSON.stringify(body)
       });
       const j = await res.json();
       if (!res.ok) throw new Error(j.error || res.statusText);
@@ -512,10 +516,13 @@ class Identity extends React.Component {
   }
 
   renderPresence () {
-    const shipLabel =
-      (this.state.shipOverride && (this.state.shipOverride.name || this.state.shipOverride.slug)) ||
-      (this.state.detectedShip && (this.state.detectedShip.name || this.state.detectedShip.slug)) ||
-      null;
+    const shipCleared = !!(this.state.shipOverride &&
+      (this.state.shipOverride.cleared || this.state.shipOverride.slug === '__none__'));
+    const shipLabel = shipCleared
+      ? null
+      : ((this.state.shipOverride && (this.state.shipOverride.name || this.state.shipOverride.slug)) ||
+        (this.state.detectedShip && (this.state.detectedShip.name || this.state.detectedShip.slug)) ||
+        null);
     const busy = this.state.presenceBusy;
     return React.createElement('div', { className: 'id-sec' },
       React.createElement('h3', null, 'Online status',
@@ -559,12 +566,15 @@ class Identity extends React.Component {
         )
       ),
       React.createElement('div', { className: 'id-row', style: { marginBottom: 10 } },
-        shipLabel
-          ? React.createElement('span', { style: { fontSize: 12.5 } },
-            this.state.shipOverride ? 'Publishing ' : 'Autodetect ',
-            React.createElement('b', null, shipLabel),
-            this.state.shipOverride ? ' (override)' : '')
-          : React.createElement('span', { style: { fontSize: 12, color: 'var(--muted)' } }, 'No ship detected yet')
+        shipCleared
+          ? React.createElement('span', { style: { fontSize: 12, color: 'var(--muted)' } },
+            'Ship cleared — not publishing a ship')
+          : (shipLabel
+            ? React.createElement('span', { style: { fontSize: 12.5 } },
+              this.state.shipOverride ? 'Publishing ' : 'Autodetect ',
+              React.createElement('b', null, shipLabel),
+              this.state.shipOverride ? ' (override)' : '')
+            : React.createElement('span', { style: { fontSize: 12, color: 'var(--muted)' } }, 'No ship detected yet'))
       ),
       React.createElement('label', { style: { display: 'flex', gap: 8, alignItems: 'center', fontSize: 13, cursor: 'pointer', marginBottom: 10 } },
         React.createElement('input', {

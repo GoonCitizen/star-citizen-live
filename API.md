@@ -12,11 +12,17 @@ Missions can be accepted by signing with secp256k1 or Musig2 multisig.</p>
 </dd>
 <dt><a href="#Store">Store</a></dt>
 <dd></dd>
+<dt><a href="#ChatManager">ChatManager</a></dt>
+<dd></dd>
+<dt><a href="#FabricNetwork">FabricNetwork</a></dt>
+<dd></dd>
 <dt><a href="#MissionManager">MissionManager</a></dt>
 <dd><p>Mission Manager service.
 Handles mission lifecycle, applications, and cryptographic verification.
 Supports both single secp256k1 signatures and Musig2 multisig.</p>
 </dd>
+<dt><a href="#SnapshotManager">SnapshotManager</a></dt>
+<dd></dd>
 <dt><a href="#StarCitizen">StarCitizen</a> ⇐ <code>Hub</code></dt>
 <dd><p>Core service for Star Citizen.
 Provides a Fabric-compatible declarative API with Discord integration.</p>
@@ -27,31 +33,74 @@ Provides a Fabric-compatible declarative API with Discord integration.</p>
 
 <dl>
 <dt><a href="#crypto">crypto</a></dt>
-<dd><p>Group — a member-created org unit backed by a k-of-n Schnorr multisig.</p>
-<p>Members are identified by their compressed secp256k1 public keys (the same
-actor ids the identity onboarding produces). Threshold decisions (mission
-acceptance, payout release) are verified with the standard Fabric
-<a href="Federation">Federation</a> k-of-n Schnorr verification (BIP340).</p>
-<p>Pages: <code>/groups/:id</code> by default, or <code>/groups/:slug</code> when a custom slug is set.
-Visibility: <code>private</code> (members only) or <code>public</code> (shareable join page).</p>
+<dd><p>Group — a member-created unit backed by a k-of-n Schnorr multisig of <strong>signers</strong>.</p>
+<p><code>members</code> = all participants (readers + signers).
+<code>validators</code> = signing federation (proposedPolicy.validators); tip / wallet / threshold.
+Read-only members are in <code>members</code> but not <code>validators</code>.</p>
 </dd>
 <dt><a href="#fs">fs</a></dt>
 <dd><p>Store — keyed-collection persistence for the mission register + groups.</p>
-<p>Follows the Fabric convention: the <em>type</em> lives in <code>types/</code>, the <em>data</em>
-lives under the named store root <code>stores/gooncitizen/</code> (like the Hub&#39;s
-<code>stores/hub</code>). The register LevelDB is <code>stores/gooncitizen/register</code>.</p>
-<p>Surface (sync): get / all / count / put — same as the original M5 seam so
-MissionManager and GroupManager stay simple.</p>
-<p>Persistence: when <code>path</code> (or legacy <code>dir</code>) is set, collections are kept in an
-{@link <a href="https://github.com/FabricLabs/fabric/blob/master/types/store.js">https://github.com/FabricLabs/fabric/blob/master/types/store.js</a></p>
+<p>Composes <code>@fabric/core</code> <a href="#Store">Store</a> (<code>this.fabric</code>). Named collections are
+stored at Fabric paths <code>/collections/&lt;name&gt;</code> via <code>fabric.set</code> / <code>fabric.get</code>
+(not raw Level key blobs). The sync façade (<code>get</code> / <code>put</code> / <code>all</code> / <code>count</code> /
+<code>del</code>) keeps MissionManager / GroupManager simple.</p>
+<p>Data lives under the named store root <code>stores/gooncitizen/</code> (Hub-style);
+the register LevelDB is <code>stores/gooncitizen/register</code>.</p>
+<p>Call <code>await store.start()</code> before reads that must see prior sessions, and
+<code>await store.stop()</code> on shutdown so pending writes flush.</p>
+<p>Memory-only when <code>path</code> is null (tests) — no Fabric Store is constructed.</p>
+</dd>
+<dt><a href="#crypto">crypto</a></dt>
+<dd><p>ChatManager — org chat brought forward from the Hub, on the Fabric Store.</p>
+<p>Message types follow hub.fabric.pub conventions:</p>
+<ul>
+<li>stored records are <code>@type: &#39;ChatMessage&#39;</code></li>
+<li><code>global</code> rides Fabric <code>P2P_CHAT_MESSAGE</code> (D-010)</li>
+<li><code>group:&lt;groupId&gt;</code> rides <code>GroupChat</code> under that Group&#39;s Federation
+<code>CONTRACT_MESSAGE</code> namespace (Groups-as-Federations)</li>
+</ul>
+<p>Channels:</p>
+<ul>
+<li><code>global</code>            — network chat on this node (all local viewers)</li>
+<li><code>group:&lt;groupId&gt;</code>   — dedicated channel per group / subgroup, members
+                  only in hosted mode (the local relay shows your groups)</li>
+</ul>
+<p>Ids are content-derived (channel + author + body + ts), so merging the
+same message from multiple paths (local post, peer push, peer pull) is
+idempotent — the same convergence rule as the event uplink.</p>
+</dd>
+<dt><a href="#DIRECT_CHAT_TYPE">DIRECT_CHAT_TYPE</a></dt>
+<dd><p>GoonCitizen CONTRACT_MESSAGE body type for 1:1 chat (mesh).</p>
+</dd>
+<dt><a href="#EventEmitter">EventEmitter</a></dt>
+<dd><p>FabricNetwork — local <code>@fabric/core</code> Peer for GoonCitizen peering.</p>
+<p>Wire Messages:</p>
+<ul>
+<li>P2P_CHAT_MESSAGE     — network-wide <code>global</code> chat (Peer auto-relays)</li>
+<li>CONTRACT_MESSAGE     — GoonCitizen app types + per-Group Federation types</li>
+<li>CONTRACT_PUBLISH     — GoonCitizen genesis + per-Group Federation genesis</li>
+</ul>
+<p>Lazy-requires Peer/Message so memory-only unit tests stay light.</p>
+</dd>
+<dt><del><a href="#DEFAULT_SEED">DEFAULT_SEED</a></del></dt>
+<dd></dd>
+<dt><a href="#DEFAULT_MAX_PEERS">DEFAULT_MAX_PEERS</a></dt>
+<dd><p>Default TCP peer cap (matches @fabric/core MAX_PEERS soft default for slot fill).</p>
+</dd>
+<dt><a href="#APP_RELAY_TYPES">APP_RELAY_TYPES</a></dt>
+<dd><p>App <code>type</code> values under the GoonCitizen CONTRACT_MESSAGE namespace (core catalog + local).</p>
 </dd>
 <dt><a href="#crypto">crypto</a></dt>
 <dd><p>GroupManager — member-created groups with k-of-n Schnorr multisig,
-public/private visibility, custom page slugs, and join applications.</p>
+optional nested subgroups (<code>parentId</code>), public/private visibility,
+custom page slugs, and join applications.</p>
+<p>Groups are the sharing boundary across many GoonCitizen installations
+on the Fabric mesh (not a single global &quot;org&quot;).</p>
 <p>Group pages live at <code>/groups/:id</code> (or <code>/groups/:slug</code> when a custom slug
 is set). Public groups can be shared; visitors apply to join; the creator
 accepts or rejects. Private groups are members-only.</p>
-<p>Persistence: uses <code>types/Store.js</code> → <code>@fabric/core</code> LevelDB under
+<p>Persistence: uses <code>types/Store.js</code> (composes <code>@fabric/core</code> Store;
+<code>/collections/*</code> paths) under
 <code>stores/gooncitizen/register</code> (Hub-style named store root).</p>
 </dd>
 <dt><a href="#http">http</a></dt>
@@ -105,6 +154,58 @@ auditable; settlement happens out-of-band.</li>
 </ul>
 <p><code>rpc</code> is any <code>(method, params) =&gt; Promise&lt;result&gt;</code> — on goon.vc it wraps
 the Hub&#39;s managed bitcoind (<code>@fabric/core</code> Bitcoin <code>_makeRPCRequest</code>).</p>
+</dd>
+<dt><a href="#fs">fs</a></dt>
+<dd><p>SnapshotManager — periodic screen snapshots of player activity.</p>
+<p>Captures a reduced-size JPEG on a configurable interval (default 10 s,
+opt-in) so a future image analyzer can parse gameplay the log does not
+cover. Image files live under the named Fabric store root
+(<code>stores/gooncitizen/snapshots/</code>); metadata records live in the shared
+Fabric Store <code>snapshots</code> collection ({ id, ts, file, bytes, width,
+height }). Auto-purge deletes the oldest snapshots once the library
+exceeds a disk cap, keeping requirements low.</p>
+<p>The capture function is injected by the host (Electron main uses
+<code>screenshot-desktop</code> + <code>nativeImage</code> downscaling); without one — pure
+browser/server sessions — the manager stays idle.</p>
+</dd>
+</dl>
+
+## Functions
+
+<dl>
+<dt><a href="#dmChannelKey">dmChannelKey()</a></dt>
+<dd><p>Deterministic DM channel key for two Fabric pubkeys.</p>
+</dd>
+<dt><a href="#parseDmChannel">parseDmChannel()</a></dt>
+<dd><p>Parse <code>dm:&lt;pkA&gt;:&lt;pkB&gt;</code> → <code>{ a, b }</code> or null.</p>
+</dd>
+<dt><a href="#isNetworkHubAddress">isNetworkHubAddress()</a></dt>
+<dd><p>True when address is a known network hub seed (selective Fabric relays).</p>
+</dd>
+<dt><a href="#isLoopbackFabricAddress">isLoopbackFabricAddress(address)</a> ⇒ <code>boolean</code></dt>
+<dd><p>True when address uses a loopback host (localhost / 127.0.0.1 / ::1).
+Local star-topology tests dial <code>127.0.0.1:otherPort</code> on purpose; only
+<a href="#isSelfFabricAddress">isSelfFabricAddress</a> must be excluded from the dial list.</p>
+</dd>
+<dt><a href="#isSelfFabricAddress">isSelfFabricAddress(address, [listenPort])</a> ⇒ <code>boolean</code></dt>
+<dd><p>True when address dials this process&#39;s Fabric listen port on loopback
+(self-loop). That breaks star-hub gossip on the desktop.</p>
+</dd>
+<dt><a href="#isFabricAddress">isFabricAddress(value)</a> ⇒ <code>boolean</code></dt>
+<dd><p>True when <code>value</code> looks like a Fabric peer address (<code>host:port</code>).</p>
+</dd>
+<dt><a href="#normalizeFabricAddress">normalizeFabricAddress(value, [opts])</a> ⇒ <code>string</code> | <code>null</code></dt>
+<dd><p>Normalize operator input to <code>host:port</code>. Rejects bare http(s) URLs for new
+peers; migrates legacy <code>https://host[/…]</code> → <code>host:7777</code> when <code>migrate</code> is set.</p>
+</dd>
+<dt><a href="#attachAppHandlers">attachAppHandlers(peer, handlers, [opts])</a></dt>
+<dd><p>Subscribe app handlers to a Fabric Peer using its native message events.</p>
+<p>Namespaces:</p>
+<ul>
+<li>GoonCitizen contract id → MissionCreated / MissionBroadcast / SCEventBatch</li>
+<li>Group Federation contracts → GroupChat / GroupChange / GroupShare / invites
+(by typed app message, and/or <code>handlers.isKnownGroupContract(id)</code>)</li>
+</ul>
 </dd>
 </dl>
 
@@ -259,104 +360,48 @@ Stops monitoring the game log and stops HTTP server if running.
 
 * [Group](#Group)
     * [new Group(data)](#new_Group_new)
-    * _instance_
-        * [.pathKey()](#Group+pathKey)
-        * [.pagePath()](#Group+pagePath)
-        * [.includes()](#Group+includes) ⇒ <code>Boolean</code>
-        * [.validate()](#Group+validate)
-        * [.commitment()](#Group+commitment)
-        * [.federation()](#Group+federation)
-        * [.verifyMultiSignature(multiSig, [threshold])](#Group+verifyMultiSignature) ⇒ <code>Boolean</code>
-        * [.toJSON()](#Group+toJSON)
-        * [.toPublicJSON()](#Group+toPublicJSON)
-    * _static_
-        * [.normalizeSlug()](#Group.normalizeSlug)
+    * [.includes()](#Group+includes) ⇒ <code>Boolean</code>
+    * [.isSigner()](#Group+isSigner) ⇒ <code>Boolean</code>
+    * [.isReader()](#Group+isReader)
+    * [.federation()](#Group+federation)
+    * [.verifyMultiSignature()](#Group+verifyMultiSignature)
 
 <a name="new_Group_new"></a>
 
 ### new Group(data)
 
-| Param | Type | Default | Description |
-| --- | --- | --- | --- |
-| data | <code>Object</code> |  | Group data. |
-| data.id | <code>String</code> |  | Group id. |
-| data.name | <code>String</code> |  | Display name. |
-| data.creator | <code>String</code> |  | Creator pubkey (hex). |
-| data.members | <code>Array.&lt;String&gt;</code> |  | Member pubkeys (hex). |
-| [data.threshold] | <code>Number</code> | <code>1</code> | Signatures required for group decisions. |
-| [data.visibility] | <code>String</code> | <code>private</code> | `public` | `private`. |
-| [data.slug] | <code>String</code> \| <code>null</code> |  | Optional custom URL slug (else use id). |
-| [data.createdAt] | <code>String</code> |  | ISO timestamp. |
+| Param | Type | Description |
+| --- | --- | --- |
+| data | <code>Object</code> | Group data. |
 
-<a name="Group+pathKey"></a>
-
-### group.pathKey()
-Path segment for the group page: custom slug or id.
-
-**Kind**: instance method of [<code>Group</code>](#Group)  
-<a name="Group+pagePath"></a>
-
-### group.pagePath()
-Absolute path for the group page (`/groups/...`).
-
-**Kind**: instance method of [<code>Group</code>](#Group)  
 <a name="Group+includes"></a>
 
 ### group.includes() ⇒ <code>Boolean</code>
 **Kind**: instance method of [<code>Group</code>](#Group)  
-**Returns**: <code>Boolean</code> - True when `pubkey` is a member of this group.  
-<a name="Group+validate"></a>
+**Returns**: <code>Boolean</code> - True when `pubkey` is a member (reader or signer).  
+<a name="Group+isSigner"></a>
 
-### group.validate()
-Validate shape: pubkeys well-formed, threshold achievable.
-
+### group.isSigner() ⇒ <code>Boolean</code>
 **Kind**: instance method of [<code>Group</code>](#Group)  
-<a name="Group+commitment"></a>
+**Returns**: <code>Boolean</code> - True when pubkey is a signing validator.  
+<a name="Group+isReader"></a>
 
-### group.commitment()
-Deterministic commitment over the group's identity-defining fields.
+### group.isReader()
+Member but not a signer.
 
 **Kind**: instance method of [<code>Group</code>](#Group)  
 <a name="Group+federation"></a>
 
 ### group.federation()
-Lazily build the Fabric Federation for this member set.
+Lazily build the Fabric Federation for the **signer** set.
 
 **Kind**: instance method of [<code>Group</code>](#Group)  
 <a name="Group+verifyMultiSignature"></a>
 
-### group.verifyMultiSignature(multiSig, [threshold]) ⇒ <code>Boolean</code>
-Verify a k-of-n multisignature against this group's roster + threshold.
-Signers sign the raw message bytes with BIP340 Schnorr (Fabric
-`Key.signSchnorr`); non-member signatures do not count.
+### group.verifyMultiSignature()
+Verify a k-of-n multisignature against **signers** + threshold.
 
 **Kind**: instance method of [<code>Group</code>](#Group)  
-**Returns**: <code>Boolean</code> - True when at least `threshold` member signatures verify.  
-
-| Param | Type | Description |
-| --- | --- | --- |
-| multiSig | <code>Object</code> | `{ message, signatures: { [pubkey]: sigHexOrBuffer } }`. |
-| [threshold] | <code>Number</code> | Override (defaults to the group threshold). |
-
-<a name="Group+toJSON"></a>
-
-### group.toJSON()
-Full JSON for members / authenticated managers.
-
-**Kind**: instance method of [<code>Group</code>](#Group)  
-<a name="Group+toPublicJSON"></a>
-
-### group.toPublicJSON()
-Public summary for share pages (no full member list — only count).
-Safe for unauthenticated GET when visibility is public.
-
-**Kind**: instance method of [<code>Group</code>](#Group)  
-<a name="Group.normalizeSlug"></a>
-
-### Group.normalizeSlug()
-Normalize a custom URL slug (lowercase, hyphenated) or return null.
-
-**Kind**: static method of [<code>Group</code>](#Group)  
 <a name="Mission"></a>
 
 ## Mission ⇐ <code>Entity</code>
@@ -558,8 +603,14 @@ Convert application to JSON.
 
 * [Store](#Store)
     * [new Store([opts])](#new_Store_new)
+    * [._fabric](#Store+_fabric) : <code>Object</code> \| <code>null</code>
+    * [.fabric](#Store+fabric)
     * [.start()](#Store+start)
     * [.flush()](#Store+flush)
+    * [._migrateLegacyJson()](#Store+_migrateLegacyJson)
+    * [._takeLegacySettingsJson()](#Store+_takeLegacySettingsJson) ⇒ <code>Object</code> \| <code>null</code>
+    * [._loadCollection()](#Store+_loadCollection)
+    * [.del()](#Store+del)
 
 <a name="new_Store_new"></a>
 
@@ -571,6 +622,16 @@ Convert application to JSON.
 | [opts.path] | <code>String</code> \| <code>null</code> | LevelDB path for `@fabric/core` Store. |
 | [opts.dir] | <code>String</code> \| <code>null</code> | Alias for `path` (legacy register API). |
 
+<a name="Store+_fabric"></a>
+
+### store.\_fabric : <code>Object</code> \| <code>null</code>
+**Kind**: instance property of [<code>Store</code>](#Store)  
+<a name="Store+fabric"></a>
+
+### store.fabric
+Underlying `@fabric/core` Store (null in memory-only mode or before start).
+
+**Kind**: instance property of [<code>Store</code>](#Store)  
 <a name="Store+start"></a>
 
 ### store.start()
@@ -581,9 +642,544 @@ Idempotent — safe when MissionManager and GroupManager share one instance.
 <a name="Store+flush"></a>
 
 ### store.flush()
-Flush pending Level writes (also called from stop).
+Flush pending Fabric writes (also called from stop).
 
 **Kind**: instance method of [<code>Store</code>](#Store)  
+<a name="Store+_migrateLegacyJson"></a>
+
+### store.\_migrateLegacyJson()
+Transitional: import legacy per-collection JSON beside the register dir once.
+Not used for steady-state persistence.
+
+**Kind**: instance method of [<code>Store</code>](#Store)  
+<a name="Store+_takeLegacySettingsJson"></a>
+
+### store.\_takeLegacySettingsJson() ⇒ <code>Object</code> \| <code>null</code>
+One-time pickup of the pre-Fabric-Store operator `settings.json`.
+
+**Kind**: instance method of [<code>Store</code>](#Store)  
+<a name="Store+_loadCollection"></a>
+
+### store.\_loadCollection()
+Load one collection map from Fabric path `/collections/<name>`.
+Migrates legacy bare Level keys (`missions`, …) once onto that path.
+
+**Kind**: instance method of [<code>Store</code>](#Store)  
+<a name="Store+del"></a>
+
+### store.del()
+Remove one record from a collection. Returns true when it existed.
+
+**Kind**: instance method of [<code>Store</code>](#Store)  
+<a name="ChatManager"></a>
+
+## ChatManager
+**Kind**: global class  
+
+* [ChatManager](#ChatManager)
+    * [new ChatManager(opts)](#new_ChatManager_new)
+    * _instance_
+        * [.canAccess()](#ChatManager+canAccess)
+        * [.dmPeerOf()](#ChatManager+dmPeerOf)
+        * [.channelsFor()](#ChatManager+channelsFor)
+        * [.openDm()](#ChatManager+openDm) ⇒ <code>Object</code>
+        * [.post(data)](#ChatManager+post)
+        * [.ingest()](#ChatManager+ingest) ⇒ <code>Object</code>
+        * [.list(channel, [opts])](#ChatManager+list)
+    * _static_
+        * [.groupIdOf()](#ChatManager.groupIdOf)
+        * [.idOf()](#ChatManager.idOf)
+
+<a name="new_ChatManager_new"></a>
+
+### new ChatManager(opts)
+
+| Param | Type | Description |
+| --- | --- | --- |
+| opts | <code>Object</code> |  |
+| opts.store | <code>Object</code> | Shared Fabric Store. |
+| [opts.groupManager] | <code>Object</code> | For channel membership. |
+
+<a name="ChatManager+canAccess"></a>
+
+### chatManager.canAccess()
+May `viewer` read/post this channel? Global: anyone. Group channels:
+members only when enforcing (hosted mode); locally the relay is the
+player's own node, so their groups are already the visible set.
+DM channels: only the two participant pubkeys.
+
+**Kind**: instance method of [<code>ChatManager</code>](#ChatManager)  
+<a name="ChatManager+dmPeerOf"></a>
+
+### chatManager.dmPeerOf()
+Other participant in a DM channel for `viewer`, or null.
+
+**Kind**: instance method of [<code>ChatManager</code>](#ChatManager)  
+<a name="ChatManager+channelsFor"></a>
+
+### chatManager.channelsFor()
+Channels visible to a viewer: global, group channels, plus DM threads
+that already have messages involving the viewer.
+
+**Kind**: instance method of [<code>ChatManager</code>](#ChatManager)  
+<a name="ChatManager+openDm"></a>
+
+### chatManager.openDm() ⇒ <code>Object</code>
+Ensure a DM channel descriptor exists in the channel list (even with 0 msgs).
+
+**Kind**: instance method of [<code>ChatManager</code>](#ChatManager)  
+<a name="ChatManager+post"></a>
+
+### chatManager.post(data)
+Post a message. The id is content-derived so the same message merged
+from any path converges. Returns the stored record.
+
+**Kind**: instance method of [<code>ChatManager</code>](#ChatManager)  
+
+| Param | Type | Description |
+| --- | --- | --- |
+| data | <code>Object</code> | Message fields (`channel`, `body`, `author`, optional `handle` / `ts`). |
+
+<a name="ChatManager+ingest"></a>
+
+### chatManager.ingest() ⇒ <code>Object</code>
+Ingest a ChatMessage pushed by a remote relay (signed batch). The signer
+must be the author — nobody relays words into someone else's mouth.
+
+**Kind**: instance method of [<code>ChatManager</code>](#ChatManager)  
+<a name="ChatManager+list"></a>
+
+### chatManager.list(channel, [opts])
+Messages in a channel, ascending by ts.
+
+**Kind**: instance method of [<code>ChatManager</code>](#ChatManager)  
+
+| Param | Type | Description |
+| --- | --- | --- |
+| channel | <code>String</code> | Channel key. |
+| [opts] | <code>Object</code> | { since (ISO ts, exclusive), limit } |
+
+<a name="ChatManager.groupIdOf"></a>
+
+### ChatManager.groupIdOf()
+`group:<id>` → groupId, or null for non-group channels.
+
+**Kind**: static method of [<code>ChatManager</code>](#ChatManager)  
+<a name="ChatManager.idOf"></a>
+
+### ChatManager.idOf()
+Deterministic id for a message payload (mirror of post()).
+
+**Kind**: static method of [<code>ChatManager</code>](#ChatManager)  
+<a name="FabricNetwork"></a>
+
+## FabricNetwork
+**Kind**: global class  
+
+* [FabricNetwork](#FabricNetwork)
+    * [new FabricNetwork([settings])](#new_FabricNetwork_new)
+    * _instance_
+        * [._groupContractIds](#FabricNetwork+_groupContractIds) : <code>Set</code>
+        * [.ready](#FabricNetwork+ready)
+        * [.messageLog](#FabricNetwork+messageLog)
+        * [.setGroupContractKnown(contractId, [known])](#FabricNetwork+setGroupContractKnown)
+        * [.setKnownGroupContracts()](#FabricNetwork+setKnownGroupContracts)
+        * [.recordMessage(direction, messageOrBuffer, [meta])](#FabricNetwork+recordMessage)
+        * [.connectedAddresses()](#FabricNetwork+connectedAddresses)
+        * [._signAndRelay(vectorType, body, [opts])](#FabricNetwork+_signAndRelay)
+        * [.signContractMessage(contractId, type, object, [opts])](#FabricNetwork+signContractMessage)
+        * [.encodeOpaqueMessage(message)](#FabricNetwork+encodeOpaqueMessage) ⇒ <code>Object</code>
+        * [._ingestPeeringEvent(ev, kind)](#FabricNetwork+_ingestPeeringEvent)
+        * [.fillPeerSlots()](#FabricNetwork+fillPeerSlots) ⇒ <code>number</code>
+        * [.maybePublishPeeringOffer([opts])](#FabricNetwork+maybePublishPeeringOffer)
+        * [.publishPeeringOffer([opts])](#FabricNetwork+publishPeeringOffer)
+        * [.publishGroupContract(definition)](#FabricNetwork+publishGroupContract)
+        * [.publishChat(record)](#FabricNetwork+publishChat)
+        * [.publishPeerAlias(nickname)](#FabricNetwork+publishPeerAlias)
+        * [.publishPeerProfile(profile)](#FabricNetwork+publishPeerProfile)
+        * [.publishFleetShare(shareObject)](#FabricNetwork+publishFleetShare)
+        * [.publishPeerPresence(presenceObject)](#FabricNetwork+publishPeerPresence)
+        * [.publishDirectChat(payload)](#FabricNetwork+publishDirectChat)
+        * [.lookupPeerRegistry(address)](#FabricNetwork+lookupPeerRegistry) ⇒ <code>Object</code> \| <code>null</code>
+        * [.publishGameStateSnapshot(snapshot, [opts])](#FabricNetwork+publishGameStateSnapshot)
+        * [.publishGroupChat(contractId, payload)](#FabricNetwork+publishGroupChat)
+        * [.publishGroupChange(contractId, payload)](#FabricNetwork+publishGroupChange)
+        * [.publishGroupJournalRequest(contractId, [opts])](#FabricNetwork+publishGroupJournalRequest)
+        * [.publishGroupJournalBatch(contractId, batch)](#FabricNetwork+publishGroupJournalBatch)
+        * [.publishGroupStateJournal(contractId, tip)](#FabricNetwork+publishGroupStateJournal)
+        * [.publishGroupShare(contractId, payload)](#FabricNetwork+publishGroupShare)
+        * [.publishGroupActivityTree(contractId, payload)](#FabricNetwork+publishGroupActivityTree)
+        * [.publishFederationInvite(contractId, invite)](#FabricNetwork+publishFederationInvite)
+        * [.publishFederationInviteResponse(contractId, response)](#FabricNetwork+publishFederationInviteResponse)
+    * _static_
+        * [.connectionMatchesAddress(connectionId, rosterAddress)](#FabricNetwork.connectionMatchesAddress)
+
+<a name="new_FabricNetwork_new"></a>
+
+### new FabricNetwork([settings])
+
+| Param | Type |
+| --- | --- |
+| [settings] | <code>Object</code> | 
+
+<a name="FabricNetwork+_groupContractIds"></a>
+
+### fabricNetwork.\_groupContractIds : <code>Set</code>
+**Kind**: instance property of [<code>FabricNetwork</code>](#FabricNetwork)  
+<a name="FabricNetwork+ready"></a>
+
+### fabricNetwork.ready
+Whether the Peer is up and has identity key material.
+
+**Kind**: instance property of [<code>FabricNetwork</code>](#FabricNetwork)  
+<a name="FabricNetwork+messageLog"></a>
+
+### fabricNetwork.messageLog
+Shared Fabric wire-message ring buffer (advanced UI).
+
+**Kind**: instance property of [<code>FabricNetwork</code>](#FabricNetwork)  
+<a name="FabricNetwork+setGroupContractKnown"></a>
+
+### fabricNetwork.setGroupContractKnown(contractId, [known])
+Register (or forget) a group Federation contract id for ingest routing.
+
+**Kind**: instance method of [<code>FabricNetwork</code>](#FabricNetwork)  
+
+| Param | Type | Default |
+| --- | --- | --- |
+| contractId | <code>string</code> |  | 
+| [known] | <code>boolean</code> | <code>true</code> | 
+
+<a name="FabricNetwork+setKnownGroupContracts"></a>
+
+### fabricNetwork.setKnownGroupContracts()
+Replace the known group-contract id set (e.g. after loading groups).
+
+**Kind**: instance method of [<code>FabricNetwork</code>](#FabricNetwork)  
+<a name="FabricNetwork+recordMessage"></a>
+
+### fabricNetwork.recordMessage(direction, messageOrBuffer, [meta])
+Record a Fabric AMP Message (instance or wire buffer) in the advanced log.
+
+**Kind**: instance method of [<code>FabricNetwork</code>](#FabricNetwork)  
+
+| Param | Type |
+| --- | --- |
+| direction | <code>&#x27;in&#x27;</code> \| <code>&#x27;out&#x27;</code> | 
+| messageOrBuffer | <code>object</code> \| <code>Buffer</code> | 
+| [meta] | <code>Object</code> | 
+| [meta.peer] | <code>string</code> \| <code>null</code> | 
+| [meta.via] | <code>string</code> \| <code>null</code> | 
+
+<a name="FabricNetwork+connectedAddresses"></a>
+
+### fabricNetwork.connectedAddresses()
+Connected Fabric addresses (connection map keys, typically host:port).
+
+**Kind**: instance method of [<code>FabricNetwork</code>](#FabricNetwork)  
+<a name="FabricNetwork+_signAndRelay"></a>
+
+### fabricNetwork.\_signAndRelay(vectorType, body, [opts])
+Sign a Message and optionally relay to peers. Sign-only works with an
+unlocked identity even when the peer is not listening yet.
+
+**Kind**: instance method of [<code>FabricNetwork</code>](#FabricNetwork)  
+
+| Param | Type |
+| --- | --- |
+| vectorType | <code>string</code> | 
+| body | <code>object</code> \| <code>string</code> | 
+| [opts] | <code>Object</code> | 
+| [opts.to] | <code>Array.&lt;string&gt;</code> | 
+| [opts.relay] | <code>boolean</code> | 
+| [opts.key] | <code>object</code> | 
+
+<a name="FabricNetwork+signContractMessage"></a>
+
+### fabricNetwork.signContractMessage(contractId, type, object, [opts])
+Sign a CONTRACT_MESSAGE without requiring peer ready (clipboard / share).
+
+**Kind**: instance method of [<code>FabricNetwork</code>](#FabricNetwork)  
+
+| Param | Type |
+| --- | --- |
+| contractId | <code>string</code> | 
+| type | <code>string</code> | 
+| object | <code>object</code> | 
+| [opts] | <code>Object</code> | 
+| [opts.relay] | <code>boolean</code> | 
+
+<a name="FabricNetwork+encodeOpaqueMessage"></a>
+
+### fabricNetwork.encodeOpaqueMessage(message) ⇒ <code>Object</code>
+Encode a signed Message as opaque fabric:&lt;hex&gt; for copy-paste.
+
+**Kind**: instance method of [<code>FabricNetwork</code>](#FabricNetwork)  
+
+| Param | Type |
+| --- | --- |
+| message | <code>object</code> | 
+
+<a name="FabricNetwork+_ingestPeeringEvent"></a>
+
+### fabricNetwork.\_ingestPeeringEvent(ev, kind)
+Enqueue host:port from offer/gossip and dial open slots.
+
+**Kind**: instance method of [<code>FabricNetwork</code>](#FabricNetwork)  
+
+| Param | Type |
+| --- | --- |
+| ev | <code>Object</code> | 
+| [ev.message] | <code>object</code> | 
+| kind | <code>&#x27;offer&#x27;</code> \| <code>&#x27;gossip&#x27;</code> | 
+
+<a name="FabricNetwork+fillPeerSlots"></a>
+
+### fabricNetwork.fillPeerSlots() ⇒ <code>number</code>
+Dial queued peering candidates into open connection slots.
+
+**Kind**: instance method of [<code>FabricNetwork</code>](#FabricNetwork)  
+**Returns**: <code>number</code> - remaining candidate count  
+<a name="FabricNetwork+maybePublishPeeringOffer"></a>
+
+### fabricNetwork.maybePublishPeeringOffer([opts])
+When under capacity and advertise host + opt-in broadcast are set, publish
+P2P_PEERING_OFFER so hubs / peers can gossip this node into open slots.
+
+**Kind**: instance method of [<code>FabricNetwork</code>](#FabricNetwork)  
+
+| Param | Type | Description |
+| --- | --- | --- |
+| [opts] | <code>Object</code> |  |
+| [opts.force] | <code>boolean</code> | Skip throttle; still requires advertise host.   When force=true, skips broadcastPeering gate (Announce now). |
+
+<a name="FabricNetwork+publishPeeringOffer"></a>
+
+### fabricNetwork.publishPeeringOffer([opts])
+Force one P2P_PEERING_OFFER (Announce now). Requires advertise host.
+
+**Kind**: instance method of [<code>FabricNetwork</code>](#FabricNetwork)  
+
+| Param | Type | Default |
+| --- | --- | --- |
+| [opts] | <code>Object</code> |  | 
+| [opts.force] | <code>boolean</code> | <code>true</code> | 
+
+<a name="FabricNetwork+publishGroupContract"></a>
+
+### fabricNetwork.publishGroupContract(definition)
+Publish a Group Federation genesis (CONTRACT_PUBLISH).
+
+**Kind**: instance method of [<code>FabricNetwork</code>](#FabricNetwork)  
+
+| Param | Type | Description |
+| --- | --- | --- |
+| definition | <code>Object</code> | From [groupContractDefinition](groupContractDefinition) |
+
+<a name="FabricNetwork+publishChat"></a>
+
+### fabricNetwork.publishChat(record)
+Publish a chat record as first-class `P2P_CHAT_MESSAGE` (global only on
+the LiveRelay path; group chat uses [#publishGroupChat](#publishGroupChat)).
+Wire body = raw UTF-8 message text only (no JSON / handle). Author is AMP signature.
+
+**Kind**: instance method of [<code>FabricNetwork</code>](#FabricNetwork)  
+
+| Param | Type | Description |
+| --- | --- | --- |
+| record | <code>Object</code> | ChatManager record |
+
+<a name="FabricNetwork+publishPeerAlias"></a>
+
+### fabricNetwork.publishPeerAlias(nickname)
+Broadcast personal nickname as first-class `P2P_PEER_ALIAS` (UTF-8 body).
+
+**Kind**: instance method of [<code>FabricNetwork</code>](#FabricNetwork)  
+
+| Param | Type |
+| --- | --- |
+| nickname | <code>string</code> | 
+
+<a name="FabricNetwork+publishPeerProfile"></a>
+
+### fabricNetwork.publishPeerProfile(profile)
+Broadcast local social profile under the GoonCitizen contract namespace.
+
+**Kind**: instance method of [<code>FabricNetwork</code>](#FabricNetwork)  
+
+| Param | Type | Description |
+| --- | --- | --- |
+| profile | <code>object</code> | from [buildLocalProfile](buildLocalProfile) |
+
+<a name="FabricNetwork+publishFleetShare"></a>
+
+### fabricNetwork.publishFleetShare(shareObject)
+Broadcast a personal Starjump fleet under the GoonCitizen contract.
+
+**Kind**: instance method of [<code>FabricNetwork</code>](#FabricNetwork)  
+
+| Param | Type | Description |
+| --- | --- | --- |
+| shareObject | <code>object</code> | from [buildFleetShareObject](buildFleetShareObject) |
+
+<a name="FabricNetwork+publishPeerPresence"></a>
+
+### fabricNetwork.publishPeerPresence(presenceObject)
+Broadcast local online presence + current ship under the GoonCitizen contract.
+
+**Kind**: instance method of [<code>FabricNetwork</code>](#FabricNetwork)  
+
+| Param | Type | Description |
+| --- | --- | --- |
+| presenceObject | <code>object</code> | from [buildPresenceShareObject](buildPresenceShareObject) |
+
+<a name="FabricNetwork+publishDirectChat"></a>
+
+### fabricNetwork.publishDirectChat(payload)
+Publish a 1:1 DirectChat under the GoonCitizen contract namespace.
+
+**Kind**: instance method of [<code>FabricNetwork</code>](#FabricNetwork)  
+
+| Param | Type | Description |
+| --- | --- | --- |
+| payload | <code>Object</code> | DirectChat fields (`channel`, `peerA`, `peerB`, `author`, `body`, optional `handle` / `ts` / `id`). |
+
+<a name="FabricNetwork+lookupPeerRegistry"></a>
+
+### fabricNetwork.lookupPeerRegistry(address) ⇒ <code>Object</code> \| <code>null</code>
+Look up a peer registry entry by Fabric address (best-effort).
+
+**Kind**: instance method of [<code>FabricNetwork</code>](#FabricNetwork)  
+
+| Param | Type |
+| --- | --- |
+| address | <code>string</code> | 
+
+<a name="FabricNetwork+publishGameStateSnapshot"></a>
+
+### fabricNetwork.publishGameStateSnapshot(snapshot, [opts])
+Publish a compact cumulative game-state snapshot for Hub sidechain sync.
+
+**Kind**: instance method of [<code>FabricNetwork</code>](#FabricNetwork)  
+
+| Param | Type | Description |
+| --- | --- | --- |
+| snapshot | <code>Object</code> | from functions/gooncitizenGameState.buildGameStateSnapshot |
+| [opts] | <code>Object</code> | Optional Fabric addresses; omit to broadcast |
+| [opts.to] | <code>Array.&lt;string&gt;</code> |  |
+
+<a name="FabricNetwork+publishGroupChat"></a>
+
+### fabricNetwork.publishGroupChat(contractId, payload)
+**Kind**: instance method of [<code>FabricNetwork</code>](#FabricNetwork)  
+
+| Param | Type | Description |
+| --- | --- | --- |
+| contractId | <code>string</code> | Group Federation contract id |
+| payload | <code>Object</code> | GroupChat object |
+
+<a name="FabricNetwork+publishGroupChange"></a>
+
+### fabricNetwork.publishGroupChange(contractId, payload)
+**Kind**: instance method of [<code>FabricNetwork</code>](#FabricNetwork)  
+
+| Param | Type | Description |
+| --- | --- | --- |
+| contractId | <code>string</code> |  |
+| payload | <code>Object</code> | GroupChange object |
+
+<a name="FabricNetwork+publishGroupJournalRequest"></a>
+
+### fabricNetwork.publishGroupJournalRequest(contractId, [opts])
+Request missing Statechain journal rows from peers that know this contract.
+
+**Kind**: instance method of [<code>FabricNetwork</code>](#FabricNetwork)  
+
+| Param | Type |
+| --- | --- |
+| contractId | <code>string</code> | 
+| [opts] | <code>Object</code> | 
+| [opts.fromClock] | <code>number</code> | 
+| [opts.groupId] | <code>string</code> | 
+
+<a name="FabricNetwork+publishGroupJournalBatch"></a>
+
+### fabricNetwork.publishGroupJournalBatch(contractId, batch)
+Reply with replayable journal entries + tip Schnorr signatures.
+
+**Kind**: instance method of [<code>FabricNetwork</code>](#FabricNetwork)  
+
+| Param | Type | Description |
+| --- | --- | --- |
+| contractId | <code>string</code> |  |
+| batch | <code>object</code> | GroupJournalBatch body |
+
+<a name="FabricNetwork+publishGroupStateJournal"></a>
+
+### fabricNetwork.publishGroupStateJournal(contractId, tip)
+Publish a tip attestation (stateDigest + member Schnorr signatures).
+
+**Kind**: instance method of [<code>FabricNetwork</code>](#FabricNetwork)  
+
+| Param | Type | Description |
+| --- | --- | --- |
+| contractId | <code>string</code> |  |
+| tip | <code>object</code> | GroupStateJournal body |
+
+<a name="FabricNetwork+publishGroupShare"></a>
+
+### fabricNetwork.publishGroupShare(contractId, payload)
+**Kind**: instance method of [<code>FabricNetwork</code>](#FabricNetwork)  
+
+| Param | Type | Description |
+| --- | --- | --- |
+| contractId | <code>string</code> |  |
+| payload | <code>Object</code> | GroupShare object `{ kind, object, … }` |
+
+<a name="FabricNetwork+publishGroupActivityTree"></a>
+
+### fabricNetwork.publishGroupActivityTree(contractId, payload)
+Publish a Merkle activity tree into a Group Contract namespace.
+
+**Kind**: instance method of [<code>FabricNetwork</code>](#FabricNetwork)  
+
+| Param | Type | Description |
+| --- | --- | --- |
+| contractId | <code>string</code> |  |
+| payload | <code>Object</code> | GroupActivityTree body (root, digests, counts, …) |
+
+<a name="FabricNetwork+publishFederationInvite"></a>
+
+### fabricNetwork.publishFederationInvite(contractId, invite)
+**Kind**: instance method of [<code>FabricNetwork</code>](#FabricNetwork)  
+
+| Param | Type | Description |
+| --- | --- | --- |
+| contractId | <code>string</code> |  |
+| invite | <code>Object</code> | FederationContractInvite fields/object |
+
+<a name="FabricNetwork+publishFederationInviteResponse"></a>
+
+### fabricNetwork.publishFederationInviteResponse(contractId, response)
+**Kind**: instance method of [<code>FabricNetwork</code>](#FabricNetwork)  
+
+| Param | Type | Description |
+| --- | --- | --- |
+| contractId | <code>string</code> |  |
+| response | <code>Object</code> | FederationContractInviteResponse fields/object |
+
+<a name="FabricNetwork.connectionMatchesAddress"></a>
+
+### FabricNetwork.connectionMatchesAddress(connectionId, rosterAddress)
+True when `connectionId` matches a roster address (exact or host match).
+
+**Kind**: static method of [<code>FabricNetwork</code>](#FabricNetwork)  
+
+| Param | Type |
+| --- | --- |
+| connectionId | <code>string</code> | 
+| rosterAddress | <code>string</code> | 
+
 <a name="MissionManager"></a>
 
 ## MissionManager
@@ -596,6 +1192,12 @@ Supports both single secp256k1 signatures and Musig2 multisig.
 * [MissionManager](#MissionManager)
     * [new MissionManager([settings])](#new_MissionManager_new)
     * [.createMission(data)](#MissionManager+createMission) ⇒ [<code>Mission</code>](#Mission)
+    * [.ingestRemote(data)](#MissionManager+ingestRemote) ⇒ <code>Object</code>
+    * [.ingestApplication()](#MissionManager+ingestApplication)
+    * [.ingestApplicationDecision()](#MissionManager+ingestApplicationDecision)
+    * [.ingestClaim()](#MissionManager+ingestClaim)
+    * [.ingestValidation()](#MissionManager+ingestValidation)
+    * [.ingestCancel()](#MissionManager+ingestCancel)
     * [._normalizeAuthorities()](#MissionManager+_normalizeAuthorities)
     * [.getMission(missionId)](#MissionManager+getMission) ⇒ [<code>Mission</code>](#Mission) \| <code>null</code>
     * [.getMissionApplications(missionId)](#MissionManager+getMissionApplications) ⇒ [<code>Array.&lt;MissionApplication&gt;</code>](#MissionApplication)
@@ -633,6 +1235,51 @@ Create a new mission.
 | --- | --- | --- |
 | data | <code>Object</code> | Mission data. |
 
+<a name="MissionManager+ingestRemote"></a>
+
+### missionManager.ingestRemote(data) ⇒ <code>Object</code>
+Upsert a mission received from a peer broadcast. Skips the local officer
+allowlist — the remote creator's pubkey is the provenance. Does not
+clobber an already-assigned/completed local copy.
+
+**Kind**: instance method of [<code>MissionManager</code>](#MissionManager)  
+
+| Param | Type | Description |
+| --- | --- | --- |
+| data | <code>Object</code> | Mission snapshot from the wire. |
+
+<a name="MissionManager+ingestApplication"></a>
+
+### missionManager.ingestApplication()
+Upsert a remote application (self-authored by the applicant). Idempotent by id.
+
+**Kind**: instance method of [<code>MissionManager</code>](#MissionManager)  
+<a name="MissionManager+ingestApplicationDecision"></a>
+
+### missionManager.ingestApplicationDecision()
+Apply a remote officer/authority decision on an application. Idempotent.
+
+**Kind**: instance method of [<code>MissionManager</code>](#MissionManager)  
+<a name="MissionManager+ingestClaim"></a>
+
+### missionManager.ingestClaim()
+Upsert a remote completion claim (self-authored by the assignee). Idempotent.
+
+**Kind**: instance method of [<code>MissionManager</code>](#MissionManager)  
+<a name="MissionManager+ingestValidation"></a>
+
+### missionManager.ingestValidation()
+Apply a remote claim validation. When the mission has an authorities set
+and the decision is approve, the k-of-n Schnorr acceptance is re-verified
+here (defense in depth) and preserved in the audit authorization. Idempotent.
+
+**Kind**: instance method of [<code>MissionManager</code>](#MissionManager)  
+<a name="MissionManager+ingestCancel"></a>
+
+### missionManager.ingestCancel()
+Apply a remote mission cancel. Idempotent.
+
+**Kind**: instance method of [<code>MissionManager</code>](#MissionManager)  
 <a name="MissionManager+_normalizeAuthorities"></a>
 
 ### missionManager.\_normalizeAuthorities()
@@ -807,6 +1454,90 @@ Get applications by applicant.
 | --- | --- | --- |
 | applicantId | <code>String</code> | Combined public key (hex). |
 
+<a name="SnapshotManager"></a>
+
+## SnapshotManager
+**Kind**: global class  
+
+* [SnapshotManager](#SnapshotManager)
+    * [new SnapshotManager(opts)](#new_SnapshotManager_new)
+    * [.active](#SnapshotManager+active)
+    * [.setCapture()](#SnapshotManager+setCapture)
+    * [.configure()](#SnapshotManager+configure)
+    * [.snap()](#SnapshotManager+snap)
+    * [.list()](#SnapshotManager+list)
+    * [.stats()](#SnapshotManager+stats)
+    * [.imagePath()](#SnapshotManager+imagePath)
+    * [.purge()](#SnapshotManager+purge) ⇒ <code>Number</code>
+    * [.purgeAll()](#SnapshotManager+purgeAll)
+
+<a name="new_SnapshotManager_new"></a>
+
+### new SnapshotManager(opts)
+
+| Param | Type | Description |
+| --- | --- | --- |
+| opts | <code>Object</code> |  |
+| opts.store | <code>Object</code> | Shared Fabric Store. |
+| opts.dir | <code>String</code> \| <code>null</code> | Directory for image files (null = disabled). |
+| [opts.capture] | <code>function</code> | async () => { buffer, width, height }. |
+
+<a name="SnapshotManager+active"></a>
+
+### snapshotManager.active
+True when snapshots can actually be taken right now.
+
+**Kind**: instance property of [<code>SnapshotManager</code>](#SnapshotManager)  
+<a name="SnapshotManager+setCapture"></a>
+
+### snapshotManager.setCapture()
+Provide (or clear) the platform capture function; re-evaluates the timer.
+
+**Kind**: instance method of [<code>SnapshotManager</code>](#SnapshotManager)  
+<a name="SnapshotManager+configure"></a>
+
+### snapshotManager.configure()
+Apply configuration (from operator settings). Values are clamped;
+missing keys keep their current value.
+
+**Kind**: instance method of [<code>SnapshotManager</code>](#SnapshotManager)  
+<a name="SnapshotManager+snap"></a>
+
+### snapshotManager.snap()
+Take one snapshot now: capture → write JPEG → record metadata → purge.
+
+**Kind**: instance method of [<code>SnapshotManager</code>](#SnapshotManager)  
+<a name="SnapshotManager+list"></a>
+
+### snapshotManager.list()
+Snapshot metadata, newest first.
+
+**Kind**: instance method of [<code>SnapshotManager</code>](#SnapshotManager)  
+<a name="SnapshotManager+stats"></a>
+
+### snapshotManager.stats()
+Aggregate stats for the settings/library UI.
+
+**Kind**: instance method of [<code>SnapshotManager</code>](#SnapshotManager)  
+<a name="SnapshotManager+imagePath"></a>
+
+### snapshotManager.imagePath()
+Absolute path for a snapshot's image file, or null.
+
+**Kind**: instance method of [<code>SnapshotManager</code>](#SnapshotManager)  
+<a name="SnapshotManager+purge"></a>
+
+### snapshotManager.purge() ⇒ <code>Number</code>
+Auto-purge: delete oldest snapshots until total size fits the disk cap.
+
+**Kind**: instance method of [<code>SnapshotManager</code>](#SnapshotManager)  
+**Returns**: <code>Number</code> - How many snapshots were removed.  
+<a name="SnapshotManager+purgeAll"></a>
+
+### snapshotManager.purgeAll()
+Delete every snapshot (Library "Clear all").
+
+**Kind**: instance method of [<code>SnapshotManager</code>](#SnapshotManager)  
 <a name="StarCitizen"></a>
 
 ## StarCitizen ⇐ <code>Hub</code>
@@ -871,15 +1602,11 @@ Services can override this method to declare their UI components.
 <a name="crypto"></a>
 
 ## crypto
-Group — a member-created org unit backed by a k-of-n Schnorr multisig.
+Group — a member-created unit backed by a k-of-n Schnorr multisig of **signers**.
 
-Members are identified by their compressed secp256k1 public keys (the same
-actor ids the identity onboarding produces). Threshold decisions (mission
-acceptance, payout release) are verified with the standard Fabric
-[Federation](Federation) k-of-n Schnorr verification (BIP340).
-
-Pages: `/groups/:id` by default, or `/groups/:slug` when a custom slug is set.
-Visibility: `private` (members only) or `public` (shareable join page).
+`members` = all participants (readers + signers).
+`validators` = signing federation (proposedPolicy.validators); tip / wallet / threshold.
+Read-only members are in `members` but not `validators`.
 
 **Kind**: global constant  
 <a name="fs"></a>
@@ -887,32 +1614,94 @@ Visibility: `private` (members only) or `public` (shareable join page).
 ## fs
 Store — keyed-collection persistence for the mission register + groups.
 
-Follows the Fabric convention: the *type* lives in `types/`, the *data*
-lives under the named store root `stores/gooncitizen/` (like the Hub's
-`stores/hub`). The register LevelDB is `stores/gooncitizen/register`.
+Composes `@fabric/core` [Store](#Store) (`this.fabric`). Named collections are
+stored at Fabric paths `/collections/<name>` via `fabric.set` / `fabric.get`
+(not raw Level key blobs). The sync façade (`get` / `put` / `all` / `count` /
+`del`) keeps MissionManager / GroupManager simple.
 
-Surface (sync): get / all / count / put — same as the original M5 seam so
-MissionManager and GroupManager stay simple.
-
-Persistence: when `path` (or legacy `dir`) is set, collections are kept in an
-{@link https://github.com/FabricLabs/fabric/blob/master/types/store.js
-
-**Kind**: global constant  
-**Fabric/core**: Store} (LevelDB). Memory-only when path is null (tests).
+Data lives under the named store root `stores/gooncitizen/` (Hub-style);
+the register LevelDB is `stores/gooncitizen/register`.
 
 Call `await store.start()` before reads that must see prior sessions, and
-`await store.stop()` on shutdown so pending writes flush.  
+`await store.stop()` on shutdown so pending writes flush.
+
+Memory-only when `path` is null (tests) — no Fabric Store is constructed.
+
+**Kind**: global constant  
+<a name="crypto"></a>
+
+## crypto
+ChatManager — org chat brought forward from the Hub, on the Fabric Store.
+
+Message types follow hub.fabric.pub conventions:
+  - stored records are `@type: 'ChatMessage'`
+  - `global` rides Fabric `P2P_CHAT_MESSAGE` (D-010)
+  - `group:<groupId>` rides `GroupChat` under that Group's Federation
+    `CONTRACT_MESSAGE` namespace (Groups-as-Federations)
+
+Channels:
+  - `global`            — network chat on this node (all local viewers)
+  - `group:<groupId>`   — dedicated channel per group / subgroup, members
+                          only in hosted mode (the local relay shows your groups)
+
+Ids are content-derived (channel + author + body + ts), so merging the
+same message from multiple paths (local post, peer push, peer pull) is
+idempotent — the same convergence rule as the event uplink.
+
+**Kind**: global constant  
+<a name="DIRECT_CHAT_TYPE"></a>
+
+## DIRECT\_CHAT\_TYPE
+GoonCitizen CONTRACT_MESSAGE body type for 1:1 chat (mesh).
+
+**Kind**: global constant  
+<a name="EventEmitter"></a>
+
+## EventEmitter
+FabricNetwork — local `@fabric/core` Peer for GoonCitizen peering.
+
+Wire Messages:
+  - P2P_CHAT_MESSAGE     — network-wide `global` chat (Peer auto-relays)
+  - CONTRACT_MESSAGE     — GoonCitizen app types + per-Group Federation types
+  - CONTRACT_PUBLISH     — GoonCitizen genesis + per-Group Federation genesis
+
+Lazy-requires Peer/Message so memory-only unit tests stay light.
+
+**Kind**: global constant  
+<a name="DEFAULT_SEED"></a>
+
+## ~~DEFAULT\_SEED~~
+***Prefer DEFAULT_SEEDS — first network hub seed.***
+
+**Kind**: global constant  
+<a name="DEFAULT_MAX_PEERS"></a>
+
+## DEFAULT\_MAX\_PEERS
+Default TCP peer cap (matches @fabric/core MAX_PEERS soft default for slot fill).
+
+**Kind**: global constant  
+<a name="APP_RELAY_TYPES"></a>
+
+## APP\_RELAY\_TYPES
+App `type` values under the GoonCitizen CONTRACT_MESSAGE namespace (core catalog + local).
+
+**Kind**: global constant  
 <a name="crypto"></a>
 
 ## crypto
 GroupManager — member-created groups with k-of-n Schnorr multisig,
-public/private visibility, custom page slugs, and join applications.
+optional nested subgroups (`parentId`), public/private visibility,
+custom page slugs, and join applications.
+
+Groups are the sharing boundary across many GoonCitizen installations
+on the Fabric mesh (not a single global "org").
 
 Group pages live at `/groups/:id` (or `/groups/:slug` when a custom slug
 is set). Public groups can be shared; visitors apply to join; the creator
 accepts or rejects. Private groups are members-only.
 
-Persistence: uses `types/Store.js` → `@fabric/core` LevelDB under
+Persistence: uses `types/Store.js` (composes `@fabric/core` Store;
+`/collections/*` paths) under
 `stores/gooncitizen/register` (Hub-style named store root).
 
 **Kind**: global constant  
@@ -983,6 +1772,112 @@ Modes:
 the Hub's managed bitcoind (`@fabric/core` Bitcoin `_makeRPCRequest`).
 
 **Kind**: global constant  
+<a name="fs"></a>
+
+## fs
+SnapshotManager — periodic screen snapshots of player activity.
+
+Captures a reduced-size JPEG on a configurable interval (default 10 s,
+opt-in) so a future image analyzer can parse gameplay the log does not
+cover. Image files live under the named Fabric store root
+(`stores/gooncitizen/snapshots/`); metadata records live in the shared
+Fabric Store `snapshots` collection ({ id, ts, file, bytes, width,
+height }). Auto-purge deletes the oldest snapshots once the library
+exceeds a disk cap, keeping requirements low.
+
+The capture function is injected by the host (Electron main uses
+`screenshot-desktop` + `nativeImage` downscaling); without one — pure
+browser/server sessions — the manager stays idle.
+
+**Kind**: global constant  
+<a name="dmChannelKey"></a>
+
+## dmChannelKey()
+Deterministic DM channel key for two Fabric pubkeys.
+
+**Kind**: global function  
+<a name="parseDmChannel"></a>
+
+## parseDmChannel()
+Parse `dm:<pkA>:<pkB>` → `{ a, b }` or null.
+
+**Kind**: global function  
+<a name="isNetworkHubAddress"></a>
+
+## isNetworkHubAddress()
+True when address is a known network hub seed (selective Fabric relays).
+
+**Kind**: global function  
+<a name="isLoopbackFabricAddress"></a>
+
+## isLoopbackFabricAddress(address) ⇒ <code>boolean</code>
+True when address uses a loopback host (localhost / 127.0.0.1 / ::1).
+Local star-topology tests dial `127.0.0.1:otherPort` on purpose; only
+[isSelfFabricAddress](#isSelfFabricAddress) must be excluded from the dial list.
+
+**Kind**: global function  
+
+| Param | Type |
+| --- | --- |
+| address | <code>\*</code> | 
+
+<a name="isSelfFabricAddress"></a>
+
+## isSelfFabricAddress(address, [listenPort]) ⇒ <code>boolean</code>
+True when address dials this process's Fabric listen port on loopback
+(self-loop). That breaks star-hub gossip on the desktop.
+
+**Kind**: global function  
+
+| Param | Type |
+| --- | --- |
+| address | <code>\*</code> | 
+| [listenPort] | <code>number</code> \| <code>string</code> | 
+
+<a name="isFabricAddress"></a>
+
+## isFabricAddress(value) ⇒ <code>boolean</code>
+True when `value` looks like a Fabric peer address (`host:port`).
+
+**Kind**: global function  
+
+| Param | Type |
+| --- | --- |
+| value | <code>\*</code> | 
+
+<a name="normalizeFabricAddress"></a>
+
+## normalizeFabricAddress(value, [opts]) ⇒ <code>string</code> \| <code>null</code>
+Normalize operator input to `host:port`. Rejects bare http(s) URLs for new
+peers; migrates legacy `https://host[/…]` → `host:7777` when `migrate` is set.
+
+**Kind**: global function  
+
+| Param | Type | Description |
+| --- | --- | --- |
+| value | <code>\*</code> |  |
+| [opts] | <code>Object</code> |  |
+| [opts.migrate] | <code>boolean</code> | Migrate legacy `https://host` → `host:7777` |
+
+<a name="attachAppHandlers"></a>
+
+## attachAppHandlers(peer, handlers, [opts])
+Subscribe app handlers to a Fabric Peer using its native message events.
+
+Namespaces:
+  - GoonCitizen contract id → MissionCreated / MissionBroadcast / SCEventBatch
+  - Group Federation contracts → GroupChat / GroupChange / GroupShare / invites
+    (by typed app message, and/or `handlers.isKnownGroupContract(id)`)
+
+**Kind**: global function  
+
+| Param | Type | Description |
+| --- | --- | --- |
+| peer | <code>Object</code> | Fabric Peer instance |
+| handlers | <code>Object</code> |  |
+| [opts] | <code>Object</code> |  |
+| [opts.relay] | <code>boolean</code> |  |
+
 <a name="StarCitizenActivity"></a>
 
 ## StarCitizenActivity : <code>Object</code>

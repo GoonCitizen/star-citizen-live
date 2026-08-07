@@ -15,8 +15,11 @@
 
 const React = require('react');
 const ActivityHeatmap = require('./ActivityHeatmap');
-
-const FABRIC_ADDR = /^[a-zA-Z0-9._-]+:\d{1,5}$/;
+const {
+  peeringInfoForGoonCitizen,
+  parsePeerDialInput,
+  copyPeeringString
+} = require('../functions/peerPeeringString');
 
 const CSS = `
   .pr-wrap{max-width:920px;margin:0 auto;padding:18px;display:grid;gap:16px}
@@ -89,7 +92,11 @@ class Peers extends React.Component {
       inspectId: null,
       detail: null,
       detailLoading: false,
-      observe: null
+      observe: null,
+      peeringCopied: false,
+      peeringCopiedId: null,
+      announceBusy: false,
+      advertiseDraft: ''
     };
     this._timer = null;
   }
@@ -118,6 +125,9 @@ class Peers extends React.Component {
         editable: settingsRes.editable !== false,
         observe: (observeRes && observeRes.data) || (settingsRes.runtime && settingsRes.runtime.networkObserve) || this.state.observe
       };
+      if (!this.state.advertiseDraft && (next.runtime.fabricAdvertiseHost || '')) {
+        next.advertiseDraft = next.runtime.fabricAdvertiseHost || '';
+      }
       this.setState(next);
       if (this.state.inspectId) this.loadDetail(this.state.inspectId, { quiet: true });
     } catch (e) {
@@ -160,15 +170,16 @@ class Peers extends React.Component {
   }
 
   async addPeer () {
-    const address = this.state.newPeerUrl.trim();
-    if (!FABRIC_ADDR.test(address) || this.state.busy) return;
+    const raw = this.state.newPeerUrl.trim();
+    const parsed = parsePeerDialInput(raw);
+    if (!parsed || this.state.busy) return;
     this.setState({ busy: true, error: null });
     try {
       const res = await fetch('/peers', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          address,
+          address: parsed.pubkey ? `${parsed.pubkey}@${parsed.address}` : parsed.address,
           label: this.state.newPeerLabel.trim() || null,
           shareLogs: !!this.state.newPeerShareLogs
         })
@@ -180,6 +191,62 @@ class Peers extends React.Component {
     } catch (e) {
       this.setState({ busy: false, error: e.message });
     }
+  }
+
+  async putSetting (name, value) {
+    const res = await fetch(`/settings/${encodeURIComponent(name)}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ value })
+    });
+    const json = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(json.error || `HTTP ${res.status}`);
+    return json;
+  }
+
+  async saveAdvertiseHost () {
+    if (this.state.busy) return;
+    this.setState({ busy: true, error: null });
+    try {
+      await this.putSetting('fabricAdvertiseHost', String(this.state.advertiseDraft || '').trim() || null);
+      this.setState({ busy: false });
+      await this.load();
+    } catch (e) {
+      this.setState({ busy: false, error: e.message });
+    }
+  }
+
+  async toggleBroadcastPeering () {
+    if (this.state.busy) return;
+    const next = !(this.state.runtime && this.state.runtime.broadcastPeering);
+    this.setState({ busy: true, error: null });
+    try {
+      await this.putSetting('broadcastPeering', next);
+      this.setState({ busy: false });
+      await this.load();
+    } catch (e) {
+      this.setState({ busy: false, error: e.message });
+    }
+  }
+
+  async announcePeering () {
+    if (this.state.announceBusy) return;
+    this.setState({ announceBusy: true, error: null });
+    try {
+      const res = await fetch('/peers/announce', { method: 'POST' });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(json.error || `HTTP ${res.status}`);
+      this.setState({ announceBusy: false });
+      await this.load();
+    } catch (e) {
+      this.setState({ announceBusy: false, error: e.message });
+    }
+  }
+
+  copyPeerPeering (str, id) {
+    if (!copyPeeringString(str)) return;
+    this.setState({ peeringCopied: true, peeringCopiedId: id || null });
+    window.setTimeout(() => this.setState({ peeringCopied: false, peeringCopiedId: null }), 1500);
   }
 
   async patchPeer (peer, patch) {
@@ -264,6 +331,17 @@ class Peers extends React.Component {
     if (!this.state.inspectId) return null;
     const peer = d && d.peer;
     const profile = d && d.profile;
+    const rt = this.state.runtime || {};
+    const peering = (d && d.peering && d.peering.string)
+      ? d.peering
+      : peeringInfoForGoonCitizen({
+        peer,
+        profile,
+        pubkey: (profile && profile.pubkey) || (peer && peer.pubkey) || null,
+        advertiseHost: d && d.self ? rt.fabricAdvertiseHost : null,
+        listenPort: rt.fabricListenPort || 7777,
+        signalingHostPort: typeof window !== 'undefined' ? window.location.host : ''
+      });
     return React.createElement('div', { className: 'pr-panel' },
       React.createElement('h2', null, 'Peer profile'),
       React.createElement('div', { className: 'body' },
@@ -293,8 +371,28 @@ class Peers extends React.Component {
               peer.discovered ? React.createElement('span', { className: 'pr-tag warn' }, 'discovered') : null,
               d.self ? React.createElement('span', { className: 'pr-tag on' }, 'you') : null
             ),
-            React.createElement('div', { className: 'pr-kv' },
-              React.createElement('b', null, 'address '), React.createElement('br'), peer.address || '—'),
+            peering.string
+              ? React.createElement('div', { className: 'pr-kv' },
+                React.createElement('b', null, 'peering '), React.createElement('br'),
+                peering.string,
+                React.createElement('div', { className: 'pr-row', style: { marginTop: 8 } },
+                  React.createElement('button', {
+                    type: 'button',
+                    className: 'pr-btn ghost',
+                    title: 'Copy pubkey@host:port for native Fabric dial',
+                    onClick: () => {
+                      if (copyPeeringString(peering.string)) {
+                        this.setState({ peeringCopied: true });
+                        window.setTimeout(() => this.setState({ peeringCopied: false }), 1500);
+                      }
+                    }
+                  }, this.state.peeringCopied ? 'Copied' : 'Copy peering string')),
+                React.createElement('div', { className: 'pr-hint', style: { marginTop: 6 } },
+                  peering.signaling
+                    ? 'WebRTC signaling host (this site).'
+                    : 'Native Fabric dial pin (pubkey@host:port).'))
+              : React.createElement('div', { className: 'pr-kv' },
+                React.createElement('b', null, 'address '), React.createElement('br'), peer.address || '—'),
             React.createElement('div', { className: 'pr-kv' },
               React.createElement('b', null, 'nickname '), React.createElement('br'),
               (profile && profile.nickname) || peer.alias || '—'),
@@ -380,10 +478,10 @@ class Peers extends React.Component {
         React.createElement('h2', null, 'Fabric Network'),
         React.createElement('div', { className: 'body' },
           React.createElement('div', { className: 'pr-hint' },
-            'GoonCitizen peers over the Fabric Protocol (TCP/NOISE on port ',
+            'Native Fabric TCP/NOISE on port ',
             String(listenPort),
-            '). Default star seeds are hub.fabric.pub:7777 and relay.goon.vc:7777 — both should show connected when unlocked. ',
-            'Peer gossip and peering offers fill open connection slots; click a peer to inspect their local profile. ',
+            ' — dial pins are pubkey@host:port. Default rendezvous seeds: hub.fabric.pub:7777 and relay.goon.vc:7777. ',
+            'Opt in to announce open slots (P2P_PEERING_OFFER) so peers can discover you. ',
             'Parsed game logs only leave this machine when you authorize sharing.'),
           React.createElement('div', { className: 'pr-id', style: { marginTop: 10 } },
             React.createElement('span', { className: 'pr-tag ' + (unlocked ? 'on' : 'off') }, unlocked ? 'identity unlocked' : 'identity locked'),
@@ -394,11 +492,75 @@ class Peers extends React.Component {
                 : 'peer idle'),
             React.createElement('span', { className: 'pr-tag ' + (connectedCount ? 'on' : 'off') },
               `${connectedCount} roster connected`),
+            React.createElement('span', { className: 'pr-tag ' + (rt.broadcastPeering ? 'on' : 'off') },
+              rt.broadcastPeering ? 'announcing slots' : 'announce off'),
             React.createElement('span', { className: 'pr-tag ' + (shareActive ? 'on' : 'off') },
               shareGlobal ? 'logs → all peers' : (shareActive ? 'logs → authorized peers' : 'logs private')),
             React.createElement('span', { className: 'pr-tag ' + (rt.uplinkActive ? 'on' : 'off') },
               rt.uplinkActive ? `event queue · ${rt.uplinkQueued || 0}` : 'event queue idle')
           ),
+          unlocked
+            ? React.createElement('div', { className: 'pr-conns' },
+              React.createElement('div', { className: 'pr-row', style: { marginTop: 0 } },
+                React.createElement('input', {
+                  type: 'text',
+                  value: this.state.advertiseDraft,
+                  placeholder: 'advertise host (e.g. relay.example.com)',
+                  style: { flex: '2 1 200px' },
+                  disabled: this.state.busy || !this.state.editable,
+                  onChange: (e) => this.setState({ advertiseDraft: e.target.value })
+                }),
+                React.createElement('button', {
+                  type: 'button',
+                  className: 'pr-btn ghost',
+                  disabled: this.state.busy || !this.state.editable,
+                  onClick: () => this.saveAdvertiseHost()
+                }, 'Save host'),
+                React.createElement('label', {
+                  className: 'share-new',
+                  style: { marginLeft: 4 }
+                },
+                  React.createElement('input', {
+                    type: 'checkbox',
+                    checked: !!rt.broadcastPeering,
+                    disabled: this.state.busy || !this.state.editable || !unlocked,
+                    onChange: () => this.toggleBroadcastPeering()
+                  }),
+                  'Broadcast peering'),
+                React.createElement('button', {
+                  type: 'button',
+                  className: 'pr-btn',
+                  disabled: this.state.announceBusy || !unlocked || !(rt.fabricAdvertiseHost || this.state.advertiseDraft),
+                  title: 'Force one P2P_PEERING_OFFER now (needs advertise host + a live Fabric connection)',
+                  onClick: () => this.announcePeering()
+                }, this.state.announceBusy ? 'Announcing…' : 'Announce now')
+              ),
+              (() => {
+                const selfPeering = (rt.selfPeering)
+                  ? { string: rt.selfPeering }
+                  : peeringInfoForGoonCitizen({
+                    pubkey: rt.fabricPeerId || rt.identity || null,
+                    advertiseHost: rt.fabricAdvertiseHost || null,
+                    listenPort
+                  });
+                if (!selfPeering.string) {
+                  return React.createElement('div', { style: { marginTop: 8 } },
+                    'Set an advertise host above to get a copyable pubkey@host:port dial pin.');
+                }
+                return React.createElement('div', { style: { marginTop: 8 } },
+                  'Your peering string: ',
+                  React.createElement('code', null, selfPeering.string),
+                  ' ',
+                  React.createElement('button', {
+                    type: 'button',
+                    className: 'pr-btn ghost',
+                    style: { padding: '4px 10px', fontSize: 11 },
+                    title: 'Copy pubkey@host:port for native Fabric dial',
+                    onClick: () => this.copyPeerPeering(selfPeering.string, 'self')
+                  }, (this.state.peeringCopied && this.state.peeringCopiedId === 'self') ? 'Copied' : 'Copy'));
+              })()
+            )
+            : null,
           (local.nickname || local.bio || local.scHandle)
             ? React.createElement('div', { className: 'pr-conns' },
               'Your profile: ',
@@ -436,7 +598,14 @@ class Peers extends React.Component {
           this.state.loading
             ? React.createElement('div', { className: 'pr-hint' }, 'loading…')
             : (this.state.peers.length
-              ? this.state.peers.map((p) => React.createElement('div', { className: 'pr-peer', key: p.id },
+              ? this.state.peers.map((p) => {
+                const pin = p.peering || peeringInfoForGoonCitizen({
+                  peer: p,
+                  pubkey: p.pubkey || p.expectedPubkey || null,
+                  address: p.address,
+                  listenPort
+                }).string || null;
+                return React.createElement('div', { className: 'pr-peer', key: p.id },
                 React.createElement('div', {
                   className: 'u',
                   onClick: () => this.loadDetail(p.id),
@@ -444,6 +613,22 @@ class Peers extends React.Component {
                 },
                   React.createElement('div', { className: 'url' },
                     (p.alias ? p.alias + ' — ' : (p.label ? p.label + ' — ' : '')) + (p.address || p.url)),
+                  pin
+                    ? React.createElement('div', { className: 'meta', style: { marginTop: 2 } },
+                      React.createElement('code', {
+                        style: { fontSize: 10.5 },
+                        title: 'Native Fabric dial pin'
+                      }, pin),
+                      React.createElement('button', {
+                        type: 'button',
+                        className: 'pr-btn ghost',
+                        style: { padding: '2px 8px', fontSize: 10.5, marginLeft: 6 },
+                        onClick: (e) => {
+                          e.stopPropagation();
+                          this.copyPeerPeering(pin, p.id);
+                        }
+                      }, (this.state.peeringCopied && this.state.peeringCopiedId === p.id) ? 'Copied' : 'Copy pin'))
+                    : null,
                   React.createElement('div', { className: 'meta' },
                     statusTag(p),
                     React.createElement('span', { className: 'pr-tag off' }, p.transport || 'fabric-tcp'),
@@ -493,9 +678,10 @@ class Peers extends React.Component {
                     onClick: () => this.removePeer(p)
                   }, 'Remove')
                 )
-              ))
+              );
+              })
               : React.createElement('div', { className: 'pr-hint' },
-                'No peers configured — restore network seeds or add a Fabric address (e.g. hub.fabric.pub:7777).')),
+                'No peers configured — restore network seeds or add a Fabric dial pin (host:port or pubkey@host:port).')),
           React.createElement('div', { className: 'pr-row' },
             React.createElement('button', {
               className: 'pr-btn ghost',
@@ -503,7 +689,8 @@ class Peers extends React.Component {
               onClick: () => this.restoreNetworkSeeds()
             }, 'Restore network seeds'),
             React.createElement('input', {
-              type: 'text', value: this.state.newPeerUrl, placeholder: 'hub.fabric.pub:7777',
+              type: 'text', value: this.state.newPeerUrl,
+              placeholder: 'hub.fabric.pub:7777 or pubkey@host:port',
               style: { flex: '2 1 200px' },
               onChange: (e) => this.setState({ newPeerUrl: e.target.value })
             }),
@@ -522,7 +709,7 @@ class Peers extends React.Component {
             ),
             React.createElement('button', {
               className: 'pr-btn',
-              disabled: !FABRIC_ADDR.test(this.state.newPeerUrl.trim()) || this.state.busy,
+              disabled: !parsePeerDialInput(this.state.newPeerUrl.trim()) || this.state.busy,
               onClick: () => this.addPeer()
             }, 'Add peer')
           )

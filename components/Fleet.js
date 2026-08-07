@@ -15,11 +15,11 @@ const CSS = `
   .fl-wrap{width:100%;max-width:none;margin:0;padding:12px 14px;display:grid;
     grid-template-rows:auto minmax(0,1fr);gap:12px;height:100%;min-height:0;overflow:hidden;box-sizing:border-box}
   .fl-panel{background:var(--panel);border:1px solid var(--line);border-radius:12px;overflow:hidden;
-    display:flex;flex-direction:column;min-height:0;min-width:0}
+    display:flex;flex-direction:column;min-height:0;min-width:0;max-width:100%}
   .fl-panel h2{font-size:13px;margin:0;padding:12px 16px;border-bottom:1px solid var(--line);font-weight:600;display:flex;flex-wrap:wrap;gap:8px;align-items:center;
-    flex:0 0 auto}
+    flex:0 0 auto;min-width:0}
   .fl-panel h2 .sub{font-weight:500;color:var(--muted);font-size:12px}
-  .fl-panel .body{padding:14px 16px;flex:1 1 auto;min-height:0;overflow:auto}
+  .fl-panel .body{padding:14px 16px;flex:1 1 auto;min-height:0;min-width:0;overflow-x:hidden;overflow-y:auto}
   .fl-toolbar .body{flex:0 0 auto;overflow:visible}
   .fl-hint{color:var(--muted);font-size:12.5px;line-height:1.55;margin:0 0 12px}
   .fl-err{background:rgba(248,81,73,.12);color:var(--kill);border-radius:7px;padding:9px 12px;font-size:13px;margin-bottom:10px}
@@ -34,12 +34,14 @@ const CSS = `
   .fl-chip{background:var(--panel2);border:1px solid var(--line);color:var(--muted);border-radius:999px;
     padding:3px 10px;font-size:11.5px;cursor:pointer}
   .fl-chip.on{background:rgba(56,139,253,.15);border-color:var(--accent);color:var(--accent)}
-  .fl-list{display:grid;gap:10px}
+  .fl-list{display:grid;gap:10px;min-width:0;max-width:100%}
   .fl-card{border:1px solid var(--line);border-radius:10px;padding:12px 14px;background:var(--panel2);
-    display:grid;gap:8px;cursor:pointer}
+    display:grid;gap:8px;cursor:pointer;min-width:0;max-width:100%;overflow:hidden;box-sizing:border-box}
   .fl-card:hover,.fl-card.on{border-color:var(--accent)}
-  .fl-card .title{font-size:14px;font-weight:600;display:flex;flex-wrap:wrap;gap:8px;align-items:baseline}
-  .fl-card .meta{font-size:12px;color:var(--muted);display:flex;flex-wrap:wrap;gap:8px}
+  .fl-card .title{font-size:14px;font-weight:600;display:flex;flex-wrap:wrap;gap:8px;align-items:baseline;
+    min-width:0;max-width:100%;overflow-wrap:anywhere;word-break:break-word}
+  .fl-card .meta{font-size:12px;color:var(--muted);display:flex;flex-wrap:wrap;gap:8px;
+    min-width:0;max-width:100%;overflow-wrap:anywhere;word-break:break-word}
   .fl-tag{font-size:10.5px;font-weight:700;padding:2px 8px;border-radius:5px;letter-spacing:.02em}
   .fl-tag.private{background:rgba(110,118,129,.18);color:var(--muted)}
   .fl-tag.peers{background:rgba(56,139,253,.15);color:var(--accent)}
@@ -63,7 +65,8 @@ const CSS = `
   .fl-groups label{display:flex;align-items:center;gap:6px;font-size:12px;color:var(--text);cursor:pointer}
   .fl-empty{color:var(--muted);text-align:center;font-style:italic;padding:28px 0;font-size:13px;line-height:1.7}
   .fl-samples{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
-  .fl-split{display:grid;grid-template-columns:minmax(240px,320px) minmax(0,1fr);gap:12px;min-height:0;overflow:hidden}
+  .fl-split{display:grid;grid-template-columns:minmax(0,320px) minmax(0,1fr);gap:12px;min-height:0;overflow:hidden}
+  .fl-split > .fl-panel{min-width:0;max-width:100%}
   @media (max-width:840px){
     .fl-wrap{grid-template-rows:auto minmax(0,1fr);overflow:auto}
     .fl-split{grid-template-columns:1fr;grid-template-rows:minmax(160px,32%) minmax(0,1fr);min-height:min(60vh,480px)}

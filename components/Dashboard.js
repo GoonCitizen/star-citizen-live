@@ -156,19 +156,26 @@ const CSS = `
   .idchip .id-dot.share{outline:1px solid rgba(56,139,253,.55);outline-offset:1px}
   .idchip .id-label{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   .idchip .id-ship{color:var(--muted);font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:110px}
-  .id-flyout{position:absolute;right:0;top:calc(100% + 8px);z-index:30;width:min(360px,94vw);
-    background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px 14px;
-    box-shadow:0 12px 32px rgba(0,0,0,.45);display:grid;gap:10px}
-  .id-flyout .ff{display:grid;gap:4px}
-  .id-flyout .ff label{font-size:11.5px;color:var(--muted)}
+  .id-flyout{position:absolute;right:0;top:calc(100% + 6px);z-index:30;width:min(268px,94vw);
+    background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:10px 11px;
+    box-shadow:0 12px 32px rgba(0,0,0,.45);display:grid;gap:7px}
+  .id-flyout .ff{display:grid;gap:3px}
+  .id-flyout .ff label{font-size:10.5px;color:var(--muted);letter-spacing:.02em}
   .id-flyout select,.id-flyout input{width:100%;background:var(--bg);border:1px solid var(--line);color:var(--text);
-    border-radius:7px;padding:7px 9px;font-size:12.5px;box-sizing:border-box}
-  .id-flyout .hint{font-size:11.5px;color:var(--muted);line-height:1.4}
+    border-radius:6px;padding:5px 8px;font-size:12px;box-sizing:border-box}
+  .id-flyout .ff-inline{display:flex;gap:6px;align-items:stretch}
+  .id-flyout .ff-inline input{flex:1;min-width:0}
+  .id-flyout .ff-inline .btn{flex:none;padding:5px 9px}
+  .id-flyout .hint{font-size:10.5px;color:var(--muted);line-height:1.35;margin:0}
   .id-flyout .meta{font-size:12px;color:var(--text)}
-  .id-flyout .actions{display:flex;flex-wrap:wrap;gap:8px;margin-top:2px}
+  .id-flyout .actions{display:flex;flex-wrap:wrap;gap:6px;margin-top:1px}
   .id-flyout .actions .btn{background:var(--panel2);border:1px solid var(--line);color:var(--text);
-    border-radius:7px;padding:6px 11px;font-size:12px;cursor:pointer;font-weight:600}
+    border-radius:6px;padding:5px 9px;font-size:11.5px;cursor:pointer;font-weight:600}
   .id-flyout .actions .btn.primary{background:var(--accent);border-color:var(--accent);color:#fff}
+  .id-flyout .sp-wrap{gap:4px}
+  .id-flyout .sp-row input{padding:5px 8px;font-size:12px}
+  .id-flyout .sp-btn{padding:5px 8px;font-size:11px}
+  .id-flyout .sp-hits{max-height:120px}
   .counts{display:flex;gap:12px;flex-wrap:wrap;color:var(--muted);font-size:12.5px}
   .counts b{color:var(--text)}
   .counts .k b{color:var(--kill)}
@@ -611,11 +618,15 @@ class Dashboard extends React.Component {
   async setPublishedShipQuick (slug) {
     this.setState({ presenceBusy: true });
     try {
-      const autodetect = !slug;
+      const none = slug === '__none__' || slug === 'none' || slug === 'clear';
+      const autodetect = slug === null || slug === undefined || slug === '';
+      const body = autodetect
+        ? { autodetect: true }
+        : (none ? { clear: true } : { slug });
       const res = await fetch('/services/star-citizen/presence/ship', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(autodetect ? { autodetect: true } : { slug })
+        body: JSON.stringify(body)
       });
       const j = await res.json();
       if (!res.ok) throw new Error(j.error || res.statusText);
@@ -673,15 +684,19 @@ class Dashboard extends React.Component {
   renderIdentityFlyout () {
     if (!this.state.showIdFlyout) return null;
     const busy = this.state.presenceBusy;
+    const pk = this.state.identityPubkey;
     return React.createElement('div', {
       className: 'id-flyout',
       onClick: (e) => e.stopPropagation()
     },
     React.createElement('div', { className: 'ff' },
-      React.createElement('label', null, 'Online status'),
+      React.createElement('label', null, 'Online'),
       React.createElement('select', {
         value: this.state.presenceAvailability || 'auto',
-        disabled: busy || !this.state.identityPubkey,
+        disabled: busy || !pk,
+        title: this.state.presenceSharing
+          ? 'Sharing presence on the mesh'
+          : 'Local until Online/Offline (enables sharing)',
         onChange: (e) => {
           const availability = e.target.value;
           const patch = { presenceAvailability: availability };
@@ -700,36 +715,48 @@ class Dashboard extends React.Component {
     ),
     React.createElement(ShipPicker, {
       compact: true,
-      disabled: busy || !this.state.identityPubkey,
+      disabled: busy || !pk,
       overrideShip: this.state.shipOverride,
       detectedShip: this.state.detectedShip,
       onSelect: (slug) => this.setPublishedShipQuick(slug)
     }),
     React.createElement('div', { className: 'ff' },
       React.createElement('label', null, 'Status'),
-      React.createElement('input', {
-        type: 'text',
-        maxLength: 64,
-        placeholder: 'Short status…',
-        value: this.state.statusDraft || '',
-        disabled: busy || !this.state.identityPubkey,
-        onChange: (e) => this.setState({ statusDraft: e.target.value }),
-        onKeyDown: (e) => {
-          if (e.key === 'Enter') this.putPresenceQuick({ presenceStatusText: this.state.statusDraft });
-        }
-      })
+      React.createElement('div', { className: 'ff-inline' },
+        React.createElement('input', {
+          type: 'text',
+          maxLength: 64,
+          placeholder: 'Short status…',
+          value: this.state.statusDraft || '',
+          disabled: busy || !pk,
+          onChange: (e) => this.setState({ statusDraft: e.target.value }),
+          onKeyDown: (e) => {
+            if (e.key === 'Enter') this.putPresenceQuick({ presenceStatusText: this.state.statusDraft });
+          }
+        }),
+        React.createElement('button', {
+          type: 'button',
+          className: 'btn',
+          disabled: busy || !pk,
+          title: 'Publish status text',
+          onClick: () => this.putPresenceQuick({ presenceStatusText: this.state.statusDraft })
+        }, 'Set')
+      )
     ),
     React.createElement('div', { className: 'hint' },
-      this.state.presenceSharing
-        ? 'Sharing presence on the mesh.'
-        : 'Presence is local until you share (Online/Offline enables sharing).'),
+      this.state.presenceSharing ? 'Sharing on mesh' : 'Local until Online/Offline'),
     React.createElement('div', { className: 'actions' },
       React.createElement('button', {
         type: 'button',
         className: 'btn',
-        disabled: busy || !this.state.identityPubkey,
-        onClick: () => this.putPresenceQuick({ presenceStatusText: this.state.statusDraft })
-      }, 'Set status'),
+        disabled: !pk,
+        title: pk ? 'Open your profile page' : 'Unlock identity first',
+        onClick: () => {
+          if (!pk) return;
+          this.setState({ showIdFlyout: false });
+          window.location.href = '/profiles/' + encodeURIComponent(pk);
+        }
+      }, 'My profile'),
       React.createElement('button', {
         type: 'button',
         className: 'btn primary',
@@ -746,7 +773,8 @@ class Dashboard extends React.Component {
       const s = d.session || {};
       const parts = [d.channel, s.branch, s.changelist].filter(Boolean);
       const el = this._feedRef.current;
-      const pinned = el && (el.scrollHeight - el.scrollTop - el.clientHeight < 80);
+      // Newest-first: stay pinned to the top when the operator is reading live.
+      const pinnedTop = !el || el.scrollTop < 80;
       const feedPayload = d.feed || null;
       this.setState({
         status: d.status,
@@ -769,8 +797,8 @@ class Dashboard extends React.Component {
         corpus: d.corpus || this.state.corpus,
         reparse: d.reparse || null
       }, () => {
-        if (pinned && this._feedRef.current) {
-          this._feedRef.current.scrollTop = this._feedRef.current.scrollHeight;
+        if (pinnedTop && this._feedRef.current) {
+          this._feedRef.current.scrollTop = 0;
         }
       });
     } catch (_) {
@@ -1866,7 +1894,7 @@ class Dashboard extends React.Component {
       React.createElement('section', { className: 'panel full live-stream' },
         React.createElement('h2', null, '📡 Live feed ',
           React.createElement('span', { className: 'sub' },
-            '— chat-style stream of parsed Game.log events, peer shares, chat & broadcasts. ',
+            '— newest first · parsed Game.log, peer shares, chat & broadcasts. ',
             mstats),
           React.createElement('button', {
             className: 'btn',
@@ -1915,12 +1943,22 @@ class Dashboard extends React.Component {
                 peerId: it.sourceId || null
               };
               const fieldBadges = Array.isArray(it.badges) ? it.badges : [];
+              const showTags = fieldBadges.length > 0 ||
+                !!(it.meta && !fieldBadges.some((b) => b.value === it.meta)) ||
+                it.recognized === false ||
+                it.verified === true;
               return React.createElement('div', {
                 className: 'live-msg' + (prov.origin === 'peer' ? ' peer' : ''),
                 key: id
               },
               React.createElement('div', { className: 'm' },
                 React.createElement('span', { className: 'badge ' + cls }, label),
+                it.who
+                  ? React.createElement('span', {
+                    className: 'who' + (prov.origin === 'peer' ? ' peer' : ''),
+                    title: it.sourceId || it.who
+                  }, it.who)
+                  : null,
                 React.createElement('span', { className: 't' }, shortTime(it.ts)),
                 showRaw
                   ? React.createElement('button', {
@@ -1942,7 +1980,7 @@ class Dashboard extends React.Component {
                   __html: highlight(it.body || '', kws)
                 }
               }),
-              (fieldBadges.length || it.meta)
+              showTags
                 ? React.createElement('div', { className: 'tags' },
                   fieldBadges.map((b, bi) => React.createElement('span', {
                     key: (b.kind || 't') + ':' + b.value + ':' + bi,
@@ -1956,6 +1994,16 @@ class Dashboard extends React.Component {
                     ? React.createElement('span', { className: 'fb', title: String(it.meta) },
                       React.createElement('span', { className: 'fk' }, 'id'),
                       String(it.meta).length > 28 ? String(it.meta).slice(0, 12) + '…' : it.meta)
+                    : null,
+                  it.recognized === false
+                    ? React.createElement('span', { className: 'fb fb-status', title: 'Not matched by a verified parser rule' },
+                      React.createElement('span', { className: 'fk' }, 'parse'),
+                      'unrecognized')
+                    : null,
+                  it.verified === true
+                    ? React.createElement('span', { className: 'fb fb-status', title: 'Parser rule verified on real Game.log' },
+                      React.createElement('span', { className: 'fk' }, 'rule'),
+                      'verified')
                     : null
                 )
                 : null,

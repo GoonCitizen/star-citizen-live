@@ -72,7 +72,7 @@ class PayoutManager extends EventEmitter {
    * every member's relay.
    * @param {Array<String>} keys Compressed secp256k1 pubkeys.
    * @param {Number} threshold Signatures required to spend.
-   * @returns {{ address, redeemScript?, descriptor?, keys, threshold, network, mode }}
+   * @returns {Object} `{ address, keys, threshold, network, mode }` plus optional `redeemScript` / `descriptor`
    */
   async multisigAddress (keys, threshold = 1) {
     if (!Array.isArray(keys) || !keys.length) throw new Error('keys required');

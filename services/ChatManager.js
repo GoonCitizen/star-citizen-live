@@ -67,8 +67,8 @@ function canonical (value) {
 class ChatManager extends EventEmitter {
   /**
    * @param {Object} opts
-   * @param {import('../types/Store').Store} opts.store Shared Fabric Store.
-   * @param {import('./GroupManager')} [opts.groupManager] For channel membership.
+   * @param {Object} opts.store Shared Fabric Store.
+   * @param {Object} [opts.groupManager] For channel membership.
    */
   constructor ({ store, groupManager = null } = {}) {
     super();
@@ -195,7 +195,7 @@ class ChatManager extends EventEmitter {
   /**
    * Post a message. The id is content-derived so the same message merged
    * from any path converges. Returns the stored record.
-   * @param {Object} data { channel, body, author, handle?, ts? }
+   * @param {Object} data Message fields (`channel`, `body`, `author`, optional `handle` / `ts`).
    */
   post (data = {}) {
     const channel = String(data.channel || GLOBAL_CHANNEL);

@@ -1,19 +1,11 @@
 'use strict';
 
 /**
- * Group — a member-created unit backed by a k-of-n Schnorr multisig.
+ * Group — a member-created unit backed by a k-of-n Schnorr multisig of **signers**.
  *
- * Many installations share over the Fabric mesh; Groups (and nested
- * subgroups via `parentId`) are the sharing / authority boundary — not a
- * single hard-coded "org".
- *
- * Members are identified by their compressed secp256k1 public keys (the same
- * actor ids the identity onboarding produces). Threshold decisions (mission
- * acceptance, payout release) are verified with the standard Fabric
- * {@link Federation} k-of-n Schnorr verification (BIP340).
- *
- * Pages: `/groups/:id` by default, or `/groups/:slug` when a custom slug is set.
- * Visibility: `private` (members only) or `public` (shareable join page).
+ * `members` = all participants (readers + signers).
+ * `validators` = signing federation (proposedPolicy.validators); tip / wallet / threshold.
+ * Read-only members are in `members` but not `validators`.
  */
 
 const crypto = require('crypto');
@@ -25,24 +17,24 @@ const SLUG_RE = /^[a-z0-9](?:[a-z0-9-]{0,46}[a-z0-9])?$/;
 class Group {
   /**
    * @param {Object} data Group data.
-   * @param {String} data.id Group id.
-   * @param {String} data.name Display name.
-   * @param {String} data.creator Creator pubkey (hex).
-   * @param {Array<String>} data.members Member pubkeys (hex).
-   * @param {Number} [data.threshold=1] Signatures required for group decisions.
-   * @param {String} [data.visibility=private] `public` | `private`.
-   * @param {String|null} [data.slug] Optional custom URL slug (else use id).
-   * @param {String|null} [data.parentId] Parent group id when this is a subgroup.
-   * @param {String} [data.createdAt] ISO timestamp.
-   * @param {String|null} [data.contractId] Fabric Federation contract id (Actor hex).
-   * @param {Object|null} [data.proposedPolicy] Hub-shaped `{ validators, threshold }`.
-   * @param {String|null} [data.policyFingerprint] sha256 of canonical policy.
    */
   constructor (data = {}) {
     this.id = data.id || null;
     this.name = data.name || 'Unnamed group';
     this.creator = data.creator || null;
     this.members = Array.isArray(data.members) ? [...new Set(data.members)] : [];
+    // Signers: explicit validators, else proposedPolicy, else legacy (= all members).
+    if (Array.isArray(data.validators) && data.validators.length) {
+      this.validators = [...new Set(data.validators.map((v) => String(v).toLowerCase()))];
+    } else if (data.proposedPolicy && Array.isArray(data.proposedPolicy.validators)) {
+      this.validators = [...new Set(data.proposedPolicy.validators.map((v) => String(v).toLowerCase()))];
+    } else {
+      this.validators = this.members.slice();
+    }
+    // Ensure every validator is also a member.
+    for (const v of this.validators) {
+      if (!this.members.includes(v)) this.members.push(v);
+    }
     this.threshold = Math.max(1, Number(data.threshold) || 1);
     this.visibility = data.visibility === 'public' ? 'public' : 'private';
     this.slug = data.slug || null;
@@ -51,6 +43,7 @@ class Group {
     this.contractId = data.contractId || null;
     this.proposedPolicy = data.proposedPolicy || null;
     this.policyFingerprint = data.policyFingerprint || null;
+    this.spendLadder = data.spendLadder || null;
     this._federation = null;
   }
 
@@ -62,7 +55,6 @@ class Group {
     return typeof slug === 'string' && SLUG_RE.test(slug) && !slug.startsWith('group-');
   }
 
-  /** Normalize a custom URL slug (lowercase, hyphenated) or return null. */
   static normalizeSlug (input) {
     if (input == null || input === '') return null;
     const slug = String(input).trim().toLowerCase()
@@ -76,26 +68,40 @@ class Group {
 
   isPublic () { return this.visibility === 'public'; }
 
-  /** Path segment for the group page: custom slug or id. */
   pathKey () { return this.slug || this.id; }
 
-  /** Absolute path for the group page (`/groups/...`). */
   pagePath () { return `/groups/${this.pathKey()}`; }
 
-  /** @returns {Boolean} True when `pubkey` is a member of this group. */
+  /** @returns {Boolean} True when `pubkey` is a member (reader or signer). */
   includes (pubkey) {
     return this.members.includes(pubkey);
   }
 
-  /** Validate shape: pubkeys well-formed, threshold achievable. */
+  /** @returns {Boolean} True when pubkey is a signing validator. */
+  isSigner (pubkey) {
+    const pk = String(pubkey || '').toLowerCase();
+    return this.validators.some((v) => String(v).toLowerCase() === pk);
+  }
+
+  /** Member but not a signer. */
+  isReader (pubkey) {
+    return this.includes(pubkey) && !this.isSigner(pubkey);
+  }
+
   validate () {
     if (!this.members.length) throw new Error('group requires at least one member');
+    if (!this.validators.length) throw new Error('group requires at least one signer (validator)');
     for (const m of this.members) {
       if (!Group.isValidPubkey(m)) throw new Error(`invalid member pubkey: ${m}`);
     }
+    for (const v of this.validators) {
+      if (!Group.isValidPubkey(v)) throw new Error(`invalid validator pubkey: ${v}`);
+      if (!this.includes(v)) throw new Error(`validator must be a member: ${v}`);
+    }
     if (this.creator && !this.includes(this.creator)) throw new Error('creator must be a member');
-    if (this.threshold > this.members.length) {
-      throw new Error(`threshold ${this.threshold} exceeds member count ${this.members.length}`);
+    if (this.creator && !this.isSigner(this.creator)) throw new Error('creator must be a signer');
+    if (this.threshold > this.validators.length) {
+      throw new Error(`threshold ${this.threshold} exceeds signer count ${this.validators.length}`);
     }
     if (this.slug != null && !Group.isValidSlug(this.slug)) {
       throw new Error('invalid group slug');
@@ -106,13 +112,13 @@ class Group {
     return true;
   }
 
-  /** Deterministic commitment over the group's identity-defining fields. */
   commitment () {
     const body = JSON.stringify({
       id: this.id,
       name: this.name,
       creator: this.creator,
       members: [...this.members].sort(),
+      validators: [...this.validators].sort(),
       threshold: this.threshold,
       visibility: this.visibility,
       slug: this.slug,
@@ -121,29 +127,24 @@ class Group {
     return crypto.createHash('sha256').update(body).digest('hex');
   }
 
-  /** Lazily build the Fabric Federation for this member set. */
+  /** Lazily build the Fabric Federation for the **signer** set. */
   federation () {
     if (!this._federation) {
       const fed = new Federation({});
-      for (const pubkey of this.members) fed.addMember({ public: pubkey });
+      for (const pubkey of this.validators) fed.addMember({ public: pubkey });
       this._federation = fed;
     }
     return this._federation;
   }
 
   /**
-   * Verify a k-of-n multisignature against this group's roster + threshold.
-   * Signers sign the raw message bytes with BIP340 Schnorr (Fabric
-   * `Key.signSchnorr`); non-member signatures do not count.
-   * @param {Object} multiSig `{ message, signatures: { [pubkey]: sigHexOrBuffer } }`.
-   * @param {Number} [threshold] Override (defaults to the group threshold).
-   * @returns {Boolean} True when at least `threshold` member signatures verify.
+   * Verify a k-of-n multisignature against **signers** + threshold.
    */
   verifyMultiSignature (multiSig, threshold = this.threshold) {
     if (!multiSig || !multiSig.signatures) return false;
     const signatures = {};
     for (const [pubkey, sig] of Object.entries(multiSig.signatures)) {
-      if (!this.includes(pubkey)) continue; // ignore non-members
+      if (!this.isSigner(pubkey)) continue;
       signatures[pubkey] = Buffer.isBuffer(sig) ? sig : Buffer.from(String(sig), 'hex');
     }
     if (Object.keys(signatures).length < threshold) return false;
@@ -154,13 +155,13 @@ class Group {
     }
   }
 
-  /** Full JSON for members / authenticated managers. */
   toJSON () {
     return {
       id: this.id,
       name: this.name,
       creator: this.creator,
       members: this.members,
+      validators: this.validators,
       threshold: this.threshold,
       visibility: this.visibility,
       slug: this.slug,
@@ -170,20 +171,18 @@ class Group {
       contractId: this.contractId || null,
       proposedPolicy: this.proposedPolicy || null,
       policyFingerprint: this.policyFingerprint || null,
+      spendLadder: this.spendLadder || null,
       commitment: this.commitment()
     };
   }
 
-  /**
-   * Public summary for share pages (no full member list — only count).
-   * Safe for unauthenticated GET when visibility is public.
-   */
   toPublicJSON () {
     return {
       id: this.id,
       name: this.name,
       creator: this.creator,
       memberCount: this.members.length,
+      signerCount: this.validators.length,
       threshold: this.threshold,
       visibility: this.visibility,
       slug: this.slug,
