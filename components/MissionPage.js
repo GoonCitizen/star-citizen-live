@@ -67,7 +67,11 @@ class MissionPage extends React.Component {
       busy: false,
       payoutAddr: '',
       psbt: null,
-      events: []
+      events: [],
+      groups: [],
+      claimGroup: '',
+      claimNote: '',
+      claimOpen: false
     };
   }
 
@@ -118,12 +122,13 @@ class MissionPage extends React.Component {
     }
     this.setState({ loading: true, error: null });
     try {
-      const [mRes, aRes, cRes, eRes] = await Promise.all([
+      const [mRes, aRes, cRes, eRes, gRes] = await Promise.all([
         fetch(`${BASE}/missions/${encodeURIComponent(id)}`, { headers: this.headers() })
           .then((r) => r.json().then((j) => ({ ok: r.ok, j }))),
         fetch(`${BASE}/missions/${encodeURIComponent(id)}/applications`).then((r) => r.json()).catch(() => ({ data: [] })),
         fetch(`${BASE}/claims`).then((r) => r.json()).catch(() => ({ data: [] })),
-        fetch(`${BASE}/inbox?missionId=${encodeURIComponent(id)}`).then((r) => r.json()).catch(() => ({ data: [] }))
+        fetch(`${BASE}/inbox?missionId=${encodeURIComponent(id)}`).then((r) => r.json()).catch(() => ({ data: [] })),
+        fetch(`${BASE}/groups`, { headers: this.headers() }).then((r) => r.json()).catch(() => ({ data: [] }))
       ]);
       if (!mRes.ok) throw new Error((mRes.j && mRes.j.error) || 'Mission not found');
       const claims = (cRes.data || []).filter((c) => c.missionId === id);
@@ -133,6 +138,7 @@ class MissionPage extends React.Component {
         applications: aRes.data || [],
         claims,
         events: eRes.data || [],
+        groups: gRes.data || [],
         error: null
       });
     } catch (e) {
@@ -173,7 +179,8 @@ class MissionPage extends React.Component {
         action: 'mission.accept',
         missionId: m.id,
         claimId: claim.id,
-        claimantId: claim.claimantId
+        claimantId: claim.claimantId,
+        completionGroupId: claim.completionGroupId || null
       });
       const signed = await b.signMessage(message);
       if (signed.error) throw new Error(signed.error);
@@ -195,31 +202,43 @@ class MissionPage extends React.Component {
     const m = this.state.mission;
     const e = m && m.escrow;
     if (!e) return null;
+    const groupPayee = e.payeeKind === 'group';
     return React.createElement('div', { className: 'mpage-esc' },
       React.createElement('div', null, React.createElement('b', null, 'Escrow'), ' · ', e.status || 'pending'),
       e.address ? React.createElement('div', null, 'address ', React.createElement('code', null, e.address)) : null,
       e.amountSats != null ? React.createElement('div', null, SATS(e.amountSats), ' sats') : null,
+      e.status === 'payable' && groupPayee
+        ? React.createElement('div', null,
+          'payee: group wallet ',
+          e.payeeAddress
+            ? React.createElement('code', null, e.payeeAddress)
+            : React.createElement('span', { style: { color: 'var(--muted)' } }, '(unavailable)'))
+        : null,
       e.status === 'payable'
         ? React.createElement('div', { className: 'mpage-row' },
-          React.createElement('input', {
-            type: 'text',
-            placeholder: 'payout address (optional)',
-            value: this.state.payoutAddr,
-            onChange: (ev) => this.setState({ payoutAddr: ev.target.value }),
-            style: {
-              flex: 1, background: 'var(--panel)', border: '1px solid var(--line)',
-              color: 'var(--text)', borderRadius: 7, padding: '7px 10px', fontSize: 12
-            }
-          }),
+          groupPayee
+            ? null
+            : React.createElement('input', {
+              type: 'text',
+              placeholder: 'payout address (optional)',
+              value: this.state.payoutAddr,
+              onChange: (ev) => this.setState({ payoutAddr: ev.target.value }),
+              style: {
+                flex: 1, background: 'var(--panel)', border: '1px solid var(--line)',
+                color: 'var(--text)', borderRadius: 7, padding: '7px 10px', fontSize: 12
+              }
+            }),
           React.createElement('button', {
             className: 'mpage-btn ghost',
-            disabled: this.state.busy,
+            disabled: this.state.busy || (groupPayee && !e.payeeAddress),
             onClick: () => this.act(async () => {
-              const toAddress = this.state.payoutAddr.trim() || undefined;
+              const toAddress = groupPayee
+                ? (e.payeeAddress || undefined)
+                : (this.state.payoutAddr.trim() || e.payeeAddress || undefined);
               const built = await this.post(`/missions/${m.id}/payout`, { toAddress });
               this.setState({ psbt: built.psbt || null });
             }, 'Payout PSBT ready.')
-          }, 'Build payout')
+          }, groupPayee ? 'Build payout (group)' : 'Build payout')
         )
         : null,
       this.state.psbt
@@ -243,11 +262,17 @@ class MissionPage extends React.Component {
     const m = this.state.mission;
     const me = this.state.pubkey;
     const apps = this.state.applications.filter((a) => a.status === 'pending');
-    const claim = this.state.claims.find((c) => c.status === 'pending');
+    const pendingClaims = this.state.claims.filter((c) => c.status === 'pending');
+    const participants = Array.isArray(m.participantIds) && m.participantIds.length
+      ? m.participantIds
+      : (m.assigneeId ? [m.assigneeId] : []);
     const isCreator = me && m.createdBy === me;
-    const isAssignee = me && m.assigneeId === me;
+    const isParticipant = me && participants.includes(me);
     const isAuthority = me && m.authorities && (m.authorities.keys || []).includes(me);
     const applied = this.state.applications.some((a) => a.applicantId === me && a.status === 'pending');
+    const joinable = m.status === 'open' || m.status === 'assigned' || m.status === 'in_progress';
+    const myPendingClaim = pendingClaims.find((c) => c.claimantId === me);
+    const myGroups = (this.state.groups || []).filter((g) => me && Array.isArray(g.members) && g.members.includes(me));
 
     return React.createElement('div', { className: 'mpage' },
       React.createElement('button', { type: 'button', className: 'mpage-back', onClick: () => this.goBack() }, '← Back to missions'),
@@ -266,9 +291,10 @@ class MissionPage extends React.Component {
         React.createElement('div', { className: 'body' },
           React.createElement('div', { className: 'mpage-kv' },
             'Created by ', React.createElement('b', { className: 'mpage-code' }, shortKey(m.createdBy))),
-          m.assigneeId
+          participants.length
             ? React.createElement('div', { className: 'mpage-kv' },
-              'Assignee ', React.createElement('b', { className: 'mpage-code' }, shortKey(m.assigneeId)))
+              'Participants ', React.createElement('b', null, String(participants.length)),
+              isParticipant ? ' (you’re in)' : '')
             : null,
           m.groupId
             ? React.createElement('div', { className: 'mpage-kv' },
@@ -287,7 +313,7 @@ class MissionPage extends React.Component {
         React.createElement('h2', null, 'Actions'),
         React.createElement('div', { className: 'body' },
           React.createElement('div', { className: 'mpage-row' },
-            m.status === 'open' && isCreator
+            joinable && isCreator
               ? React.createElement(React.Fragment, null,
                 React.createElement('button', {
                   className: 'mpage-btn ghost',
@@ -309,7 +335,7 @@ class MissionPage extends React.Component {
                   : null
               )
               : null,
-            m.status === 'open' && me && !isCreator && !applied
+            joinable && me && !isCreator && !applied && !isParticipant
               ? React.createElement('button', {
                 className: 'mpage-btn ghost',
                 disabled: this.state.busy,
@@ -320,6 +346,9 @@ class MissionPage extends React.Component {
               }, 'Apply')
               : null,
             applied ? React.createElement('span', { style: { color: 'var(--muted)', fontSize: 12 } }, 'application pending') : null,
+            isParticipant && joinable
+              ? React.createElement('span', { style: { color: 'var(--good)', fontSize: 12 } }, 'You’re in')
+              : null,
             ...apps.map((a) => (isCreator || isAuthority)
               ? React.createElement('button', {
                 className: 'mpage-btn',
@@ -327,48 +356,89 @@ class MissionPage extends React.Component {
                 disabled: this.state.busy,
                 onClick: () => this.act(
                   () => this.post(`/applications/${a.id}/decision`, { decision: 'accept', officerId: me }),
-                  'Assigned.'
+                  'Participant accepted.'
                 )
               }, `Accept ${shortKey(a.applicantId)}`)
               : null),
-            m.status === 'assigned' && isAssignee && !claim
+            joinable && isParticipant && !myPendingClaim && m.status !== 'completed'
               ? React.createElement('button', {
                 className: 'mpage-btn',
                 disabled: this.state.busy,
-                onClick: () => this.act(
-                  () => this.post(`/missions/${m.id}/claim`, { claimantId: me }),
-                  'Completion submitted — awaiting approval.'
-                )
+                onClick: () => this.setState({ claimOpen: true })
               }, '✔ Submit completion')
               : null,
-            claim && isAuthority
+            ...pendingClaims.map((c) => (isAuthority
               ? React.createElement('button', {
                 className: 'mpage-btn good',
+                key: c.id,
                 disabled: this.state.busy,
-                onClick: () => this.approve(claim)
-              }, '✓ Approve completion (sign)')
-              : null,
-            claim && !isAuthority
+                onClick: () => this.approve(c)
+              }, `✓ Approve ${shortKey(c.claimantId)}${c.completionGroupId ? ' (group)' : ''}`)
+              : null)),
+            pendingClaims.length && !isAuthority
               ? React.createElement('span', { style: { color: 'var(--muted)', fontSize: 12 } },
-                'completion submitted — awaiting authority signatures')
-              : null,
-            !me
-              ? React.createElement('span', { style: { color: 'var(--muted)', fontSize: 12.5 } },
-                'Unlock your identity to apply or manage this mission.')
+                `${pendingClaims.length} completion(s) awaiting authority signatures`)
               : null
           ),
-          apps.length
-            ? React.createElement('div', null,
-              React.createElement('div', { className: 'mpage-kv', style: { marginBottom: 6 } }, 'Pending applications'),
-              apps.map((a) => React.createElement('div', {
-                key: a.id,
-                className: 'mpage-code',
-                style: { marginBottom: 4 }
-              }, a.applicantId, a.message ? ` — ${a.message}` : ''))
+          this.state.claimOpen
+            ? React.createElement('div', { className: 'mpage-esc' },
+              React.createElement('div', { className: 'mpage-kv' }, 'Note'),
+              React.createElement('input', {
+                value: this.state.claimNote,
+                onChange: (e) => this.setState({ claimNote: e.target.value }),
+                placeholder: 'Optional note',
+                style: {
+                  background: 'var(--panel)', border: '1px solid var(--line)',
+                  color: 'var(--text)', borderRadius: 7, padding: '7px 10px', fontSize: 12
+                }
+              }),
+              React.createElement('div', { className: 'mpage-kv' }, 'Completion group (optional)'),
+              React.createElement('select', {
+                value: this.state.claimGroup,
+                onChange: (e) => this.setState({ claimGroup: e.target.value }),
+                style: {
+                  background: 'var(--panel)', border: '1px solid var(--line)',
+                  color: 'var(--text)', borderRadius: 7, padding: '7px 10px', fontSize: 12
+                }
+              },
+                React.createElement('option', { value: '' }, 'Individual — pay me'),
+                myGroups.map((g) => React.createElement('option', { key: g.id, value: g.id },
+                  `${g.name || g.id}`))
+              ),
+              React.createElement('div', { className: 'mpage-row' },
+                React.createElement('button', {
+                  className: 'mpage-btn',
+                  disabled: this.state.busy,
+                  onClick: () => this.act(async () => {
+                    await this.post(`/missions/${m.id}/claim`, {
+                      claimantId: me,
+                      note: this.state.claimNote.trim() || undefined,
+                      completionGroupId: this.state.claimGroup.trim() || undefined
+                    });
+                    this.setState({ claimOpen: false, claimGroup: '', claimNote: '' });
+                  }, 'Completion submitted — awaiting approval.')
+                }, 'Submit'),
+                React.createElement('button', {
+                  className: 'mpage-btn ghost',
+                  onClick: () => this.setState({ claimOpen: false })
+                }, 'Cancel')
+              )
             )
             : null
         )
       ),
+      apps.length
+        ? React.createElement('div', { className: 'mpage-panel' },
+          React.createElement('h2', null, 'Pending applications'),
+          React.createElement('div', { className: 'body' },
+            apps.map((a) => React.createElement('div', {
+              key: a.id,
+              className: 'mpage-code',
+              style: { marginBottom: 4 }
+            }, a.applicantId, a.message ? ` — ${a.message}` : ''))
+          )
+        )
+        : null,
       React.createElement('div', { className: 'mpage-panel' },
         React.createElement('h2', null, 'Activity'),
         React.createElement('div', { className: 'body' },

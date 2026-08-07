@@ -4,10 +4,14 @@
  * MissionManager — the org mission register (M5.1).
  *
  * Implements D-005: a centralized, OFFICER-VALIDATED register. Lifecycle:
- *   open --apply--> (applications) --officer accept--> assigned
- *        --claim(assignee)--> (claim) --officer validate(approve)--> completed
- *                                       --officer validate(reject)--> back to assigned
+ *   open --apply--> (applications) --officer accept / joinMission--> assigned
+ *        (many accepted participants; mission stays open for more joins)
+ *        --claim(any participant)--> pending claims
+ *        --authorities approve ONE claim--> completed (+ other pending → superseded)
+ *        --authorities reject claim--> mission stays assigned (re-claim allowed)
  *   open|assigned --officer cancel--> cancelled
+ *
+ * Claims may be individual or name a completionGroupId (group wallet payee).
  *
  * Every mutation appends a hash-chained AuditEntry (tamper-evident; M6 adds
  * officer signatures over each entry). Backed by types/Store.js (in-memory
@@ -18,6 +22,8 @@
  * Officer model: settings.officers is an allowlist of actor ids. If EMPTY, the
  * register runs in permissive "bootstrap" mode (everyone is an officer) so it is
  * usable before roles are wired (REST/Discord auth lands in M5.2/M5.3).
+ *
+ * Optional `settings.isGroupMember(groupId, pubkey)` gates completionGroupId.
  */
 
 // Dependencies
@@ -67,7 +73,60 @@ class MissionManager extends EventEmitter {
   }
 
   get assignedMissions () {
-    return this.missions.filter(m => m.status === 'assigned');
+    return this.missions.filter(m => m.status === 'assigned' || m.status === 'in_progress');
+  }
+
+  /** Ensure participantIds exists; seed from legacy assigneeId. */
+  _ensureParticipants (m) {
+    if (!m) return [];
+    if (!Array.isArray(m.participantIds)) m.participantIds = [];
+    if (m.assigneeId && !m.participantIds.includes(String(m.assigneeId))) {
+      m.participantIds.push(String(m.assigneeId));
+    }
+    return m.participantIds;
+  }
+
+  _isParticipant (m, pubkey) {
+    const id = String(pubkey || '');
+    if (!id || !m) return false;
+    this._ensureParticipants(m);
+    if (m.participantIds.includes(id)) return true;
+    if (m.assigneeId && String(m.assigneeId) === id) return true;
+    return this.applications.some((a) => (
+      a.missionId === m.id && a.status === 'accepted' && String(a.applicantId) === id
+    ));
+  }
+
+  /** Mission still accepts joiners / claims (not terminal). */
+  _isJoinable (m) {
+    return m && (m.status === 'open' || m.status === 'assigned' || m.status === 'in_progress');
+  }
+
+  _addParticipant (m, pubkey) {
+    const id = String(pubkey || '');
+    if (!id || !m) return false;
+    this._ensureParticipants(m);
+    if (m.participantIds.includes(id)) return false;
+    m.participantIds.push(id);
+    if (!m.assigneeId) m.assigneeId = id;
+    if (m.status === 'open') m.status = 'assigned';
+    return true;
+  }
+
+  _supersedeOtherPendingClaims (missionId, keepClaimId, actor = null) {
+    const superseded = [];
+    for (const c of this.claims) {
+      if (c.missionId !== missionId || c.id === keepClaimId) continue;
+      if (c.status !== 'pending') continue;
+      c.status = 'superseded';
+      c.supersededAt = new Date().toISOString();
+      c.supersedeReason = 'another claim accepted';
+      this.store.put('claims', c.id, c);
+      this._audit(actor, 'claim.supersede', 'claim', c.id, keepClaimId);
+      this.emit('claim:superseded', c);
+      superseded.push(c);
+    }
+    return superseded;
   }
 
   get completedMissions () {
@@ -162,6 +221,8 @@ class MissionManager extends EventEmitter {
       createdAt: new Date().toISOString(),
       status: 'open',
       assigneeId: null,
+      participantIds: [],
+      openSignup: data.openSignup === true,
       contract: data.contract || { type: 'single' }
     };
     this.store.put('missions', id, mission);
@@ -210,6 +271,10 @@ class MissionManager extends EventEmitter {
       createdAt: data.createdAt || new Date().toISOString(),
       status: data.status || 'open',
       assigneeId: data.assigneeId || null,
+      participantIds: Array.isArray(data.participantIds)
+        ? data.participantIds.map(String)
+        : (data.assigneeId ? [String(data.assigneeId)] : []),
+      openSignup: data.openSignup === true,
       contract: data.contract || { type: 'single' },
       source: data.source || 'remote'
     };
@@ -256,12 +321,10 @@ class MissionManager extends EventEmitter {
     app.decidedBy = data.officerId != null ? String(data.officerId) : null;
     app.decidedAt = data.decidedAt || new Date().toISOString();
     if (data.decision === 'accept') {
+      if (!this._isJoinable(m)) return { created: false, skipped: 'mission-not-joinable' };
       app.status = 'accepted';
-      if (m.status === 'open') {
-        m.status = 'assigned';
-        m.assigneeId = app.applicantId;
-        this.store.put('missions', m.id, m);
-      }
+      this._addParticipant(m, app.applicantId);
+      this.store.put('missions', m.id, m);
       this.store.put('applications', app.id, app);
       this._audit(data.officerId, 'application.accept', 'application', app.id, m.title);
       this.emit('application:accepted', app);
@@ -277,18 +340,22 @@ class MissionManager extends EventEmitter {
     return { created: true, application: app };
   }
 
-  /** Upsert a remote completion claim (self-authored by the assignee). Idempotent. */
+  /** Upsert a remote completion claim (self-authored by a participant). Idempotent. */
   ingestClaim (claim = {}) {
     if (!claim || !claim.id || !claim.missionId) throw new Error('claim id + missionId required');
     if (this.store.get('claims', claim.id)) return { created: false };
     const m = this.getMission(claim.missionId);
     if (!m) return { created: false, skipped: 'mission-unknown' };
+    if (m.status === 'completed' || m.status === 'cancelled') {
+      return { created: false, skipped: 'mission-terminal' };
+    }
     const rec = {
       id: String(claim.id),
       missionId: String(claim.missionId),
       claimantId: String(claim.claimantId || 'unknown'),
       note: claim.note || '',
       evidence: Array.isArray(claim.evidence) ? claim.evidence : [],
+      completionGroupId: claim.completionGroupId ? String(claim.completionGroupId) : null,
       status: 'pending',
       claimedAt: claim.claimedAt || new Date().toISOString(),
       source: 'remote'
@@ -337,6 +404,7 @@ class MissionManager extends EventEmitter {
       this.store.put('claims', claim.id, claim);
       this.store.put('missions', m.id, m);
       this.store.put('validations', validation.id, validation);
+      this._supersedeOtherPendingClaims(m.id, claim.id, validation.officerId);
       this._audit(validation.officerId, 'claim.validate', 'claim', claim.id, 'approved', authorization);
       this.emit('claim:validated', validation);
       this.emit('mission:completed', m);
@@ -357,7 +425,7 @@ class MissionManager extends EventEmitter {
   ingestCancel (data = {}) {
     const m = this.getMission(data.missionId);
     if (!m) return { created: false, skipped: 'mission-unknown' };
-    if (m.status !== 'open' && m.status !== 'assigned') return { created: false };
+    if (m.status !== 'open' && m.status !== 'assigned' && m.status !== 'in_progress') return { created: false };
     m.status = 'cancelled';
     m.cancelledAt = data.cancelledAt || new Date().toISOString();
     if (data.reason) m.cancelReason = data.reason;
@@ -412,12 +480,88 @@ class MissionManager extends EventEmitter {
   // ---- applications ----
   async applyToMission (data = {}) {
     const m = this._mission(data.missionId);
-    if (m.status !== 'open') throw new Error(`mission is ${m.status}, not open`);
+    if (!this._isJoinable(m)) throw new Error(`mission is ${m.status}, not open`);
+    const applicantId = String(data.applicantId || 'unknown');
+    const pending = this.applications.find((a) => (
+      a.missionId === m.id && a.applicantId === applicantId && a.status === 'pending'
+    ));
+    if (pending) return pending;
+    if (this._isParticipant(m, applicantId)) {
+      const existing = this.applications.find((a) => (
+        a.missionId === m.id && a.applicantId === applicantId && a.status === 'accepted'
+      ));
+      if (existing) return existing;
+    }
+    // Open signup / auto-join: accept into participants immediately.
+    if (m.openSignup === true || data.autoAccept === true) {
+      return this.joinMission({
+        missionId: m.id,
+        applicantId,
+        message: data.message || '',
+        id: data.id
+      });
+    }
     const id = data.id || this._id('application');
-    const app = { id, missionId: m.id, applicantId: String(data.applicantId || 'unknown'), message: data.message || '', status: 'pending', createdAt: new Date().toISOString() };
+    const app = {
+      id,
+      missionId: m.id,
+      applicantId,
+      message: data.message || '',
+      status: 'pending',
+      createdAt: new Date().toISOString()
+    };
     this.store.put('applications', id, app);
     this._audit(app.applicantId, 'application.submit', 'application', id, m.title);
     this.emit('application:submitted', app);
+    return app;
+  }
+
+  /**
+   * Join a mission as an accepted participant (broadcast Accept / openSignup).
+   * Idempotent when already a participant.
+   * @param {Object} data
+   * @returns {Object} Accepted application record
+   */
+  async joinMission (data = {}) {
+    const m = this._mission(data.missionId);
+    if (!this._isJoinable(m)) throw new Error(`mission is ${m.status}, cannot join`);
+    const applicantId = String(data.applicantId || 'unknown');
+    const existingAccepted = this.applications.find((a) => (
+      a.missionId === m.id && a.applicantId === applicantId && a.status === 'accepted'
+    ));
+    if (this._isParticipant(m, applicantId) && existingAccepted) {
+      return existingAccepted;
+    }
+    let app = existingAccepted;
+    if (!app) {
+      const pending = this.applications.find((a) => (
+        a.missionId === m.id && a.applicantId === applicantId && a.status === 'pending'
+      ));
+      if (pending) {
+        app = pending;
+        app.status = 'accepted';
+        app.decidedBy = applicantId;
+        app.decidedAt = new Date().toISOString();
+        app.message = data.message != null ? data.message : app.message;
+      } else {
+        app = {
+          id: data.id || this._id('application'),
+          missionId: m.id,
+          applicantId,
+          message: data.message || '',
+          status: 'accepted',
+          decidedBy: applicantId,
+          decidedAt: new Date().toISOString(),
+          createdAt: new Date().toISOString()
+        };
+      }
+      this.store.put('applications', app.id, app);
+    }
+    this._addParticipant(m, applicantId);
+    this.store.put('missions', m.id, m);
+    this._audit(applicantId, 'application.accept', 'application', app.id, m.title);
+    this.emit('application:accepted', app);
+    this.emit('mission:joined', { mission: m, application: app });
     return app;
   }
 
@@ -431,10 +575,9 @@ class MissionManager extends EventEmitter {
 
     if (data.decision === 'accept') {
       const m = this._mission(app.missionId);
-      if (m.status !== 'open') throw new Error(`mission is ${m.status}, cannot assign`);
+      if (!this._isJoinable(m)) throw new Error(`mission is ${m.status}, cannot accept participant`);
       app.status = 'accepted';
-      m.status = 'assigned';
-      m.assigneeId = app.applicantId;
+      this._addParticipant(m, app.applicantId);
       this.store.put('applications', app.id, app);
       this.store.put('missions', m.id, m);
       this._audit(data.officerId, 'application.accept', 'application', app.id, m.title);
@@ -454,10 +597,38 @@ class MissionManager extends EventEmitter {
   // ---- completion claims + officer validation ----
   async submitClaim (data = {}) {
     const m = this._mission(data.missionId);
-    if (m.status !== 'assigned') throw new Error(`mission is ${m.status}, not assigned`);
-    if (String(data.claimantId) !== String(m.assigneeId)) throw new Error('only the assignee can claim completion');
+    if (m.status === 'completed' || m.status === 'cancelled') {
+      throw new Error(`mission is ${m.status}, cannot claim`);
+    }
+    if (!this._isJoinable(m) && m.status !== 'assigned') {
+      throw new Error(`mission is ${m.status}, not assigned`);
+    }
+    const claimantId = String(data.claimantId || '');
+    if (!this._isParticipant(m, claimantId)) {
+      throw new Error('only an accepted participant can claim completion');
+    }
+    let completionGroupId = data.completionGroupId != null && data.completionGroupId !== ''
+      ? String(data.completionGroupId)
+      : null;
+    if (completionGroupId) {
+      const check = this.settings.isGroupMember;
+      if (typeof check === 'function') {
+        if (!check(completionGroupId, claimantId)) {
+          throw new Error('claimant is not a member of the completion group');
+        }
+      }
+    }
     const id = data.id || this._id('claim');
-    const claim = { id, missionId: m.id, claimantId: String(data.claimantId), note: data.note || '', evidence: Array.isArray(data.evidence) ? data.evidence : [], status: 'pending', claimedAt: new Date().toISOString() };
+    const claim = {
+      id,
+      missionId: m.id,
+      claimantId,
+      note: data.note || '',
+      evidence: Array.isArray(data.evidence) ? data.evidence : [],
+      completionGroupId,
+      status: 'pending',
+      claimedAt: new Date().toISOString()
+    };
     this.store.put('claims', id, claim);
     this._audit(claim.claimantId, 'claim.submit', 'claim', id, m.title);
     this.emit('claim:submitted', claim);
@@ -472,7 +643,13 @@ class MissionManager extends EventEmitter {
    * @returns {String} Canonical acceptance message.
    */
   acceptanceMessage (mission, claim) {
-    return JSON.stringify({ action: 'mission.accept', missionId: mission.id, claimId: claim.id, claimantId: claim.claimantId });
+    return JSON.stringify({
+      action: 'mission.accept',
+      missionId: mission.id,
+      claimId: claim.id,
+      claimantId: claim.claimantId,
+      completionGroupId: claim.completionGroupId || null
+    });
   }
 
   /**
@@ -527,13 +704,14 @@ class MissionManager extends EventEmitter {
       this.store.put('claims', claim.id, claim);
       this.store.put('missions', m.id, m);
       this.store.put('validations', validation.id, validation);
+      this._supersedeOtherPendingClaims(m.id, claim.id, data.officerId);
       this._audit(data.officerId, 'claim.validate', 'claim', claim.id, 'approved', authorization);
       this.emit('claim:validated', validation);
       this.emit('mission:completed', m);
       // Escrowed Bitcoin payouts unlock on acceptance (see PayoutManager).
       if (m.escrow) this.emit('payout:unlocked', { mission: m, claim, validation });
     } else if (data.decision === 'reject') {
-      claim.status = 'rejected';                 // mission stays 'assigned'; assignee may re-claim
+      claim.status = 'rejected';                 // mission stays assigned; participants may re-claim
       this.store.put('claims', claim.id, claim);
       this.store.put('validations', validation.id, validation);
       this._audit(data.officerId, 'claim.validate', 'claim', claim.id, 'rejected');

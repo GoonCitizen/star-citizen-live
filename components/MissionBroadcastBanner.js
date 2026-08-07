@@ -11,7 +11,7 @@ const { showDesktopNotification } = require('../functions/desktopNotify');
 const BASE = '/services/star-citizen';
 const LS_SEEN = 'gc.missionBroadcast.seen';
 const LS_INBOX_SEEN = 'gc.inboxNotify.seen';
-const DESKTOP_INBOX_KINDS = new Set(['FederationInvite', 'GroupOffer']);
+const DESKTOP_INBOX_KINDS = new Set(['FederationInvite', 'GroupOffer', 'MissionClaim']);
 
 const CSS = `
   .mbb-stack{position:fixed;left:16px;bottom:16px;z-index:32;display:flex;flex-direction:column;gap:10px;
@@ -190,7 +190,7 @@ class MissionBroadcastBanner extends React.Component {
             title: 'Mission broadcast',
             body: `${who}: ${m.title || 'Untitled'}${reward}`,
             actions: [
-              { id: 'accept', text: 'Accept' },
+              { id: 'accept', text: 'Join' },
               { id: 'ignore', text: 'Ignore' }
             ],
             onClick: () => {
@@ -217,16 +217,25 @@ class MissionBroadcastBanner extends React.Component {
         this._inboxSeen.add(row.id);
         const who = row.handle || shortKey(row.source);
         const isInvite = row.kind === 'FederationInvite';
+        const isClaim = row.kind === 'MissionClaim';
         await showDesktopNotification({
           id: row.id,
-          kind: isInvite ? 'federationinvite' : 'groupoffer',
-          title: isInvite ? 'Group invite' : 'Group offer',
-          body: `${who}: ${row.title || (isInvite ? 'You were invited to a group' : 'Group share')}`,
+          kind: isClaim ? 'missionclaim' : (isInvite ? 'federationinvite' : 'groupoffer'),
+          title: isClaim ? 'Mission completion' : (isInvite ? 'Group invite' : 'Group offer'),
+          body: isClaim
+            ? `${who}: ${row.title || 'Completion awaiting approval'}`
+            : `${who}: ${row.title || (isInvite ? 'You were invited to a group' : 'Group share')}`,
           actions: [
             { id: 'open', text: 'Open' }
           ],
           onClick: () => {
-            if (typeof window !== 'undefined') window.location.hash = 'notifications';
+            if (typeof window !== 'undefined') {
+              if (isClaim && row.refs && row.refs.missionId) {
+                window.location.href = `/missions/${encodeURIComponent(row.refs.missionId)}`;
+              } else {
+                window.location.hash = 'notifications';
+              }
+            }
           }
         });
       }
@@ -302,7 +311,7 @@ class MissionBroadcastBanner extends React.Component {
               className: 'mbb-btn good',
               disabled: this.state.busyId === b.id,
               onClick: () => this.accept(b.id)
-            }, this.state.busyId === b.id ? '…' : 'Accept'),
+            }, this.state.busyId === b.id ? '…' : 'Join mission'),
             React.createElement('button', {
               className: 'mbb-btn ghost',
               disabled: this.state.busyId === b.id,

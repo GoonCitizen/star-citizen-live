@@ -71,6 +71,8 @@ function kindLabel (kind) {
   const map = {
     MissionBroadcast: 'mission offer',
     MissionApplication: 'mission apply',
+    MissionClaim: 'completion',
+    MissionClaimDecision: 'completion decision',
     GroupApplication: 'group apply',
     GroupOffer: 'group offer',
     FederationInvite: 'invite'
@@ -245,7 +247,7 @@ class Notifications extends React.Component {
           className: 'nt-btn good',
           disabled: this.state.busyId === item.id,
           onClick: () => this.actBroadcast(item, 'accept')
-        }, this.state.busyId === item.id ? '…' : 'Accept'),
+        }, this.state.busyId === item.id ? '…' : 'Join mission'),
         React.createElement('button', {
           className: 'nt-btn ghost',
           disabled: this.state.busyId === item.id,

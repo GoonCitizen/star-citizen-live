@@ -24,6 +24,8 @@ const INBOX_TYPE = 'RegisterInboxItem';
 const NOTIFICATION_KINDS = new Set([
   'MissionBroadcast',
   'MissionApplication',
+  'MissionClaim',
+  'MissionClaimDecision',
   'GroupApplication',
   'GroupOffer',
   'FederationInvite'
@@ -36,6 +38,7 @@ const MISSION_AUDIT_ACTIONS = new Set([
   'application.reject',
   'claim.submit',
   'claim.validate',
+  'claim.supersede',
   'mission.create',
   'mission.ingest',
   'mission.cancel'
@@ -71,7 +74,7 @@ function normalizeEntry (partial = {}) {
   const ts = partial.ts || new Date().toISOString();
   const id = partial.id || idFor(`${kind}:${partial.dedupeKey || ts}:${partial.source || ''}:${partial.title || ''}`);
   let status = partial.status || 'info';
-  if (!['pending', 'accepted', 'ignored', 'rejected', 'self', 'info'].includes(status)) {
+  if (!['pending', 'accepted', 'ignored', 'rejected', 'self', 'info', 'superseded'].includes(status)) {
     status = 'info';
   }
   return {
@@ -145,11 +148,16 @@ function entryFromMissionAudit (audit) {
   } else if (action === 'claim.submit') {
     kind = 'MissionClaim';
     status = 'pending';
+    actionable = true;
     title = `Completion submitted: ${audit.summary || ''}`;
   } else if (action === 'claim.validate') {
     kind = 'MissionClaimDecision';
     status = audit.summary === 'rejected' ? 'rejected' : 'accepted';
     title = `Completion ${status}: ${audit.entityId || ''}`;
+  } else if (action === 'claim.supersede') {
+    kind = 'MissionClaimDecision';
+    status = 'superseded';
+    title = `Completion superseded: ${audit.entityId || ''}`;
   } else if (action === 'mission.create' || action === 'mission.ingest') {
     kind = 'MissionCreated';
     title = action === 'mission.ingest'

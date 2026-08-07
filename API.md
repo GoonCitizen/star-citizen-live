@@ -90,6 +90,8 @@ idempotent — the same convergence rule as the event uplink.</p>
 <dt><a href="#APP_RELAY_TYPES">APP_RELAY_TYPES</a></dt>
 <dd><p>App <code>type</code> values under the GoonCitizen CONTRACT_MESSAGE namespace (core catalog + local).</p>
 </dd>
+<dt><a href="#_dnsOwnHostCache">_dnsOwnHostCache</a> : <code>Map.&lt;string, boolean&gt;</code></dt>
+<dd></dd>
 <dt><a href="#crypto">crypto</a></dt>
 <dd><p>GroupManager — member-created groups with k-of-n Schnorr multisig,
 optional nested subgroups (<code>parentId</code>), public/private visibility,
@@ -117,10 +119,13 @@ optional Discord webhook posting, and the mission/contract seam.</p>
 <dt><a href="#crypto">crypto</a></dt>
 <dd><p>MissionManager — the org mission register (M5.1).</p>
 <p>Implements D-005: a centralized, OFFICER-VALIDATED register. Lifecycle:
-  open --apply--&gt; (applications) --officer accept--&gt; assigned
-       --claim(assignee)--&gt; (claim) --officer validate(approve)--&gt; completed
-                                      --officer validate(reject)--&gt; back to assigned
+  open --apply--&gt; (applications) --officer accept / joinMission--&gt; assigned
+       (many accepted participants; mission stays open for more joins)
+       --claim(any participant)--&gt; pending claims
+       --authorities approve ONE claim--&gt; completed (+ other pending → superseded)
+       --authorities reject claim--&gt; mission stays assigned (re-claim allowed)
   open|assigned --officer cancel--&gt; cancelled</p>
+<p>Claims may be individual or name a completionGroupId (group wallet payee).</p>
 <p>Every mutation appends a hash-chained AuditEntry (tamper-evident; M6 adds
 officer signatures over each entry). Backed by types/Store.js (in-memory
 or <code>@fabric/core</code> Store / LevelDB under <code>stores/</code> when a path is configured).
@@ -129,6 +134,7 @@ Keeps the method names/events the rest of the code already uses
 <p>Officer model: settings.officers is an allowlist of actor ids. If EMPTY, the
 register runs in permissive &quot;bootstrap&quot; mode (everyone is an officer) so it is
 usable before roles are wired (REST/Discord auth lands in M5.2/M5.3).</p>
+<p>Optional <code>settings.isGroupMember(groupId, pubkey)</code> gates completionGroupId.</p>
 </dd>
 <dt><a href="#EventEmitter">EventEmitter</a></dt>
 <dd><p>PayoutManager — Bitcoin-unlocked mission rewards.</p>
@@ -187,9 +193,19 @@ browser/server sessions — the manager stays idle.</p>
 Local star-topology tests dial <code>127.0.0.1:otherPort</code> on purpose; only
 <a href="#isSelfFabricAddress">isSelfFabricAddress</a> must be excluded from the dial list.</p>
 </dd>
-<dt><a href="#isSelfFabricAddress">isSelfFabricAddress(address, [listenPort])</a> ⇒ <code>boolean</code></dt>
-<dd><p>True when address dials this process&#39;s Fabric listen port on loopback
-(self-loop). That breaks star-hub gossip on the desktop.</p>
+<dt><a href="#collectOwnFabricHosts">collectOwnFabricHosts([opts])</a> ⇒ <code>Set.&lt;string&gt;</code></dt>
+<dd><p>Hostnames / IPs that identify this node for dial filtering.
+Includes advertiseHost, optional ownHosts, FABRIC_* env public host, and
+(by default) addresses from os.networkInterfaces().</p>
+</dd>
+<dt><a href="#hostnameResolvesToOwn">hostnameResolvesToOwn(host, ownHosts)</a> ⇒ <code>boolean</code></dt>
+<dd><p>True when <code>host</code> is not an IP literal and DNS resolves it to a local interface.
+Cached; failures cache as false for this process.</p>
+</dd>
+<dt><a href="#isSelfFabricAddress">isSelfFabricAddress(address, [listenPortOrOpts], [opts])</a> ⇒ <code>boolean</code></dt>
+<dd><p>True when dialing this address would connect to this process (self-loop).
+Covers loopback+listenPort, public advertise/env hostnames, local interface
+IPs, and (when interfaces are available) hub hostnames that DNS to self.</p>
 </dd>
 <dt><a href="#isFabricAddress">isFabricAddress(value)</a> ⇒ <code>boolean</code></dt>
 <dd><p>True when <code>value</code> looks like a Fabric peer address (<code>host:port</code>).</p>
@@ -1191,6 +1207,8 @@ Supports both single secp256k1 signatures and Musig2 multisig.
 
 * [MissionManager](#MissionManager)
     * [new MissionManager([settings])](#new_MissionManager_new)
+    * [._ensureParticipants()](#MissionManager+_ensureParticipants)
+    * [._isJoinable()](#MissionManager+_isJoinable)
     * [.createMission(data)](#MissionManager+createMission) ⇒ [<code>Mission</code>](#Mission)
     * [.ingestRemote(data)](#MissionManager+ingestRemote) ⇒ <code>Object</code>
     * [.ingestApplication()](#MissionManager+ingestApplication)
@@ -1201,6 +1219,7 @@ Supports both single secp256k1 signatures and Musig2 multisig.
     * [._normalizeAuthorities()](#MissionManager+_normalizeAuthorities)
     * [.getMission(missionId)](#MissionManager+getMission) ⇒ [<code>Mission</code>](#Mission) \| <code>null</code>
     * [.getMissionApplications(missionId)](#MissionManager+getMissionApplications) ⇒ [<code>Array.&lt;MissionApplication&gt;</code>](#MissionApplication)
+    * [.joinMission(data)](#MissionManager+joinMission) ⇒ <code>Object</code>
     * [.acceptanceMessage(mission, claim)](#MissionManager+acceptanceMessage) ⇒ <code>String</code>
     * [.verifyAcceptance()](#MissionManager+verifyAcceptance) ⇒ <code>Boolean</code>
     * [.submitApplication(applicationData)](#MissionManager+submitApplication) ⇒ [<code>Promise.&lt;MissionApplication&gt;</code>](#MissionApplication)
@@ -1223,6 +1242,18 @@ Create a MissionManager instance.
 | --- | --- | --- |
 | [settings] | <code>Object</code> | Configuration settings. |
 
+<a name="MissionManager+_ensureParticipants"></a>
+
+### missionManager.\_ensureParticipants()
+Ensure participantIds exists; seed from legacy assigneeId.
+
+**Kind**: instance method of [<code>MissionManager</code>](#MissionManager)  
+<a name="MissionManager+_isJoinable"></a>
+
+### missionManager.\_isJoinable()
+Mission still accepts joiners / claims (not terminal).
+
+**Kind**: instance method of [<code>MissionManager</code>](#MissionManager)  
 <a name="MissionManager+createMission"></a>
 
 ### missionManager.createMission(data) ⇒ [<code>Mission</code>](#Mission)
@@ -1263,7 +1294,7 @@ Apply a remote officer/authority decision on an application. Idempotent.
 <a name="MissionManager+ingestClaim"></a>
 
 ### missionManager.ingestClaim()
-Upsert a remote completion claim (self-authored by the assignee). Idempotent.
+Upsert a remote completion claim (self-authored by a participant). Idempotent.
 
 **Kind**: instance method of [<code>MissionManager</code>](#MissionManager)  
 <a name="MissionManager+ingestValidation"></a>
@@ -1309,6 +1340,19 @@ Get applications for a mission.
 | Param | Type | Description |
 | --- | --- | --- |
 | missionId | <code>String</code> | Mission ID. |
+
+<a name="MissionManager+joinMission"></a>
+
+### missionManager.joinMission(data) ⇒ <code>Object</code>
+Join a mission as an accepted participant (broadcast Accept / openSignup).
+Idempotent when already a participant.
+
+**Kind**: instance method of [<code>MissionManager</code>](#MissionManager)  
+**Returns**: <code>Object</code> - Accepted application record  
+
+| Param | Type |
+| --- | --- |
+| data | <code>Object</code> | 
 
 <a name="MissionManager+acceptanceMessage"></a>
 
@@ -1686,6 +1730,10 @@ Default TCP peer cap (matches @fabric/core MAX_PEERS soft default for slot fill)
 App `type` values under the GoonCitizen CONTRACT_MESSAGE namespace (core catalog + local).
 
 **Kind**: global constant  
+<a name="_dnsOwnHostCache"></a>
+
+## \_dnsOwnHostCache : <code>Map.&lt;string, boolean&gt;</code>
+**Kind**: global constant  
 <a name="crypto"></a>
 
 ## crypto
@@ -1728,10 +1776,14 @@ It edits NOTHING in the Star Citizen installation - the log is only ever read.
 MissionManager — the org mission register (M5.1).
 
 Implements D-005: a centralized, OFFICER-VALIDATED register. Lifecycle:
-  open --apply--> (applications) --officer accept--> assigned
-       --claim(assignee)--> (claim) --officer validate(approve)--> completed
-                                      --officer validate(reject)--> back to assigned
+  open --apply--> (applications) --officer accept / joinMission--> assigned
+       (many accepted participants; mission stays open for more joins)
+       --claim(any participant)--> pending claims
+       --authorities approve ONE claim--> completed (+ other pending → superseded)
+       --authorities reject claim--> mission stays assigned (re-claim allowed)
   open|assigned --officer cancel--> cancelled
+
+Claims may be individual or name a completionGroupId (group wallet payee).
 
 Every mutation appends a hash-chained AuditEntry (tamper-evident; M6 adds
 officer signatures over each entry). Backed by types/Store.js (in-memory
@@ -1742,6 +1794,8 @@ Keeps the method names/events the rest of the code already uses
 Officer model: settings.officers is an allowlist of actor ids. If EMPTY, the
 register runs in permissive "bootstrap" mode (everyone is an officer) so it is
 usable before roles are wired (REST/Discord auth lands in M5.2/M5.3).
+
+Optional `settings.isGroupMember(groupId, pubkey)` gates completionGroupId.
 
 **Kind**: global constant  
 <a name="EventEmitter"></a>
@@ -1821,18 +1875,55 @@ Local star-topology tests dial `127.0.0.1:otherPort` on purpose; only
 | --- | --- |
 | address | <code>\*</code> | 
 
-<a name="isSelfFabricAddress"></a>
+<a name="collectOwnFabricHosts"></a>
 
-## isSelfFabricAddress(address, [listenPort]) ⇒ <code>boolean</code>
-True when address dials this process's Fabric listen port on loopback
-(self-loop). That breaks star-hub gossip on the desktop.
+## collectOwnFabricHosts([opts]) ⇒ <code>Set.&lt;string&gt;</code>
+Hostnames / IPs that identify this node for dial filtering.
+Includes advertiseHost, optional ownHosts, FABRIC_* env public host, and
+(by default) addresses from os.networkInterfaces().
+
+**Kind**: global function  
+
+| Param | Type | Default |
+| --- | --- | --- |
+| [opts] | <code>Object</code> |  | 
+| [opts.advertiseHost] | <code>string</code> |  | 
+| [opts.ownHosts] | <code>Array.&lt;string&gt;</code> |  | 
+| [opts.includeLocalInterfaces] | <code>boolean</code> | <code>true</code> | 
+| [opts.env] | <code>NodeJS.ProcessEnv</code> |  | 
+
+<a name="hostnameResolvesToOwn"></a>
+
+## hostnameResolvesToOwn(host, ownHosts) ⇒ <code>boolean</code>
+True when `host` is not an IP literal and DNS resolves it to a local interface.
+Cached; failures cache as false for this process.
 
 **Kind**: global function  
 
 | Param | Type |
 | --- | --- |
-| address | <code>\*</code> | 
-| [listenPort] | <code>number</code> \| <code>string</code> | 
+| host | <code>string</code> | 
+| ownHosts | <code>Set.&lt;string&gt;</code> | 
+
+<a name="isSelfFabricAddress"></a>
+
+## isSelfFabricAddress(address, [listenPortOrOpts], [opts]) ⇒ <code>boolean</code>
+True when dialing this address would connect to this process (self-loop).
+Covers loopback+listenPort, public advertise/env hostnames, local interface
+IPs, and (when interfaces are available) hub hostnames that DNS to self.
+
+**Kind**: global function  
+
+| Param | Type | Default |
+| --- | --- | --- |
+| address | <code>\*</code> |  | 
+| [listenPortOrOpts] | <code>number</code> \| <code>string</code> \| <code>Object</code> |  | 
+| [opts] | <code>Object</code> |  | 
+| [opts.listenPort] | <code>number</code> \| <code>string</code> |  | 
+| [opts.advertiseHost] | <code>string</code> |  | 
+| [opts.ownHosts] | <code>Array.&lt;string&gt;</code> |  | 
+| [opts.includeLocalInterfaces] | <code>boolean</code> |  | 
+| [opts.resolveDns] | <code>boolean</code> | <code>true</code> | 
 
 <a name="isFabricAddress"></a>
 

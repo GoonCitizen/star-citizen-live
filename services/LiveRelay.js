@@ -217,7 +217,12 @@ class StarCitizenService extends EventEmitter {
       { store: this.registerStore }
     );
     this.groupManager = groupSettings.enable !== false ? new GroupManager(groupSettings) : null;
-    if (this.missionManager && this.groupManager) this.missionManager.groupManager = this.groupManager;
+    if (this.missionManager && this.groupManager) {
+      this.missionManager.groupManager = this.groupManager;
+      this.missionManager.settings.isGroupMember = (groupId, pubkey) => (
+        this.groupManager.isInGroupTree(groupId, pubkey)
+      );
+    }
     if (this.groupManager) {
       // Federation contract publish + GroupChange fan-out (best-effort).
       this.groupManager.on('group:created', (group, meta) => {
@@ -258,7 +263,11 @@ class StarCitizenService extends EventEmitter {
     if (this.settings.payouts && this.settings.payouts.enable !== false && (this.settings.payouts.rpc || this.settings.payouts.ledger)) {
       const PayoutManager = require('../services/PayoutManager');
       this.payoutManager = new PayoutManager(this.settings.payouts);
-      if (this.missionManager) this.payoutManager.attach(this.missionManager);
+      if (this.missionManager) {
+        this.payoutManager.attach(this.missionManager, {
+          resolveGroupWallet: (groupId) => this._resolveCompletionGroupWallet(groupId)
+        });
+      }
     }
 
     // Compact cumulative history (ended missions, deaths, sessions, heat).
@@ -1621,6 +1630,18 @@ class StarCitizenService extends EventEmitter {
           { status: 'rejected', actionable: false, resolvedAt: new Date().toISOString() }
         );
       });
+      this.missionManager.on('claim:superseded', (claim) => {
+        if (!claim || !claim.id) return;
+        this._resolveInboxWhere(
+          (r) => r.kind === 'MissionClaim' && r.refs && r.refs.claimId === claim.id,
+          {
+            status: 'superseded',
+            actionable: false,
+            resolvedAt: new Date().toISOString(),
+            summary: claim.supersedeReason || 'another claim accepted'
+          }
+        );
+      });
     }
     if (this.groupManager) {
       this.groupManager.on('audit', (entry) => {
@@ -1880,6 +1901,30 @@ class StarCitizenService extends EventEmitter {
     const { group, definition } = this.groupManager.ensureContract(groupId);
     await this._publishGroupContractFor(group, definition);
     return group.contractId || null;
+  }
+
+  /**
+   * Group wallet address for a mission completion payout (Taproot primary).
+   * @param {string} groupId
+   * @returns {{ address: string, groupId: string, mode: string }|null}
+   */
+  _resolveCompletionGroupWallet (groupId) {
+    if (!this.groupManager || !groupId) return null;
+    const group = this.groupManager.getGroup(groupId);
+    if (!group) throw new Error('completion group not found');
+    const { groupTaprootWallet } = require('../functions/groupSpendLadder');
+    const pm = this.payoutManager;
+    const tapWallet = groupTaprootWallet(group, {
+      network: (pm && pm.settings && pm.settings.network) || 'regtest'
+    });
+    if (!tapWallet || !tapWallet.address) throw new Error('completion group wallet unavailable');
+    return {
+      address: tapWallet.address,
+      groupId: group.id,
+      mode: tapWallet.mode || 'taproot',
+      keys: tapWallet.keys,
+      threshold: tapWallet.threshold
+    };
   }
 
   async _publishGroupContractFor (group, definition) {
@@ -3187,7 +3232,11 @@ class StarCitizenService extends EventEmitter {
         }
         if (!actor) return send(401, { error: 'Unlock your identity to accept' });
         try {
-          const app = await reg.applyToMission({ missionId: rec.missionId, applicantId: actor, message: 'via broadcast' });
+          const app = await reg.joinMission({
+            missionId: rec.missionId,
+            applicantId: actor,
+            message: 'via broadcast'
+          });
           rec.status = 'accepted';
           rec.resolvedAt = new Date().toISOString();
           rec.resolvedBy = actor;
@@ -3393,7 +3442,10 @@ class StarCitizenService extends EventEmitter {
             reg._audit(this._actor(req, d.actor), 'escrow.paid', 'mission', m.id, result.txid);
             return send(200, { type: 'Payout', data: result });
           }
-          const built = await pm.buildPayout(m.escrow, d.toAddress || m.escrow.payee);
+          const built = await pm.buildPayout(
+            m.escrow,
+            d.toAddress || m.escrow.payeeAddress || null
+          );
           reg.store.put('missions', m.id, m);
           return send(200, { type: 'PayoutPsbt', data: built });
         } catch (e) { return send(400, { error: e.message }); }
