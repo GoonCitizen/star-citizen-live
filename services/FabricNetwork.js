@@ -73,18 +73,120 @@ function isLoopbackFabricAddress (address) {
 }
 
 /**
- * True when address dials this process's Fabric listen port on loopback
- * (self-loop). That breaks star-hub gossip on the desktop.
- * @param {*} address
- * @param {number|string} [listenPort]
+ * Hostnames / IPs that identify this node for dial filtering.
+ * Includes advertiseHost, optional ownHosts, FABRIC_* env public host, and
+ * (by default) addresses from os.networkInterfaces().
+ * @param {Object} [opts]
+ * @param {string} [opts.advertiseHost]
+ * @param {string[]} [opts.ownHosts]
+ * @param {boolean} [opts.includeLocalInterfaces=true]
+ * @param {NodeJS.ProcessEnv} [opts.env]
+ * @returns {Set<string>}
+ */
+function collectOwnFabricHosts (opts = {}) {
+  const hosts = new Set();
+  const add = (raw) => {
+    let s = String(raw || '').trim().toLowerCase();
+    if (!s) return;
+    if (s.startsWith('[') && s.includes(']')) {
+      s = s.slice(1, s.indexOf(']'));
+    } else if (/:\d{1,5}$/.test(s) && (s.match(/:/g) || []).length === 1) {
+      s = s.split(':')[0];
+    }
+    if (s) hosts.add(s);
+  };
+  if (opts.advertiseHost) add(opts.advertiseHost);
+  for (const h of opts.ownHosts || []) add(h);
+  const env = opts.env || process.env;
+  for (const key of ['FABRIC_PUBLIC_HOST', 'FABRIC_ADVERTISE_HOST', 'SC_FABRIC_PUBLIC_HOST']) {
+    if (env[key]) add(env[key]);
+  }
+  if (opts.includeLocalInterfaces !== false) {
+    try {
+      const os = require('os');
+      const ifaces = os.networkInterfaces();
+      for (const list of Object.values(ifaces || {})) {
+        for (const entry of list || []) {
+          if (entry && entry.address) add(entry.address);
+        }
+      }
+    } catch (_) { /* ignore (sandbox / restricted os) */ }
+  }
+  return hosts;
+}
+
+/** @type {Map<string, boolean>} */
+const _dnsOwnHostCache = new Map();
+
+/**
+ * True when `host` is not an IP literal and DNS resolves it to a local interface.
+ * Cached; failures cache as false for this process.
+ * @param {string} host
+ * @param {Set<string>} ownHosts
  * @returns {boolean}
  */
-function isSelfFabricAddress (address, listenPort) {
-  if (!isLoopbackFabricAddress(address)) return false;
-  const port = Number(String(address || '').trim().split(':')[1]);
-  const listen = Number(listenPort);
-  if (!Number.isFinite(port) || !Number.isFinite(listen) || listen <= 0) return false;
-  return port === listen;
+function hostnameResolvesToOwn (host, ownHosts) {
+  const key = String(host || '').trim().toLowerCase();
+  if (!key || !ownHosts || !ownHosts.size) return false;
+  if (/^\d{1,3}(?:\.\d{1,3}){3}$/.test(key)) return false;
+  if (_dnsOwnHostCache.has(key)) return _dnsOwnHostCache.get(key);
+  let hit = false;
+  try {
+    const dns = require('dns');
+    if (typeof dns.lookupSync === 'function') {
+      const r = dns.lookupSync(key, { all: true });
+      const list = Array.isArray(r) ? r : (r ? [r] : []);
+      for (const row of list) {
+        const addr = row && (row.address || row);
+        if (addr && ownHosts.has(String(addr).toLowerCase())) {
+          hit = true;
+          break;
+        }
+      }
+    }
+  } catch (_) {
+    hit = false;
+  }
+  _dnsOwnHostCache.set(key, hit);
+  return hit;
+}
+
+/**
+ * True when dialing this address would connect to this process (self-loop).
+ * Covers loopback+listenPort, public advertise/env hostnames, local interface
+ * IPs, and (when interfaces are available) hub hostnames that DNS to self.
+ * @param {*} address
+ * @param {number|string|Object} [listenPortOrOpts]
+ * @param {Object} [opts]
+ * @param {number|string} [opts.listenPort]
+ * @param {string} [opts.advertiseHost]
+ * @param {string[]} [opts.ownHosts]
+ * @param {boolean} [opts.includeLocalInterfaces]
+ * @param {boolean} [opts.resolveDns=true]
+ * @returns {boolean}
+ */
+function isSelfFabricAddress (address, listenPortOrOpts, opts) {
+  let listenPort = listenPortOrOpts;
+  let options = opts || {};
+  if (listenPortOrOpts && typeof listenPortOrOpts === 'object' && !Array.isArray(listenPortOrOpts)) {
+    options = listenPortOrOpts;
+    listenPort = options.listenPort;
+  }
+  const host = String(address || '').trim().toLowerCase().split(':')[0];
+  if (!host) return false;
+
+  if (isLoopbackFabricAddress(address)) {
+    const port = Number(String(address || '').trim().split(':')[1]);
+    const listen = Number(listenPort);
+    if (!Number.isFinite(port) || !Number.isFinite(listen) || listen <= 0) return false;
+    return port === listen;
+  }
+
+  const own = collectOwnFabricHosts(options);
+  if (own.has(host)) return true;
+  if (options.resolveDns === false) return false;
+  if (options.includeLocalInterfaces === false) return false;
+  return hostnameResolvesToOwn(host, own);
 }
 
 /**
@@ -304,7 +406,8 @@ class FabricNetwork extends EventEmitter {
   static get DEFAULT_SEEDS () { return DEFAULT_SEEDS.slice(); }
   static isNetworkHubAddress (v) { return isNetworkHubAddress(v); }
   static isLoopbackFabricAddress (v) { return isLoopbackFabricAddress(v); }
-  static isSelfFabricAddress (v, listenPort) { return isSelfFabricAddress(v, listenPort); }
+  static isSelfFabricAddress (v, listenPort, opts) { return isSelfFabricAddress(v, listenPort, opts); }
+  static collectOwnFabricHosts (opts) { return collectOwnFabricHosts(opts); }
   static isFabricAddress (v) { return isFabricAddress(v); }
   static normalizeFabricAddress (v, opts) { return normalizeFabricAddress(v, opts); }
   static attachAppHandlers (peer, handlers, opts) { return attachAppHandlers(peer, handlers, opts); }
@@ -598,6 +701,14 @@ class FabricNetwork extends EventEmitter {
     peer.on('ready', (info) => this.emit('ready', info));
     peer.on('connections:open', (ev) => this.emit('connections:open', ev));
     peer.on('connections:close', (ev) => this.emit('connections:close', ev));
+    peer.on('peer:self', (ev) => {
+      this.emit('peer:self', ev);
+      const addr = ev && ev.address;
+      if (addr) {
+        this.emit('warning',
+          `[STAR-CITIZEN] fabric self-session at ${addr}: ${(ev && ev.reason) || 'own key'}`);
+      }
+    });
     this._attachMessageLog(peer);
 
     this._rawInbound = new Set();
@@ -751,15 +862,41 @@ class FabricNetwork extends EventEmitter {
   _ingestPeeringEvent (ev, kind) {
     const message = ev && ev.message;
     const object = (message && (message.object || message)) || {};
+    const offerPubkey = object.pubkey
+      ? String(object.pubkey).trim().toLowerCase()
+      : (message && message.actor && (message.actor.pubkey || message.actor.publicKey || message.actor.id))
+        ? String(message.actor.pubkey || message.actor.publicKey || message.actor.id).trim().toLowerCase()
+        : null;
+    const myPubkey = this._identity && this._identity.pubkey
+      ? String(this._identity.pubkey).trim().toLowerCase().replace(/^0[23]/, '')
+      : null;
+    const offerPkNorm = offerPubkey
+      ? offerPubkey.replace(/^0[23]/, '')
+      : null;
+    // Pre-dial: peering/gossip already named our key — do not enqueue.
+    if (myPubkey && offerPkNorm && myPubkey === offerPkNorm) {
+      this.emit('warning',
+        `[STAR-CITIZEN] ignoring ${kind} peering candidate: advertised pubkey is our own`);
+      this.emit('peer:self', {
+        address: object.host && object.port ? `${object.host}:${object.port}` : null,
+        reason: `${kind} pubkey is own Fabric key`
+      });
+      return;
+    }
     const addrs = peeringAddressesFromObject(object).filter((addr) => {
-      if (isSelfFabricAddress(addr, this.settings.port)) return false;
+      if (isSelfFabricAddress(addr, this.settings.port, {
+        advertiseHost: this.settings.advertiseHost,
+        ownHosts: this.settings.ownHosts
+      })) return false;
       if (isLoopbackFabricAddress(addr) && !this.settings.allowLoopbackDiscovery) return false;
       return true;
     });
     for (const addr of addrs) {
       const [host, port] = String(addr).split(':');
       if (this._peer && typeof this._peer._enqueuePeeringCandidate === 'function') {
-        try { this._peer._enqueuePeeringCandidate(host, Number(port)); } catch (_) { /* ignore */ }
+        try {
+          this._peer._enqueuePeeringCandidate(host, Number(port), { pubkey: offerPubkey });
+        } catch (_) { /* ignore */ }
       }
     }
     this.fillPeerSlots();
@@ -768,7 +905,7 @@ class FabricNetwork extends EventEmitter {
         addresses: addrs,
         kind,
         origin: ev && ev.origin,
-        pubkey: object.pubkey ? String(object.pubkey).trim().toLowerCase() : null,
+        pubkey: offerPubkey,
         peering: object.peering ? String(object.peering).trim() : null
       };
       this.emit('peeringCandidate', payload);

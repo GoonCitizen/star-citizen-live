@@ -405,6 +405,17 @@ class StarCitizenService extends EventEmitter {
         : DEFAULT_PEERS;
       this.peers = (seeds || []).map((p) => this._normalizePeerRecord(p)).filter(Boolean);
     }
+    // Public hostname for self-dial filter (must be set before heal).
+    this._fabricAdvertiseHost = persisted.fabricAdvertiseHost || null;
+    if (!this._fabricAdvertiseHost) {
+      const envHost = String(
+        process.env.FABRIC_PUBLIC_HOST ||
+        process.env.FABRIC_ADVERTISE_HOST ||
+        process.env.SC_FABRIC_PUBLIC_HOST ||
+        ''
+      ).trim();
+      if (envHost) this._fabricAdvertiseHost = envHost;
+    }
     // Constructor peers (tests / custom deploys): only strip true self-loops.
     // Persisted desktop roster: drop self-loops and re-seed hubs when none left
     // (old saves that only dialed localhost break chat gossip).
@@ -424,7 +435,6 @@ class StarCitizenService extends EventEmitter {
     this._shareLogsGlobal = persisted.shareLogsGlobal === true;
     this._nickname = persisted.nickname || null;
     this._profile = peerProfile.sanitizeProfile(persisted.profile);
-    this._fabricAdvertiseHost = persisted.fabricAdvertiseHost || null;
     this._broadcastPeering = persisted.broadcastPeering === true;
     this._notifyMissionBroadcasts = persisted.notifyMissionBroadcasts !== false;
     this._applySnapshotSettings(persisted);
@@ -462,12 +472,44 @@ class StarCitizenService extends EventEmitter {
    * @param {boolean} [opts.forceHubs]
    * @returns {{ removed: string[], added: string[] }}
    */
+  /**
+   * Options for {@link FabricNetwork.isSelfFabricAddress} — public hostname +
+   * local interface IPs so network hubs never dial themselves.
+   * @returns {Object}
+   */
+  _selfFabricDialOpts () {
+    return {
+      listenPort: Number(this.settings.fabric && this.settings.fabric.port) || 7777,
+      advertiseHost: this._fabricAdvertiseHost || null
+    };
+  }
+
+  /**
+   * True when hex is this node's publishing Fabric pubkey (x-only or compressed).
+   * @param {*} hex
+   * @returns {boolean}
+   */
+  _isOwnFabricPubkeyHex (hex) {
+    const mine = this._identity && this._identity.pubkey
+      ? String(this._identity.pubkey).trim().toLowerCase().replace(/^0[23]/, '')
+      : '';
+    const theirs = String(hex || '').trim().toLowerCase().replace(/^0[23]/, '');
+    return !!(mine && theirs && mine === theirs);
+  }
+
+  /**
+   * Drop self-loop dials from the peer roster. With `ensureHubs` / `forceHubs`,
+   * re-seed network hubs when none remain (unless this node *is* that hub).
+   * `forceHubs` (Peers → Restore network seeds) also strips all loopback and
+   * re-adds missing hub seeds (minus self).
+   */
   _healPeerRoster (opts = {}) {
     const removed = [];
     const forceHubs = opts.forceHubs === true;
     const dropSelf = forceHubs || opts.dropSelf === true;
     const dropAllLoopback = forceHubs;
-    const listenPort = Number(this.settings.fabric && this.settings.fabric.port) || 7777;
+    const selfOpts = this._selfFabricDialOpts();
+    const listenPort = selfOpts.listenPort;
     const before = this.peers.slice();
     this.peers = before.filter((p) => {
       if (!p || !p.address) return false;
@@ -475,7 +517,7 @@ class StarCitizenService extends EventEmitter {
         removed.push(p.address);
         return false;
       }
-      if (dropSelf && FabricNetwork.isSelfFabricAddress(p.address, listenPort)) {
+      if (dropSelf && FabricNetwork.isSelfFabricAddress(p.address, selfOpts)) {
         removed.push(p.address);
         return false;
       }
@@ -489,6 +531,7 @@ class StarCitizenService extends EventEmitter {
       for (const seed of DEFAULT_PEERS) {
         const address = seed.address;
         if (have.has(address)) continue;
+        if (FabricNetwork.isSelfFabricAddress(address, selfOpts)) continue;
         const row = this._normalizePeerRecord(seed);
         if (!row) continue;
         this.peers.push(row);
@@ -540,11 +583,12 @@ class StarCitizenService extends EventEmitter {
 
   /** Enabled Fabric peer addresses (`host:port`) — excludes self-loop dials. */
   _fabricPeerAddresses () {
-    const listenPort = Number(this.settings.fabric && this.settings.fabric.port) || 7777;
+    const selfOpts = this._selfFabricDialOpts();
     return this.peers
       .filter((p) => p.enabled !== false && p.address)
+      .filter((p) => !this._isOwnFabricPubkeyHex(p.expectedPubkey))
       .map((p) => p.address)
-      .filter((a) => !FabricNetwork.isSelfFabricAddress(a, listenPort));
+      .filter((a) => !FabricNetwork.isSelfFabricAddress(a, selfOpts));
   }
 
   /** Fabric addresses authorized to receive log events (null = all connected when global on). */
@@ -786,17 +830,21 @@ class StarCitizenService extends EventEmitter {
    */
   _considerDiscoveredPeers (addresses, kind, meta = {}) {
     if (!Array.isArray(addresses) || !addresses.length) return;
-    const listenPort = Number(this.settings.fabric && this.settings.fabric.port) || 7777;
+    const selfOpts = this._selfFabricDialOpts();
     const have = new Set(this.peers.map((p) => p.address));
     const discoveredCount = this.peers.filter((p) => p.discovered === true && !FabricNetwork.isNetworkHubAddress(p.address)).length;
     const expectedPubkey = meta.pubkey
       ? String(meta.pubkey).trim().toLowerCase()
       : null;
+    if (this._isOwnFabricPubkeyHex(expectedPubkey)) {
+      console.log(`[STAR-CITIZEN] ignoring discovered peers (${kind}): pubkey is our own`);
+      return;
+    }
     let added = 0;
     for (const raw of addresses) {
       const address = FabricNetwork.normalizeFabricAddress(raw, { migrate: false });
       if (!address || have.has(address)) continue;
-      if (FabricNetwork.isSelfFabricAddress(address, listenPort)) continue;
+      if (FabricNetwork.isSelfFabricAddress(address, selfOpts)) continue;
       if (FabricNetwork.isLoopbackFabricAddress(address)) continue;
       if (FabricNetwork.isNetworkHubAddress(address)) continue;
       if (discoveredCount + added >= this._maxDiscoveredPeers) break;
@@ -2348,6 +2396,9 @@ class StarCitizenService extends EventEmitter {
             const address = parsed.address;
             if (FabricNetwork.isLoopbackFabricAddress(address)) {
               return send(400, { error: 'loopback peers (localhost / 127.0.0.1) are not dialed — use hub.fabric.pub:7777 or relay.goon.vc:7777' });
+            }
+            if (FabricNetwork.isSelfFabricAddress(address, this._selfFabricDialOpts())) {
+              return send(400, { error: 'refusing to dial this node (self) — set fabricAdvertiseHost / FABRIC_PUBLIC_HOST if this keeps happening' });
             }
             if (this.peers.some((p) => p.address === address)) return send(400, { error: 'peer already exists' });
             const peer = {
@@ -4553,6 +4604,19 @@ class StarCitizenService extends EventEmitter {
       });
       this.fabricNetwork.setHandlers(this._fabricIngestHandlers());
       this.fabricNetwork.on('error', (e) => this.emit('error', e));
+      this.fabricNetwork.on('peer:self', (ev) => {
+        const addr = ev && ev.address
+          ? FabricNetwork.normalizeFabricAddress(ev.address, { migrate: false })
+          : null;
+        if (!addr) return;
+        const before = this.peers.length;
+        this.peers = this.peers.filter((p) => p.address !== addr);
+        if (this.peers.length !== before) {
+          this._persistPeers();
+          console.log(`[STAR-CITIZEN] dropped peer ${addr} after fabric self-session`);
+          this._refreshFabric().catch((e) => this.emit('error', e));
+        }
+      });
     }
     this.fabricNetwork.setIdentity(this._identity);
     this.fabricNetwork.setAdvertiseHost(this._fabricAdvertiseHost || null);

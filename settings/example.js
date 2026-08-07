@@ -30,8 +30,9 @@ module.exports = {
     listen: true,
     port: 7777,
     peers: ['hub.fabric.pub:7777', 'relay.goon.vc:7777']
-    // Optional public hostname for P2P_PEERING_OFFER: set Store key
-    // fabricAdvertiseHost (settings API) — do not commit secrets here.
+    // Optional public hostname for P2P_PEERING_OFFER + self-dial filter:
+    // Store key fabricAdvertiseHost, or env FABRIC_PUBLIC_HOST /
+    // FABRIC_ADVERTISE_HOST (required on relay.goon.vc so it does not dial itself).
   },
 
   // Discord Integration
