@@ -28,6 +28,8 @@
     "desktop": "node scripts/desktop.js .",
     "fabric:env": "node scripts/fabric-env.js",
     "make:api": "jsdoc2md --configure jsdoc.json --files types/*.js services/*.js README.md > API.md",
+    "playnet:deploy-gooncitizen": "node scripts/playnet-deploy-gooncitizen.js",
+    "publish:gooncitizen": "node scripts/playnet-deploy-gooncitizen.js",
     "refresh:ships": "node scripts/refresh-ship-catalog.js",
     "replay": "node scripts/replay.js",
     "report:install": "rm -rf node_modules && echo \"$ npm i --allow-git=all\" > reports/install.log && npm i --allow-git=all >> reports/install.log 2>&1",
