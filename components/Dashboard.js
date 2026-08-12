@@ -13,6 +13,7 @@ const FabricLoginModal = require('./FabricLoginModal');
 const GroupOfferModal = require('./GroupOfferModal');
 const SiteLogin = require('./SiteLogin');
 const Chat = require('./Chat');
+const DeliverySync = require('./DeliverySync');
 const GlobalChatDock = require('./GlobalChatDock');
 const MissionBroadcastBanner = require('./MissionBroadcastBanner');
 const Notifications = require('./Notifications');
@@ -24,6 +25,7 @@ const FabricMessages = require('./FabricMessages');
 const Fleet = require('./Fleet');
 const Settings = require('./Settings');
 const Wallet = require('./Wallet');
+const DocumentExchange = require('./DocumentExchange');
 const LogBrowser = require('./LogBrowser');
 const ActivityHeatmap = require('./ActivityHeatmap');
 const ShipPicker = require('./ShipPicker');
@@ -31,20 +33,21 @@ const activityHeat = require('../functions/activityHeat');
 const missionCharts = require('../functions/missionCharts');
 
 const { FEATURES } = require('../constants');
-const { FEED_CATEGORIES, FEED_SOURCES, filterLiveFeed } = require('../functions/liveFeed');
+const { FEED_CATEGORIES, FEED_SOURCES, DEFAULT_FEED_SOURCES, filterLiveFeed } = require('../functions/liveFeed');
 const featureEnabled = (key) => FEATURES[key] !== false;
 
 // Top-level features, listed along the top of the dashboard (Hub-style).
-// Order is product-facing: Home → Fleet → Missions → Groups → Network → Chat.
+// Order is product-facing: Home → Files (advanced) → Groups → Missions → Fleets → Chat → Wallet → Network.
 // Feature-flagged tabs (see constants.FEATURES) are filtered out when disabled.
 const TABS = [
   ['home', 'Home'],
-  ['fleet', 'Fleet'],
-  ['missions', 'Missions'],
+  ['documents', 'Files'],
   ['groups', 'Groups'],
-  ['network', 'Network'],
+  ['missions', 'Missions'],
+  ['fleet', 'Fleets'],
   ['chat', 'Chat'],
   ['wallet', 'Wallet'],
+  ['network', 'Network'],
   ['library', 'Library']
 ].filter(([k]) => featureEnabled(k));
 
@@ -57,8 +60,8 @@ const NETWORK_ADVANCED_VIEWS = [
   ['messages', 'Messages']
 ];
 
-// Advanced-only top-level tabs — none today (Peers/Messages live under Network).
-const ADVANCED_TABS = new Set();
+// Advanced-only top-level tabs (Files = Hub Document Exchange inventory UI).
+const ADVANCED_TABS = new Set(['documents']);
 
 // Notifications is opened from the header bell (not a primary feature tab).
 // Legacy #analyze / #live / #peers / #messages hash aliases resolve in resolveHash().
@@ -102,6 +105,7 @@ const HOME_ADVANCED_VIEWS = [
 ];
 
 const ADVANCED_MODE_KEY = 'gooncitizen.advancedMode';
+const FEED_SOURCES_KEY = 'gooncitizen.feedSources';
 
 function readAdvancedMode () {
   try {
@@ -116,6 +120,32 @@ function writeAdvancedMode (on) {
     if (typeof localStorage === 'undefined') return;
     if (on) localStorage.setItem(ADVANCED_MODE_KEY, '1');
     else localStorage.removeItem(ADVANCED_MODE_KEY);
+  } catch (_) { /* ignore */ }
+}
+
+/** Local-first default; expand via from chips (Peers / Groups / All). */
+function readFeedSources () {
+  try {
+    if (typeof localStorage === 'undefined') {
+      return new Set(DEFAULT_FEED_SOURCES);
+    }
+    const raw = localStorage.getItem(FEED_SOURCES_KEY);
+    if (raw === null) return new Set(DEFAULT_FEED_SOURCES);
+    if (raw === '' || raw === 'all') return null;
+    const arr = JSON.parse(raw);
+    if (!Array.isArray(arr)) return new Set(DEFAULT_FEED_SOURCES);
+    if (!arr.length) return null;
+    return new Set(arr.map(String));
+  } catch (_) {
+    return new Set(DEFAULT_FEED_SOURCES);
+  }
+}
+
+function writeFeedSources (sources) {
+  try {
+    if (typeof localStorage === 'undefined') return;
+    if (!sources || !sources.size) localStorage.setItem(FEED_SOURCES_KEY, 'all');
+    else localStorage.setItem(FEED_SOURCES_KEY, JSON.stringify([...sources]));
   } catch (_) { /* ignore */ }
 }
 
@@ -210,7 +240,7 @@ const CSS = `
   .b-warn{background:rgba(210,153,34,.18);color:var(--warn)}
   .b-raw{background:rgba(110,118,129,.18);color:var(--raw)}
   .b-kill{background:rgba(248,81,73,.18);color:var(--kill)}
-  .b-acc{background:rgba(59,130,246,.18);color:var(--accent)}
+  .b-acc{background:var(--accent-soft-strong, rgba(59,130,246,.18));color:var(--accent)}
   .raw{font-family:'Cascadia Code',Consolas,monospace;font-size:12px;word-break:break-word;flex:1;line-height:1.45}
   .copy{opacity:0;font-size:11px;background:none;border:none;color:var(--accent);cursor:pointer;flex:none}
   .line:hover .copy{opacity:1}
@@ -228,7 +258,11 @@ const CSS = `
   .slrow{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-bottom:8px}
   .flab{font-size:11px;color:var(--muted);margin-right:3px;min-width:54px}
   .chip{font-size:12px;padding:4px 10px;border-radius:999px;border:1px solid var(--line);background:transparent;color:var(--muted);cursor:pointer}
-  .chip.on{background:rgba(59,130,246,.15);color:var(--accent);border-color:var(--accent)}
+  .chip.on{background:var(--accent-soft, rgba(59,130,246,.15));color:var(--accent);border-color:var(--accent)}
+  .line.rulehit{background:var(--accent-soft, rgba(59,130,246,.10));box-shadow:inset 3px 0 0 var(--accent)}
+  .logline.rulehit{background:var(--accent-soft, rgba(59,130,246,.14));box-shadow:inset 3px 0 0 var(--accent)}
+  .b-chat{background:var(--accent-soft-strong, rgba(59,130,246,.18));color:var(--accent)}
+  .b-peer{background:var(--accent-soft, rgba(59,130,246,.12));color:var(--accent)}
   .kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(118px,1fr));gap:10px;padding:12px 14px;width:100%}
   .mc{background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:10px 12px}
   .mc .l{font-size:12px;color:var(--muted)}
@@ -236,14 +270,12 @@ const CSS = `
   .mc .d{font-size:11px;color:var(--muted);margin-top:2px}
   .lbr{display:grid;grid-template-columns:1fr 72px 86px 56px;gap:8px;align-items:center;padding:6px 8px;font-size:12.5px;border-radius:6px}
   .lbr.click{cursor:pointer}.lbr.click:hover{background:var(--panel2)}
-  .line.rulehit{background:rgba(59,130,246,.10);box-shadow:inset 3px 0 0 var(--accent)}
   .logwarn{background:rgba(210,153,34,.12);color:var(--warn);border-radius:7px;margin:10px 14px 0;
     padding:9px 12px;font-size:12.5px}
   .lognav{display:flex;gap:8px;align-items:center;padding:8px 14px;border-bottom:1px solid var(--line)}
   .lognav .sub{color:var(--muted);font-size:12px;flex:1;text-align:center;font-variant-numeric:tabular-nums}
   .logbrowse{font-family:'Cascadia Code',Consolas,monospace;font-size:11.5px;line-height:1.5;max-height:44vh}
   .logline{padding:0 14px;white-space:pre-wrap;word-break:break-all;border-bottom:1px solid #171c23}
-  .logline.rulehit{background:rgba(59,130,246,.14);box-shadow:inset 3px 0 0 var(--accent)}
   .reparse{display:flex;gap:10px;align-items:center;flex-wrap:wrap;padding:10px 14px;border-top:1px solid var(--line)}
   .reparse .sub{color:var(--muted);font-size:12px}
   .rpkinds{display:flex;gap:6px;flex-wrap:wrap;width:100%}
@@ -292,6 +324,8 @@ const CSS = `
   .live-msg{display:grid;gap:2px;padding:8px 10px;border-radius:8px;background:var(--panel2);border:1px solid transparent}
   .live-msg:hover{border-color:var(--line)}
   .live-msg.peer{box-shadow:inset 3px 0 0 var(--accent)}
+  .live-msg.group{box-shadow:inset 3px 0 0 var(--warn)}
+  .live-msg.peer.group{box-shadow:inset 3px 0 0 var(--accent), inset 6px 0 0 var(--warn)}
   .live-msg .m{display:flex;gap:8px;align-items:baseline;flex-wrap:wrap}
   .live-msg .who{font-weight:600;font-size:12.5px}
   .live-msg .who.peer{color:var(--accent)}
@@ -315,6 +349,7 @@ const CSS = `
   .live-msg .prov .plabel{font-weight:600}
   .live-msg .prov .plabel.peer{color:var(--accent)}
   .live-msg .prov .plabel.self{color:var(--good)}
+  .live-msg .prov .plabel.group{color:var(--warn)}
   .live-msg .prov code{font-size:10.5px;color:var(--text)}
   .live-msg .copy,.live-msg .rawtog{font-size:11px;background:none;border:none;color:var(--accent);cursor:pointer;padding:0}
   .live-msg .copy{opacity:0}
@@ -324,9 +359,9 @@ const CSS = `
   .live-msg .rawline{margin-top:6px;padding:8px 10px;border-radius:6px;background:var(--bg);border:1px solid var(--line);
     font-family:'Cascadia Code',Consolas,monospace;font-size:11px;line-height:1.45;color:var(--muted);
     word-break:break-word;white-space:pre-wrap}
-  .b-chat{background:rgba(59,130,246,.18);color:var(--accent)}
+  .b-chat{background:var(--accent-soft-strong, rgba(59,130,246,.18));color:var(--accent)}
   .b-bcast{background:rgba(163,113,247,.18);color:#a371f7}
-  .b-peer{background:rgba(59,130,246,.12);color:var(--accent)}
+  .b-peer{background:var(--accent-soft, rgba(59,130,246,.12));color:var(--accent)}
 `;
 
 const GOOD = '#3fb950';
@@ -444,7 +479,7 @@ class Dashboard extends React.Component {
       feedCategories: FEED_CATEGORIES,
       feedSourcesMeta: FEED_SOURCES,
       feedCats: null,      // null = all categories
-      feedSources: null,   // null = local + peer
+      feedSources: readFeedSources(), // default Local; expand Peers/Groups/All
       feedRawOpen: null,   // Set of item ids with raw log expanded
       copyAllLabel: 'Copy all',
       // analyze
@@ -458,6 +493,9 @@ class Dashboard extends React.Component {
       identityPubkey: null,
       identityLocked: false,
       identityExists: false,
+      bitcoinEnable: null, // null until /settings; then runtime.bitcoin.enable
+      documentsEnable: null, // null until /settings; then runtime.documents.enable
+      documentsRuntime: null,
       showSettings: false,
       showIdentity: false,
       chatUnread: 0,
@@ -475,6 +513,7 @@ class Dashboard extends React.Component {
       statusDraft: '',
       showIdFlyout: false,
       presenceBusy: false,
+      primaryGroupColor: null,
       // Game.log visibility + rules + re-parse
       loginfo: null,
       corpus: null,
@@ -562,6 +601,10 @@ class Dashboard extends React.Component {
     if (this._presenceTimer) clearInterval(this._presenceTimer);
     Object.values(this._copiedTimers).forEach(clearTimeout);
     try { document.body.classList.remove('chat-fill'); } catch (_) { /* ignore */ }
+    try {
+      const { applyDocumentTheme } = require('../functions/groupPrimaryColor');
+      applyDocumentTheme(null);
+    } catch (_) { /* ignore */ }
   }
 
   /** Chat / Fleet own the viewport: no document scroll; panes scroll internally. */
@@ -572,10 +615,41 @@ class Dashboard extends React.Component {
     } catch (_) { /* ignore */ }
   }
 
+  walletVisible () {
+    if (!featureEnabled('wallet')) return false;
+    if (this.state.bitcoinEnable === false) return false;
+    return true;
+  }
+
+  documentsVisible () {
+    if (!featureEnabled('documents')) return false;
+    if (!this.state.advancedMode) return false;
+    if (this.state.documentsEnable !== true) return false;
+    return true;
+  }
+
   async loadNickname () {
     try {
       const res = await fetch('/settings').then((r) => r.json());
-      this.setState({ nickname: (res.settings && res.settings.nickname) || null });
+      const bitcoin = (res.runtime && res.runtime.bitcoin) || null;
+      const documents = (res.runtime && res.runtime.documents) || null;
+      const primaryColor = (res.runtime && res.runtime.primaryGroupColor) || null;
+      this.setState({
+        nickname: (res.settings && res.settings.nickname) || null,
+        bitcoinEnable: bitcoin ? bitcoin.enable === true : null,
+        documentsEnable: documents ? documents.enable === true : null,
+        documentsRuntime: documents,
+        primaryGroupColor: primaryColor
+      });
+      this.applyPrimaryGroupTheme(primaryColor);
+    } catch (_) { /* ignore */ }
+  }
+
+  applyPrimaryGroupTheme (hex) {
+    try {
+      const { applyDocumentTheme } = require('../functions/groupPrimaryColor');
+      applyDocumentTheme(hex || null);
+      this.setState({ primaryGroupColor: hex || null });
     } catch (_) { /* ignore */ }
   }
 
@@ -1100,6 +1174,21 @@ class Dashboard extends React.Component {
     this.setState({ feedRawOpen: cur.size ? cur : null });
   }
 
+  onFeedDeliveryUpdated (itemId, data) {
+    if (!data || !data.delivery) return;
+    const hash = data.wireHash ? String(data.wireHash).toLowerCase() : null;
+    this.setState((s) => ({
+      feed: (s.feed || []).map((it) => {
+        if (!it || it.id !== itemId) return it;
+        return Object.assign({}, it, {
+          delivery: data.delivery,
+          wireHash: hash || it.wireHash,
+          contractId: data.contractId || it.contractId || null
+        });
+      })
+    }));
+  }
+
   // ---- analyze helpers ----
   mSel (ym) { return this.state.azMonths ? this.state.azMonths.has(ym) : true; }
   pSel (p) { return has(this.state.azPlayers, p); }
@@ -1111,7 +1200,14 @@ class Dashboard extends React.Component {
     const cur = this.state[key];
     const next = cur ? new Set(cur) : new Set();
     if (next.has(v)) next.delete(v); else next.add(v);
-    this.setState({ [key]: next.size ? next : null });
+    const value = next.size ? next : null;
+    this.setState({ [key]: value });
+    if (key === 'feedSources') writeFeedSources(value);
+  }
+
+  setFeedSourcesAll () {
+    this.setState({ feedSources: null });
+    writeFeedSources(null);
   }
 
   baseM () {
@@ -1364,12 +1460,15 @@ class Dashboard extends React.Component {
   renderChips (label, opts, key) {
     const sel = this.state[key];
     const all = !sel || !sel.size;
+    const onAll = key === 'feedSources'
+      ? () => this.setFeedSourcesAll()
+      : () => this.setState({ [key]: null });
     return React.createElement('div', { className: 'slrow' },
       React.createElement('span', { className: 'flab' }, label),
       React.createElement('button', {
         type: 'button',
         className: 'chip ' + (all ? 'on' : ''),
-        onClick: () => this.setState({ [key]: null })
+        onClick: onAll
       }, 'All'),
       opts.map((o) => React.createElement('button', {
         type: 'button',
@@ -1892,16 +1991,23 @@ class Dashboard extends React.Component {
     const items = this.filteredFeedItems();
     const cats = this.state.feedCategories || FEED_CATEGORIES;
     const sources = this.state.feedSourcesMeta || FEED_SOURCES;
-    const peerCount = (this.state.feed || []).filter((it) => it.source === 'peer').length;
+    const feedAll = this.state.feed || [];
+    const peerCount = feedAll.filter((it) => it.source === 'peer').length;
+    const groupCount = feedAll.filter((it) => it.source === 'group').length;
+    const sourcesSel = this.state.feedSources;
+    const localOnly = !!(sourcesSel && sourcesSel.size === 1 && sourcesSel.has('local'));
     const mstats = `missions ✅${ms.completed || 0} · ⤺${ms.abandoned || 0} · ✖${ms.failed || 0} · ●${ms.active || 0}` +
-      (peerCount ? ` · ${peerCount} from peers` : '');
+      (peerCount ? ` · ${peerCount} peer` : '') +
+      (groupCount ? ` · ${groupCount} group` : '');
+    const scopeHint = localOnly
+      ? 'Showing your local Game.log by default — enable Peers / Groups (or All) to widen context.'
+      : 'Parsed Game.log, peer shares, group chat & broadcasts — newest first.';
 
     return React.createElement('main', null,
       React.createElement('section', { className: 'panel full live-stream' },
         React.createElement('h2', null, '📡 Live feed ',
           React.createElement('span', { className: 'sub' },
-            '— newest first · parsed Game.log, peer shares, chat & broadcasts. ',
-            mstats),
+            '— ', scopeHint, ' ', mstats),
           React.createElement('button', {
             className: 'btn',
             type: 'button',
@@ -1930,8 +2036,8 @@ class Dashboard extends React.Component {
             }),
             React.createElement('span', { className: 'sub' },
               `${items.length} shown` +
-              ((this.state.feed || []).length !== items.length
-                ? ` / ${(this.state.feed || []).length}`
+              (feedAll.length !== items.length
+                ? ` / ${feedAll.length}`
                 : ''))
           )
         ),
@@ -1944,8 +2050,10 @@ class Dashboard extends React.Component {
               const showRaw = !!(it.hasRaw && it.raw);
               const kws = keywordsFrom(this.state.filter);
               const prov = it.provenance || {
-                origin: it.source === 'peer' ? 'peer' : 'local',
-                label: it.source === 'peer' ? 'peer' : 'local',
+                origin: it.source === 'peer' ? 'peer'
+                  : (it.source === 'group' ? 'group' : 'local'),
+                label: it.source === 'peer' ? 'peer'
+                  : (it.source === 'group' ? 'group' : 'local'),
                 peerId: it.sourceId || null
               };
               const fieldBadges = Array.isArray(it.badges) ? it.badges : [];
@@ -1954,7 +2062,9 @@ class Dashboard extends React.Component {
                 it.recognized === false ||
                 it.verified === true;
               return React.createElement('div', {
-                className: 'live-msg' + (prov.origin === 'peer' ? ' peer' : ''),
+                className: 'live-msg' +
+                  (prov.origin === 'peer' ? ' peer' : '') +
+                  (it.source === 'group' ? ' group' : ''),
                 key: id
               },
               React.createElement('div', { className: 'm' },
@@ -1986,6 +2096,22 @@ class Dashboard extends React.Component {
                   __html: highlight(it.body || '', kws)
                 }
               }),
+              it.category === 'chat' && (
+                it.delivery ||
+                it.wireHash ||
+                (it.chatMessageId && String(it.meta || '').indexOf('group:') === 0)
+              )
+                ? React.createElement(DeliverySync, {
+                  compact: true,
+                  delivery: it.delivery,
+                  wireHash: it.wireHash || (it.delivery && it.delivery.wireHash) || null,
+                  chatMessageId: it.chatMessageId || null,
+                  contractId: it.contractId || (it.delivery && it.delivery.contractId) || null,
+                  canReceipt: !!this.state.identityPubkey,
+                  showAwaiting: !!(it.chatMessageId && !it.wireHash && String(it.meta || '').indexOf('group:') === 0),
+                  onUpdated: (data) => this.onFeedDeliveryUpdated(id, data)
+                })
+                : null,
               showTags
                 ? React.createElement('div', { className: 'tags' },
                   fieldBadges.map((b, bi) => React.createElement('span', {
@@ -2025,7 +2151,7 @@ class Dashboard extends React.Component {
                       ? String(prov.peerId).slice(0, 12) + '…'
                       : (String(prov.peerId).slice(0, 16) + (String(prov.peerId).length > 16 ? '…' : '')))
                   : null,
-                prov.detail && prov.origin === 'local'
+                prov.detail && (prov.origin === 'local' || prov.origin === 'group')
                   ? React.createElement('span', null, '· ' + prov.detail)
                   : null
               ),
@@ -2038,9 +2164,11 @@ class Dashboard extends React.Component {
               );
             })
             : React.createElement('div', { className: 'empty' },
-              (this.state.feed || []).length
-                ? 'nothing matches these filters — click All on type/from, or clear keywords'
-                : 'nothing yet — play, chat, or wait for peer events on the Fabric mesh')
+              feedAll.length
+                ? (localOnly
+                  ? 'only local events are shown — enable Peers, Groups, or All on from to expand'
+                  : 'nothing matches these filters — click All on type/from, or clear keywords')
+                : 'nothing local yet — play to collect Game.log events, or expand from to Peers / Groups')
         )
       )
     );
@@ -2118,21 +2246,25 @@ class Dashboard extends React.Component {
     };
 
     const cards = [
-      ['fleet', '🚀 Fleet', 'Import Starjump / FleetViewer JSON, browse your ships, share to peers, groups, or public.',
-        'personal roster · Fabric FleetShare'],
-      ['missions', '⭐ Missions', 'Post contracts with Bitcoin rewards — submit completion, authorities approve with Schnorr signatures, coins unlock.',
-        'k-of-n approval · escrowed sats'],
+      ['documents', '📁 Files', 'Advanced Document Exchange — Hub inventory create / publish / purchase (same as Hub /documents).',
+        'advanced mode · settings.documents.enable'],
       ['groups', '👥 Groups', 'Member-created squads with k-of-n Schnorr decisions. Share a public group page; others apply to join.',
         'pages at /groups/:id (or a custom URL)'],
-      ['network', '🌐 Network', 'Live feed of Game.log and peer events, plus Fabric peer management — hubs, log sharing, and mesh status.',
-        `${sess.missions || 0} missions · ${sess.deaths || 0} deaths this session · Feed + Peers`],
+      ['missions', '⭐ Missions', 'Post contracts with Bitcoin rewards — submit completion, authorities approve with Schnorr signatures, coins unlock.',
+        'k-of-n approval · escrowed sats'],
+      ['fleet', '🚀 Fleets', 'Import Starjump / FleetViewer JSON, browse your ships, share to peers, groups, or public.',
+        'personal roster · Fabric FleetShare'],
       ['chat', '💬 Chat', 'Org chat with Hub message types — a global channel plus a dedicated channel for every group.',
         'ChatMessage · signed · synced via your peers'],
+      ['wallet', '₿ Wallet', 'Personal Hub-backed balance / receive / send / history, plus group Taproot and mission escrows.',
+        'identity xpub watch · Hub faucet send · group multisig'],
+      ['network', '🌐 Network', 'Your live Game.log first — expand the feed to peer shares and group traffic, plus Fabric peer management.',
+        `${sess.missions || 0} missions · ${sess.deaths || 0} deaths this session · Feed + Peers`],
       ['library', '📸 Library', 'Periodic reduced-size snapshots of your play sessions — browsable history, ready for image analysis.',
-        'opt-in · configurable interval · auto-purge'],
-      ['wallet', '₿ Wallet', 'Group multisig addresses and mission escrows — deterministic k-of-n P2WSH from each group\'s roster.',
-        'ledger or bitcoind · regtest first']
-    ].filter(([tab]) => featureEnabled(tab));
+        'opt-in · configurable interval · auto-purge']
+    ].filter(([tab]) => featureEnabled(tab) &&
+      (tab !== 'wallet' || this.walletVisible()) &&
+      (tab !== 'documents' || this.documentsVisible()));
 
     const activeFilters = m && m.af && m.af.length
       ? m.af.length + ' filter' + (m.af.length === 1 ? '' : 's') + ' active'
@@ -2184,7 +2316,7 @@ class Dashboard extends React.Component {
       !view
         ? React.createElement('section', { className: 'panel full' },
           React.createElement('h2', null, 'Features ',
-            React.createElement('span', { className: 'sub' }, '— jump to Fleet, Missions, Groups, Network, Chat')
+            React.createElement('span', { className: 'sub' }, '— jump to Documents, Groups, Missions, Fleets, Chat, Wallet, Network')
           ),
           React.createElement('div', { className: 'home-grid' },
             cards.map(([tab, title, desc, stat]) => React.createElement('button', {
@@ -2243,7 +2375,20 @@ class Dashboard extends React.Component {
         identityPubkey: this.state.identityPubkey,
         analytics: this.state.analytics
       });
-      case 'wallet': return featureEnabled('wallet') ? React.createElement(Wallet, null) : this.renderHome();
+      case 'wallet': return this.walletVisible()
+        ? React.createElement(Wallet, {
+          identityPubkey: this.state.identityPubkey,
+          identityLocked: !!this.state.identityLocked,
+          pubkey: this.state.identityPubkey,
+          bitcoinEnable: this.state.bitcoinEnable !== false
+        })
+        : this.renderHome();
+      case 'documents': return this.documentsVisible()
+        ? React.createElement(DocumentExchange, {
+          documentsEnable: this.state.documentsEnable === true,
+          documentsHub: (this.state.documentsRuntime && this.state.documentsRuntime.hub) || null
+        })
+        : this.renderHome();
       case 'library': return featureEnabled('library') ? React.createElement(Library, null) : this.renderHome();
       case 'fleet': return React.createElement(Fleet, {
         identityPubkey: this.state.identityPubkey,
@@ -2251,12 +2396,16 @@ class Dashboard extends React.Component {
       });
       case 'chat': return React.createElement(Chat, {
         identityPubkey: this.state.identityPubkey,
-        nickname: this.state.nickname
+        nickname: this.state.nickname,
+        documentsEnable: this.state.documentsEnable === true,
+        documentsDefaultPriceSats: (this.state.documentsRuntime &&
+          this.state.documentsRuntime.defaultPriceSats) || 25
       });
       case 'groups': return React.createElement(Groups, {
         identityPubkey: this.state.identityPubkey,
         nickname: this.state.nickname,
-        advancedMode: this.state.advancedMode
+        advancedMode: this.state.advancedMode,
+        onPrimaryGroupTheme: (hex) => this.applyPrimaryGroupTheme(hex)
       });
       case 'notifications': return React.createElement(Notifications, {
         onPendingCount: (n) => {
@@ -2294,6 +2443,7 @@ class Dashboard extends React.Component {
         ? React.createElement(Settings, {
           onClose: () => this.setState({ showSettings: false }),
           onOpenIdentity: () => this.setState({ showSettings: false, showIdentity: true }),
+          onPrimaryGroupTheme: (hex) => this.applyPrimaryGroupTheme(hex),
           advancedMode: this.state.advancedMode,
           onAdvancedModeChange: (on) => {
             writeAdvancedMode(on);
@@ -2358,7 +2508,7 @@ class Dashboard extends React.Component {
             React.createElement('button', {
               type: 'button',
               className: 'btn',
-              title: 'Paste an encoded fabric:<hex> message (group offer, invite, …)',
+              title: 'Paste an encoded fabric:<hex> or fabric:base64,… message (group offer, invite, …)',
               onClick: () => this.setState({ showFabricImport: true })
             }, 'Import…'),
             React.createElement('button', {
@@ -2424,13 +2574,15 @@ class Dashboard extends React.Component {
             React.createElement('button', {
               type: 'button',
               className: 'gear',
-              title: 'Settings — log path, Discord, runtime',
+              title: 'Settings — Privacy, log path, Fabric, runtime',
               onClick: () => this.setState({ showSettings: true })
             }, '⚙️')
           )
         ),
         React.createElement('div', { className: 'row', style: { marginTop: 10, gap: 8 } },
-          TABS.filter(([key]) => this.state.advancedMode || !ADVANCED_TABS.has(key)).map(([key, label]) => React.createElement('button', {
+          TABS.filter(([key]) => (this.state.advancedMode || !ADVANCED_TABS.has(key)) &&
+            (key !== 'wallet' || this.walletVisible()) &&
+            (key !== 'documents' || this.documentsVisible())).map(([key, label]) => React.createElement('button', {
             key,
             type: 'button',
             className: 'tab ' + (this.state.tab === key ? 'on' : ''),
@@ -2449,6 +2601,9 @@ class Dashboard extends React.Component {
         identityPubkey: this.state.identityPubkey,
         nickname: this.state.nickname,
         hide: this.state.tab === 'chat',
+        documentsEnable: this.state.documentsEnable === true,
+        documentsDefaultPriceSats: (this.state.documentsRuntime &&
+          this.state.documentsRuntime.defaultPriceSats) || 25,
         onUnread: (n) => {
           if (n !== this.state.chatUnread) this.setState({ chatUnread: n });
         }

@@ -19,9 +19,11 @@
  * Keeps the method names/events the rest of the code already uses
  * (createMission/getMission/missions, start/stop) so nothing else breaks.
  *
- * Officer model: settings.officers is an allowlist of actor ids. If EMPTY, the
- * register runs in permissive "bootstrap" mode (everyone is an officer) so it is
- * usable before roles are wired (REST/Discord auth lands in M5.2/M5.3).
+ * Officer model: settings.officers is an allowlist of actor ids. If EMPTY and
+ * `requireOfficers` is false, the register runs in permissive "bootstrap" mode
+ * (everyone is an officer) for local desktop before roles are set. Hosted
+ * `SC_MODE=server` sets `requireOfficers: true` so an empty allowlist denies
+ * all officer mutations (set `SC_OFFICERS`).
  *
  * Optional `settings.isGroupMember(groupId, pubkey)` gates completionGroupId.
  */
@@ -54,7 +56,7 @@ class MissionManager extends EventEmitter {
    */
   constructor (settings = {}) {
     super();
-    this.settings = Object.assign({ enable: true, officers: [], dir: null }, settings);
+    this.settings = Object.assign({ enable: true, officers: [], dir: null, requireOfficers: false }, settings);
     this.officers = new Set((this.settings.officers || []).map(String));
     this.store = settings.store || new Store({ path: this.settings.dir || this.settings.path || null });
     this._counter = 0;
@@ -152,7 +154,14 @@ class MissionManager extends EventEmitter {
   _mission (id) { const m = this.store.get('missions', id); if (!m) throw new Error('mission not found'); return m; }
 
   // ---- officer permission ----
-  isOfficer (actor) { return this.officers.size === 0 || this.officers.has(String(actor)); }
+  isOfficer (actor) {
+    if (this.officers.size === 0) {
+      // Hosted / locked: empty allowlist means nobody is an officer.
+      if (this.settings.requireOfficers) return false;
+      return true; // local bootstrap
+    }
+    return this.officers.has(String(actor));
+  }
   _requireOfficer (actor) { if (!this.isOfficer(actor)) { const e = new Error('forbidden: not an officer'); e.code = 'FORBIDDEN'; throw e; } }
 
   // ---- audit (hash chain; optional signed authorizations — M6) ----

@@ -24,10 +24,15 @@ const FEED_CATEGORIES = Object.freeze([
   ['log', 'Other']
 ]);
 
+/** View scopes for the Live feed — default UI is Local-only (user-centered). */
 const FEED_SOURCES = Object.freeze([
   ['local', 'Local'],
-  ['peer', 'Peers']
+  ['peer', 'Peers'],
+  ['group', 'Groups']
 ]);
+
+/** Default "from" filter when the operator has not expanded context. */
+const DEFAULT_FEED_SOURCES = Object.freeze(['local']);
 
 /** Badge kinds rendered with distinct styles in the Feed UI. */
 const BADGE_KINDS = Object.freeze([
@@ -58,10 +63,15 @@ function categoryForKind (kind) {
 }
 
 /**
- * @param {*} source
- * @returns {'local'|'peer'}
+ * Collect provenance bucket for filter chips (local Game.log / peer share / group).
+ * @param {*} source Peer pubkey when ingested remotely; falsy when collected here.
+ * @param {{ channel?: string, scope?: string }|null} [opts]
+ * @returns {'local'|'peer'|'group'}
  */
-function sourceKind (source) {
+function sourceKind (source, opts = null) {
+  const channel = opts && opts.channel != null ? String(opts.channel) : '';
+  const scope = opts && opts.scope != null ? String(opts.scope) : '';
+  if (scope === 'group' || channel.indexOf('group:') === 0) return 'group';
   return source ? 'peer' : 'local';
 }
 
@@ -121,7 +131,11 @@ function buildProvenance (item, ctx = {}) {
     return null;
   };
 
-  if (item.source === 'peer' && sourceId) {
+  const fromRemote = (item.source === 'peer' || item.source === 'group') &&
+    sourceId &&
+    !(selfPubkey && sourceId === selfPubkey);
+
+  if (fromRemote) {
     const peerAlias = resolveAlias(sourceId);
     return {
       origin: 'peer',
@@ -141,7 +155,17 @@ function buildProvenance (item, ctx = {}) {
       peerId: sourceId,
       peerAlias,
       label: peerAlias || 'you',
-      detail: 'This node'
+      detail: item.source === 'group' ? 'Your post · group channel' : 'This node'
+    };
+  }
+
+  if (item.source === 'group') {
+    return {
+      origin: 'group',
+      peerId: selfPubkey || null,
+      peerAlias: resolveAlias(selfPubkey),
+      label: 'group',
+      detail: 'Group channel'
     };
   }
 
@@ -298,18 +322,23 @@ function itemFromChat (m) {
   const channelLabel = ch === 'global'
     ? 'Global'
     : (groupName || (String(ch).indexOf('group:') === 0 ? String(ch).slice(6, 18) : ch));
+  const delivery = m.delivery && m.delivery.aggregate ? m.delivery : null;
   return {
     id: 'chat:' + m.id,
     ts: m.ts || null,
     category: 'chat',
-    // `source` is set on peer ingest; local posts only have `author`.
-    source: sourceKind(m.source),
+    // Group channels are their own view scope; else peer ingest vs local post.
+    source: sourceKind(m.source, { channel: ch }),
     sourceId: m.source || m.author || null,
     kind: 'ChatMessage',
     label: 'chat',
     who,
     body: m.body || '',
     meta: ch === 'global' ? 'Global chat' : ch,
+    chatMessageId: m.id || null,
+    wireHash: m.wireHash || null,
+    contractId: (delivery && delivery.contractId) || m.contractId || null,
+    delivery: delivery || null,
     badges: badges(
       badge('player', m.handle || null, 'player'),
       badge('channel', channelLabel, 'channel'),
@@ -332,7 +361,7 @@ function itemFromBroadcast (b) {
     id: 'bcast:' + b.id,
     ts: b.broadcastAt || b.createdAt || b.ts || null,
     category: 'broadcast',
-    source: 'peer',
+    source: sourceKind(b.source || true, { scope: b.scope }),
     sourceId: b.source || null,
     kind: 'MissionBroadcast',
     label: 'broadcast',
@@ -667,6 +696,7 @@ function filterLiveFeed (items, filters = {}) {
 module.exports = {
   FEED_CATEGORIES,
   FEED_SOURCES,
+  DEFAULT_FEED_SOURCES,
   BADGE_KINDS,
   categoryForKind,
   sourceKind,

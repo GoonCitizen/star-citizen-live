@@ -71,6 +71,33 @@ describe('groupShareMessage', () => {
     assert.equal(classified.object.kind, GROUP_SHARE_KIND_OFFER);
   });
 
+  it('opaque fabric:base64 url round-trips the same Message', () => {
+    const key = new Key();
+    const offer = buildGroupOfferBody({
+      group: { id: 'group-test-1', contractId },
+      definition,
+      actor: key.pubkey
+    });
+    const body = buildGroupOfferContractMessage(offer, key.pubkey);
+    const msg = Message.fromVector(['CONTRACT_MESSAGE', JSON.stringify(body)]).signWithKey(key);
+    const url = buildOpaqueFabricUrl(msg, { encoding: 'base64' });
+    assert.ok(url.startsWith('fabric:base64,'));
+    const parsedUrl = parseOpaqueFabricUrl(url);
+    assert.equal(parsedUrl.ok, true);
+    assert.equal(parsedUrl.encoding, 'base64');
+
+    const parsed = parseOpaqueFabricMessage(url);
+    assert.equal(parsed.ok, true);
+    assert.equal(parsed.encoding, 'base64');
+    assert.equal(parsed.message.type, 'CONTRACT_MESSAGE');
+    assert.equal(parsed.hex, msg.toBuffer().toString('hex'));
+
+    const rawB64 = msg.toBuffer().toString('base64');
+    const fromRaw = parseOpaqueFabricMessage(rawB64);
+    assert.equal(fromRaw.ok, true);
+    assert.equal(fromRaw.hex, parsed.hex);
+  });
+
   it('classifies FederationContractInvite opaque messages', () => {
     const key = new Key();
     const invite = buildFederationContractInvite({

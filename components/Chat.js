@@ -9,6 +9,14 @@
  */
 
 const React = require('react');
+const DeliverySync = require('./DeliverySync');
+const {
+  matchSlashMenu,
+  listSlashCommands,
+  displayCaption,
+  messageAttachment,
+  DEFAULT_CHAT_ATTACH_PRICE_SATS
+} = require('../functions/chatAttachment');
 
 const BASE = '/services/star-citizen';
 
@@ -43,13 +51,37 @@ const CSS = `
   .chat-msg .key{color:var(--muted);font-size:10.5px;font-family:'Cascadia Code',Consolas,monospace}
   .chat-msg .t{color:var(--muted);font-size:10.5px;font-variant-numeric:tabular-nums}
   .chat-msg .b{font-size:13.5px;line-height:1.5;word-break:break-word;white-space:pre-wrap}
+  .chat-attach-card{margin-top:6px;padding:8px 10px;border:1px solid var(--line);border-radius:8px;
+    background:var(--panel2);display:grid;gap:4px;max-width:420px}
+  .chat-attach-card .nm{font-size:12.5px;font-weight:600}
+  .chat-attach-card .meta{font-size:11.5px;color:var(--muted)}
+  .chat-attach-card .tag{font-size:10px;font-weight:700;padding:1px 6px;border-radius:4px;
+    background:rgba(247,147,26,.16);color:#f7931a;margin-left:6px}
   .chat-empty{color:var(--muted);font-style:italic;text-align:center;margin:auto;font-size:13px;line-height:1.7}
-  .chat-compose{display:flex;gap:8px;padding:12px 14px;border-top:1px solid var(--line);flex:0 0 auto}
+  .chat-compose-wrap{position:relative;flex:0 0 auto;border-top:1px solid var(--line)}
+  .chat-attach-chip{display:flex;gap:8px;align-items:center;padding:8px 14px 0;font-size:12px;color:var(--muted)}
+  .chat-attach-chip b{color:var(--text);font-weight:600}
+  .chat-attach-chip button{background:none;border:none;color:var(--kill);cursor:pointer;font-size:12px;padding:0}
+  .chat-compose{display:flex;gap:8px;padding:12px 14px;align-items:center}
   .chat-compose input{flex:1;background:var(--bg);border:1px solid var(--line);color:var(--text);
     border-radius:8px;padding:10px 12px;font-size:13.5px;min-width:0}
-  .chat-send{background:var(--accent);border:none;color:#fff;border-radius:8px;padding:0 18px;
+  .chat-tool{background:var(--panel2);border:1px solid var(--line);color:var(--text);border-radius:8px;
+    width:38px;height:38px;flex:none;cursor:pointer;font-size:16px;line-height:1;display:inline-flex;
+    align-items:center;justify-content:center}
+  .chat-tool:hover{border-color:var(--accent)}
+  .chat-tool:disabled{opacity:.45;cursor:default}
+  .chat-send{background:var(--accent);border:none;color:#fff;border-radius:8px;padding:0 18px;height:38px;
     font-size:13px;font-weight:600;cursor:pointer}
   .chat-send:disabled{opacity:.45;cursor:default}
+  .chat-slash{position:absolute;left:14px;right:14px;bottom:calc(100% - 4px);z-index:20;
+    background:var(--panel);border:1px solid var(--line);border-radius:10px;overflow:hidden;
+    box-shadow:0 10px 28px rgba(0,0,0,.4);max-height:220px;overflow-y:auto}
+  .chat-slash button{display:grid;gap:2px;width:100%;text-align:left;background:none;border:none;
+    color:var(--text);padding:9px 12px;cursor:pointer;border-bottom:1px solid #20262f}
+  .chat-slash button:last-child{border-bottom:none}
+  .chat-slash button:hover,.chat-slash button.on{background:var(--panel2)}
+  .chat-slash .cmd{font-weight:650;font-size:12.5px;font-family:'Cascadia Code',Consolas,monospace}
+  .chat-slash .hint{font-size:11.5px;color:var(--muted)}
   .chat-err{background:rgba(248,81,73,.12);color:var(--kill);border-radius:7px;margin:0 14px 10px;padding:8px 11px;font-size:12.5px;
     flex:0 0 auto}
   .chat-members{background:var(--panel);border:1px solid var(--line);border-radius:12px;overflow:auto;display:flex;
@@ -167,11 +199,17 @@ class Chat extends React.Component {
       inviteBusy: false,
       inviteError: null,
       inviteOk: null,
-      authToken: null
+      authToken: null,
+      pendingFile: null, // { name, mime, size, contentBase64 }
+      attachPriceSats: null, // null → props / default 25
+      slashOpen: false,
+      slashIndex: 0,
+      documentsEnableLocal: null
     };
     this._timer = null;
     this._hoverTimer = null;
     this._msgsRef = React.createRef();
+    this._fileRef = React.createRef();
     this._memRefs = {};
   }
 
@@ -184,6 +222,27 @@ class Chat extends React.Component {
   componentDidMount () {
     this.refresh();
     this._timer = setInterval(() => this.refresh(), 3000);
+    if (this.props.documentsEnable == null) this.loadDocumentsFlag();
+  }
+
+  async loadDocumentsFlag () {
+    try {
+      const res = await fetch('/settings').then((r) => r.json());
+      const documents = (res.runtime && res.runtime.documents) || null;
+      if (!documents) return;
+      this.setState({
+        documentsEnableLocal: documents.enable === true,
+        attachPriceSats: this.state.attachPriceSats != null
+          ? this.state.attachPriceSats
+          : (documents.defaultPriceSats != null ? Number(documents.defaultPriceSats) : null)
+      });
+    } catch (_) { /* ignore */ }
+  }
+
+  documentsEnabled () {
+    if (this.props.documentsEnable === true) return true;
+    if (this.props.documentsEnable === false) return false;
+    return this.state.documentsEnableLocal === true;
   }
 
   componentDidUpdate (prevProps) {
@@ -513,22 +572,197 @@ class Chat extends React.Component {
 
   async send () {
     const body = this.state.draft.trim();
-    if (!body || this.state.sending) return;
-    this.setState({ sending: true, error: null });
+    const pending = this.state.pendingFile;
+    if ((!body && !pending) || this.state.sending) return;
+    this.setState({ sending: true, error: null, slashOpen: false });
     try {
+      const price = this.state.attachPriceSats != null
+        ? this.state.attachPriceSats
+        : (Number(this.props.documentsDefaultPriceSats) || DEFAULT_CHAT_ATTACH_PRICE_SATS);
+      const payload = {
+        channel: this.state.channel,
+        body: body || (pending ? `📎 ${pending.name}` : '')
+      };
+      if (pending) {
+        if (this.props.documentsEnable === false || !this.documentsEnabled()) {
+          throw new Error('File attach requires settings.documents.enable');
+        }
+        payload.file = {
+          name: pending.name,
+          mime: pending.mime,
+          size: pending.size,
+          contentBase64: pending.contentBase64
+        };
+        payload.purchasePriceSats = price;
+      }
       const res = await fetch(`${BASE}/chat/messages`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ channel: this.state.channel, body })
+        body: JSON.stringify(payload)
       });
       const json = await res.json();
       if (!res.ok) throw new Error(json.error || `HTTP ${res.status}`);
-      this.setState({ draft: '', sending: false });
+      this.setState({ draft: '', sending: false, pendingFile: null });
       await this.refresh();
       if (this._msgsRef.current) this._msgsRef.current.scrollTop = this._msgsRef.current.scrollHeight;
     } catch (e) {
       this.setState({ sending: false, error: e.message });
     }
+  }
+
+  attachPrice () {
+    return this.state.attachPriceSats != null
+      ? this.state.attachPriceSats
+      : (Number(this.props.documentsDefaultPriceSats) || DEFAULT_CHAT_ATTACH_PRICE_SATS);
+  }
+
+  onDraftChange (value) {
+    const draft = String(value || '');
+    const matches = matchSlashMenu(draft);
+    const slashOpen = draft.startsWith('/') && matches.length > 0;
+    this.setState({
+      draft,
+      slashOpen,
+      slashIndex: slashOpen ? Math.min(this.state.slashIndex, matches.length - 1) : 0
+    });
+  }
+
+  applySlash (cmd) {
+    if (!cmd) return;
+    if (cmd.action === 'attach') {
+      this.setState({ draft: '', slashOpen: false }, () => this.openFilePicker());
+      return;
+    }
+    if (cmd.action === 'price') {
+      const rest = String(this.state.draft || '').split(/\s+/).slice(1).join(' ').trim();
+      const n = rest ? Math.max(0, Math.floor(Number(rest))) : null;
+      if (n == null || !Number.isFinite(n)) {
+        this.setState({
+          draft: '',
+          slashOpen: false,
+          error: `Usage: /price <sats> — current default ${this.attachPrice()} sats`
+        });
+        return;
+      }
+      this.setState({
+        draft: '',
+        slashOpen: false,
+        attachPriceSats: n,
+        error: null
+      });
+      return;
+    }
+    if (cmd.action === 'help') {
+      const lines = listSlashCommands().map((c) => `${c.cmd} — ${c.hint}`).join('\n');
+      this.setState({ draft: '', slashOpen: false, error: lines });
+    }
+  }
+
+  openFilePicker () {
+    if (!this.documentsEnabled()) {
+      this.setState({ error: 'Enable settings.documents.enable to attach files' });
+      return;
+    }
+    const el = this._fileRef.current;
+    if (el) el.click();
+  }
+
+  onFilePicked (ev) {
+    const file = ev.target.files && ev.target.files[0];
+    ev.target.value = '';
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      try {
+        const dataUrl = String(reader.result || '');
+        const comma = dataUrl.indexOf(',');
+        const contentBase64 = comma >= 0 ? dataUrl.slice(comma + 1) : dataUrl;
+        this.setState({
+          pendingFile: {
+            name: file.name || 'attachment',
+            mime: file.type || 'application/octet-stream',
+            size: file.size,
+            contentBase64
+          },
+          error: null,
+          slashOpen: false
+        });
+      } catch (e) {
+        this.setState({ error: e.message || 'Failed to read file' });
+      }
+    };
+    reader.onerror = () => this.setState({ error: 'Failed to read file' });
+    reader.readAsDataURL(file);
+  }
+
+  onComposeKeyDown (e) {
+    const matches = this.state.slashOpen ? matchSlashMenu(this.state.draft) : [];
+    if (this.state.slashOpen && matches.length) {
+      if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        this.setState({ slashIndex: (this.state.slashIndex + 1) % matches.length });
+        return;
+      }
+      if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        this.setState({ slashIndex: (this.state.slashIndex - 1 + matches.length) % matches.length });
+        return;
+      }
+      if (e.key === 'Enter' || e.key === 'Tab') {
+        e.preventDefault();
+        this.applySlash(matches[this.state.slashIndex] || matches[0]);
+        return;
+      }
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        this.setState({ slashOpen: false });
+        return;
+      }
+    }
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      this.send();
+    }
+  }
+
+  renderAttachmentCard (m) {
+    const att = messageAttachment(m);
+    if (!att) return null;
+    const price = Number(att.purchasePriceSats || 0);
+    return React.createElement('div', { className: 'chat-attach-card' },
+      React.createElement('div', { className: 'nm' },
+        '📎 ', att.name,
+        price > 0
+          ? React.createElement('span', { className: 'tag' }, `${price.toLocaleString()} sats`)
+          : React.createElement('span', { className: 'tag' }, 'free')
+      ),
+      React.createElement('div', { className: 'meta' },
+        att.mime || 'file',
+        att.sealed ? ' · sealed' : '',
+        ' · ',
+        React.createElement('span', {
+          title: att.documentId,
+          style: { fontFamily: "'Cascadia Code',Consolas,monospace", fontSize: 10.5 }
+        }, String(att.documentId).slice(0, 12) + '…')
+      )
+    );
+  }
+
+  onDeliveryUpdated (data) {
+    if (!data || !data.delivery) return;
+    const hash = data.wireHash ? String(data.wireHash).toLowerCase() : null;
+    const chatId = data.chatMessageId || data.id || null;
+    this.setState((s) => ({
+      messages: (s.messages || []).map((m) => {
+        const match = (hash && m.wireHash && String(m.wireHash).toLowerCase() === hash) ||
+          (chatId && m.id === chatId);
+        if (!match) return m;
+        return Object.assign({}, m, {
+          delivery: data.delivery,
+          wireHash: hash || m.wireHash
+        });
+      })
+    }));
   }
 
   renderMemberCard () {
@@ -740,27 +974,82 @@ class Chat extends React.Component {
                 this.renderAuthor(m.author, m.handle),
                 React.createElement('span', { className: 't' }, shortTime(m.ts))
               ),
-              React.createElement('div', { className: 'b' }, m.body)
+              React.createElement('div', { className: 'b' }, displayCaption(m)),
+              this.renderAttachmentCard(m),
+              React.createElement(DeliverySync, {
+                delivery: m.delivery,
+                wireHash: m.wireHash || (m.delivery && m.delivery.wireHash) || null,
+                chatMessageId: m.id,
+                contractId: (m.delivery && m.delivery.contractId) || m.contractId || null,
+                canReceipt: !!this.props.identityPubkey,
+                authToken: this.state.authToken,
+                getAuthToken: () => this.ensureAuth(),
+                showAwaiting: !!(m.channel && String(m.channel).startsWith('group:') && !m.wireHash),
+                onUpdated: (data) => this.onDeliveryUpdated(data),
+                onError: (e) => this.setState({ error: (e && e.message) || String(e) })
+              })
             ))
             : React.createElement('div', { className: 'chat-empty' },
               this.state.loading ? 'loading…' : 'No messages yet — say hello, Citizen.')
         ),
         this.state.error ? React.createElement('div', { className: 'chat-err' }, this.state.error) : null,
-        React.createElement('div', { className: 'chat-compose' },
+        React.createElement('div', { className: 'chat-compose-wrap' },
+          this.state.pendingFile
+            ? React.createElement('div', { className: 'chat-attach-chip' },
+              React.createElement('span', null, 'Ready to publish '),
+              React.createElement('b', null, this.state.pendingFile.name),
+              React.createElement('span', null, ` · ${this.attachPrice().toLocaleString()} sats`),
+              React.createElement('button', {
+                type: 'button',
+                onClick: () => this.setState({ pendingFile: null })
+              }, 'remove')
+            )
+            : null,
+          this.state.slashOpen
+            ? React.createElement('div', { className: 'chat-slash', role: 'listbox' },
+              matchSlashMenu(this.state.draft).map((cmd, i) => React.createElement('button', {
+                type: 'button',
+                key: cmd.cmd,
+                className: i === this.state.slashIndex ? 'on' : '',
+                onMouseDown: (e) => { e.preventDefault(); this.applySlash(cmd); }
+              },
+              React.createElement('span', { className: 'cmd' }, cmd.cmd),
+              React.createElement('span', { className: 'hint' }, cmd.hint)
+              ))
+            )
+            : null,
           React.createElement('input', {
-            type: 'text',
-            value: this.state.draft,
-            placeholder: me
-              ? ('Message as ' + (this.props.nickname || shortKey(me)) + '…')
-              : 'Unlock your identity to chat…',
-            onChange: (e) => this.setState({ draft: e.target.value }),
-            onKeyDown: (e) => { if (e.key === 'Enter') this.send(); }
+            ref: this._fileRef,
+            type: 'file',
+            style: { display: 'none' },
+            onChange: (e) => this.onFilePicked(e)
           }),
-          React.createElement('button', {
-            className: 'chat-send',
-            disabled: !this.state.draft.trim() || this.state.sending,
-            onClick: () => this.send()
-          }, this.state.sending ? '…' : 'Send')
+          React.createElement('div', { className: 'chat-compose' },
+            React.createElement('button', {
+              type: 'button',
+              className: 'chat-tool',
+              title: !this.documentsEnabled()
+                ? 'Enable settings.documents.enable to attach files'
+                : `Attach file (publishes at ${this.attachPrice()} sats)`,
+              disabled: !me || this.state.sending,
+              onClick: () => this.openFilePicker()
+            }, '📎'),
+            React.createElement('input', {
+              type: 'text',
+              value: this.state.draft,
+              placeholder: me
+                ? ('Message as ' + (this.props.nickname || shortKey(me)) + '…  (/ for commands)')
+                : 'Unlock your identity to chat…',
+              disabled: !me,
+              onChange: (e) => this.onDraftChange(e.target.value),
+              onKeyDown: (e) => this.onComposeKeyDown(e)
+            }),
+            React.createElement('button', {
+              className: 'chat-send',
+              disabled: (!this.state.draft.trim() && !this.state.pendingFile) || this.state.sending || !me,
+              onClick: () => this.send()
+            }, this.state.sending ? '…' : 'Send')
+          )
         )
       ),
       embedded ? null : this.renderMembers(),

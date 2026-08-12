@@ -158,10 +158,16 @@ class GroupOfferModal extends React.Component {
   async ingestEncoded (raw) {
     await this.ensureSession();
     const text = String(raw || '').trim();
-    if (!text) throw new Error('Paste a fabric:<hex> message');
-    const body = /^fabric:/i.test(text)
-      ? { protocolUrl: text }
-      : { messageHex: text.replace(/\s+/g, '') };
+    if (!text) throw new Error('Paste a fabric: hex or base64 message');
+    const cleaned = text.replace(/\s+/g, '');
+    let body;
+    if (/^fabric:/i.test(text)) {
+      body = { protocolUrl: text };
+    } else if (/^[0-9a-fA-F]+$/.test(cleaned) && cleaned.length % 2 === 0) {
+      body = { messageHex: cleaned };
+    } else {
+      body = { messageBase64: cleaned };
+    }
     const res = await fetch(`${BASE}/groups/share/ingest`, {
       method: 'POST',
       headers: this.headers(),
@@ -260,11 +266,13 @@ class GroupOfferModal extends React.Component {
         React.createElement('h2', null, 'Import Fabric message'),
         React.createElement('p', null,
           'Paste an encoded Fabric message (',
-          React.createElement('code', null, 'fabric:…'),
+          React.createElement('code', null, 'fabric:<hex>'),
+          ' or ',
+          React.createElement('code', null, 'fabric:base64,…'),
           '). Public group offers apply with your publishing identity; federation invites join locally.'),
         React.createElement('textarea', {
           value: this.state.pasteText,
-          placeholder: 'fabric:…',
+          placeholder: 'fabric:<hex> or fabric:base64,…',
           spellCheck: false,
           autoFocus: true,
           onChange: (e) => this.setState({ pasteText: e.target.value }),

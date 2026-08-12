@@ -35,8 +35,11 @@ const JOURNAL_TYPES = Object.freeze([
   'GroupApplication',
   'GroupApplicationDecision',
   'GroupChange',
+  'GroupChangeProposal',
+  'GroupChangeVote',
   'FederationContractInviteResponse',
-  'GroupActivityTree'
+  'GroupActivityTree',
+  'FleetShare'
 ]);
 
 function normalizeContractId (contractId) {
@@ -153,6 +156,11 @@ function _sortMembers (members) {
 
 /**
  * Deterministic fold of genesis + accepted journal entries.
+ * `members` = participant roster (chat / readers entitlement).
+ * `signers` = spend / authz federation (proposedPolicy.validators).
+ * Application accepts widen members only; GroupChange / invite role=signer
+ * widen the signer set (default role is signer, matching GroupManager).
+ *
  * @param {object} definition GoonCitizenGroup genesis
  * @param {object[]} entries Journal entries
  * @returns {object} GoonCitizenGroupState
@@ -164,16 +172,21 @@ function foldGroupState (definition, entries = []) {
   const groupId = String(definition.groupId);
   const contractId = groupContractId(definition);
   const creator = String(definition.creator || '').toLowerCase();
-  let members = _sortMembers(
+  let signers = _sortMembers(
     (definition.proposedPolicy && definition.proposedPolicy.validators) || [creator]
   );
-  if (!members.includes(creator) && creator) members = _sortMembers(members.concat([creator]));
+  if (!signers.includes(creator) && creator) signers = _sortMembers(signers.concat([creator]));
+  let members = signers.slice();
 
   let meta = Object.assign({}, definition.meta || {});
   let threshold = (definition.proposedPolicy && definition.proposedPolicy.threshold) || 1;
   const applications = {};
   /** Latest published activity tree root under this group namespace (compact). */
   let activityTree = null;
+  /** Fleet tips shared into this group (keyed by fleetId; latest journal wins). */
+  const fleets = {};
+  /** Pending / adopted GroupChangeProposal rows (non-roster until GroupChange). */
+  const proposals = {};
   const seen = new Set();
 
   const list = (Array.isArray(entries) ? entries : []).slice().sort((a, b) => {
@@ -220,19 +233,54 @@ function foldGroupState (definition, entries = []) {
       prev.decidedBy = message.decidedBy || message.actor || null;
       prev.decidedAt = message.decidedAt || entry.acceptedAt || null;
       applications[id] = prev;
+      // Accepted applicants join the participant roster only (not the signer set).
       if (prev.status === 'accepted' && prev.applicantId) {
         members = _sortMembers(members.concat([prev.applicantId]));
       }
+    } else if (type === 'GroupChangeProposal') {
+      const id = String(message.id || entry.id || '');
+      if (id) {
+        proposals[id] = {
+          id,
+          action: message.action || null,
+          member: message.member || null,
+          role: message.role || null,
+          patch: message.patch || null,
+          proposedBy: message.proposedBy || message.actor || null,
+          createdAt: message.createdAt || entry.acceptedAt || null,
+          threshold: Number(message.threshold) || threshold,
+          status: message.status || 'pending',
+          signatures: (message.signatures && typeof message.signatures === 'object')
+            ? Object.assign({}, message.signatures)
+            : {}
+        };
+      }
+    } else if (type === 'GroupChangeVote') {
+      const pid = String(message.proposalId || '');
+      const voter = String(message.voter || '').toLowerCase();
+      const sig = message.signature || null;
+      if (pid && voter && proposals[pid] && proposals[pid].status === 'pending' && sig) {
+        proposals[pid].signatures = Object.assign({}, proposals[pid].signatures || {}, { [voter]: sig });
+      }
     } else if (type === 'GroupChange') {
       const action = String(message.action || '');
+      const role = String(message.role || 'signer').toLowerCase() === 'reader' ? 'reader' : 'signer';
+      if (message.proposalId && proposals[message.proposalId]) {
+        proposals[message.proposalId].status = 'adopted';
+        proposals[message.proposalId].adoptedChangeId = message.id || null;
+      }
       if (action === 'member.add') {
         const pubkey = String(message.member || '').toLowerCase();
-        if (pubkey) members = _sortMembers(members.concat([pubkey]));
+        if (pubkey) {
+          members = _sortMembers(members.concat([pubkey]));
+          if (role === 'signer') signers = _sortMembers(signers.concat([pubkey]));
+        }
       } else if (action === 'member.remove') {
         const pubkey = String(message.member || '').toLowerCase();
         if (pubkey && pubkey !== creator) {
           members = members.filter((m) => m !== pubkey);
-          threshold = Math.min(threshold, Math.max(1, members.length));
+          signers = signers.filter((m) => m !== pubkey);
+          threshold = Math.min(threshold, Math.max(1, signers.length));
         }
       } else if (action === 'update' && message.patch && typeof message.patch === 'object') {
         const patch = message.patch;
@@ -243,7 +291,10 @@ function foldGroupState (definition, entries = []) {
       }
     } else if (type === 'FederationContractInviteResponse') {
       if (message.accept && message.responderPubkey) {
-        members = _sortMembers(members.concat([String(message.responderPubkey).toLowerCase()]));
+        const pubkey = String(message.responderPubkey).toLowerCase();
+        const role = String(message.role || 'signer').toLowerCase() === 'reader' ? 'reader' : 'signer';
+        members = _sortMembers(members.concat([pubkey]));
+        if (role === 'signer') signers = _sortMembers(signers.concat([pubkey]));
       }
     } else if (type === 'GroupActivityTree') {
       // Keep the newest publish (by journal clock order) as the group namespace tip.
@@ -254,11 +305,25 @@ function foldGroupState (definition, entries = []) {
         generatedAt: message.generatedAt || entry.acceptedAt || null,
         counts: message.counts && typeof message.counts === 'object' ? message.counts : null
       };
+    } else if (type === 'FleetShare') {
+      const fleetId = String(message.fleetId || message.id || eid || '').trim();
+      if (!fleetId) continue;
+      fleets[fleetId] = {
+        fleetId,
+        name: message.name != null ? String(message.name) : null,
+        ownerPubkey: message.ownerPubkey || null,
+        shipCount: Number(message.shipCount) || 0,
+        uniqueShips: Number(message.uniqueShips) || 0,
+        ships: Array.isArray(message.ships) ? message.ships.slice(0, 200) : [],
+        sharedAt: message.sharedAt || entry.acceptedAt || null,
+        source: message.source || entry.source || null,
+        visibility: message.visibility || 'groups'
+      };
     }
   }
 
-  threshold = Math.max(1, Math.min(threshold, members.length || 1));
-  const proposedPolicy = normalizeProposedPolicy({ validators: members, threshold });
+  threshold = Math.max(1, Math.min(threshold, signers.length || 1));
+  const proposedPolicy = normalizeProposedPolicy({ validators: signers, threshold });
 
   return {
     '@type': 'GoonCitizenGroupState',
@@ -266,12 +331,22 @@ function foldGroupState (definition, entries = []) {
     contractId,
     meta,
     members: members.slice(),
+    signers: signers.slice(),
+    threshold,
     applications: Object.keys(applications).sort().reduce((acc, k) => {
       acc[k] = applications[k];
       return acc;
     }, {}),
+    proposals: Object.keys(proposals).sort().reduce((acc, k) => {
+      acc[k] = proposals[k];
+      return acc;
+    }, {}),
     proposedPolicy,
-    activityTree
+    activityTree,
+    fleets: Object.keys(fleets).sort().reduce((acc, k) => {
+      acc[k] = fleets[k];
+      return acc;
+    }, {})
   };
 }
 
@@ -459,6 +534,53 @@ function mergeJournalEntries (store, contractId, remoteEntries, definition, meta
 }
 
 /**
+ * Latest ContractStateTip fields + roster for tip-bound GroupChat sealing.
+ * Uses the peer's folded journal content (members entitled at this tip).
+ * @param {{ get: Function, put: Function }} store
+ * @param {string} contractId
+ * @param {object} definition
+ * @returns {{ contractId: string, clock: number, stateDigest: string, memberPubkeys: string[] }}
+ */
+function tipForChatSeal (store, contractId, definition) {
+  if (!isGroupContractDefinition(definition)) {
+    throw new Error('tipForChatSeal requires a GoonCitizenGroup definition');
+  }
+  const id = normalizeContractId(contractId || groupContractId(definition));
+  const doc = loadDoc(store, id);
+  const content = foldGroupState(definition, doc.journal.entries);
+  const state = {
+    version: Number(doc.version) || 1,
+    clock: Number(doc.clock) || 0,
+    content
+  };
+  const head = namespaceHeadFromState(id, state);
+  let members = Array.isArray(content.members) ? content.members.slice() : [];
+  if (!members.length) {
+    members = canonicalizeValidators(
+      (definition.proposedPolicy && definition.proposedPolicy.validators) || []
+    );
+  }
+  let signers = Array.isArray(content.signers) ? content.signers.slice() : [];
+  if (!signers.length) {
+    signers = canonicalizeValidators(
+      (content.proposedPolicy && content.proposedPolicy.validators)
+      || (definition.proposedPolicy && definition.proposedPolicy.validators)
+      || []
+    );
+  }
+  return {
+    contractId: head.contractId,
+    clock: head.clock,
+    stateDigest: head.stateDigest,
+    memberPubkeys: members,
+    signerPubkeys: signers,
+    threshold: content.threshold != null
+      ? Number(content.threshold)
+      : ((content.proposedPolicy && content.proposedPolicy.threshold) || 1)
+  };
+}
+
+/**
  * Build a GroupJournalBatch object for mesh catch-up.
  * @param {{ get: Function, put: Function }} store
  * @param {string} contractId
@@ -510,5 +632,6 @@ module.exports = {
   attachFabricMessage,
   entriesFromClock,
   mergeJournalEntries,
+  tipForChatSeal,
   buildJournalBatch
 };

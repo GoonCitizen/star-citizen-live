@@ -9,6 +9,7 @@
  */
 
 const React = require('react');
+const BitcoinWalletPanel = require('./BitcoinWalletPanel');
 
 const BASE = '/services/star-citizen';
 
@@ -32,7 +33,7 @@ const CSS = `
   .wa-btn{background:var(--panel2);border:1px solid var(--line);color:var(--text);border-radius:7px;padding:4px 11px;font-size:11.5px;cursor:pointer}
   .wa-btn:hover{border-color:var(--accent)}
   .wa-note{color:var(--muted);font-size:12px;padding:12px 16px;line-height:1.6}
-`;
+` + (BitcoinWalletPanel.CSS || '');
 
 const SATS = (n) => Number(n || 0).toLocaleString() + ' sats';
 
@@ -100,9 +101,18 @@ class Wallet extends React.Component {
 
   render () {
     const w = this.state.wallet;
+    const bitcoinEnable = this.props.bitcoinEnable !== false &&
+      !(w && w.bitcoin && w.bitcoin.enable === false);
     return React.createElement('div', { className: 'wa-wrap' },
+      React.createElement(BitcoinWalletPanel, {
+        bitcoinEnable,
+        identityPubkey: this.props.identityPubkey || this.props.pubkey || null,
+        identityLocked: !!this.props.identityLocked,
+        network: (w && w.bitcoin && w.bitcoin.network) || (w && w.network) || 'regtest'
+      }),
+
       React.createElement('div', { className: 'wa-panel' },
-        React.createElement('h2', null, '₿ Wallet ',
+        React.createElement('h2', null, '₿ Escrow backend ',
           React.createElement('span', { className: 'sub' }, '— mission escrow backend and group multisig'),
           React.createElement('button', { className: 'wa-btn', onClick: () => this.load() }, 'Refresh')
         ),
@@ -143,7 +153,20 @@ class Wallet extends React.Component {
                     className: 'wa-btn',
                     title: 'Propose publisher withdrawal (active non-expired tier)',
                     onClick: () => this.proposeWithdraw(g.id)
-                  }, 'Withdraw') : null
+                  }, 'Withdraw') : null,
+                  Array.isArray(gw.leaves) && gw.leaves.length
+                    ? React.createElement('div', {
+                      style: {
+                        width: '100%',
+                        marginTop: 6,
+                        fontSize: 11,
+                        color: 'var(--muted)',
+                        lineHeight: 1.5
+                      }
+                    },
+                    'Leaves: ',
+                    gw.leaves.map((l) => `${l.id}(${l.kind})`).join(' · '))
+                    : null
                 )
                 : React.createElement('span', { className: 'wa-addr', style: { color: 'var(--muted)' } },
                   gw ? (gw.error || gw.note || '…') : 'deriving…')

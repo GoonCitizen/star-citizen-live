@@ -108,7 +108,7 @@ npm run build:installers  # Windows x64 + Debian x64 + macOS
   (`GET …/activity-tree`) and can publish `GroupActivityTree` into a Group
   Contract Statechain (`POST …/activity-tree/publish`).
 - Dashboard home lists features along the top: Live (Feed), Missions,
-  Wallet, Library, Chat, Groups, Peers. **Feed** is a chat-style stream
+  Wallet, Files (advanced / opt-in), Library, Chat, Groups, Peers. **Feed** is a chat-style stream
   (`GET …/monitor` → `feed` / `GET …/feed`) merging parsed Game.log events,
   peer `SCEventBatch` collections, global/group chat, and mission broadcasts;
   type/from chips default to All with optional keyword filter. Chat uses Hub message types
@@ -147,7 +147,31 @@ npm run build:installers  # Windows x64 + Debian x64 + macOS
   authorities' multisig, submit-completion (claim) → approve-completion
   (BIP340 Schnorr over the acceptance message) → escrow `payable` → payout
   PSBT. Ledger mode by default; `settings.payouts.rpc` connects bitcoind
-  (regtest/signet; mainnet refused per D-008).
+  (regtest/signet; mainnet refused per D-008). Personal Hub Bitcoin
+  (`settings.bitcoin.enable`) proxies `/services/star-citizen/bitcoin/*` to
+  Hub HTTP — the app’s Hub-shaped API. Operator admin token for Hub-wallet
+  send is resolved server-side only (`FABRIC_HUB_ADMIN_TOKEN`,
+  `bitcoin.adminToken`, `bitcoin.adminTokenFile`, or playnet mesh discover);
+  the UI never holds it.
+- **Document Exchange / Files (opt-in):** Hub UI `/documents` + Fabric TUI
+  `documents` / `documents-market` packs, gated by **`settings.documents.enable`**
+  in `settings/local.js` (off by default in `settings/example.js`). The dashboard
+  **Files** tab (renamed from Documents) is **Advanced mode only**. Chat (and the
+  global dock) expose an **📎 attach** control for all users when documents are
+  enabled: picking a file creates + publishes on the Hub at
+  `documents.defaultPriceSats` (default **25**, Hub DocumentView default) then
+  posts a ChatMessage with a `fabric-doc:` wire line (`functions/chatAttachment.js`).
+  LiveRelay `/services/star-citizen/documents/*` proxies Hub JSON-RPC; chat POST
+  may include `{ file: { contentBase64, name, mime }, purchasePriceSats }`.
+  Slash-command pop-out (`/file`, `/price`, `/help`) is extensible via
+  `SLASH_COMMANDS`.
+- **Discord bot (`@fabric/discord`):** Settings / env configure app id, token,
+  channel. Inbound Discord traffic publishes GoonCitizen `CONTRACT_MESSAGE`
+  bodies **DiscordRequest → DiscordClaim (first-wins) → DiscordResponse** so
+  multiple operators of the same Discord application do not double-reply.
+  Auditors seed the sequence from the Fabric message log (**View tree** on any
+  Discord frame, or `GET …/fabric/messages/tree?requestId=`). Helpers:
+  `functions/discordContract.js`.
 - **Peers (D-010 / D-017):** each node runs a Fabric Peer on **port 7777**
   (`fabric.port`); default seeds are `hub.fabric.pub:7777` and
   `relay.goon.vc:7777` (removable; a saved empty list is respected). Peering is
@@ -179,10 +203,17 @@ npm run build:installers  # Windows x64 + Debian x64 + macOS
 | `SC_LOGFILE` | Force an exact `Game.log` path (highest priority). |
 | `SC_CHANNEL` | Force a channel, e.g. `HOTFIX` (when auto-detect ties). |
 | `SC_SEED` | Pre-fill the monitor from a different log on start. |
-| `DISCORD_WEBHOOK_URL` | Enable Discord posting (optional). |
+| `DISCORD_WEBHOOK_URL` | Optional webhook mirror (fallback if no bot). |
+| `DISCORD_BOT_TOKEN` | Local `@fabric/discord` bot token. |
+| `DISCORD_APP_ID` / `DISCORD_APP_SECRET` | Discord application id / OAuth client secret. |
+| `DISCORD_CHANNEL_ID` | Default announce channel snowflake for bot embeds. When set, inbound Fabric DiscordRequest coordination is limited to that channel. |
 | `SC_OFFICERS` | Comma-separated officer allowlist for the mission register. |
 | `SC_REGISTER_DIR` | Fabric Store (LevelDB) for ALL internal storage — missions, groups, operator settings. Default: `stores/gooncitizen/register` (CLI) / `<userData>/stores/gooncitizen/register` (desktop). |
 | `SC_SETTINGS_DIR` | Named Fabric store root. Default: `stores/gooncitizen`. |
+| `FABRIC_PORT` | Fabric Peer listen port (default 7777). |
+| `FABRIC_INTERFACE` / `FABRIC_PEER_INTERFACE` | Fabric Peer bind address (default `0.0.0.0`). Dedicated `relay.goon.vc` NIC: `65.21.231.149`. |
+| `FABRIC_PUBLIC_HOST` / `FABRIC_ADVERTISE_HOST` | Hostname for peering offers / self-dial filter (`relay.goon.vc` on that host). Legacy alias: `SC_FABRIC_PUBLIC_HOST` (mapped at boot). |
+| `FABRIC_HUB_INTERFACE` / `INTERFACE` / `FABRIC_HTTP_INTERFACE` | HTTP dashboard bind (default loopback unless shared mode / server). Legacy aliases: `SC_HTTP_HOST` / `SC_HTTP_INTERFACE` (mapped at boot via `functions/goonCitizenEnvAliases.js`). |
 
 Snapshot settings (Settings ⚙ → Snapshots; stored in the Fabric Store, applied
 live): `snapshotsEnabled` (opt-in, default off), `snapshotIntervalSeconds`
@@ -262,7 +293,7 @@ Kept during migration; safe to ignore unless explicitly working on migration.
   in `history.json` under the store root. Live tail and peer `SCEventBatch`
   deaths/mission ends fold into the same store. Optional CLI: `npm run backfill`.
 - **Hub sidechain / Beacon seal (D-015 / D-016 / D-018):** clients publish
-  `GameStateSnapshot`; `relay.goon.vc` aggregates into `/gooncitizen` **and**
+  `GameStateSnapshot`; `relay.goon.vc` aggregates into `/services/rsi` **and**
   `/namespaces/<gooncitizenContractId>` on Hub `sidechain/STATE` so each Beacon
   epoch seals a public `stateDigest` + `sidechain/SNAPSHOTS` (Fabric sidechain document;
   Hub ADR-001). Gossip event firehose uses `@fabric/core` **Chain** of **Blocks**

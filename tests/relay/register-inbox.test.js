@@ -88,10 +88,42 @@ test('registerInbox maps audits and broadcasts', () => {
     status: 'pending',
     note: 'come fly'
   });
-  assert.strictEqual(fi.kind, 'FederationInvite');
-  assert.strictEqual(fi.title, 'Invite to Wing Alpha');
+  assert.strictEqual(fi.kind, 'MultisigWalletInvite');
+  assert.strictEqual(fi.title, 'Multisig wallet invite · Wing Alpha');
   assert.strictEqual(fi.refs.inviteePubkey, '02' + 'cd'.repeat(32));
   assert.ok(registerInbox.isNotification(fi));
+
+  const readerInvite = registerInbox.entryFromFederationInvite({
+    inviteId: 'inv-reader',
+    role: 'reader',
+    groupName: 'Library',
+    status: 'pending'
+  });
+  assert.strictEqual(readerInvite.kind, 'FederationInvite');
+  assert.ok(registerInbox.isNotification(readerInvite));
+
+  const rejectDecision = registerInbox.entryFromGroupAudit({
+    id: 'gaudit-1',
+    ts: '2026-01-01T00:02:00.000Z',
+    actor: '02' + 'ab'.repeat(32),
+    action: 'group.application.reject',
+    entityId: 'g1',
+    summary: 'app-9'
+  });
+  assert.strictEqual(rejectDecision.kind, 'GroupApplicationDecision');
+  assert.strictEqual(rejectDecision.status, 'rejected');
+  assert.ok(registerInbox.isNotification(rejectDecision));
+
+  const wallet = registerInbox.entryFromWalletEvent({
+    kind: 'WalletPayout',
+    title: 'Mission payout unlocked',
+    status: 'pending',
+    actionable: true,
+    refs: { missionId: 'm1' },
+    dedupeKey: 'wallet-test-1'
+  });
+  assert.strictEqual(wallet.kind, 'WalletPayout');
+  assert.ok(registerInbox.isNotification(wallet));
 });
 
 test('notifications vs mission/group activity scopes', async () => {
@@ -185,6 +217,17 @@ test('notifications vs mission/group activity scopes', async () => {
     assert.ok(
       (notices2.body.data || []).some((r) => r.kind === 'GroupApplication'),
       'group applications are notifications'
+    );
+
+    const decide = await request(port, 'POST', `${BASE}/group-applications/${gapp.body.data.id}/decision`, {
+      decision: 'reject'
+    }, officerToken);
+    assert.strictEqual(decide.status, 200, JSON.stringify(decide.body));
+
+    const notices3 = await request(port, 'GET', `${BASE}/inbox?scope=notifications`);
+    assert.ok(
+      (notices3.body.data || []).some((r) => r.kind === 'GroupApplicationDecision' && r.status === 'rejected'),
+      'group join rejections appear in notifications'
     );
 
     const groupLog = await request(port, 'GET', `${BASE}/inbox?groupId=${encodeURIComponent(groupId)}`);

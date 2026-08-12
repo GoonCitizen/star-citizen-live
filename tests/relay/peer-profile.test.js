@@ -163,6 +163,15 @@ test('observeHubPeering discovers via OPTIONS ARC then reads peering', async () 
             peering: {
               endpointBasePath: '/services/peering',
               kind: 'PeeringCapability'
+            },
+            faucet: {
+              kind: 'BitcoinFaucet',
+              source: 'beacon',
+              network: 'regtest',
+              endpointBasePath: '/services/bitcoin/faucet',
+              available: true,
+              funded: true,
+              balanceSats: 100000
             }
           },
           capabilities: { http: { cors: true }, fabric: { p2p: true } }
@@ -193,6 +202,9 @@ test('observeHubPeering discovers via OPTIONS ARC then reads peering', async () 
   assert.strictEqual(snap.hubs[0].p2pConnections, 4);
   assert.strictEqual(snap.hubs[0].application.contractId, 'deadbeef');
   assert.strictEqual(snap.hubs[0].discoveredVia, 'options+peering');
+  assert.ok(snap.hubs[0].faucet);
+  assert.strictEqual(snap.hubs[0].faucet.source, 'beacon');
+  assert.strictEqual(snap.hubs[0].faucet.balanceSats, 100000);
   assert.ok(calls.some((c) => c.method === 'OPTIONS'));
   assert.ok(calls.some((c) => c.method === 'GET' && c.url.endsWith('/services/peering')));
 });

@@ -22,6 +22,13 @@
 const crypto = require('crypto');
 const EventEmitter = require('events');
 const { OUTER } = require('../contracts/applicationMessageTypes');
+const { pubkeysMatch, canonicalChatAuthor } = require('../functions/identity');
+const {
+  encodeWireBody,
+  decodeWireBody,
+  normalizeAttachment,
+  isWireEncoded
+} = require('../functions/chatAttachment');
 
 const GLOBAL_CHANNEL = 'global';
 const GROUP_PREFIX = 'group:';
@@ -37,11 +44,16 @@ function sha256 (s) { return crypto.createHash('sha256').update(String(s)).diges
 
 /** Deterministic DM channel key for two Fabric pubkeys. */
 function dmChannelKey (a, b) {
-  const x = String(a || '').trim();
-  const y = String(b || '').trim();
-  if (!PUBKEY_RE.test(x) || !PUBKEY_RE.test(y)) return null;
-  if (x.toLowerCase() === y.toLowerCase()) return null;
-  const [lo, hi] = [x, y].sort((p, q) => p.localeCompare(q));
+  let xa;
+  let xb;
+  try {
+    xa = canonicalChatAuthor(a);
+    xb = canonicalChatAuthor(b);
+  } catch (_) {
+    return null;
+  }
+  if (xa === xb) return null;
+  const [lo, hi] = [xa, xb].sort((p, q) => p.localeCompare(q));
   return `${DM_PREFIX}${lo}:${hi}`;
 }
 
@@ -108,12 +120,7 @@ class ChatManager extends EventEmitter {
     const dm = parseDmChannel(channel);
     if (dm) {
       if (!viewer) return !enforceMembership;
-      try {
-        const { pubkeysMatch } = require('../functions/identity');
-        return pubkeysMatch(viewer, dm.a) || pubkeysMatch(viewer, dm.b);
-      } catch (_) {
-        return viewer === dm.a || viewer === dm.b;
-      }
+      return pubkeysMatch(viewer, dm.a) || pubkeysMatch(viewer, dm.b);
     }
     const groupId = ChatManager.groupIdOf(channel);
     if (!groupId || !this.groupManager || !this.groupManager.getGroup(groupId)) return false;
@@ -127,14 +134,8 @@ class ChatManager extends EventEmitter {
   dmPeerOf (channel, viewer) {
     const dm = parseDmChannel(channel);
     if (!dm || !viewer) return null;
-    try {
-      const { pubkeysMatch } = require('../functions/identity');
-      if (pubkeysMatch(viewer, dm.a)) return dm.b;
-      if (pubkeysMatch(viewer, dm.b)) return dm.a;
-    } catch (_) {
-      if (viewer === dm.a) return dm.b;
-      if (viewer === dm.b) return dm.a;
-    }
+    if (pubkeysMatch(viewer, dm.a)) return dm.b;
+    if (pubkeysMatch(viewer, dm.b)) return dm.a;
     return null;
   }
 
@@ -195,16 +196,26 @@ class ChatManager extends EventEmitter {
   /**
    * Post a message. The id is content-derived so the same message merged
    * from any path converges. Returns the stored record.
-   * @param {Object} data Message fields (`channel`, `body`, `author`, optional `handle` / `ts`).
+   * Optional `attachment` (DocumentPublish) is encoded into the wire body for
+   * global UTF-8 chat and stored as a structured field for UI / group payloads.
+   * @param {Object} data Message fields (`channel`, `body`, `author`, optional `handle` / `ts` / `attachment`).
    */
   post (data = {}) {
     const channel = String(data.channel || GLOBAL_CHANNEL);
     if (!this._validChannel(channel)) throw new Error(`unknown channel: ${channel}`);
-    const body = String(data.body || '').trim().slice(0, MAX_BODY);
+    let attachment = normalizeAttachment(data.attachment);
+    let body = String(data.body || '').trim();
+    if (attachment && !isWireEncoded(body)) {
+      body = encodeWireBody({ caption: body, attachment });
+    } else if (!attachment && isWireEncoded(body)) {
+      attachment = decodeWireBody(body).attachment;
+    }
+    body = body.slice(0, MAX_BODY);
     if (!body) throw new Error('message body required');
     if (!data.author) throw new Error('author (pubkey) required');
+    const author = canonicalChatAuthor(data.author);
     const dm = parseDmChannel(channel);
-    if (dm && !this.canAccess(channel, data.author, { enforceMembership: true })) {
+    if (dm && !this.canAccess(channel, author, { enforceMembership: true })) {
       throw new Error('author is not a participant in this DM');
     }
     const ts = data.ts || new Date().toISOString();
@@ -212,21 +223,29 @@ class ChatManager extends EventEmitter {
     // Global mesh chat is UTF-8 text only on the wire (no ts) — id from author+body
     // so multi-path ingest converges. Group / local channels keep ts in the id.
     const idBasis = channel === GLOBAL_CHANNEL
-      ? { channel, author: data.author, body }
-      : { channel, author: data.author, body, ts };
+      ? { channel, author, body }
+      : { channel, author, body, ts };
     const record = {
       '@type': TYPE,
       id: sha256(canonical(idBasis)).slice(0, 32),
       channel,
-      author: String(data.author),
+      author,
       handle: data.handle ? String(data.handle).slice(0, 64) : null,
       body,
       ts
     };
+    if (attachment) record.attachment = attachment;
     if (data.source) record.source = data.source;
 
     const existing = this.store.get('chatmessages', record.id);
-    if (existing) return existing; // idempotent merge
+    if (existing) {
+      // Prefer filling attachment on an earlier text-only merge of the same id.
+      if (attachment && !existing.attachment) {
+        existing.attachment = attachment;
+        this.store.put('chatmessages', existing.id, existing);
+      }
+      return existing;
+    }
     this.store.put('chatmessages', record.id, record);
     this.emit('message', record);
     return record;
@@ -242,17 +261,23 @@ class ChatManager extends EventEmitter {
       throw Object.assign(new Error('chat event requires author, body and ts'), { code: 'BAD_EVENT' });
     }
     // Fabric wire authors are often x-only; identities use compressed pubkeys.
-    const { pubkeysMatch } = require('../functions/identity');
     if (!pubkeysMatch(data.author, source)) {
       throw Object.assign(new Error('chat author must match the batch signer'), { code: 'FORBIDDEN' });
     }
-    const before = this.store.get('chatmessages', ChatManager.idOf(data));
+    const author = canonicalChatAuthor(source);
+    const before = this.store.get('chatmessages', ChatManager.idOf({
+      channel: data.channel,
+      body: data.body,
+      author,
+      ts: data.ts
+    }));
     const record = this.post({
       channel: data.channel,
       body: data.body,
-      author: data.author,
+      author,
       handle: data.handle,
       ts: data.ts,
+      attachment: data.attachment || null,
       source
     });
     return { id: record.id, created: !before };
@@ -262,9 +287,10 @@ class ChatManager extends EventEmitter {
   static idOf (data) {
     const body = String(data.body || '').trim().slice(0, MAX_BODY);
     const channel = String(data.channel || GLOBAL_CHANNEL);
+    const author = canonicalChatAuthor(data.author);
     const basis = channel === GLOBAL_CHANNEL
-      ? { channel, author: data.author, body }
-      : { channel, author: data.author, body, ts: data.ts };
+      ? { channel, author, body }
+      : { channel, author, body, ts: data.ts };
     return sha256(canonical(basis)).slice(0, 32);
   }
 
@@ -282,3 +308,4 @@ class ChatManager extends EventEmitter {
 }
 
 module.exports = ChatManager;
+module.exports.canonicalChatAuthor = canonicalChatAuthor;

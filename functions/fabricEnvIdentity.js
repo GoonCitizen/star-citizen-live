@@ -3,13 +3,13 @@
 /**
  * GoonCitizen publishing identity from the process environment.
  *
- * Priority:
- *   1. FABRIC_XPRV — extended private key (preferred for headless / relay)
- *   2. FABRIC_SEED or FABRIC_MNEMONIC — BIP39 mnemonic (derives the same Key)
+ * Priority (same convention across the Fabric suite):
+ *   1. FABRIC_XPRV — extended private key (preferred in public docs / production)
+ *   2. FABRIC_SEED or FABRIC_MNEMONIC — BIP39 mnemonic, or an `xprv…` string in FABRIC_SEED
+ *   3. Optional local `local/fabric-operator-identity.json` (automation fallback only)
  *
- * Calling {@link applyFabricEnvConfig} with FABRIC_SEED set fills FABRIC_XPRV
- * (and related public fields) on the env object so the rest of the stack can
- * treat XPRV as the canonical publishing secret.
+ * Calling {@link applyFabricEnvConfig} stamps FABRIC_XPRV (and public fields) onto `env`
+ * so the rest of the stack can treat XPRV as the canonical publishing secret.
  */
 
 const fs = require('fs');
@@ -61,24 +61,71 @@ function loadRepoDotEnv (repoRoot = path.join(__dirname, '..'), env = process.en
 }
 
 /**
+ * Local automation identity file (never preferred over FABRIC_XPRV / FABRIC_SEED).
  * @param {NodeJS.ProcessEnv} [env]
- * @returns {{ mnemonic: string|null, xprv: string, xpub: string, pubkey: string, id: string }|null}
+ * @param {string} [repoRoot]
+ * @returns {{ path: string, mnemonic: string|null, xprv: string|null }|null}
  */
-function loadFabricEnvIdentity (env = process.env) {
-  const xprv = String(env.FABRIC_XPRV || '').trim();
-  if (xprv.startsWith('xprv')) {
-    return restoreIdentity({ xprv });
+function loadLocalOperatorIdentityFile (env = process.env, repoRoot = path.join(__dirname, '..')) {
+  const candidates = [
+    env.FABRIC_OPERATOR_IDENTITY
+      ? path.resolve(String(env.FABRIC_OPERATOR_IDENTITY))
+      : null,
+    path.join(repoRoot, 'local', 'fabric-operator-identity.json'),
+    path.resolve(repoRoot, '..', 'hub.fabric.pub', 'local', 'fabric-operator-identity.json'),
+    // Silent legacy filenames (disk only; not part of the public API)
+    path.join(repoRoot, 'local', 'cursor-agent-fabric-identity.json'),
+    path.resolve(repoRoot, '..', 'hub.fabric.pub', 'local', 'cursor-agent-fabric-identity.json')
+  ].filter(Boolean);
+  for (const p of candidates) {
+    try {
+      const data = JSON.parse(fs.readFileSync(p, 'utf8'));
+      const mnemonic = String(data.mnemonic || '').trim();
+      const xprv = String(data.xprv || '').trim();
+      if (xprv.startsWith('xprv') || xprv.startsWith('tprv') || mnemonic) {
+        return {
+          path: p,
+          mnemonic: mnemonic || null,
+          xprv: (xprv.startsWith('xprv') || xprv.startsWith('tprv')) ? xprv : null
+        };
+      }
+    } catch (_) {}
   }
-  const seed = String(env.FABRIC_SEED || env.FABRIC_MNEMONIC || '').trim();
-  if (!seed) return null;
-  if (seed.startsWith('xprv')) {
-    return restoreIdentity({ xprv: seed });
-  }
-  return restoreIdentity({ mnemonic: seed });
+  return null;
 }
 
 /**
- * Derive Key material from FABRIC_SEED / FABRIC_MNEMONIC and stamp FABRIC_XPRV
+ * @param {NodeJS.ProcessEnv} [env]
+ * @param {object} [opts]
+ * @param {boolean} [opts.allowLocalIdentityFallback=true]
+ * @returns {{ mnemonic: string|null, xprv: string, xpub: string, pubkey: string, id: string }|null}
+ */
+function loadFabricEnvIdentity (env = process.env, opts = {}) {
+  const allowLocal = opts.allowLocalIdentityFallback !== false;
+
+  const xprv = String(env.FABRIC_XPRV || '').trim();
+  if (xprv.startsWith('xprv') || xprv.startsWith('tprv')) {
+    return restoreIdentity({ xprv });
+  }
+
+  const seed = String(env.FABRIC_SEED || env.FABRIC_MNEMONIC || '').trim();
+  if (seed.startsWith('xprv') || seed.startsWith('tprv')) {
+    return restoreIdentity({ xprv: seed });
+  }
+  if (seed) {
+    return restoreIdentity({ mnemonic: seed });
+  }
+
+  if (!allowLocal) return null;
+  const local = loadLocalOperatorIdentityFile(env);
+  if (!local) return null;
+  if (local.xprv) return restoreIdentity({ xprv: local.xprv });
+  if (local.mnemonic) return restoreIdentity({ mnemonic: local.mnemonic });
+  return null;
+}
+
+/**
+ * Derive Key material from FABRIC_* env (preferred) and stamp FABRIC_XPRV
  * (plus FABRIC_XPUB / FABRIC_PUBKEY) onto `env` when missing.
  *
  * @param {NodeJS.ProcessEnv} [env]
@@ -90,11 +137,14 @@ function applyFabricEnvConfig (env = process.env) {
   if (!identity) {
     return { identity: null, updated: false, source: null };
   }
-  let source = before.startsWith('xprv')
-    ? 'FABRIC_XPRV'
-    : (env.FABRIC_SEED ? 'FABRIC_SEED' : 'FABRIC_MNEMONIC');
+
+  let source = 'local-operator-identity';
+  if (before.startsWith('xprv') || before.startsWith('tprv')) source = 'FABRIC_XPRV';
+  else if (String(env.FABRIC_SEED || '').trim()) source = 'FABRIC_SEED';
+  else if (String(env.FABRIC_MNEMONIC || '').trim()) source = 'FABRIC_MNEMONIC';
+
   let updated = false;
-  if (!before.startsWith('xprv')) {
+  if (!(before.startsWith('xprv') || before.startsWith('tprv'))) {
     env.FABRIC_XPRV = identity.xprv;
     updated = true;
   }
@@ -111,6 +161,7 @@ function applyFabricEnvConfig (env = process.env) {
 
 /**
  * Shell-friendly export lines (never log these to shared consoles in prod).
+ * Prefer exporting FABRIC_XPRV for suite-wide identity.
  * @param {object} identity
  * @returns {string}
  */
@@ -127,6 +178,7 @@ function formatFabricEnvExports (identity) {
 module.exports = {
   loadDotEnvFile,
   loadRepoDotEnv,
+  loadLocalOperatorIdentityFile,
   loadFabricEnvIdentity,
   applyFabricEnvConfig,
   formatFabricEnvExports

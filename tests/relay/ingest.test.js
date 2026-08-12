@@ -23,7 +23,15 @@ function request (port, method, path, payload) {
 }
 
 async function startServer (extra = {}) {
-  const svc = new LiveRelay(Object.assign({ port: 0, mode: 'server', missions: { enable: true } }, extra));
+  const base = {
+    port: 0,
+    mode: 'server',
+    missions: { enable: true },
+    ingest: { httpEnable: true }
+  };
+  const merged = Object.assign({}, base, extra);
+  merged.ingest = Object.assign({}, base.ingest, extra.ingest || {});
+  const svc = new LiveRelay(merged);
   await svc.start();
   return { svc, port: svc.server.address().port };
 }
@@ -170,5 +178,22 @@ test('hosted HTTP ingest still accepts Schnorr-signed event batches (legacy/test
     assert.strictEqual(kills.body.data[0].source, identity.pubkey);
   } finally {
     await server.stop();
+  }
+});
+
+test('HTTP event ingest is disabled by default (Fabric-only path)', async () => {
+  const identity = createIdentity();
+  const svc = new LiveRelay({ port: 0, mode: 'server', missions: { enable: false } });
+  await svc.start();
+  const port = svc.server.address().port;
+  try {
+    const envelope = signEnvelope(identity, {
+      events: [{ collection: 'kills', data: { killer: 'a', victim: 'b' } }]
+    });
+    const res = await request(port, 'POST', `${BASE}/events`, envelope);
+    assert.strictEqual(res.status, 403);
+    assert.match(res.body.error, /HTTP event ingest is disabled/i);
+  } finally {
+    await svc.stop();
   }
 });

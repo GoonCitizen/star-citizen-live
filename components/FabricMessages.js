@@ -46,6 +46,12 @@ const CSS = `
   .fm-peer{color:var(--muted);font-size:11px;margin-top:3px;word-break:break-all}
   .fm-detail{margin-top:8px;padding:8px 10px;background:var(--panel);border:1px solid var(--line);border-radius:6px;
     white-space:pre-wrap;word-break:break-word;max-height:280px;overflow:auto;font-size:11.5px;color:var(--text)}
+  .fm-tree{margin-top:8px;padding:10px 12px;background:var(--panel2);border:1px solid var(--line);border-radius:6px}
+  .fm-tree h3{margin:0 0 8px;font-size:12px;font-weight:600}
+  .fm-tree .fm-tree-node{font-family:'Cascadia Code',Consolas,monospace;font-size:11.5px;padding:4px 0;
+    border-bottom:1px solid #20262f;display:flex;flex-wrap:wrap;gap:8px;align-items:baseline}
+  .fm-tree .fm-tree-node:last-child{border-bottom:0}
+  .fm-tree .kind{font-weight:700;color:var(--accent);min-width:9em}
   .fm-empty{padding:28px 16px;text-align:center;color:var(--muted);font-size:13px}
 `;
 
@@ -67,6 +73,20 @@ function bodyText (entry) {
   return entry.bodyPreview || '';
 }
 
+function discordRequestIdFromEntry (entry) {
+  if (!entry) return null;
+  const body = entry.body;
+  if (body && typeof body === 'object') {
+    const object = body.object != null ? body.object : body;
+    if (object && object.requestId) return String(object.requestId);
+  }
+  const app = String(entry.appType || '');
+  if (!/Discord(Request|Claim|Response)/.test(app)) return null;
+  const preview = String(entry.bodyPreview || '');
+  const m = preview.match(/"requestId"\s*:\s*"([a-fA-F0-9]{64})"/);
+  return m ? m[1] : null;
+}
+
 class FabricMessages extends React.Component {
   constructor (props) {
     super(props);
@@ -81,7 +101,9 @@ class FabricMessages extends React.Component {
       showKeepalive: false,
       auto: true,
       openId: null,
-      busy: false
+      busy: false,
+      treeByMsgId: {},
+      treeLoadingId: null
     };
     this._timer = null;
     this._feedRef = React.createRef();
@@ -154,6 +176,27 @@ class FabricMessages extends React.Component {
       this.setState({ error: e.message });
     } finally {
       this.setState({ busy: false });
+    }
+  }
+
+  async viewTree (entry) {
+    const requestId = discordRequestIdFromEntry(entry);
+    if (!requestId) {
+      this.setState({ error: 'No Discord requestId on this message' });
+      return;
+    }
+    this.setState({ treeLoadingId: entry.id, error: null });
+    try {
+      const res = await fetch(`${BASE}/fabric/messages/tree?requestId=${encodeURIComponent(requestId)}`);
+      const j = await res.json();
+      if (!res.ok) throw new Error((j && j.error) || res.statusText);
+      this.setState((s) => ({
+        treeByMsgId: Object.assign({}, s.treeByMsgId, { [entry.id]: j.data || j }),
+        treeLoadingId: null,
+        openId: entry.id
+      }));
+    } catch (e) {
+      this.setState({ treeLoadingId: null, error: e.message || String(e) });
     }
   }
 
@@ -273,9 +316,11 @@ class FabricMessages extends React.Component {
         ? React.createElement('div', { className: 'fm-empty' },
           this.props.contract
             ? 'No Fabric Messages for this group contract in the buffer yet.'
-            : 'No Fabric Messages yet. Unlock identity, connect peers, chat, or Import a fabric:<hex> share.')
+            : 'No Fabric Messages yet. Unlock identity, connect peers, chat, or Import a fabric:<hex|base64> share.')
         : this.state.messages.map((m) => {
           const open = this.state.openId === m.id;
+          const requestId = discordRequestIdFromEntry(m);
+          const tree = this.state.treeByMsgId[m.id];
           return React.createElement('div', {
             key: m.id,
             className: 'fm-row' + (open ? ' open' : ''),
@@ -306,6 +351,75 @@ class FabricMessages extends React.Component {
             : null,
           open
             ? React.createElement('pre', { className: 'fm-detail' }, bodyText(m) || '(empty body)')
+            : null,
+          open
+            ? React.createElement('div', {
+              style: { marginTop: 8, display: 'flex', gap: 8, flexWrap: 'wrap' },
+              onClick: (e) => e.stopPropagation()
+            },
+              m.hash
+                ? React.createElement('button', {
+                  type: 'button',
+                  className: 'fm-btn',
+                  onClick: async () => {
+                    try {
+                      await navigator.clipboard.writeText(String(m.hash));
+                    } catch (_) { /* ignore */ }
+                  }
+                }, 'Copy message id')
+                : null,
+              requestId
+                ? React.createElement('button', {
+                  type: 'button',
+                  className: 'fm-btn primary',
+                  disabled: this.state.treeLoadingId === m.id,
+                  onClick: () => this.viewTree(m)
+                }, this.state.treeLoadingId === m.id ? 'Loading tree…' : 'View tree')
+                : null,
+              m.hash
+                ? React.createElement('span', {
+                  style: { fontSize: 11, color: 'var(--muted)', alignSelf: 'center' }
+                }, 'Paste into Settings → Primary group / settings/local.js')
+                : null
+            )
+            : null,
+          open && tree
+            ? React.createElement('div', {
+              className: 'fm-tree',
+              onClick: (e) => e.stopPropagation()
+            },
+              React.createElement('h3', null,
+                'Discord sequence · ',
+                String(tree.requestId || '').slice(0, 16),
+                '…'),
+              React.createElement('div', { className: 'fm-meta', style: { marginBottom: 8 } },
+                [
+                  tree.winningClaim
+                    ? `claim ${(tree.winningClaim.claimantPubkey || '').slice(0, 12)}…`
+                    : 'no claim yet',
+                  Array.isArray(tree.responses) ? `${tree.responses.length} response(s)` : null,
+                  tree.digest ? `digest ${String(tree.digest).slice(0, 12)}…` : null
+                ].filter(Boolean).join(' · ')),
+              (tree.nodes || []).length
+                ? (tree.nodes || []).map((n, i) => React.createElement('div', {
+                  key: `${n.type}-${i}-${n.ts || ''}`,
+                  className: 'fm-tree-node'
+                },
+                  React.createElement('span', { className: 'kind' }, n.type || '?'),
+                  React.createElement('span', { className: 'fm-ts' }, shortTime(n.ts)),
+                  n.signer
+                    ? React.createElement('span', { className: 'fm-app' },
+                      String(n.signer).slice(0, 12) + '…')
+                    : null,
+                  n.object && n.object.status
+                    ? React.createElement('span', { className: 'fm-app' }, n.object.status)
+                    : null
+                ))
+                : React.createElement('div', { className: 'fm-empty' },
+                  'No sequence nodes yet — wait for Request / Claim / Response on the mesh.'),
+              React.createElement('pre', { className: 'fm-detail', style: { maxHeight: 200 } },
+                JSON.stringify(tree, null, 2))
+            )
             : null
           );
         })

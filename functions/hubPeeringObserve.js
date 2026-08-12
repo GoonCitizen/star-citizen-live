@@ -59,6 +59,14 @@ function extractClaim (attestation, body) {
  * @returns {object}
  */
 function hubRow (base, arc, body, fields) {
+  const faucet = (() => {
+    try {
+      const hubBitcoinProxy = require('./hubBitcoinProxy');
+      return hubBitcoinProxy.faucetFromOptionsDocument(arc);
+    } catch (_) {
+      return null;
+    }
+  })();
   return {
     origin: base,
     ok: true,
@@ -71,6 +79,7 @@ function hubRow (base, arc, body, fields) {
     webrtcRegistered: fields.webrtcRegistered || 0,
     webrtcSignaling: Array.isArray(fields.webrtcSignaling) ? fields.webrtcSignaling.slice() : [],
     claim: fields.claim || null,
+    faucet: faucet || null,
     application: arc
       ? {
         '@type': arc['@type'] || null,

@@ -15,7 +15,7 @@ const { gooncitizenContractId } = require('./gooncitizen');
 const { CONTRACT_BODY_TYPES, isKnownContractBodyType } = require('./applicationMessageTypes');
 
 /** Bump only when the group genesis shape must intentionally move ids. */
-const GOONCITIZEN_GROUP_CONTRACT_VERSION = 4; // +ContractCapabilityGrant/Withdrawal*
+const GOONCITIZEN_GROUP_CONTRACT_VERSION = 6; // +FleetShare journal / messageTypes
 
 const GROUP_CONTRACT_NAME = 'GoonCitizenGroup';
 
@@ -40,11 +40,18 @@ const GROUP_CAPABILITY_TYPES = Object.freeze([
   CONTRACT_BODY_TYPES.ContractWithdrawalWitness || 'ContractWithdrawalWitness'
 ]);
 
+const GROUP_GOVERNANCE_TYPES = Object.freeze([
+  CONTRACT_BODY_TYPES.GroupChangeProposal || 'GroupChangeProposal',
+  CONTRACT_BODY_TYPES.GroupChangeVote || 'GroupChangeVote'
+]);
+
 const GROUP_MESSAGE_TYPES = Object.freeze([
   CONTRACT_BODY_TYPES.GroupChat,
   CONTRACT_BODY_TYPES.GroupChange,
+  ...GROUP_GOVERNANCE_TYPES,
   CONTRACT_BODY_TYPES.GroupShare,
   CONTRACT_BODY_TYPES.GroupActivityTree,
+  CONTRACT_BODY_TYPES.FleetShare,
   CONTRACT_BODY_TYPES.FederationContractInvite,
   CONTRACT_BODY_TYPES.FederationContractInviteResponse,
   ...GROUP_JOURNAL_TYPES,
@@ -55,7 +62,10 @@ for (const t of GROUP_MESSAGE_TYPES) {
   if (!t) {
     throw new Error('[GOONCITIZEN] GROUP_MESSAGE_TYPES entry missing');
   }
-  if (!isKnownContractBodyType(t) && !GROUP_JOURNAL_TYPES.includes(t) && !GROUP_CAPABILITY_TYPES.includes(t)) {
+  if (!isKnownContractBodyType(t) &&
+      !GROUP_JOURNAL_TYPES.includes(t) &&
+      !GROUP_CAPABILITY_TYPES.includes(t) &&
+      !GROUP_GOVERNANCE_TYPES.includes(t)) {
     throw new Error(`[GOONCITIZEN] GROUP_MESSAGE_TYPES entry unknown to applicationNamespaces: ${t}`);
   }
 }
@@ -194,6 +204,7 @@ module.exports = {
   GROUP_MESSAGE_TYPES,
   GROUP_JOURNAL_TYPES,
   GROUP_CAPABILITY_TYPES,
+  GROUP_GOVERNANCE_TYPES,
   canonicalizeValidators,
   normalizeProposedPolicy,
   policyFingerprint,

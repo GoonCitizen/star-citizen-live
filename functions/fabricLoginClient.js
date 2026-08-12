@@ -5,9 +5,11 @@
  * Used by Electron main to fetch a pending challenge and POST a Schnorr signature.
  */
 
-const Identity = require('@fabric/core/types/identity');
 const { keyFromIdentity } = require('./identity');
 const { fabricLoginRequestHeaders } = require('./fabricProtocolLogin');
+const {
+  buildFabricIdentitySignedPayload
+} = require('@fabric/http/functions/fabricSiteLoginVerify');
 
 /**
  * @param {string} hubBase
@@ -63,32 +65,16 @@ async function completeClientSignedLogin (identity, hubBase, sessionId, message,
   if (!identity) return { ok: false, error: 'Identity is locked — unlock before approving site login.' };
   if (typeof message !== 'string' || !message) return { ok: false, error: 'message required' };
 
-  let key;
-  let fabricIdent;
+  let body;
   try {
-    key = keyFromIdentity(identity);
-    fabricIdent = new Identity(key);
+    const key = keyFromIdentity(identity);
+    body = buildFabricIdentitySignedPayload(key, message);
   } catch (e) {
-    return { ok: false, error: (e && e.message) ? String(e.message) : 'could not load identity key' };
-  }
-
-  let signature;
-  try {
-    signature = Buffer.from(key.signSchnorr(Buffer.from(message, 'utf8'))).toString('hex');
-  } catch (e) {
-    return { ok: false, error: (e && e.message) ? String(e.message) : 'sign failed' };
+    return { ok: false, error: (e && e.message) ? String(e.message) : 'could not sign login challenge' };
   }
 
   const base = String(hubBase || '').replace(/\/$/, '');
   const url = `${base}/sessions/${encodeURIComponent(sessionId)}/signatures`;
-  const body = {
-    signature,
-    pubkeyHex: key.pubkey,
-    identity: {
-      id: fabricIdent.id,
-      xpub: key.xpub
-    }
-  };
 
   let res;
   try {
@@ -114,7 +100,7 @@ async function completeClientSignedLogin (identity, hubBase, sessionId, message,
     sessionId,
     signer: data.signer || 'client',
     identity: data.identity || body.identity,
-    pubkeyHex: data.pubkeyHex || key.pubkey
+    pubkeyHex: data.pubkeyHex || body.pubkeyHex
   };
 }
 

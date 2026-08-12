@@ -1,9 +1,9 @@
 'use strict';
 
 /**
- * Notifications — inbound offers and requests only (mission shares, group
- * applications / offers / invites). Lifecycle history lives on mission and
- * group pages. Opened from the header bell (`#notifications`).
+ * Notifications — inbound offers, invites (group + multisig wallet), join
+ * decisions (including rejections), and wallet escrow/payout/withdrawal events.
+ * Opened from the header bell (`#notifications`).
  */
 
 const React = require('react');
@@ -33,7 +33,9 @@ const CSS = `
   .nt-tag.ignored,.nt-tag.info{background:rgba(110,118,129,.18);color:var(--muted)}
   .nt-tag.rejected{background:rgba(248,81,73,.15);color:var(--kill)}
   .nt-tag.MissionBroadcast,.nt-tag.MissionApplication{background:rgba(247,147,26,.14);color:#f7931a}
-  .nt-tag.GroupApplication,.nt-tag.GroupOffer,.nt-tag.FederationInvite{background:rgba(56,139,253,.14);color:var(--accent)}
+  .nt-tag.GroupApplication,.nt-tag.GroupOffer,.nt-tag.FederationInvite,.nt-tag.MultisigWalletInvite{background:rgba(56,139,253,.14);color:var(--accent)}
+  .nt-tag.GroupApplicationDecision,.nt-tag.FederationInviteDecision{background:rgba(110,118,129,.18);color:var(--muted)}
+  .nt-tag.WalletEscrow,.nt-tag.WalletPayout,.nt-tag.WalletWithdrawal{background:rgba(247,147,26,.14);color:#f7931a}
   .nt-meta{color:var(--muted);font-size:11.5px;font-family:'Cascadia Code',Consolas,monospace;word-break:break-all}
   .nt-body{font-size:13px;line-height:1.45;color:var(--text)}
   .nt-row{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:4px}
@@ -74,15 +76,22 @@ function kindLabel (kind) {
     MissionClaim: 'completion',
     MissionClaimDecision: 'completion decision',
     GroupApplication: 'group apply',
+    GroupApplicationDecision: 'group decision',
     GroupOffer: 'group offer',
-    FederationInvite: 'invite'
+    FederationInvite: 'group invite',
+    FederationInviteDecision: 'invite response',
+    MultisigWalletInvite: 'multisig invite',
+    GroupChangeProposal: 'proposal',
+    WalletEscrow: 'escrow',
+    WalletPayout: 'payout',
+    WalletWithdrawal: 'withdrawal'
   };
   return map[kind] || (kind || 'notice');
 }
 
 function openTarget (item) {
   const refs = item.refs || {};
-  if (refs.missionId) {
+  if (refs.missionId && String(item.kind || '').indexOf('Wallet') !== 0) {
     window.location.href = `/missions/${encodeURIComponent(refs.missionId)}`;
     return;
   }
@@ -90,7 +99,12 @@ function openTarget (item) {
     window.location.href = `/groups/${encodeURIComponent(refs.groupId)}`;
     return;
   }
-  if (item.kind && (item.kind.indexOf('Group') === 0 || item.kind === 'FederationInvite')) {
+  if (item.kind && String(item.kind).indexOf('Wallet') === 0) {
+    window.location.hash = 'wallet';
+    return;
+  }
+  if (item.kind && (item.kind.indexOf('Group') === 0 || item.kind === 'FederationInvite' ||
+      item.kind === 'FederationInviteDecision' || item.kind === 'MultisigWalletInvite')) {
     window.location.hash = 'groups';
     return;
   }
@@ -259,13 +273,13 @@ class Notifications extends React.Component {
         }, 'Open')
       );
     }
-    if (item.kind === 'FederationInvite' && item.status === 'pending') {
+    if ((item.kind === 'FederationInvite' || item.kind === 'MultisigWalletInvite') && item.status === 'pending') {
       return React.createElement('div', { className: 'nt-row' },
         React.createElement('button', {
           className: 'nt-btn good',
           disabled: this.state.busyId === item.id || !(item.refs && item.refs.inviteId && item.refs.groupId),
           onClick: () => this.actFederationInvite(item, true)
-        }, this.state.busyId === item.id ? '…' : 'Accept'),
+        }, this.state.busyId === item.id ? '…' : (item.kind === 'MultisigWalletInvite' ? 'Join wallet' : 'Accept')),
         React.createElement('button', {
           className: 'nt-btn ghost',
           disabled: this.state.busyId === item.id || !(item.refs && item.refs.inviteId && item.refs.groupId),
@@ -339,8 +353,8 @@ class Notifications extends React.Component {
         React.createElement('h2', null, '🔔 Notifications',
           React.createElement('span', { className: 'sub' },
             pending
-              ? `${pending} pending · mission shares, join requests, and invites`
-              : 'Inbound offers and requests from the mesh')
+              ? `${pending} pending · invites, join requests, wallet events`
+              : 'Invites, join decisions, multisig wallet offers, and wallet events')
         ),
         React.createElement('div', { className: 'nt-filters' },
           [['pending', 'Pending'], ['all', 'All'], ['resolved', 'Resolved']].map(([key, label]) =>
@@ -360,7 +374,7 @@ class Notifications extends React.Component {
             : React.createElement('div', { className: 'nt-empty' },
               this.state.filter === 'pending'
                 ? 'No pending notifications.'
-                : 'No inbound offers yet — mission shares and join requests show up here.')
+                : 'No notifications yet — group/multisig invites, join decisions, and wallet events show up here.')
       )
     );
   }

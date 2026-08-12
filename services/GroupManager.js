@@ -123,6 +123,28 @@ class GroupManager extends EventEmitter {
   }
 
   /**
+   * Tip + roster for GroupChat sealing (latest local ContractStateTip).
+   * Ensures genesis fold exists so clock/digest are stable across members.
+   * @param {string} groupId
+   * @returns {{ contractId: string, clock: number, stateDigest: string, memberPubkeys: string[], groupId: string }}
+   */
+  getChatSealTip (groupId) {
+    const { group, definition } = this.ensureContract(groupId);
+    const contractId = group.contractId || groupContractId(definition);
+    if (!contractId || !definition) {
+      throw new Error('group Federation contract is not ready');
+    }
+    const groupStatechain = require('../functions/groupStatechain');
+    let tip = groupStatechain.tipForChatSeal(this.store, contractId, definition);
+    // First seal after create: materialize an empty fold so peers share clock≥1 tip.
+    if ((Number(tip.clock) || 0) === 0) {
+      this._syncGroupStatechain(contractId, definition);
+      tip = groupStatechain.tipForChatSeal(this.store, contractId, definition);
+    }
+    return Object.assign({ groupId: group.id }, tip);
+  }
+
+  /**
    * Append an accepted membership event to the group Statechain journal and fold.
    * @param {string} groupId
    * @param {Object} entry
@@ -502,7 +524,12 @@ class GroupManager extends EventEmitter {
     const content = merged.content || {};
     if (Array.isArray(content.members) && content.members.length) {
       data.members = content.members.slice();
-      if (content.proposedPolicy && Array.isArray(content.proposedPolicy.validators)) {
+      if (Array.isArray(content.signers) && content.signers.length) {
+        data.validators = content.signers.slice();
+        data.threshold = content.threshold != null
+          ? Number(content.threshold)
+          : (content.proposedPolicy && content.proposedPolicy.threshold) || data.threshold;
+      } else if (content.proposedPolicy && Array.isArray(content.proposedPolicy.validators)) {
         data.validators = content.proposedPolicy.validators.slice();
         data.threshold = content.proposedPolicy.threshold || data.threshold;
       } else if (!data.validators || !data.validators.length) {
@@ -640,6 +667,10 @@ class GroupManager extends EventEmitter {
       if (patch.visibility === 'public' || patch.visibility === 'private') data.visibility = patch.visibility;
       if (patch.slug !== undefined) {
         try { data.slug = Group.normalizeSlug(patch.slug); } catch (_) { /* ignore bad remote slug */ }
+      }
+      if (patch.primaryColor !== undefined) {
+        const { sanitizePrimaryColor } = require('../functions/groupPrimaryColor');
+        data.primaryColor = sanitizePrimaryColor(patch.primaryColor);
       }
     } else {
       return { group: null, applied: false, skipped: 'bad-action' };
@@ -848,66 +879,351 @@ class GroupManager extends EventEmitter {
     return publicJson;
   }
 
-  /**
-   * Update group settings (creator only): name, threshold, visibility, slug.
-   */
-  async updateGroup (groupId, patch = {}, actor) {
-    const data = this.store.get('groups', groupId);
-    if (!data) throw new Error('group not found');
-    if (data.creator !== actor) {
-      const e = new Error('forbidden: only the creator may change group settings'); e.code = 'FORBIDDEN'; throw e;
-    }
-    if (patch.name !== undefined) data.name = String(patch.name || data.name);
-    if (patch.threshold !== undefined) data.threshold = Number(patch.threshold) || data.threshold;
-    if (patch.visibility !== undefined) {
-      if (patch.visibility !== 'public' && patch.visibility !== 'private') throw new Error('visibility must be public or private');
-      data.visibility = patch.visibility;
-    }
-    if (patch.slug !== undefined) {
-      const slug = Group.normalizeSlug(patch.slug);
-      this._assertSlugAvailable(slug, groupId);
-      data.slug = slug;
-    }
-    // Invalidate cached federation if membership-affecting fields changed.
-    const group = new Group(data);
-    group.validate();
-    const json = group.toJSON();
-    const prevDef = data._contractDefinition;
-    const prevContractId = data.contractId;
-    this.store.put('groups', groupId, Object.assign({}, json, {
-      _contractDefinition: prevDef,
-      contractId: prevContractId || json.contractId
-    }));
-    this._audit(actor, 'group.update', groupId, `visibility=${json.visibility} slug=${json.slug || '—'} threshold=${json.threshold}`);
-    const change = {
-      id: this._id('gchg'),
-      action: 'update',
-      groupId,
-      contractId: prevContractId || json.contractId,
-      actor,
-      patch: {
-        name: json.name,
-        threshold: json.threshold,
-        visibility: json.visibility,
-        slug: json.slug
-      },
-      ts: new Date().toISOString()
-    };
-    this.emit('group:updated', json);
-    this.emit('group:local-change', change);
-    this._appendGroupStatechain(groupId, {
-      id: change.id,
-      type: 'GroupChange',
-      message: change,
-      acceptedAt: change.ts
+  get proposals () {
+    return this.store.all('groupchangeproposals');
+  }
+
+  /** Pending proposals for a group (shared log). */
+  listProposals (groupId, { includeAdopted = false } = {}) {
+    return this.proposals.filter((p) => {
+      if (p.groupId !== groupId) return false;
+      if (includeAdopted) return true;
+      return p.status === 'pending';
     });
-    return new Group(this.store.get('groups', groupId)).toJSON();
+  }
+
+  getProposal (proposalId) {
+    return this.store.get('groupchangeproposals', proposalId) || null;
   }
 
   /**
-   * Add a member. Only existing members may add (or accept a join application).
+   * Propose a membership/meta change. Appears in the shared log; adopts when
+   * signer votes reach the group threshold (auto-adopts at threshold 1).
+   * @param {object} opts
+   * @param {string} opts.groupId
+   * @param {string} opts.action member.add | member.remove | update
+   * @param {string} opts.actor
+   * @param {string} [opts.member]
+   * @param {string} [opts.role]
+   * @param {object} [opts.patch]
+   * @param {string} [opts.signature] BIP340 hex; else local trust vote for signer actor
+   * @returns {{ group: object, proposal: object, adopted: boolean, change: object|null }}
    */
+  proposeChange (opts = {}) {
+    const gcp = require('../functions/groupChangeProposal');
+    const { pubkeysMatch } = require('../functions/identity');
+    const groupId = opts.groupId;
+    const actor = String(opts.actor || '');
+    const data = this.store.get('groups', groupId);
+    if (!data) throw new Error('group not found');
+    if (!actor) throw new Error('actor required');
+    const g0 = new Group(data);
+
+    const action = String(opts.action || '');
+    if (action === 'member.add') {
+      if (!g0.includes(actor)) {
+        const e = new Error('forbidden: only members may add members'); e.code = 'FORBIDDEN'; throw e;
+      }
+      const pubkey = String(opts.member || '').trim();
+      if (!Group.isValidPubkey(pubkey)) throw new Error('invalid member pubkey');
+      if (g0.includes(pubkey)) {
+        return {
+          group: g0.toJSON(),
+          proposal: null,
+          adopted: true,
+          change: null,
+          skipped: 'already-member'
+        };
+      }
+    } else if (action === 'member.remove') {
+      if (!pubkeysMatch(data.creator, actor)) {
+        const e = new Error('forbidden: only the creator may remove members'); e.code = 'FORBIDDEN'; throw e;
+      }
+      const pubkey = String(opts.member || '').trim();
+      if (pubkeysMatch(pubkey, data.creator)) throw new Error('creator cannot be removed');
+      if (!g0.includes(pubkey)) {
+        return {
+          group: g0.toJSON(),
+          proposal: null,
+          adopted: true,
+          change: null,
+          skipped: 'not-member'
+        };
+      }
+    } else if (action === 'update') {
+      if (!pubkeysMatch(data.creator, actor)) {
+        const e = new Error('forbidden: only the creator may change group settings'); e.code = 'FORBIDDEN'; throw e;
+      }
+      const patch = opts.patch && typeof opts.patch === 'object' ? opts.patch : {};
+      if (patch.visibility !== undefined &&
+          patch.visibility !== 'public' && patch.visibility !== 'private') {
+        throw new Error('visibility must be public or private');
+      }
+      if (patch.slug !== undefined) {
+        const slug = Group.normalizeSlug(patch.slug);
+        this._assertSlugAvailable(slug, groupId);
+        opts = Object.assign({}, opts, { patch: Object.assign({}, patch, { slug }) });
+      }
+      if (patch.primaryColor !== undefined && patch.primaryColor !== null && patch.primaryColor !== '') {
+        const { sanitizePrimaryColor } = require('../functions/groupPrimaryColor');
+        const color = sanitizePrimaryColor(patch.primaryColor);
+        if (!color) throw new Error('primaryColor must be #RRGGBB');
+        opts = Object.assign({}, opts, { patch: Object.assign({}, patch, { primaryColor: color }) });
+      }
+    } else {
+      throw new Error(`unsupported proposal action: ${action}`);
+    }
+
+    const signers = this._signerList(data);
+    const proposal = gcp.createProposalRecord({
+      id: this._id('gprop'),
+      groupId,
+      contractId: data.contractId || null,
+      action,
+      member: opts.member != null ? String(opts.member) : null,
+      role: opts.role != null ? String(opts.role) : null,
+      patch: opts.patch || null,
+      proposedBy: actor,
+      threshold: data.threshold || 1
+    });
+
+    if (g0.isSigner(actor)) {
+      const sig = opts.signature
+        ? String(opts.signature).toLowerCase()
+        : (`local:${proposal.id}`);
+      if (opts.signature) {
+        const ok = gcp.verifyProposalVote(proposal, actor, opts.signature);
+        if (!ok) throw new Error('invalid proposal signature');
+      }
+      gcp.addVote(proposal, actor, sig);
+    }
+
+    this.store.put('groupchangeproposals', proposal.id, proposal);
+    this._audit(actor, `group.proposal.${action}`, groupId, proposal.id);
+    this._appendGroupStatechain(groupId, {
+      id: proposal.id,
+      type: 'GroupChangeProposal',
+      message: gcp.proposalWireObject(proposal),
+      acceptedAt: proposal.createdAt
+    });
+    this.emit('group:proposal', proposal);
+
+    if (gcp.hasThresholdVotes(proposal, { validators: signers, threshold: data.threshold })) {
+      return this.adoptProposal(proposal.id, { local: true });
+    }
+    return {
+      group: new Group(this.store.get('groups', groupId)).toJSON(),
+      proposal,
+      adopted: false,
+      change: null
+    };
+  }
+
   /**
+   * Cast a validator vote on a pending proposal.
+   * @param {string} proposalId
+   * @param {string} voter
+   * @param {string} signature BIP340 hex (or local: for trusted local path)
+   * @param {object} [opts]
+   * @param {boolean} [opts.requireVerify=true] Verify BIP340 (false only for trusted local)
+   * @returns {{ group: object, proposal: object, adopted: boolean, change: object|null }}
+   */
+  castVote (proposalId, voter, signature, opts = {}) {
+    const gcp = require('../functions/groupChangeProposal');
+    const proposal = this.store.get('groupchangeproposals', proposalId);
+    if (!proposal) throw new Error('proposal not found');
+    if (proposal.status !== 'pending') throw new Error(`proposal already ${proposal.status}`);
+    const data = this.store.get('groups', proposal.groupId);
+    if (!data) throw new Error('group not found');
+    const pk = String(voter || '').toLowerCase();
+    const g = new Group(data);
+    if (!g.isSigner(pk)) {
+      const e = new Error('forbidden: only group validators may vote'); e.code = 'FORBIDDEN'; throw e;
+    }
+    const sig = String(signature || '').trim().toLowerCase();
+    if (!sig) throw new Error('signature required');
+    const requireVerify = opts.requireVerify !== false;
+    if (requireVerify || !sig.startsWith('local:')) {
+      if (!gcp.verifyProposalVote(proposal, pk, sig)) {
+        throw new Error('invalid vote signature');
+      }
+    }
+    gcp.addVote(proposal, pk, sig);
+    this.store.put('groupchangeproposals', proposal.id, proposal);
+    this._audit(pk, 'group.proposal.vote', proposal.groupId, proposal.id);
+    this._appendGroupStatechain(proposal.groupId, {
+      id: `${proposal.id}:vote:${pk}`,
+      type: 'GroupChangeVote',
+      message: gcp.voteWireObject(proposal, pk, sig),
+      acceptedAt: new Date().toISOString()
+    });
+    this.emit('group:vote', { proposal, voter: pk });
+
+    if (gcp.hasThresholdVotes(proposal, data)) {
+      return this.adoptProposal(proposal.id, { local: opts.local === true });
+    }
+    return {
+      group: new Group(data).toJSON(),
+      proposal,
+      adopted: false,
+      change: null
+    };
+  }
+
+  /**
+   * Apply a pending proposal once threshold votes are present.
+   * @param {string} proposalId
+   * @param {object} [opts]
+   * @returns {{ group: object, proposal: object, adopted: boolean, change: object|null }}
+   */
+  adoptProposal (proposalId, opts = {}) {
+    const gcp = require('../functions/groupChangeProposal');
+    const proposal = this.store.get('groupchangeproposals', proposalId);
+    if (!proposal) throw new Error('proposal not found');
+    if (proposal.status === 'adopted') {
+      const group = this.getGroup(proposal.groupId);
+      return { group: group ? group.toJSON() : null, proposal, adopted: true, change: null };
+    }
+    const data = this.store.get('groups', proposal.groupId);
+    if (!data) throw new Error('group not found');
+    if (!gcp.hasThresholdVotes(proposal, data)) {
+      throw new Error('proposal lacks threshold votes');
+    }
+
+    proposal.adoptedChangeId = this._id('gchg');
+    proposal.adoptedAt = new Date().toISOString();
+    proposal.status = 'adopted';
+    this.store.put('groupchangeproposals', proposal.id, proposal);
+
+    const change = gcp.changeFromProposal(proposal);
+    const result = this.ingestGroupChange(change, proposal.proposedBy);
+    if (result.applied && opts.local !== false) {
+      this.emit('group:local-change', change);
+    }
+    if (result.applied) {
+      if (change.action === 'member.add') {
+        this.emit('group:member-added', {
+          groupId: change.groupId,
+          pubkey: change.member,
+          actor: change.actor,
+          role: change.role
+        });
+      } else if (change.action === 'member.remove') {
+        this.emit('group:member-removed', {
+          groupId: change.groupId,
+          pubkey: change.member,
+          actor: change.actor
+        });
+      } else if (change.action === 'update') {
+        this.emit('group:updated', result.group);
+      }
+    }
+    this.emit('group:proposal-adopted', { proposal, change, group: result.group });
+    return {
+      group: result.group || new Group(this.store.get('groups', proposal.groupId)).toJSON(),
+      proposal: this.store.get('groupchangeproposals', proposal.id),
+      adopted: !!result.applied,
+      change: result.applied ? change : null
+    };
+  }
+
+  /**
+   * Ingest a remote GroupChangeProposal (mesh). Does not auto-vote.
+   * @param {object} object
+   * @param {string|null} [source]
+   */
+  ingestGroupChangeProposal (object = {}, source = null) {
+    const gcp = require('../functions/groupChangeProposal');
+    const id = object.id || null;
+    if (!id) return { applied: false, skipped: 'no-id' };
+    if (this.store.get('groupchangeproposals', id)) {
+      return { applied: false, skipped: 'duplicate', proposal: this.store.get('groupchangeproposals', id) };
+    }
+    const groupId = object.groupId || null;
+    const contractId = object.contractId || null;
+    const group = (contractId && this.getGroupByContractId(contractId)) ||
+      (groupId && this.getGroup(groupId));
+    if (!group) return { applied: false, skipped: 'group-unknown' };
+
+    const proposal = gcp.createProposalRecord({
+      id,
+      groupId: group.id,
+      contractId: group.contractId || contractId,
+      action: object.action,
+      member: object.member,
+      role: object.role,
+      patch: object.patch,
+      proposedBy: object.proposedBy || source,
+      createdAt: object.createdAt,
+      threshold: object.threshold || group.threshold
+    });
+    proposal.status = object.status === 'adopted' ? 'pending' : (object.status || 'pending');
+    if (proposal.status === 'adopted') proposal.status = 'pending';
+    this.store.put('groupchangeproposals', proposal.id, proposal);
+    this._appendGroupStatechain(group.id, {
+      id: proposal.id,
+      type: 'GroupChangeProposal',
+      message: gcp.proposalWireObject(proposal),
+      acceptedAt: proposal.createdAt
+    });
+    this._audit(proposal.proposedBy, `group.proposal.${proposal.action}`, group.id, proposal.id);
+    this.emit('group:proposal', proposal);
+    return { applied: true, proposal };
+  }
+
+  /**
+   * Ingest a remote GroupChangeVote.
+   * @param {object} object
+   * @param {string|null} [source]
+   */
+  ingestGroupChangeVote (object = {}, source = null) {
+    const proposalId = object.proposalId || null;
+    const voter = String(object.voter || source || '').toLowerCase();
+    const signature = object.signature || null;
+    if (!proposalId || !voter || !signature) {
+      return { applied: false, skipped: 'bad-vote' };
+    }
+    try {
+      return this.castVote(proposalId, voter, signature, { requireVerify: true, local: false });
+    } catch (err) {
+      if (/not found|already|forbidden|invalid/i.test(err.message || '')) {
+        return { applied: false, skipped: err.message, error: err };
+      }
+      throw err;
+    }
+  }
+
+  /**
+   * Update group settings (creator only): name, threshold, visibility, slug, primaryColor.
+   * Published as a GroupChangeProposal until validators adopt.
+   */
+  async updateGroup (groupId, patch = {}, actor) {
+    const clean = {};
+    if (patch.name !== undefined) clean.name = String(patch.name || '');
+    if (patch.threshold !== undefined) clean.threshold = Number(patch.threshold);
+    if (patch.visibility !== undefined) clean.visibility = patch.visibility;
+    if (patch.slug !== undefined) clean.slug = patch.slug;
+    if (patch.primaryColor !== undefined) {
+      const { sanitizePrimaryColor } = require('../functions/groupPrimaryColor');
+      if (patch.primaryColor === null || patch.primaryColor === '') {
+        clean.primaryColor = null;
+      } else {
+        const color = sanitizePrimaryColor(patch.primaryColor);
+        if (!color) throw new Error('primaryColor must be #RRGGBB');
+        clean.primaryColor = color;
+      }
+    }
+    const result = this.proposeChange({
+      groupId,
+      action: 'update',
+      actor,
+      patch: clean
+    });
+    return result.group;
+  }
+
+  /**
+   * Propose adding a member (adopted when votes ≥ threshold).
    * @param {string} groupId
    * @param {string} pubkey
    * @param {string} actor
@@ -915,86 +1231,34 @@ class GroupManager extends EventEmitter {
    * @param {string} [opts.role] `'reader'` or `'signer'`
    */
   async addMember (groupId, pubkey, actor, opts = {}) {
-    const data = this.store.get('groups', groupId);
-    if (!data) throw new Error('group not found');
-    if (!data.members.includes(actor)) {
-      const e = new Error('forbidden: only members may add members'); e.code = 'FORBIDDEN'; throw e;
-    }
-    if (!Group.isValidPubkey(pubkey)) throw new Error('invalid member pubkey');
-    if (data.members.includes(pubkey)) return new Group(data).toJSON();
     const role = String(opts.role || 'signer').toLowerCase() === 'reader' ? 'reader' : 'signer';
-    data.members = data.members.concat([pubkey]);
-    if (!Array.isArray(data.validators) || !data.validators.length) {
-      data.validators = this._signerList(data);
-    }
-    if (role === 'signer' && !data.validators.includes(pubkey)) {
-      data.validators = data.validators.concat([pubkey]);
-    }
-    this._syncPolicyFromSigners(data);
-    const group = new Group(data);
-    group.validate();
-    const json = group.toJSON();
-    this.store.put('groups', groupId, Object.assign({}, data, json));
-    this._audit(actor, 'group.member.add', groupId, pubkey);
-    const change = {
-      id: this._id('gchg'),
-      action: 'member.add',
+    const result = this.proposeChange({
       groupId,
-      contractId: data.contractId || null,
+      action: 'member.add',
       actor,
       member: pubkey,
       role,
-      ts: new Date().toISOString()
-    };
-    this.emit('group:member-added', { groupId, pubkey, actor, role });
-    this.emit('group:local-change', change);
-    this._appendGroupStatechain(groupId, {
-      id: change.id,
-      type: 'GroupChange',
-      message: change,
-      acceptedAt: change.ts
+      signature: opts.signature
     });
-    return new Group(this.store.get('groups', groupId)).toJSON();
+    return result.group;
   }
 
   /**
-   * Remove a member. Only the creator may remove; the creator cannot be removed.
-   * Threshold is clamped to the new member count.
+   * Propose removing a member (creator proposes; validators adopt).
+   * @param {string} groupId
+   * @param {string} pubkey
+   * @param {string} actor
+   * @param {Object} [opts]
    */
-  async removeMember (groupId, pubkey, actor) {
-    const data = this.store.get('groups', groupId);
-    if (!data) throw new Error('group not found');
-    if (data.creator !== actor) {
-      const e = new Error('forbidden: only the creator may remove members'); e.code = 'FORBIDDEN'; throw e;
-    }
-    if (pubkey === data.creator) throw new Error('creator cannot be removed');
-    if (!data.members.includes(pubkey)) return new Group(data).toJSON();
-    data.members = data.members.filter((m) => m !== pubkey);
-    data.validators = this._signerList(data).filter((m) => m !== pubkey);
-    this._syncPolicyFromSigners(data);
-    const group = new Group(data);
-    group.validate();
-    const json = group.toJSON();
-    this.store.put('groups', groupId, Object.assign({}, data, json));
-    this._audit(actor, 'group.member.remove', groupId, pubkey);
-    const change = {
-      id: this._id('gchg'),
-      action: 'member.remove',
+  async removeMember (groupId, pubkey, actor, opts = {}) {
+    const result = this.proposeChange({
       groupId,
-      contractId: data.contractId || null,
+      action: 'member.remove',
       actor,
       member: pubkey,
-      ts: new Date().toISOString()
-    };
-    this.emit('group:member-removed', { groupId, pubkey, actor });
-    this.emit('group:local-change', change);
-    this._appendGroupStatechain(groupId, {
-      id: change.id,
-      type: 'GroupChange',
-      message: change,
-      acceptedAt: change.ts
+      signature: opts.signature
     });
-    return new Group(this.store.get('groups', groupId)).toJSON();
+    return result.group;
   }
 
   getGroupApplications (groupId) {
@@ -1123,6 +1387,33 @@ class GroupManager extends EventEmitter {
     });
     this._audit(source || treeBody.ownerPubkey, 'group.activity-tree', group.id, treeBody.root);
     this.emit('group:activity-tree', { groupId: group.id, tree: treeBody, statechain: result });
+    return result;
+  }
+
+  /**
+   * Journal a FleetShare tip into the group's Statechain (local + inbound).
+   * @param {string} groupId
+   * @param {object} shareObject FleetShare wire/object tip (no heavy export required)
+   * @param {string|null} source
+   */
+  ingestFleetShare (groupId, shareObject, source = null) {
+    const group = this.getGroup(groupId);
+    if (!group) throw new Error('group not found');
+    const starjumpFleet = require('../functions/starjumpFleet');
+    const tip = starjumpFleet.fleetShareJournalMessage(shareObject || {}, {
+      groupId: group.id,
+      source: source || null
+    });
+    if (!tip.fleetId) throw new Error('FleetShare fleetId required');
+    const entryId = `fleet-share:${tip.fleetId}:${tip.sharedAt || ''}:${source || tip.ownerPubkey || 'local'}`;
+    const result = this._appendGroupStatechain(group.id, {
+      id: entryId,
+      type: 'FleetShare',
+      message: tip,
+      acceptedAt: tip.sharedAt || new Date().toISOString()
+    });
+    this._audit(source || tip.ownerPubkey, 'group.fleet-share', group.id, tip.fleetId);
+    this.emit('group:fleet-share', { groupId: group.id, fleet: tip, statechain: result });
     return result;
   }
 

@@ -80,14 +80,18 @@ class GroupPage extends React.Component {
       nickname: null,
       group: null,
       applications: [],
+      proposals: [],
+      groupWallet: null,
       presenceRoster: {},
       events: [],
+      fleets: [],
       loading: true,
       error: null,
       notice: null,
       applyMessage: '',
       applying: false,
       slugEdit: '',
+      colorEdit: '#3b82f6',
       busy: false
     };
   }
@@ -171,9 +175,38 @@ class GroupPage extends React.Component {
         });
         if (er.ok) events = ((await er.json()).data) || [];
       } catch (_) { /* optional */ }
+      let proposals = [];
+      if (group.role === 'member' || group.role === 'creator') {
+        try {
+          const pr = await fetch(`${BASE}/groups/${encodeURIComponent(group.id)}/proposals`, {
+            headers: this.headers(token)
+          });
+          if (pr.ok) proposals = ((await pr.json()).data) || [];
+        } catch (_) { /* optional */ }
+      }
+      let groupWallet = null;
+      if (group.role === 'member' || group.role === 'creator') {
+        try {
+          const wr = await fetch(`${BASE}/groups/${encodeURIComponent(group.id)}/wallet`, {
+            headers: this.headers(token)
+          });
+          const wj = await wr.json().catch(() => ({}));
+          groupWallet = wr.ok ? (wj.data || wj) : { error: (wj && wj.error) || `HTTP ${wr.status}` };
+        } catch (e) {
+          groupWallet = { error: e.message || String(e) };
+        }
+      }
+      let fleets = [];
+      try {
+        const fr = await fetch(`${BASE}/groups/${encodeURIComponent(group.id)}/fleets`, {
+          headers: this.headers(token)
+        });
+        if (fr.ok) fleets = ((await fr.json()).data) || [];
+      } catch (_) { /* optional */ }
       this.setState({
-        group, applications, presenceRoster, events, loading: false,
+        group, applications, proposals, groupWallet, presenceRoster, events, fleets, loading: false,
         slugEdit: group.slug || '',
+        colorEdit: group.primaryColor || '#3b82f6',
         notice: null
       });
       document.title = `${group.name} — GoonCitizen`;
@@ -265,8 +298,17 @@ class GroupPage extends React.Component {
       if (nextKey !== this.pathKey) {
         window.history.replaceState({}, '', next.path || `/groups/${nextKey}`);
       }
-      this.setState({ busy: false, notice: 'Settings saved.', slugEdit: next.slug || '' });
+      this.setState({
+        busy: false,
+        notice: 'Settings saved.',
+        slugEdit: next.slug || '',
+        colorEdit: next.primaryColor || this.state.colorEdit || '#3b82f6'
+      });
       await this.load();
+      if (typeof this.props.onPrimaryGroupTheme === 'function' && next.primaryColor !== undefined) {
+        // Parent may refresh theme if this is the user's primary group.
+        this.props.onPrimaryGroupTheme(next.primaryColor || null);
+      }
     } catch (e) {
       this.setState({ busy: false, error: e.message });
     }
@@ -285,6 +327,176 @@ class GroupPage extends React.Component {
     } catch (e) {
       this.setState({ busy: false, error: e.message });
     }
+  }
+
+  async voteProposal (proposalId) {
+    if (this.state.busy || !this.state.group) return;
+    this.setState({ busy: true, error: null, notice: null });
+    try {
+      const res = await fetch(
+        `${BASE}/groups/${encodeURIComponent(this.state.group.id)}/proposals/${encodeURIComponent(proposalId)}/votes`,
+        { method: 'POST', headers: this.headers(), body: JSON.stringify({}) }
+      );
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error || `HTTP ${res.status}`);
+      this.setState({
+        busy: false,
+        notice: json.adopted ? 'Proposal adopted.' : 'Vote recorded — waiting for more signatures.'
+      });
+      await this.load();
+    } catch (e) {
+      this.setState({ busy: false, error: e.message });
+    }
+  }
+
+  async proposeWithdraw () {
+    const g = this.state.group;
+    if (!g || this.state.busy || g.role !== 'creator') return;
+    this.setState({ busy: true, error: null, notice: null });
+    try {
+      const res = await fetch(`${BASE}/groups/${encodeURIComponent(g.id)}/withdrawals`, {
+        method: 'POST',
+        headers: this.headers(),
+        body: JSON.stringify({ action: 'spend', utxoAgeBlocks: 0 })
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error || res.statusText);
+      const pref = json.data && json.data.prepared && json.data.prepared.preferredTierId;
+      const tiers = (json.data && json.data.prepared && json.data.prepared.activeTiers) || [];
+      const tip = tiers.length
+        ? `Active tier: ${tiers[0].id} (${tiers[0].threshold}-of-n). Address ready — fund UTXO then complete withdrawal.`
+        : 'Withdrawal proposed.';
+      this.setState({
+        busy: false,
+        notice: tip + (pref ? ` Preferred: ${pref}` : '')
+      });
+      await this.load();
+    } catch (e) {
+      this.setState({ busy: false, error: e.message || String(e) });
+    }
+  }
+
+  renderWallet () {
+    const g = this.state.group;
+    const gw = this.state.groupWallet;
+    if (!g || (g.role !== 'member' && g.role !== 'creator')) return null;
+    if (!gw) return null;
+    const isCreator = g.role === 'creator';
+    return React.createElement('div', { className: 'gpage-panel' },
+      React.createElement('h2', null, 'Wallet'),
+      React.createElement('div', { className: 'body' },
+        gw.error
+          ? React.createElement('div', { className: 'gpage-err' }, gw.error)
+          : React.createElement(React.Fragment, null,
+            React.createElement('div', { style: { fontSize: 13, color: 'var(--muted)', marginBottom: 8 } },
+              'Taproot multisig · mode ', React.createElement('b', { style: { color: 'var(--text)' } }, gw.mode || '—'),
+              ` · ${g.threshold}-of-${(g.validators || g.members || []).length}`
+            ),
+            gw.address
+              ? React.createElement(React.Fragment, null,
+                React.createElement('code', {
+                  style: { display: 'block', fontSize: 11, wordBreak: 'break-all', marginBottom: 10 }
+                }, gw.address),
+                React.createElement('div', { className: 'gpage-actions', style: { marginTop: 0 } },
+                  React.createElement('button', {
+                    className: 'gpage-btn ghost',
+                    onClick: () => {
+                      try {
+                        navigator.clipboard.writeText(gw.address);
+                        this.setState({ notice: 'Address copied.' });
+                      } catch (_) { /* ignore */ }
+                    }
+                  }, 'Copy address'),
+                  isCreator
+                    ? React.createElement('button', {
+                      className: 'gpage-btn',
+                      disabled: this.state.busy,
+                      onClick: () => this.proposeWithdraw()
+                    }, this.state.busy ? 'Working…' : 'Propose withdraw')
+                    : null
+                )
+              )
+              : React.createElement('p', { style: { color: 'var(--muted)', fontSize: 13, margin: 0 } },
+                'No Taproot address yet — group needs signer keys.')
+          )
+      )
+    );
+  }
+
+  renderFleets () {
+    const g = this.state.group;
+    if (!g) return null;
+    const list = this.state.fleets || [];
+    return React.createElement('div', { className: 'gpage-panel' },
+      React.createElement('h2', null, `Fleets${list.length ? ` (${list.length})` : ''}`),
+      React.createElement('div', { className: 'body' },
+        !list.length
+          ? React.createElement('p', { style: { color: 'var(--muted)', fontSize: 13, margin: 0 } },
+            'No fleets shared to this group yet. Share from Fleets with visibility “groups”.')
+          : list.map((f) => React.createElement('div', {
+            key: f.fleetId || f.id,
+            className: 'gpage-member',
+            style: { flexWrap: 'wrap' }
+          },
+            React.createElement('span', { style: { flex: 1, fontFamily: 'inherit', fontSize: 13 } },
+              f.name || shortKey(f.fleetId || f.id)),
+            React.createElement('span', { className: 'gpage-tag private' },
+              `${Number(f.shipCount) || 0} ships` + (f.uniqueShips ? ` · ${f.uniqueShips} types` : '')),
+            f.ownerPubkey
+              ? React.createElement('span', { className: 'gpage-tag private', title: f.ownerPubkey },
+                shortKey(f.ownerPubkey))
+              : null,
+            f.sharedAt
+              ? React.createElement('span', { style: { color: 'var(--muted)', fontSize: 11 } },
+                String(f.sharedAt).slice(0, 10))
+              : null,
+            React.createElement('button', {
+              className: 'gpage-btn ghost',
+              style: { padding: '4px 10px', fontSize: 12 },
+              onClick: () => {
+                const id = f.fleetId || f.id;
+                window.location.href = `/#fleets${id ? `?id=${encodeURIComponent(id)}` : ''}`;
+              }
+            }, 'Open')
+          ))
+      )
+    );
+  }
+
+  renderProposals () {
+    const g = this.state.group;
+    if (!g || (g.role !== 'member' && g.role !== 'creator')) return null;
+    const list = this.state.proposals || [];
+    const me = this.state.pubkey;
+    return React.createElement('div', { className: 'gpage-panel' },
+      React.createElement('h2', null, `Proposals${list.length ? ` (${list.length})` : ''}`),
+      React.createElement('div', { className: 'body' },
+        !list.length
+          ? React.createElement('p', { style: { color: 'var(--muted)', fontSize: 13, margin: 0 } },
+            'No open proposals.')
+          : list.map((p) => {
+            const sigs = p.signatures ? Object.keys(p.signatures).length : 0;
+            const need = Math.max(1, Number(p.threshold) || 1);
+            const voted = !!(me && p.signatures && (p.signatures[me] || p.signatures[String(me).toLowerCase()]));
+            return React.createElement('div', {
+              key: p.id,
+              style: { display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap', padding: '8px 0', borderBottom: '1px solid #20262f' }
+            },
+              React.createElement('span', { className: 'gpage-tag private' }, p.action || 'change'),
+              React.createElement('span', { style: { flex: 1, fontSize: 13 } },
+                (p.member ? shortKey(p.member) + ' · ' : '') + `${sigs}/${need} votes`
+              ),
+              !voted
+                ? React.createElement('button', {
+                  className: 'gpage-btn',
+                  disabled: this.state.busy,
+                  onClick: () => this.voteProposal(p.id)
+                }, 'Sign')
+                : React.createElement('span', { className: 'gpage-tag public' }, 'signed')
+            );
+          })
+      )
+    );
   }
 
   renderVisitorApply () {
@@ -349,6 +561,30 @@ class GroupPage extends React.Component {
           ),
           React.createElement('div', { style: { fontSize: 11.5, color: 'var(--muted)', marginTop: 5 } },
             'Leave blank to use the group id. Lowercase letters, digits, and hyphens only.')
+        ),
+        React.createElement('div', { className: 'gpage-field', style: { marginTop: 14 } },
+          React.createElement('label', null, 'Primary color'),
+          React.createElement('div', { style: { display: 'flex', gap: 8, alignItems: 'center' } },
+            React.createElement('input', {
+              type: 'color',
+              value: /^#[0-9a-fA-F]{6}$/.test(this.state.colorEdit || '') ? this.state.colorEdit : '#3b82f6',
+              disabled: this.state.busy,
+              onChange: (e) => this.setState({ colorEdit: e.target.value })
+            }),
+            React.createElement('code', { style: { fontSize: 12 } }, this.state.colorEdit || g.primaryColor || '—'),
+            React.createElement('button', {
+              className: 'gpage-btn ghost', disabled: this.state.busy,
+              onClick: () => this.patch({ primaryColor: this.state.colorEdit || null })
+            }, 'Save'),
+            g.primaryColor
+              ? React.createElement('button', {
+                className: 'gpage-btn danger', disabled: this.state.busy,
+                onClick: () => this.setState({ colorEdit: '' }, () => this.patch({ primaryColor: null }))
+              }, 'Clear')
+              : null
+          ),
+          React.createElement('div', { style: { fontSize: 11.5, color: 'var(--muted)', marginTop: 5 } },
+            'Members who set this group as primary use this accent to theme their dashboard.')
         )
       )
     );
@@ -445,8 +681,11 @@ class GroupPage extends React.Component {
       this.state.notice ? React.createElement('div', { className: 'gpage-ok' }, this.state.notice) : null,
       this.renderVisitorApply(),
       this.renderCreatorSettings(),
+      this.renderWallet(),
+      this.renderFleets(),
       this.renderChat(),
       this.renderApplications(),
+      this.renderProposals(),
       this.renderMembers(),
       this.renderActivity(),
       this.renderFabricInspector()
@@ -482,7 +721,7 @@ class GroupPage extends React.Component {
       React.createElement('div', { className: 'body' },
         React.createElement(RegisterEventLog, {
           items: this.state.events,
-          empty: 'No group events yet — join applications, membership changes, and invites will appear here.'
+          empty: 'No group events yet — proposals, votes, join applications, and membership changes will appear here.'
         })
       )
     );
@@ -497,7 +736,8 @@ class GroupPage extends React.Component {
     return React.createElement(GroupFabricInspector, {
       groupId: g.id,
       contractId: g.contractId || null,
-      headers
+      headers,
+      embedded: false
     });
   }
 }

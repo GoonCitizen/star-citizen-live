@@ -37,6 +37,7 @@ const {
   completeDeviceLinkAsResponder
 } = require('./functions/fabricDeviceLinkClient');
 const { applyFabricEnvConfig, loadRepoDotEnv } = require('./functions/fabricEnvIdentity');
+const { applyGoonCitizenEnvAliases } = require('./functions/goonCitizenEnvAliases');
 
 let settings = {};
 try {
@@ -47,6 +48,7 @@ try {
 }
 
 let mainWindow = null;
+let overlayWindow = null;
 let tray = null;
 let starCitizenService = null;
 let activePort = null;
@@ -115,7 +117,32 @@ function buildRelaySettings (port) {
   const resolved = resolveLogFile({ explicit, channel });
 
   const discordIn = settings.discord || {};
-  const webhook = process.env.DISCORD_WEBHOOK_URL || persisted.discordWebhook || discordIn.webhook || null;
+  const discord = (() => {
+    try {
+      const discordConfig = require('./functions/discordConfig');
+      return discordConfig.resolveDiscordConfig({
+        localDiscord: discordIn,
+        persisted,
+        settingsDir: appStoreRoot,
+        env: process.env
+      });
+    } catch (_) {
+      const webhook = process.env.DISCORD_WEBHOOK_URL || discordIn.webhook || null;
+      return {
+        enable: !!(discordIn.enable && (webhook || discordIn.token || process.env.DISCORD_BOT_TOKEN)),
+        webhook,
+        token: process.env.DISCORD_BOT_TOKEN || discordIn.token || null,
+        channel: process.env.DISCORD_CHANNEL_ID || discordIn.channel || null,
+        app: Object.assign({ id: null, secret: null }, discordIn.app || {}),
+        announceKills: discordIn.announceKills !== false,
+        announcePlayerJoins: discordIn.announcePlayerJoins !== false,
+        announceActivities: !!discordIn.announceActivities,
+        announceMissions: !!discordIn.announceMissions,
+        announceCombat: !!discordIn.announceCombat,
+        announceIncaps: !!discordIn.announceIncaps
+      };
+    }
+  })();
 
   return {
     port,
@@ -126,16 +153,7 @@ function buildRelaySettings (port) {
       : (settings.seed !== undefined
         ? settings.seed
         : (resolved.file && fs.existsSync(resolved.file) ? resolved.file : null)),
-    discord: {
-      enable: !!(discordIn.enable && webhook),
-      webhook,
-      announceKills: discordIn.announceKills !== false,
-      announcePlayerJoins: discordIn.announcePlayerJoins !== false,
-      announceActivities: !!discordIn.announceActivities,
-      announceMissions: !!discordIn.announceMissions,
-      announceCombat: !!discordIn.announceCombat,
-      announceIncaps: !!discordIn.announceIncaps
-    },
+    discord,
     missions: Object.assign({
       enable: true,
       officers: process.env.SC_OFFICERS
@@ -143,8 +161,7 @@ function buildRelaySettings (port) {
         : (Array.isArray(settings.missions?.officers) ? settings.missions.officers.map(String) : [])
     }, settings.missions || {}),
     uplink: Object.assign({
-      enable: !!(process.env.SC_UPLINK_URL || settings.uplink?.url),
-      url: process.env.SC_UPLINK_URL || settings.uplink?.url || null
+      intervalMs: Number(settings.uplink?.intervalMs) || 5000
     }, settings.uplink || {}),
     fabric: Object.assign({
       enable: true,
@@ -154,6 +171,30 @@ function buildRelaySettings (port) {
     }, settings.fabric || {}),
     // Wallet: ledger mode unless settings/local.js supplies a bitcoind rpc.
     payouts: Object.assign({ enable: true, ledger: true, network: 'regtest' }, settings.payouts || {}),
+    bitcoin: Object.assign({
+      enable: true,
+      hub: process.env.SC_BITCOIN_HUB || 'http://127.0.0.1:8080',
+      network: process.env.SC_BTC_NETWORK || 'regtest',
+      adminToken: process.env.FABRIC_HUB_ADMIN_TOKEN || null,
+      adminTokenFile: process.env.FABRIC_HUB_ADMIN_TOKEN_FILE || null
+    }, settings.bitcoin || {}, {
+      adminToken: process.env.FABRIC_HUB_ADMIN_TOKEN ||
+        (settings.bitcoin && settings.bitcoin.adminToken) ||
+        null,
+      adminTokenFile: process.env.FABRIC_HUB_ADMIN_TOKEN_FILE ||
+        (settings.bitcoin && settings.bitcoin.adminTokenFile) ||
+        null
+    }),
+    documents: Object.assign({
+      enable: false,
+      hub: null
+    }, settings.documents || {}, {
+      hub: process.env.SC_DOCUMENTS_HUB ||
+        (settings.documents && settings.documents.hub) ||
+        process.env.SC_BITCOIN_HUB ||
+        (settings.bitcoin && settings.bitcoin.hub) ||
+        'http://127.0.0.1:8080'
+    }),
     settingsDir: appStoreRoot,
     // Cumulative Game.log history lives next to the Fabric store (userData),
     // not the repo tree — survives restarts and is the Analyze default.
@@ -232,6 +273,7 @@ function hideMainWindow () {
 
 function quitApp () {
   isQuitting = true;
+  destroyOverlayWindow();
   app.quit();
 }
 
@@ -280,10 +322,19 @@ function setOpenAtLogin (enabled) {
 function rebuildTrayMenu () {
   if (!tray) return;
   const atLogin = openAtLoginEnabled();
+  const overlayOn = !!(overlayWindow && !overlayWindow.isDestroyed() && overlayWindow.isVisible());
   const menu = Menu.buildFromTemplate([
     {
       label: `Show ${BRAND_NAME}`,
       click: () => showMainWindow()
+    },
+    {
+      label: 'Primary group overlay',
+      type: 'checkbox',
+      checked: overlayOn,
+      click: (item) => {
+        void setGroupOverlayEnabled(item.checked);
+      }
     },
     {
       label: 'Open at Login',
@@ -406,6 +457,110 @@ function createWindow (port) {
   });
 }
 
+/**
+ * Always-on-top, click-through HUD for the primary group's members + ships.
+ * Positioned top-right of the primary display (Windows-first; works elsewhere).
+ */
+function createOverlayWindow (port) {
+  if (overlayWindow && !overlayWindow.isDestroyed()) return overlayWindow;
+  const { screen } = electron;
+  const display = screen.getPrimaryDisplay();
+  const work = display.workArea || display.bounds;
+  const width = 300;
+  const height = 420;
+  const x = Math.max(work.x, work.x + work.width - width - 16);
+  const y = work.y + 16;
+
+  overlayWindow = new BrowserWindow({
+    width,
+    height,
+    x,
+    y,
+    frame: false,
+    transparent: true,
+    alwaysOnTop: true,
+    skipTaskbar: true,
+    resizable: false,
+    maximizable: false,
+    minimizable: false,
+    fullscreenable: false,
+    hasShadow: false,
+    focusable: false,
+    show: false,
+    webPreferences: {
+      nodeIntegration: false,
+      contextIsolation: true,
+      webSecurity: true
+    }
+  });
+
+  // Let clicks fall through to the game (Windows: forward:true keeps hover).
+  try {
+    overlayWindow.setIgnoreMouseEvents(true, { forward: true });
+  } catch (_) {
+    try { overlayWindow.setIgnoreMouseEvents(true); } catch (__) { /* ignore */ }
+  }
+  if (typeof overlayWindow.setAlwaysOnTop === 'function') {
+    // 'screen-saver' level helps stay above fullscreen games on Windows.
+    try { overlayWindow.setAlwaysOnTop(true, 'screen-saver'); } catch (_) {
+      overlayWindow.setAlwaysOnTop(true);
+    }
+  }
+  if (process.platform === 'darwin' && typeof overlayWindow.setVisibleOnAllWorkspaces === 'function') {
+    overlayWindow.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
+  }
+
+  const url = `http://127.0.0.1:${port}/overlay`;
+  overlayWindow.loadURL(url).catch((err) => {
+    console.error('[ELECTRON]', '[ERROR]', 'Failed to load group overlay:', err);
+  });
+  overlayWindow.once('ready-to-show', () => {
+    if (overlayWindow && !overlayWindow.isDestroyed()) overlayWindow.showInactive();
+  });
+  overlayWindow.on('closed', () => {
+    overlayWindow = null;
+    rebuildTrayMenu();
+  });
+  return overlayWindow;
+}
+
+function destroyOverlayWindow () {
+  if (overlayWindow && !overlayWindow.isDestroyed()) {
+    try { overlayWindow.close(); } catch (_) { /* ignore */ }
+  }
+  overlayWindow = null;
+}
+
+/**
+ * Enable/disable the primary-group overlay and persist `groupOverlay`.
+ * @param {boolean} enabled
+ */
+async function setGroupOverlayEnabled (enabled) {
+  const on = enabled === true;
+  try {
+    if (starCitizenService && starCitizenService.registerStore) {
+      settingsStore.putSetting(starCitizenService.registerStore, 'groupOverlay', on);
+      starCitizenService._groupOverlay = on;
+    }
+  } catch (e) {
+    console.warn('[ELECTRON]', '[WARNING]', 'persist groupOverlay:', e && e.message ? e.message : e);
+  }
+  if (on) {
+    if (activePort) createOverlayWindow(activePort);
+  } else {
+    destroyOverlayWindow();
+  }
+  rebuildTrayMenu();
+  return { groupOverlay: on };
+}
+
+function syncOverlayFromSettings () {
+  const enabled = !!(starCitizenService && starCitizenService._groupOverlay);
+  if (enabled && activePort) createOverlayWindow(activePort);
+  else destroyOverlayWindow();
+  rebuildTrayMenu();
+}
+
 async function startService () {
   const preferred = servicePort();
   const candidates = [preferred, preferred + 1, preferred + 2, 0];
@@ -433,7 +588,9 @@ async function startService () {
       activePort = (bound && bound.port) || opts.port || preferred;
 
       await waitForHttp(activePort);
-      console.log('[ELECTRON]', '[STATUS]', `${BRAND_NAME} listening on http://127.0.0.1:${activePort}/`);
+      const bindHost = (bound && bound.address) || '127.0.0.1';
+      const displayHost = (bindHost === '0.0.0.0' || bindHost === '::') ? '127.0.0.1' : bindHost;
+      console.log('[ELECTRON]', '[STATUS]', `${BRAND_NAME} listening on http://${displayHost}:${activePort}/ (bind ${bindHost})`);
       return starCitizenService;
     } catch (error) {
       lastError = error;
@@ -597,6 +754,7 @@ async function handleFabricProtocolUrl (urlStr) {
           kind: classified.kind,
           protocolUrl: urlStr.startsWith('fabric:') ? urlStr.trim() : ('fabric:' + opaque.hex),
           messageHex: opaque.hex,
+          messageBase64: opaque.base64 || null,
           contractId: classified.contractId,
           groupId: classified.groupId,
           offer: classified.kind === 'GroupOffer' ? classified.object : null,
@@ -716,6 +874,7 @@ if (gotLock) {
       applyIdentityToService();
       applySnapshotCaptureToService();
       createWindow(activePort || servicePort());
+      syncOverlayFromSettings();
       if (earlyFabricUrl) {
         const u = earlyFabricUrl;
         earlyFabricUrl = null;
@@ -868,6 +1027,7 @@ let envPublishingIdentity = null;
 
 function loadEnvPublishingIdentity () {
   loadRepoDotEnv();
+  applyGoonCitizenEnvAliases(process.env);
   const { identity, updated, source } = applyFabricEnvConfig(process.env);
   envPublishingIdentity = identity;
   if (identity) {
@@ -1122,9 +1282,45 @@ ipcMain.handle('get-service-status', () => {
   return { status: 'STOPPED', port: null, brand: BRAND_NAME, openAtLogin: openAtLoginEnabled() };
 });
 
+/**
+ * Delivery sync receipt over in-process Fabric (no HTTP).
+ * Publishes MessageReceipt CONTRACT_MESSAGE via the local peer.
+ */
+ipcMain.handle('fabric:delivery-receipt', (_e, opts = {}) => {
+  if (!starCitizenService || typeof starCitizenService._markDeliveryReceipt !== 'function') {
+    return { error: 'relay not ready' };
+  }
+  const wireHash = opts.wireHash || opts.hash;
+  if (!wireHash) return { error: 'wireHash required' };
+  try {
+    const data = starCitizenService._markDeliveryReceipt(String(wireHash), {
+      contractId: opts.contractId || null,
+      chatMessageId: opts.chatMessageId || null
+    });
+    return { data };
+  } catch (e) {
+    return {
+      error: e && e.message ? e.message : String(e),
+      code: e && e.code ? e.code : null
+    };
+  }
+});
+
 ipcMain.handle('set-open-at-login', (_e, enabled) => {
   setOpenAtLogin(!!enabled);
   return { openAtLogin: openAtLoginEnabled() };
+});
+
+ipcMain.handle('set-group-overlay', async (_e, enabled) => {
+  return setGroupOverlayEnabled(!!enabled);
+});
+
+ipcMain.handle('get-group-overlay', () => {
+  return {
+    groupOverlay: !!(overlayWindow && !overlayWindow.isDestroyed() && overlayWindow.isVisible()),
+    primaryGroupId: (starCitizenService && starCitizenService._primaryGroupId) || null,
+    platform: process.platform
+  };
 });
 
 ipcMain.handle('notify:show', (_e, { title, body, id, kind, actions } = {}) => {

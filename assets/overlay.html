@@ -1,0 +1,165 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Primary group</title>
+  <style>
+    :root {
+      --bg: rgba(12, 14, 18, 0.78);
+      --line: rgba(255, 255, 255, 0.08);
+      --text: #e8edf5;
+      --muted: #9aa3b2;
+      --good: #3fb950;
+      --offline: #6e7681;
+      --accent: #3b82f6;
+    }
+    * { box-sizing: border-box; }
+    html, body {
+      margin: 0;
+      padding: 0;
+      background: transparent;
+      color: var(--text);
+      font: 12.5px/1.35 "Segoe UI", system-ui, sans-serif;
+      overflow: hidden;
+      user-select: none;
+      -webkit-user-select: none;
+    }
+    .panel {
+      margin: 8px;
+      padding: 10px 12px 8px;
+      border-radius: 10px;
+      background: var(--bg);
+      border: 1px solid var(--line);
+      backdrop-filter: blur(10px);
+      -webkit-backdrop-filter: blur(10px);
+      max-height: calc(100vh - 16px);
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+    .head {
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      gap: 8px;
+      border-bottom: 1px solid var(--line);
+      padding-bottom: 6px;
+    }
+    .head h1 {
+      margin: 0;
+      font-size: 12px;
+      font-weight: 650;
+      letter-spacing: 0.02em;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .head .meta { color: var(--muted); font-size: 11px; white-space: nowrap; }
+    .list { overflow: auto; display: flex; flex-direction: column; gap: 2px; }
+    .row {
+      display: grid;
+      grid-template-columns: 8px 1fr;
+      gap: 8px;
+      align-items: start;
+      padding: 5px 2px;
+      border-radius: 6px;
+    }
+    .dot {
+      width: 8px; height: 8px; border-radius: 50%;
+      margin-top: 4px;
+      background: var(--offline);
+    }
+    .dot.on { background: var(--good); box-shadow: 0 0 0 2px rgba(63, 185, 80, 0.18); }
+    .name { font-weight: 600; font-size: 12.5px; }
+    .ship { color: var(--muted); font-size: 11px; margin-top: 1px; }
+    .empty, .err {
+      color: var(--muted);
+      font-size: 12px;
+      padding: 8px 2px;
+      line-height: 1.45;
+    }
+    .err { color: #f85149; }
+  </style>
+</head>
+<body>
+  <div class="panel">
+    <div class="head">
+      <h1 id="title">Primary group</h1>
+      <span class="meta" id="meta"></span>
+    </div>
+    <div class="list" id="list">
+      <div class="empty">Loading…</div>
+    </div>
+  </div>
+  <script>
+    const BASE = '/services/star-citizen';
+    const titleEl = document.getElementById('title');
+    const metaEl = document.getElementById('meta');
+    const listEl = document.getElementById('list');
+
+    function shortName (m) {
+      if (m.nickname) return m.nickname;
+      const pk = m.pubkey || '';
+      return pk ? pk.slice(0, 8) + '…' : '—';
+    }
+
+    function shipLabel (m) {
+      if (!m.online) return 'offline';
+      const ship = m.ship && (m.ship.name || m.ship.slug);
+      if (ship) return ship;
+      if (m.statusText) return m.statusText;
+      return 'online';
+    }
+
+    function render (data) {
+      if (!data || !data.groupId) {
+        titleEl.textContent = 'No primary group';
+        metaEl.textContent = '';
+        listEl.innerHTML = '<div class="empty">Pick a primary group in the Groups tab. Enable the overlay in Settings.</div>';
+        return;
+      }
+      if (data.error) {
+        titleEl.textContent = data.name || 'Primary group';
+        metaEl.textContent = '';
+        listEl.innerHTML = '<div class="err">' + String(data.error) + '</div>';
+        return;
+      }
+      const members = Array.isArray(data.members) ? data.members : [];
+      const online = members.filter((m) => m.online).length;
+      titleEl.textContent = data.name || 'Primary group';
+      metaEl.textContent = online + '/' + members.length + ' online';
+      if (!members.length) {
+        listEl.innerHTML = '<div class="empty">No members yet.</div>';
+        return;
+      }
+      listEl.innerHTML = members.map((m) => {
+        const on = m.online ? 'on' : '';
+        return '<div class="row"><span class="dot ' + on + '"></span><div>' +
+          '<div class="name"></div><div class="ship"></div></div></div>';
+      }).join('');
+      const rows = listEl.querySelectorAll('.row');
+      members.forEach((m, i) => {
+        const row = rows[i];
+        if (!row) return;
+        row.querySelector('.name').textContent = shortName(m);
+        row.querySelector('.ship').textContent = shipLabel(m);
+      });
+    }
+
+    async function tick () {
+      try {
+        const res = await fetch(BASE + '/overlay/primary-group', { cache: 'no-store' });
+        const json = await res.json();
+        render(json && json.data ? json.data : json);
+      } catch (e) {
+        listEl.innerHTML = '<div class="err">Waiting for local relay…</div>';
+      }
+    }
+
+    tick();
+    setInterval(tick, 4000);
+  </script>
+</body>
+</html>

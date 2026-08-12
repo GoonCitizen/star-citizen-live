@@ -19,7 +19,8 @@ const INBOX_TYPE = 'RegisterInboxItem';
 
 /**
  * Kinds that belong in the Notifications bell — triggered by received offers /
- * requests (gossip or inbound apply), not local lifecycle bookkeeping.
+ * requests (gossip or inbound apply), wallet escrow/payout/withdrawal events,
+ * and invite / join decisions (including rejections).
  */
 const NOTIFICATION_KINDS = new Set([
   'MissionBroadcast',
@@ -27,8 +28,15 @@ const NOTIFICATION_KINDS = new Set([
   'MissionClaim',
   'MissionClaimDecision',
   'GroupApplication',
+  'GroupApplicationDecision',
   'GroupOffer',
-  'FederationInvite'
+  'FederationInvite',
+  'FederationInviteDecision',
+  'MultisigWalletInvite',
+  'GroupChangeProposal',
+  'WalletEscrow',
+  'WalletPayout',
+  'WalletWithdrawal'
 ]);
 
 /** Actions from MissionManager / GroupManager audit that become inbox rows. */
@@ -53,7 +61,12 @@ const GROUP_AUDIT_ACTIONS = new Set([
   'group.invite.accept',
   'group.create',
   'group.change.member.add',
-  'group.change.member.remove'
+  'group.change.member.remove',
+  'group.change.update',
+  'group.proposal.member.add',
+  'group.proposal.member.remove',
+  'group.proposal.update',
+  'group.proposal.vote'
 ]);
 
 function sha256Hex (s) {
@@ -221,6 +234,18 @@ function entryFromGroupAudit (audit) {
   } else if (action.indexOf('group.change.') === 0) {
     kind = 'GroupChange';
     title = action.replace('group.change.', 'Member ') + (audit.summary ? `: ${audit.summary}` : '');
+  } else if (action.indexOf('group.proposal.') === 0) {
+    const sub = action.replace('group.proposal.', '');
+    if (sub === 'vote') {
+      kind = 'GroupChangeVote';
+      status = 'pending';
+      title = 'Proposal vote' + (audit.summary ? `: ${audit.summary}` : '');
+    } else {
+      kind = 'GroupChangeProposal';
+      status = 'pending';
+      actionable = true;
+      title = `Proposal: ${sub}` + (audit.summary ? ` (${audit.summary})` : '');
+    }
   }
   return normalizeEntry({
     id: `inbox-${audit.id}`,
@@ -235,6 +260,7 @@ function entryFromGroupAudit (audit) {
       auditId: audit.id,
       groupId: audit.entityId,
       applicationId: action.indexOf('group.application') === 0 ? audit.summary : null,
+      proposalId: action.indexOf('group.proposal.') === 0 ? audit.summary : null,
       action
     },
     dedupeKey: audit.id
@@ -292,28 +318,135 @@ function entryFromGroupOffer (payload) {
   });
 }
 
+/**
+ * Pending / adopted GroupChangeProposal for the shared group log.
+ * @param {object} proposal
+ */
+function entryFromGroupChangeProposal (proposal) {
+  if (!proposal || !proposal.id) return null;
+  const sigs = proposal.signatures && typeof proposal.signatures === 'object'
+    ? Object.keys(proposal.signatures).length
+    : 0;
+  const need = Math.max(1, Number(proposal.threshold) || 1);
+  const status = proposal.status === 'adopted' ? 'accepted' : 'pending';
+  return normalizeEntry({
+    id: `inbox-gcp-${proposal.id}`,
+    kind: 'GroupChangeProposal',
+    status,
+    actionable: status === 'pending',
+    ts: proposal.createdAt || proposal.adoptedAt || new Date().toISOString(),
+    title: `Proposal ${proposal.action || 'change'} (${sigs}/${need} votes)`,
+    body: proposal.member || (proposal.patch && JSON.stringify(proposal.patch)) || null,
+    source: proposal.proposedBy,
+    resolvedAt: proposal.adoptedAt || null,
+    refs: {
+      groupId: proposal.groupId,
+      contractId: proposal.contractId || null,
+      proposalId: proposal.id,
+      action: proposal.action
+    },
+    dedupeKey: proposal.id
+  });
+}
+
 function entryFromFederationInvite (invite, source = null) {
   if (!invite || !invite.inviteId) return null;
   const groupName = invite.groupName || null;
+  const role = String(invite.role || 'signer').toLowerCase() === 'reader' ? 'reader' : 'signer';
+  const isMultisig = role === 'signer';
+  const kind = isMultisig ? 'MultisigWalletInvite' : 'FederationInvite';
+  const title = isMultisig
+    ? (groupName ? `Multisig wallet invite · ${groupName}` : (invite.note || 'Multisig wallet invite'))
+    : (groupName ? `Invite to ${groupName}` : (invite.note || 'Group invite'));
   return normalizeEntry({
     id: `inbox-fi-${invite.inviteId}`,
-    kind: 'FederationInvite',
+    kind,
     status: invite.status || 'pending',
     actionable: (invite.status || 'pending') === 'pending',
     ts: invite.createdAt || invite.receivedAt || new Date().toISOString(),
-    title: groupName ? `Invite to ${groupName}` : (invite.note || 'Group invite'),
+    title,
     body: invite.note || (invite.contractId ? `contract ${String(invite.contractId).slice(0, 16)}…` : null),
     source: source || invite.inviterHubId || null,
-    resolvedAt: invite.resolvedAt || null,
-    resolvedBy: invite.resolvedBy || null,
+    resolvedAt: invite.resolvedAt || invite.respondedAt || null,
+    resolvedBy: invite.resolvedBy || invite.responderPubkey || null,
     refs: {
       inviteId: invite.inviteId,
       groupId: invite.groupId || null,
       contractId: invite.contractId || null,
       inviteePubkey: invite.inviteePubkey || null,
-      groupName
+      groupName,
+      role
     },
     dedupeKey: invite.inviteId
+  });
+}
+
+/**
+ * Inviter-side notice when a federation / multisig invite is accepted or declined.
+ * @param {object} response
+ * @param {object} [invite]
+ * @param {string|null} [source]
+ */
+function entryFromFederationInviteDecision (response, invite = null, source = null) {
+  if (!response || !response.inviteId) return null;
+  const accepted = response.accept === true || response.status === 'accepted';
+  const groupName = (invite && invite.groupName) || null;
+  const role = invite && String(invite.role || 'signer').toLowerCase() === 'reader' ? 'reader' : 'signer';
+  const who = response.responderPubkey || source || 'peer';
+  return normalizeEntry({
+    id: `inbox-fid-${response.inviteId}`,
+    kind: 'FederationInviteDecision',
+    status: accepted ? 'accepted' : 'rejected',
+    actionable: false,
+    ts: response.respondedAt || new Date().toISOString(),
+    title: accepted
+      ? (groupName ? `Invite accepted · ${groupName}` : 'Group invite accepted')
+      : (groupName ? `Invite declined · ${groupName}` : 'Group invite declined'),
+    body: role === 'signer'
+      ? `Multisig signer response from ${String(who).slice(0, 16)}…`
+      : `Response from ${String(who).slice(0, 16)}…`,
+    source: who,
+    resolvedAt: response.respondedAt || new Date().toISOString(),
+    resolvedBy: who,
+    refs: {
+      inviteId: response.inviteId,
+      groupId: (invite && invite.groupId) || null,
+      contractId: (invite && invite.contractId) || null,
+      role,
+      accept: accepted
+    },
+    dedupeKey: `fid-${response.inviteId}`
+  });
+}
+
+/**
+ * Mission escrow / payout / group withdrawal events for the Notifications bell.
+ * @param {object} opts
+ * @param {string} opts.kind WalletEscrow | WalletPayout | WalletWithdrawal
+ * @param {string} opts.title
+ * @param {string} [opts.body]
+ * @param {string} [opts.status] pending | info | accepted | rejected
+ * @param {boolean} [opts.actionable]
+ * @param {object} [opts.refs]
+ * @param {string} [opts.dedupeKey]
+ * @param {string} [opts.source]
+ * @param {string} [opts.ts]
+ */
+function entryFromWalletEvent (opts = {}) {
+  const kind = String(opts.kind || '').trim();
+  if (!kind || !NOTIFICATION_KINDS.has(kind)) return null;
+  const status = opts.status || (opts.actionable ? 'pending' : 'info');
+  return normalizeEntry({
+    id: opts.id || null,
+    kind,
+    status,
+    actionable: opts.actionable === true,
+    ts: opts.ts || new Date().toISOString(),
+    title: opts.title || kind,
+    body: opts.body != null ? String(opts.body) : null,
+    source: opts.source || null,
+    refs: Object.assign({}, opts.refs || {}),
+    dedupeKey: opts.dedupeKey || `${kind}:${opts.title || ''}:${opts.ts || ''}`
   });
 }
 
@@ -404,6 +537,10 @@ function backfillFromLegacy (store) {
     const e = entryFromGroupAudit(a);
     if (e && append(store, enrichRefs(store, e)).created) n += 1;
   }
+  for (const p of store.all('groupchangeproposals') || []) {
+    const e = entryFromGroupChangeProposal(p);
+    if (e && append(store, enrichRefs(store, e)).created) n += 1;
+  }
   for (const inv of store.all('groupinvites') || []) {
     const e = entryFromFederationInvite(inv, inv.source || inv.inviterHubId);
     if (e && append(store, enrichRefs(store, e)).created) n += 1;
@@ -441,5 +578,8 @@ module.exports = {
   entryFromGroupAudit,
   entryFromMissionBroadcast,
   entryFromGroupOffer,
-  entryFromFederationInvite
+  entryFromGroupChangeProposal,
+  entryFromFederationInvite,
+  entryFromFederationInviteDecision,
+  entryFromWalletEvent
 };

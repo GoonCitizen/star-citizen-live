@@ -79,7 +79,13 @@ describe('fabricDeviceLinkClient', () => {
     assert.equal(body.identity.id, responderIdent.id);
     assert.match(body.signature, /^[a-f0-9]{128}$/i);
     const expected = buildLinkMessage(nonce, initiatorIdent.id, responderIdent.id, 'Hub');
-    assert.ok(responder.verifySchnorr(Buffer.from(expected, 'utf8'), Buffer.from(body.signature, 'hex')));
+    // Protocol signs with Identity#fabricKey, not the Bitcoin master.
+    assert.ok(responderIdent.fabricKey.verifySchnorr(
+      Buffer.from(expected, 'utf8'),
+      Buffer.from(body.signature, 'hex')
+    ));
+    assert.equal(body.pubkeyHex, responderIdent.fabricKey.pubkey);
+    assert.equal(body.identity.xpub, responderIdent.fabricKey.xpub);
   });
 
   it('fetches pending device-link sessions', async () => {

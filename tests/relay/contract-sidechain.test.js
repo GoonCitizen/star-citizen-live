@@ -30,7 +30,7 @@ describe('contractSidechain (D-016)', () => {
     assert.equal(pub.head.stateDigest, contractSidechain.stateDigest(pub.state));
   });
 
-  it('patchesForGameState seals /gooncitizen and /namespaces/<contractId>', () => {
+  it('patchesForGameState seals /services/rsi and /namespaces/<contractId>', () => {
     const snap = gooncitizenGameState.buildGameStateSnapshot({
       missions: [],
       deaths: [],
@@ -40,14 +40,16 @@ describe('contractSidechain (D-016)', () => {
       meta: {}
     });
     const patches = gooncitizenGameState.patchesForGameState({}, snap);
-    assert.ok(patches.some((p) => p.path === '/gooncitizen'));
+    assert.ok(patches.some((p) => p.path === '/services' || p.path === '/services/rsi'));
+    const svc = patches.find((p) => p.path === '/services');
+    if (svc) assert.ok(svc.value && svc.value.rsi);
     const ns = patches.find((p) => p.path === '/namespaces');
     assert.ok(ns, 'expected /namespaces add');
     assert.ok(ns.value[gooncitizenContractId()]);
     assert.equal(ns.value[gooncitizenContractId()].stateDigest, snap.digest);
 
     const again = gooncitizenGameState.patchesForGameState({
-      gooncitizen: snap,
+      services: { rsi: snap },
       namespaces: ns.value
     }, snap);
     assert.equal(again.length, 0);

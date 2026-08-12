@@ -2,7 +2,7 @@
 
 /**
  * Advanced-mode group Fabric inspector — wire Messages scoped to a group
- * contract, Statechain journal, and Activity Tree (composed history + provenance).
+ * contract, Statechain journal, Activity Tree, and hex/base64 message codec.
  */
 
 const React = require('react');
@@ -12,11 +12,15 @@ const BASE = '/services/star-citizen';
 
 const CSS = `
   .gfi-wrap{display:grid;gap:14px;margin-top:12px;padding:0 0 8px}
+  .gfi-wrap.embedded{margin-top:0;padding:0 0 8px;gap:0}
   .gfi-panel{background:var(--panel);border:1px solid var(--line);border-radius:12px;overflow:hidden}
+  .gfi-wrap.embedded .gfi-panel{background:transparent;border:none;border-radius:0}
   .gfi-panel h3{font-size:13px;margin:0;padding:11px 14px;border-bottom:1px solid var(--line);font-weight:600;
     display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+  .gfi-wrap.embedded .gfi-panel>h3{display:none}
   .gfi-panel h3 .sub{font-weight:500;color:var(--muted);font-size:12px}
   .gfi-panel .body{padding:12px 14px}
+  .gfi-wrap.embedded .gfi-panel .body{padding:10px 0 0}
   .gfi-hint{color:var(--muted);font-size:12.5px;line-height:1.55;margin:0 0 10px}
   .gfi-err{background:rgba(248,81,73,.12);color:var(--kill);border-radius:7px;padding:8px 11px;font-size:12.5px;margin-bottom:10px}
   .gfi-ok{background:rgba(63,185,80,.12);color:var(--good);border-radius:7px;padding:8px 11px;font-size:12.5px;margin-bottom:10px}
@@ -44,6 +48,12 @@ const CSS = `
   .gfi-tab{background:var(--panel2);border:1px solid var(--line);color:var(--muted);border-radius:999px;
     padding:4px 12px;font-size:12px;cursor:pointer;font-weight:600}
   .gfi-tab.on{background:rgba(56,139,253,.15);border-color:var(--accent);color:var(--accent)}
+  .gfi-codec textarea{width:100%;min-height:96px;background:var(--bg);border:1px solid var(--line);color:var(--text);
+    border-radius:7px;padding:8px 10px;font-size:11.5px;font-family:'Cascadia Code',Consolas,monospace;
+    box-sizing:border-box;resize:vertical}
+  .gfi-codec .out{margin-top:10px}
+  .gfi-codec pre{margin:0;padding:8px 10px;background:var(--bg);border:1px solid var(--line);border-radius:7px;
+    font-size:11.5px;white-space:pre-wrap;word-break:break-word;max-height:220px;overflow:auto}
 `;
 
 function short (hex, n = 16) {
@@ -64,7 +74,7 @@ class GroupFabricInspector extends React.Component {
   constructor (props) {
     super(props);
     this.state = {
-      tab: 'messages', // messages | statechain | tree
+      tab: 'messages', // messages | statechain | tree | codec
       chain: null,
       tree: null,
       error: null,
@@ -72,7 +82,11 @@ class GroupFabricInspector extends React.Component {
       loading: false,
       busy: false,
       openJournalId: null,
-      showLeaves: false
+      showLeaves: false,
+      codecInput: '',
+      codecEncoding: 'hex',
+      codecResult: null,
+      codecError: null
     };
   }
 
@@ -129,6 +143,67 @@ class GroupFabricInspector extends React.Component {
     } catch (e) {
       this.setState({ busy: false, error: e.message });
     }
+  }
+
+  async decodeCodec () {
+    const raw = String(this.state.codecInput || '').trim();
+    if (!raw) {
+      this.setState({ codecError: 'Paste a fabric:<hex>, fabric:base64,…, or raw hex/base64 payload.', codecResult: null });
+      return;
+    }
+    this.setState({ busy: true, codecError: null, codecResult: null, notice: null });
+    try {
+      const res = await fetch(`${BASE}/fabric/messages/decode`, {
+        method: 'POST',
+        headers: Object.assign({ 'Content-Type': 'application/json' }, this.props.headers || {}),
+        body: JSON.stringify({ protocolUrl: raw, message: raw })
+      });
+      const j = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error((j && j.error) || `HTTP ${res.status}`);
+      const data = j.data || j;
+      this.setState({
+        busy: false,
+        codecResult: data,
+        codecEncoding: data.encoding || 'hex',
+        codecError: null
+      });
+    } catch (e) {
+      this.setState({ busy: false, codecError: e.message || String(e) });
+    }
+  }
+
+  async reencodeCodec (encoding) {
+    const result = this.state.codecResult;
+    if (!result || (!result.hex && !result.base64 && !result.messageHex && !result.messageBase64)) {
+      this.setState({ codecError: 'Decode a message first, then re-encode.' });
+      return;
+    }
+    const hex = result.hex || result.messageHex;
+    const b64 = result.base64 || result.messageBase64;
+    const enc = encoding === 'base64' ? 'base64' : 'hex';
+    const protocolUrl = enc === 'base64'
+      ? ('fabric:base64,' + (b64 || ''))
+      : ('fabric:' + (hex || ''));
+    if ((enc === 'hex' && !hex) || (enc === 'base64' && !b64)) {
+      this.setState({ codecError: 'Decoded payload is missing ' + enc + ' bytes.' });
+      return;
+    }
+    const next = Object.assign({}, result, {
+      encoding: enc,
+      protocolUrl,
+      protocolUrlHex: hex ? ('fabric:' + hex) : (result.protocolUrlHex || null),
+      protocolUrlBase64: b64 ? ('fabric:base64,' + b64) : (result.protocolUrlBase64 || null)
+    });
+    this.setState({
+      codecEncoding: enc,
+      codecResult: next,
+      codecInput: protocolUrl,
+      notice: `Encoded as ${enc}.`
+    });
+    try {
+      await navigator.clipboard.writeText(protocolUrl);
+      this.setState({ notice: `Copied fabric:${enc === 'base64' ? 'base64,…' : '<hex>'} to clipboard.` });
+    } catch (_) { /* ignore */ }
   }
 
   renderMessages () {
@@ -262,19 +337,91 @@ class GroupFabricInspector extends React.Component {
     );
   }
 
+  renderCodec () {
+    const result = this.state.codecResult;
+    return React.createElement('div', { className: 'gfi-codec' },
+      React.createElement('p', { className: 'gfi-hint' },
+        'Decode opaque Fabric Messages from ',
+        React.createElement('code', null, 'fabric:<hex>'),
+        ' or ',
+        React.createElement('code', null, 'fabric:base64,…'),
+        ' (raw hex/base64 also works). Re-encode and copy either form.'),
+      React.createElement('textarea', {
+        value: this.state.codecInput,
+        placeholder: 'fabric:<hex> or fabric:base64,…',
+        spellCheck: false,
+        onChange: (e) => this.setState({ codecInput: e.target.value, codecError: null })
+      }),
+      React.createElement('div', { className: 'gfi-bar', style: { marginTop: 10 } },
+        React.createElement('button', {
+          type: 'button',
+          className: 'gfi-btn primary',
+          disabled: this.state.busy || !String(this.state.codecInput || '').trim(),
+          onClick: () => this.decodeCodec()
+        }, this.state.busy ? 'Decoding…' : 'Decode'),
+        React.createElement('button', {
+          type: 'button',
+          className: 'gfi-btn' + (this.state.codecEncoding === 'hex' ? ' primary' : ''),
+          disabled: !result,
+          onClick: () => this.reencodeCodec('hex')
+        }, 'Encode hex'),
+        React.createElement('button', {
+          type: 'button',
+          className: 'gfi-btn' + (this.state.codecEncoding === 'base64' ? ' primary' : ''),
+          disabled: !result,
+          onClick: () => this.reencodeCodec('base64')
+        }, 'Encode base64')
+      ),
+      this.state.codecError
+        ? React.createElement('div', { className: 'gfi-err' }, this.state.codecError)
+        : null,
+      result
+        ? React.createElement('div', { className: 'out' },
+          React.createElement('div', { className: 'gfi-meta' },
+            React.createElement('span', null, 'type ', React.createElement('b', null, result.type || result.wireType || '—')),
+            result.kind
+              ? React.createElement('span', null, 'kind ', React.createElement('b', null, result.kind))
+              : null,
+            React.createElement('span', null, 'encoding ', React.createElement('b', null, result.encoding || this.state.codecEncoding)),
+            (result.hex || result.messageHex)
+              ? React.createElement('span', null, 'bytes ', React.createElement('b', null,
+                String(Math.floor(String(result.hex || result.messageHex).length / 2))))
+              : null
+          ),
+          React.createElement('pre', null, JSON.stringify({
+            protocolUrl: result.protocolUrl || null,
+            protocolUrlHex: result.protocolUrlHex || (result.hex || result.messageHex ? ('fabric:' + (result.hex || result.messageHex)) : null),
+            protocolUrlBase64: result.protocolUrlBase64 || (result.base64 || result.messageBase64 ? ('fabric:base64,' + (result.base64 || result.messageBase64)) : null),
+            kind: result.kind || null,
+            type: result.type || result.wireType || null,
+            contractId: result.contractId || null,
+            groupId: result.groupId || null,
+            hash: result.hash || null
+          }, null, 2))
+        )
+        : null
+    );
+  }
+
   render () {
     if (!this.props.groupId) return null;
     const tab = this.state.tab;
-    return React.createElement('div', { className: 'gfi-wrap' },
+    const embedded = !!this.props.embedded;
+    return React.createElement('div', { className: 'gfi-wrap' + (embedded ? ' embedded' : '') },
       React.createElement('section', { className: 'gfi-panel' },
         React.createElement('h3', null, 'Advanced · Fabric history ',
           React.createElement('span', { className: 'sub' },
-            '— messages, Statechain journal, Activity Tree')),
+            '— messages, Statechain journal, Activity Tree, codec')),
         React.createElement('div', { className: 'body' },
           this.state.error ? React.createElement('div', { className: 'gfi-err' }, this.state.error) : null,
           this.state.notice ? React.createElement('div', { className: 'gfi-ok' }, this.state.notice) : null,
           React.createElement('div', { className: 'gfi-tabs' },
-            [['messages', 'Messages'], ['statechain', 'Statechain'], ['tree', 'Activity Tree']].map(([id, label]) =>
+            [
+              ['messages', 'Messages'],
+              ['statechain', 'Statechain'],
+              ['tree', 'Activity Tree'],
+              ['codec', 'Codec']
+            ].map(([id, label]) =>
               React.createElement('button', {
                 key: id,
                 type: 'button',
@@ -285,7 +432,8 @@ class GroupFabricInspector extends React.Component {
           ),
           tab === 'messages' ? this.renderMessages() : null,
           tab === 'statechain' ? this.renderStatechain() : null,
-          tab === 'tree' ? this.renderTree() : null
+          tab === 'tree' ? this.renderTree() : null,
+          tab === 'codec' ? this.renderCodec() : null
         )
       )
     );

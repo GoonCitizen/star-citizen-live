@@ -123,6 +123,19 @@ test('officer allowlist is enforced when set', async () => {
   assert.ok(await mm.decideApplication({ applicationId: app.id, officerId: 'boss', decision: 'accept' }));
 });
 
+test('requireOfficers denies all officers when allowlist is empty', async () => {
+  const mm = new MissionManager({ requireOfficers: true, officers: [] });
+  assert.strictEqual(mm.isOfficer('anyone'), false);
+  await assert.rejects(() => mm.createMission({ title: 'X', createdBy: 'anyone' }), /not an officer/);
+});
+
+test('bootstrap (empty officers, requireOfficers false) still allows create', async () => {
+  const mm = new MissionManager({ officers: [] });
+  assert.strictEqual(mm.isOfficer('anyone'), true);
+  const m = await mm.createMission({ title: 'Bootstrap', createdBy: 'anyone' });
+  assert.strictEqual(m.status, 'open');
+});
+
 test('audit chain detects tampering', async () => {
   const mm = fresh();
   await mm.createMission({ title: 'A', createdBy: 'o' });

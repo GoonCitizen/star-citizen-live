@@ -35,15 +35,29 @@ const {
   summarizeBuffer
 } = require('../functions/fabricMessageLog');
 
-const DEFAULT_SEEDS = Object.freeze([
-  'hub.fabric.pub:7777',
-  'relay.goon.vc:7777'
-]);
+let peerHost;
+try {
+  peerHost = require('@fabric/http/functions/fabricPeerHost');
+} catch (_) {
+  peerHost = require('../functions/fabricPeerHost');
+}
+
+const DEFAULT_SEEDS = peerHost.DEFAULT_NETWORK_HUB_SEEDS;
 /** @deprecated Prefer DEFAULT_SEEDS — first network hub seed. */
 const DEFAULT_SEED = DEFAULT_SEEDS[0];
 /** Default TCP peer cap (matches @fabric/core MAX_PEERS soft default for slot fill). */
-const DEFAULT_MAX_PEERS = 32;
-/** App `type` values under the GoonCitizen CONTRACT_MESSAGE namespace (core catalog + local). */
+const DEFAULT_MAX_PEERS = peerHost.DEFAULT_MAX_PEERS;
+const {
+  isNetworkHubAddress,
+  isLoopbackFabricAddress,
+  collectOwnFabricHosts,
+  hostnameResolvesToOwn,
+  isSelfFabricAddress,
+  isFabricAddress,
+  normalizeFabricAddress
+} = peerHost;
+
+/** App `type` values under GoonCitizen / Group CONTRACT_MESSAGE (ingest catalog). */
 const APP_RELAY_TYPES = new Set([
   CONTRACT_BODY_TYPES.MissionCreated,
   CONTRACT_BODY_TYPES.MissionBroadcast,
@@ -51,178 +65,26 @@ const APP_RELAY_TYPES = new Set([
   CONTRACT_BODY_TYPES.GameStateSnapshot,
   PEER_PROFILE_TYPE,
   FLEET_SHARE_TYPE,
-  PRESENCE_TYPE
+  PRESENCE_TYPE,
+  'DirectChat',
+  CONTRACT_BODY_TYPES.GroupChat,
+  CONTRACT_BODY_TYPES.GroupChange,
+  CONTRACT_BODY_TYPES.GroupChangeProposal || 'GroupChangeProposal',
+  CONTRACT_BODY_TYPES.GroupChangeVote || 'GroupChangeVote',
+  CONTRACT_BODY_TYPES.GroupShare,
+  CONTRACT_BODY_TYPES.GroupActivityTree,
+  CONTRACT_BODY_TYPES.GroupJournalRequest || 'GroupJournalRequest',
+  CONTRACT_BODY_TYPES.GroupJournalBatch || 'GroupJournalBatch',
+  CONTRACT_BODY_TYPES.GroupStateJournal || 'GroupStateJournal',
+  CONTRACT_BODY_TYPES.FederationContractInvite,
+  CONTRACT_BODY_TYPES.FederationContractInviteResponse,
+  CONTRACT_BODY_TYPES.DiscordRequest || 'DiscordRequest',
+  CONTRACT_BODY_TYPES.DiscordClaim || 'DiscordClaim',
+  CONTRACT_BODY_TYPES.DiscordResponse || 'DiscordResponse'
 ]);
 
-/** True when address is a known network hub seed (selective Fabric relays). */
-function isNetworkHubAddress (address) {
-  const host = String(address || '').trim().toLowerCase().split(':')[0];
-  return host === 'hub.fabric.pub' || host === 'relay.goon.vc';
-}
-
-/**
- * True when address uses a loopback host (localhost / 127.0.0.1 / ::1).
- * Local star-topology tests dial `127.0.0.1:otherPort` on purpose; only
- * {@link isSelfFabricAddress} must be excluded from the dial list.
- * @param {*} address
- * @returns {boolean}
- */
-function isLoopbackFabricAddress (address) {
-  const host = String(address || '').trim().toLowerCase().split(':')[0];
-  return host === 'localhost' || host === '127.0.0.1' || host === '[::1]' || host === '::1';
-}
-
-/**
- * Hostnames / IPs that identify this node for dial filtering.
- * Includes advertiseHost, optional ownHosts, FABRIC_* env public host, and
- * (by default) addresses from os.networkInterfaces().
- * @param {Object} [opts]
- * @param {string} [opts.advertiseHost]
- * @param {string[]} [opts.ownHosts]
- * @param {boolean} [opts.includeLocalInterfaces=true]
- * @param {NodeJS.ProcessEnv} [opts.env]
- * @returns {Set<string>}
- */
-function collectOwnFabricHosts (opts = {}) {
-  const hosts = new Set();
-  const add = (raw) => {
-    let s = String(raw || '').trim().toLowerCase();
-    if (!s) return;
-    if (s.startsWith('[') && s.includes(']')) {
-      s = s.slice(1, s.indexOf(']'));
-    } else if (/:\d{1,5}$/.test(s) && (s.match(/:/g) || []).length === 1) {
-      s = s.split(':')[0];
-    }
-    if (s) hosts.add(s);
-  };
-  if (opts.advertiseHost) add(opts.advertiseHost);
-  for (const h of opts.ownHosts || []) add(h);
-  const env = opts.env || process.env;
-  for (const key of ['FABRIC_PUBLIC_HOST', 'FABRIC_ADVERTISE_HOST', 'SC_FABRIC_PUBLIC_HOST']) {
-    if (env[key]) add(env[key]);
-  }
-  if (opts.includeLocalInterfaces !== false) {
-    try {
-      const os = require('os');
-      const ifaces = os.networkInterfaces();
-      for (const list of Object.values(ifaces || {})) {
-        for (const entry of list || []) {
-          if (entry && entry.address) add(entry.address);
-        }
-      }
-    } catch (_) { /* ignore (sandbox / restricted os) */ }
-  }
-  return hosts;
-}
-
-/** @type {Map<string, boolean>} */
-const _dnsOwnHostCache = new Map();
-
-/**
- * True when `host` is not an IP literal and DNS resolves it to a local interface.
- * Cached; failures cache as false for this process.
- * @param {string} host
- * @param {Set<string>} ownHosts
- * @returns {boolean}
- */
-function hostnameResolvesToOwn (host, ownHosts) {
-  const key = String(host || '').trim().toLowerCase();
-  if (!key || !ownHosts || !ownHosts.size) return false;
-  if (/^\d{1,3}(?:\.\d{1,3}){3}$/.test(key)) return false;
-  if (_dnsOwnHostCache.has(key)) return _dnsOwnHostCache.get(key);
-  let hit = false;
-  try {
-    const dns = require('dns');
-    if (typeof dns.lookupSync === 'function') {
-      const r = dns.lookupSync(key, { all: true });
-      const list = Array.isArray(r) ? r : (r ? [r] : []);
-      for (const row of list) {
-        const addr = row && (row.address || row);
-        if (addr && ownHosts.has(String(addr).toLowerCase())) {
-          hit = true;
-          break;
-        }
-      }
-    }
-  } catch (_) {
-    hit = false;
-  }
-  _dnsOwnHostCache.set(key, hit);
-  return hit;
-}
-
-/**
- * True when dialing this address would connect to this process (self-loop).
- * Covers loopback+listenPort, public advertise/env hostnames, local interface
- * IPs, and (when interfaces are available) hub hostnames that DNS to self.
- * @param {*} address
- * @param {number|string|Object} [listenPortOrOpts]
- * @param {Object} [opts]
- * @param {number|string} [opts.listenPort]
- * @param {string} [opts.advertiseHost]
- * @param {string[]} [opts.ownHosts]
- * @param {boolean} [opts.includeLocalInterfaces]
- * @param {boolean} [opts.resolveDns=true]
- * @returns {boolean}
- */
-function isSelfFabricAddress (address, listenPortOrOpts, opts) {
-  let listenPort = listenPortOrOpts;
-  let options = opts || {};
-  if (listenPortOrOpts && typeof listenPortOrOpts === 'object' && !Array.isArray(listenPortOrOpts)) {
-    options = listenPortOrOpts;
-    listenPort = options.listenPort;
-  }
-  const host = String(address || '').trim().toLowerCase().split(':')[0];
-  if (!host) return false;
-
-  if (isLoopbackFabricAddress(address)) {
-    const port = Number(String(address || '').trim().split(':')[1]);
-    const listen = Number(listenPort);
-    if (!Number.isFinite(port) || !Number.isFinite(listen) || listen <= 0) return false;
-    return port === listen;
-  }
-
-  const own = collectOwnFabricHosts(options);
-  if (own.has(host)) return true;
-  if (options.resolveDns === false) return false;
-  if (options.includeLocalInterfaces === false) return false;
-  return hostnameResolvesToOwn(host, own);
-}
-
-/**
- * True when `value` looks like a Fabric peer address (`host:port`).
- * @param {*} value
- * @returns {boolean}
- */
-function isFabricAddress (value) {
-  const s = String(value || '').trim();
-  if (!s || /^https?:\/\//i.test(s)) return false;
-  return /^[a-zA-Z0-9._-]+(?::\d{1,5})$/.test(s);
-}
-
-/**
- * Normalize operator input to `host:port`. Rejects bare http(s) URLs for new
- * peers; migrates legacy `https://host[/…]` → `host:7777` when `migrate` is set.
- * @param {*} value
- * @param {Object} [opts]
- * @param {boolean} [opts.migrate] Migrate legacy `https://host` → `host:7777`
- * @returns {string|null}
- */
-function normalizeFabricAddress (value, { migrate = false } = {}) {
-  const raw = String(value || '').trim().replace(/\/$/, '');
-  if (!raw) return null;
-  if (isFabricAddress(raw)) return raw;
-  if (migrate && /^https?:\/\//i.test(raw)) {
-    try {
-      const u = new URL(raw);
-      if (!u.hostname) return null;
-      return `${u.hostname}:7777`;
-    } catch (_) {
-      return null;
-    }
-  }
-  return null;
-}
+/** True when `appType` is a known GoonCitizen / Group contract body type. */
+const isKnownAppRelayType = peerHost.createIsKnownAppRelayType(APP_RELAY_TYPES);
 
 /**
  * Subscribe app handlers to a Fabric Peer using its native message events.
@@ -287,10 +149,23 @@ function attachAppHandlers (peer, handlers = {}, _opts = {}) {
     const appType = body.type || body['@type'] || null;
     const object = body.object != null ? body.object : body;
     const signer = ev.signer || actorPubkey(body) || null;
-    const meta = { origin: ev.origin, wireMessage: null, msg: body, signer, contract };
+    const meta = {
+      origin: ev.origin,
+      // Bit-identical AMP frame from Peer (for ARC accumulate / Statechain attach).
+      wireMessage: ev.wireMessage || null,
+      messageHex: ev.messageHex || null,
+      messageId: ev.messageId || null,
+      msg: body,
+      signer,
+      contract
+    };
 
     try {
       if (contract === goonId) {
+        if (appType && !isKnownAppRelayType(appType)) {
+          peer.emit('warning', `[FABRIC:GOON] ignoring unknown GoonCitizen app type: ${appType}`);
+          return;
+        }
         if (appType === CONTRACT_BODY_TYPES.MissionCreated && typeof handlers.onMissionCreated === 'function') {
           handlers.onMissionCreated(object, signer, meta);
         } else if (appType === CONTRACT_BODY_TYPES.MissionBroadcast && typeof handlers.onMissionBroadcast === 'function') {
@@ -316,6 +191,15 @@ function attachAppHandlers (peer, handlers = {}, _opts = {}) {
           handlers.onFederationInvite(object, signer, meta);
         } else if (appType === CONTRACT_BODY_TYPES.FederationContractInviteResponse && typeof handlers.onFederationInviteResponse === 'function') {
           handlers.onFederationInviteResponse(object, signer, meta);
+        } else if ((appType === CONTRACT_BODY_TYPES.DiscordRequest || appType === 'DiscordRequest') &&
+          typeof handlers.onDiscordRequest === 'function') {
+          handlers.onDiscordRequest(object, signer, meta);
+        } else if ((appType === CONTRACT_BODY_TYPES.DiscordClaim || appType === 'DiscordClaim') &&
+          typeof handlers.onDiscordClaim === 'function') {
+          handlers.onDiscordClaim(object, signer, meta);
+        } else if ((appType === CONTRACT_BODY_TYPES.DiscordResponse || appType === 'DiscordResponse') &&
+          typeof handlers.onDiscordResponse === 'function') {
+          handlers.onDiscordResponse(object, signer, meta);
         }
         return;
       }
@@ -327,8 +211,20 @@ function attachAppHandlers (peer, handlers = {}, _opts = {}) {
 
       if (appType === CONTRACT_BODY_TYPES.GroupChat && typeof handlers.onGroupChat === 'function') {
         handlers.onGroupChat(object, signer, meta);
+      } else if ((appType === CONTRACT_BODY_TYPES.MessageReceipt || appType === 'MessageReceipt') &&
+        typeof handlers.onMessageReceipt === 'function') {
+        handlers.onMessageReceipt(object, signer, meta);
+      } else if ((appType === CONTRACT_BODY_TYPES.MessageReceived || appType === 'MessageReceived') &&
+        typeof handlers.onMessageReceived === 'function') {
+        handlers.onMessageReceived(object, signer, meta);
       } else if (appType === CONTRACT_BODY_TYPES.GroupChange && typeof handlers.onGroupChange === 'function') {
         handlers.onGroupChange(object, signer, meta);
+      } else if ((appType === CONTRACT_BODY_TYPES.GroupChangeProposal || appType === 'GroupChangeProposal') &&
+        typeof handlers.onGroupChangeProposal === 'function') {
+        handlers.onGroupChangeProposal(object, signer, meta);
+      } else if ((appType === CONTRACT_BODY_TYPES.GroupChangeVote || appType === 'GroupChangeVote') &&
+        typeof handlers.onGroupChangeVote === 'function') {
+        handlers.onGroupChangeVote(object, signer, meta);
       } else if (appType === CONTRACT_BODY_TYPES.GroupShare && typeof handlers.onGroupShare === 'function') {
         handlers.onGroupShare(object, signer, meta);
       } else if (appType === CONTRACT_BODY_TYPES.GroupActivityTree && typeof handlers.onGroupActivityTree === 'function') {
@@ -633,21 +529,27 @@ class FabricNetwork extends EventEmitter {
   }
 
   /**
-   * Encode a signed Message as opaque fabric:&lt;hex&gt; for copy-paste.
+   * Encode a signed Message as opaque fabric:&lt;hex&gt; or fabric:base64,… for copy-paste.
    * @param {object} message
-   * @returns {{ message: object, buffer: Buffer, messageHex: string, protocolUrl: string }}
+   * @param {Object} [opts]
+   * @param {string} [opts.encoding] `'hex'` (default) or `'base64'`
+   * @returns {{ message: object, buffer: Buffer, messageHex: string, messageBase64: string, protocolUrl: string, protocolUrlBase64: string }}
    */
-  encodeOpaqueMessage (message) {
+  encodeOpaqueMessage (message, opts = {}) {
     const { buildOpaqueFabricUrl } = require('../functions/groupShareMessage');
     if (!message || typeof message.toBuffer !== 'function') {
       throw new Error('Fabric Message required');
     }
     const buffer = message.toBuffer();
+    const encoding = opts.encoding === 'base64' ? 'base64' : 'hex';
     return {
       message,
       buffer,
       messageHex: buffer.toString('hex'),
-      protocolUrl: buildOpaqueFabricUrl(buffer)
+      messageBase64: buffer.toString('base64'),
+      protocolUrl: buildOpaqueFabricUrl(buffer, { encoding }),
+      protocolUrlHex: buildOpaqueFabricUrl(buffer, { encoding: 'hex' }),
+      protocolUrlBase64: buildOpaqueFabricUrl(buffer, { encoding: 'base64' })
     };
   }
 
@@ -774,9 +676,25 @@ class FabricNetwork extends EventEmitter {
         this.emit('groupChat', { object, source, meta });
         this._forward('onGroupChat', object, source, meta);
       },
+      onMessageReceipt: (object, source, meta) => {
+        this.emit('messageReceipt', { object, source, meta });
+        this._forward('onMessageReceipt', object, source, meta);
+      },
+      onMessageReceived: (object, source, meta) => {
+        this.emit('messageReceived', { object, source, meta });
+        this._forward('onMessageReceived', object, source, meta);
+      },
       onGroupChange: (object, source, meta) => {
         this.emit('groupChange', { object, source, meta });
         this._forward('onGroupChange', object, source, meta);
+      },
+      onGroupChangeProposal: (object, source, meta) => {
+        this.emit('groupChangeProposal', { object, source, meta });
+        this._forward('onGroupChangeProposal', object, source, meta);
+      },
+      onGroupChangeVote: (object, source, meta) => {
+        this.emit('groupChangeVote', { object, source, meta });
+        this._forward('onGroupChangeVote', object, source, meta);
       },
       onGroupShare: (object, source, meta) => {
         this.emit('groupShare', { object, source, meta });
@@ -1060,7 +978,11 @@ class FabricNetwork extends EventEmitter {
   publishChat (record) {
     if (!record || !record.body || !record.author) throw new Error('chat record required');
     const pubkey = this._identity && this._identity.pubkey;
-    if (pubkey && record.author !== pubkey) throw new Error('chat author must be local identity');
+    // ChatManager stores canonical x-only authors; identity.pubkey is often compressed.
+    const { pubkeysMatch } = require('../functions/identity');
+    if (pubkey && !pubkeysMatch(record.author, pubkey)) {
+      throw new Error('chat author must be local identity');
+    }
     return this._signAndRelay(OUTER.P2P_CHAT_MESSAGE, String(record.body));
   }
 
@@ -1163,6 +1085,33 @@ class FabricNetwork extends EventEmitter {
     return this._publishContractMessage(gooncitizenContractId(), 'MissionBroadcast', Object.assign({}, payload));
   }
 
+  /**
+   * Discord bot coordination — inbound user request (GoonCitizen namespace).
+   * @param {Object} payload DiscordRequest object
+   */
+  publishDiscordRequest (payload) {
+    const type = CONTRACT_BODY_TYPES.DiscordRequest || 'DiscordRequest';
+    return this._publishContractMessage(gooncitizenContractId(), type, Object.assign({}, payload));
+  }
+
+  /**
+   * Discord bot coordination — exclusive claim (first-wins).
+   * @param {Object} payload DiscordClaim object
+   */
+  publishDiscordClaim (payload) {
+    const type = CONTRACT_BODY_TYPES.DiscordClaim || 'DiscordClaim';
+    return this._publishContractMessage(gooncitizenContractId(), type, Object.assign({}, payload));
+  }
+
+  /**
+   * Discord bot coordination — handler outcome / Discord reply record.
+   * @param {Object} payload DiscordResponse object
+   */
+  publishDiscordResponse (payload) {
+    const type = CONTRACT_BODY_TYPES.DiscordResponse || 'DiscordResponse';
+    return this._publishContractMessage(gooncitizenContractId(), type, Object.assign({}, payload));
+  }
+
   publishEventBatch (events, sentAt = new Date().toISOString(), opts = {}) {
     if (!Array.isArray(events) || !events.length) return null;
     return this._publishContractMessage(gooncitizenContractId(), 'SCEventBatch', { events, sentAt }, opts);
@@ -1188,11 +1137,57 @@ class FabricNetwork extends EventEmitter {
   }
 
   /**
+   * Phase-1 delivery ACK — Fabric CONTRACT_MESSAGE under the group contract.
+   * @param {string} contractId
+   * @param {Object} payload { messageId, receivedAt?, chatMessageId? }
+   */
+  publishMessageReceived (contractId, payload) {
+    const type = CONTRACT_BODY_TYPES.MessageReceived || 'MessageReceived';
+    return this._publishContractMessage(contractId, type, Object.assign({
+      type,
+      receivedAt: new Date().toISOString()
+    }, payload || {}));
+  }
+
+  /**
+   * Phase-2 delivery receipt — Fabric CONTRACT_MESSAGE (stored + relayed like GroupChat).
+   * @param {string} contractId
+   * @param {Object} payload { messageId, receiptAt?, receiptSig?, chatMessageId? }
+   * @param {Object} [opts] forwarded to `_publishContractMessage` / `_signAndRelay`
+   * @param {boolean} [opts.relay]
+   */
+  publishMessageReceipt (contractId, payload, opts = {}) {
+    const type = CONTRACT_BODY_TYPES.MessageReceipt || 'MessageReceipt';
+    return this._publishContractMessage(contractId, type, Object.assign({
+      type,
+      receiptAt: new Date().toISOString()
+    }, payload || {}), opts);
+  }
+
+  /**
    * @param {string} contractId
    * @param {Object} payload GroupChange object
    */
   publishGroupChange (contractId, payload) {
     return this._publishContractMessage(contractId, 'GroupChange', Object.assign({}, payload));
+  }
+
+  /**
+   * @param {string} contractId
+   * @param {Object} payload GroupChangeProposal object
+   */
+  publishGroupChangeProposal (contractId, payload) {
+    const type = CONTRACT_BODY_TYPES.GroupChangeProposal || 'GroupChangeProposal';
+    return this._publishContractMessage(contractId, type, Object.assign({ type }, payload || {}));
+  }
+
+  /**
+   * @param {string} contractId
+   * @param {Object} payload GroupChangeVote object
+   */
+  publishGroupChangeVote (contractId, payload) {
+    const type = CONTRACT_BODY_TYPES.GroupChangeVote || 'GroupChangeVote';
+    return this._publishContractMessage(contractId, type, Object.assign({ type }, payload || {}));
   }
 
   /**
@@ -1325,6 +1320,7 @@ class FabricNetwork extends EventEmitter {
 }
 
 FabricNetwork.APP_RELAY_TYPES = APP_RELAY_TYPES;
+FabricNetwork.isKnownAppRelayType = isKnownAppRelayType;
 FabricNetwork.GROUP_MESSAGE_TYPES = GROUP_MESSAGE_TYPES;
 FabricNetwork.peersDbPath = function peersDbPath (settingsDir) {
   if (!settingsDir) return null;

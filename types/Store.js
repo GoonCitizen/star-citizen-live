@@ -26,6 +26,9 @@ const COLLECTIONS = [
   'groupsidechains', // per-group Statechain STATE + JOURNAL (functions/groupStatechain.js)
   'groupinvites', // FederationContractInvite rows (survive restart)
   'groupchanges', // applied GroupChange dedupe / history
+  'groupchangeproposals', // pending GroupChangeProposal + votes (k-of-n adopt)
+  'contractmessages', // ARC multi-origin GroupChat/GroupChange fold (@fabric/core contractMessageAccumulate)
+  'contractmessagecommits', // ARC 2PC sidecar (received/receipt; does not alter tip digest)
   'settings', // operator settings records { id: key, value } (functions/settingsStore.js)
   'snapshots', // screenshot metadata { id, ts, file, bytes, width, height } (services/SnapshotManager.js)
   'chatmessages', // Hub-style ChatMessage records (services/ChatManager.js)

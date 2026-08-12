@@ -11,6 +11,11 @@
 
 const React = require('react');
 const { showDesktopNotification } = require('../functions/desktopNotify');
+const {
+  displayCaption,
+  messageAttachment,
+  DEFAULT_CHAT_ATTACH_PRICE_SATS
+} = require('../functions/chatAttachment');
 
 const BASE = '/services/star-citizen';
 const LS_OPEN = 'gc.chatDock.open';
@@ -45,12 +50,17 @@ const CSS = `
   .gcdock-msg .t{color:var(--muted);font-size:10.5px;font-variant-numeric:tabular-nums}
   .gcdock-msg .b{font-size:13px;line-height:1.45;word-break:break-word;white-space:pre-wrap}
   .gcdock-empty{color:var(--muted);font-style:italic;text-align:center;margin:auto;font-size:12.5px}
-  .gcdock-compose{display:flex;gap:6px;padding:10px 12px;border-top:1px solid var(--line)}
+  .gcdock-compose{display:flex;gap:6px;padding:10px 12px;border-top:1px solid var(--line);align-items:center}
   .gcdock-compose input{flex:1;background:var(--bg);border:1px solid var(--line);color:var(--text);
     border-radius:8px;padding:8px 10px;font-size:13px;min-width:0}
-  .gcdock-send{background:var(--accent);border:none;color:#fff;border-radius:8px;padding:0 14px;
+  .gcdock-tool{background:var(--panel2);border:1px solid var(--line);color:var(--text);border-radius:8px;
+    width:34px;height:34px;flex:none;cursor:pointer;font-size:14px}
+  .gcdock-tool:disabled{opacity:.45;cursor:default}
+  .gcdock-send{background:var(--accent);border:none;color:#fff;border-radius:8px;padding:0 14px;height:34px;
     font-size:12.5px;font-weight:600;cursor:pointer}
   .gcdock-send:disabled{opacity:.45;cursor:default}
+  .gcdock-chip{font-size:11px;color:var(--muted);padding:0 12px 6px;display:flex;gap:6px;align-items:center}
+  .gcdock-chip button{background:none;border:none;color:var(--kill);cursor:pointer;font-size:11px;padding:0}
   .gcdock-err{background:rgba(248,81,73,.12);color:var(--kill);margin:0 12px 8px;padding:7px 10px;
     border-radius:7px;font-size:12px}
 `;
@@ -111,10 +121,12 @@ class GlobalChatDock extends React.Component {
         notifyChatGlobal: true,
         notifyChatGroups: true,
         notifyWhenFocused: false
-      }
+      },
+      pendingFile: null
     };
     this._timer = null;
     this._msgsRef = React.createRef();
+    this._fileRef = React.createRef();
     this._acked = loadIdMap(LS_ACKED);       // dock unread cursor
     this._notified = loadIdMap(LS_NOTIFIED); // OS notification cursor
     this._bootstrapped = false;
@@ -258,22 +270,72 @@ class GlobalChatDock extends React.Component {
 
   async send () {
     const body = this.state.draft.trim();
-    if (!body || this.state.sending) return;
+    const pending = this.state.pendingFile;
+    if ((!body && !pending) || this.state.sending) return;
     this.setState({ sending: true, error: null });
     try {
+      const price = Number(this.props.documentsDefaultPriceSats) || DEFAULT_CHAT_ATTACH_PRICE_SATS;
+      const payload = {
+        channel: 'global',
+        body: body || (pending ? `📎 ${pending.name}` : '')
+      };
+      if (pending) {
+        if (this.props.documentsEnable === false) {
+          throw new Error('File attach requires settings.documents.enable');
+        }
+        payload.file = {
+          name: pending.name,
+          mime: pending.mime,
+          size: pending.size,
+          contentBase64: pending.contentBase64
+        };
+        payload.purchasePriceSats = price;
+      }
       const res = await fetch(`${BASE}/chat/messages`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ channel: 'global', body })
+        body: JSON.stringify(payload)
       });
       const json = await res.json();
       if (!res.ok) throw new Error(json.error || `HTTP ${res.status}`);
-      this.setState({ draft: '', sending: false });
+      this.setState({ draft: '', sending: false, pendingFile: null });
       await this.refreshGlobal();
       if (this._msgsRef.current) this._msgsRef.current.scrollTop = this._msgsRef.current.scrollHeight;
     } catch (e) {
       this.setState({ sending: false, error: e.message });
     }
+  }
+
+  openFilePicker () {
+    if (this.props.documentsEnable === false) {
+      this.setState({ error: 'Enable settings.documents.enable to attach files' });
+      return;
+    }
+    const el = this._fileRef.current;
+    if (el) el.click();
+  }
+
+  onFilePicked (ev) {
+    const file = ev.target.files && ev.target.files[0];
+    ev.target.value = '';
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      const dataUrl = String(reader.result || '');
+      const comma = dataUrl.indexOf(',');
+      const contentBase64 = comma >= 0 ? dataUrl.slice(comma + 1) : dataUrl;
+      this.setState({
+        pendingFile: {
+          name: file.name || 'attachment',
+          mime: file.type || 'application/octet-stream',
+          size: file.size,
+          contentBase64
+        },
+        error: null
+      });
+    };
+    reader.onerror = () => this.setState({ error: 'Failed to read file' });
+    reader.readAsDataURL(file);
   }
 
   render () {
@@ -321,13 +383,43 @@ class GlobalChatDock extends React.Component {
                 React.createElement('span', { className: 'key', title: m.author }, shortKey(m.author)),
                 React.createElement('span', { className: 't' }, shortTime(m.ts))
               ),
-              React.createElement('div', { className: 'b' }, m.body)
+              React.createElement('div', { className: 'b' }, displayCaption(m)),
+              (() => {
+                const att = messageAttachment(m);
+                if (!att) return null;
+                const price = Number(att.purchasePriceSats || 0);
+                return React.createElement('div', {
+                  style: { fontSize: 11, color: 'var(--muted)', marginTop: 4 }
+                }, `📎 ${att.name} · ${price > 0 ? `${price} sats` : 'free'}`);
+              })()
             ))
             : React.createElement('div', { className: 'gcdock-empty' },
               this.state.loading ? 'loading…' : 'No messages yet — say hello.')
         ),
         this.state.error ? React.createElement('div', { className: 'gcdock-err' }, this.state.error) : null,
+        this.state.pendingFile
+          ? React.createElement('div', { className: 'gcdock-chip' },
+            React.createElement('span', null, this.state.pendingFile.name),
+            React.createElement('button', {
+              type: 'button',
+              onClick: () => this.setState({ pendingFile: null })
+            }, 'remove')
+          )
+          : null,
+        React.createElement('input', {
+          ref: this._fileRef,
+          type: 'file',
+          style: { display: 'none' },
+          onChange: (e) => this.onFilePicked(e)
+        }),
         React.createElement('div', { className: 'gcdock-compose' },
+          React.createElement('button', {
+            type: 'button',
+            className: 'gcdock-tool',
+            title: 'Attach file',
+            disabled: !me || this.state.sending,
+            onClick: () => this.openFilePicker()
+          }, '📎'),
           React.createElement('input', {
             type: 'text',
             value: this.state.draft,
@@ -339,7 +431,7 @@ class GlobalChatDock extends React.Component {
           }),
           React.createElement('button', {
             className: 'gcdock-send',
-            disabled: !this.state.draft.trim() || this.state.sending,
+            disabled: (!this.state.draft.trim() && !this.state.pendingFile) || this.state.sending,
             onClick: () => this.send()
           }, this.state.sending ? '…' : 'Send')
         )

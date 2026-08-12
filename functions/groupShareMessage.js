@@ -3,7 +3,11 @@
 /**
  * Opaque Fabric Message encode/decode for GoonCitizen Group shares.
  *
- * Clipboard form: `fabric:<hex>` of a signed AMP Message (Message.toBuffer).
+ * Clipboard forms:
+ * - `fabric:<hex>` — signed AMP Message (Message.toBuffer) as hex (default)
+ * - `fabric:base64,<b64>` / `fabric:b64,<b64>` — same bytes as base64
+ *
+ * Raw hex or base64 (without the fabric: prefix) is also accepted on decode.
  * Primary body: CONTRACT_MESSAGE / GroupShare / kind GroupOffer (embeds genesis).
  * Also classifies FederationContractInvite and group CONTRACT_PUBLISH.
  */
@@ -20,87 +24,181 @@ const {
 } = require('./federationContractInvite');
 
 const GROUP_SHARE_KIND_OFFER = 'GroupOffer';
+const BASE64_PREFIX_RE = /^fabric:(?:base64|b64)[,:](.+)$/i;
 
 function normalizeHex (s) {
   if (typeof s !== 'string') return '';
   let t = s.trim();
   if (t.startsWith('0x') || t.startsWith('0X')) t = t.slice(2);
-  return t;
+  return t.replace(/\s+/g, '');
+}
+
+function normalizeBase64 (s) {
+  if (typeof s !== 'string') return '';
+  return s.trim().replace(/\s+/g, '').replace(/-/g, '+').replace(/_/g, '/');
 }
 
 /**
  * @param {Buffer|import('@fabric/core/types/message')} messageOrBuffer
+ * @returns {Buffer}
+ */
+function bufferFromMessage (messageOrBuffer) {
+  if (Buffer.isBuffer(messageOrBuffer)) return messageOrBuffer;
+  if (messageOrBuffer && typeof messageOrBuffer.toBuffer === 'function') {
+    return messageOrBuffer.toBuffer();
+  }
+  throw new TypeError('expected a Message or Buffer');
+}
+
+/**
+ * @param {Buffer|import('@fabric/core/types/message')} messageOrBuffer
+ * @param {Object} [opts]
+ * @param {string} [opts.encoding] `'hex'` (default) or `'base64'`
  * @returns {string}
  */
-function buildOpaqueFabricUrl (messageOrBuffer) {
-  let buf;
-  if (Buffer.isBuffer(messageOrBuffer)) {
-    buf = messageOrBuffer;
-  } else if (messageOrBuffer && typeof messageOrBuffer.toBuffer === 'function') {
-    buf = messageOrBuffer.toBuffer();
-  } else {
-    throw new TypeError('buildOpaqueFabricUrl requires a Message or Buffer');
+function buildOpaqueFabricUrl (messageOrBuffer, opts = {}) {
+  const buf = bufferFromMessage(messageOrBuffer);
+  const encoding = opts.encoding === 'base64' ? 'base64' : 'hex';
+  if (encoding === 'base64') {
+    return 'fabric:base64,' + buf.toString('base64');
   }
   return 'fabric:' + buf.toString('hex');
 }
 
 /**
+ * @param {string} raw
+ * @returns {{ ok: true, buffer: Buffer, encoding: string } | { ok: false, error: string }}
+ */
+function tryDecodeBase64Payload (raw) {
+  const b64 = normalizeBase64(raw);
+  if (!b64 || b64.length < 44 || !/^[A-Za-z0-9+/]+=*$/.test(b64)) {
+    return { ok: false, error: 'invalid opaque base64' };
+  }
+  let buffer;
+  try {
+    buffer = Buffer.from(b64, 'base64');
+  } catch (_) {
+    return { ok: false, error: 'base64 decode failed' };
+  }
+  if (buffer.length < 32) return { ok: false, error: 'buffer too short for Fabric message' };
+  return { ok: true, buffer, encoding: 'base64' };
+}
+
+/**
  * @param {string} urlStr
- * @returns {{ ok: true, hex: string } | { ok: false, error: string }}
+ * @returns {{ ok: true, hex: string, buffer?: Buffer, encoding: string } | { ok: false, error: string }}
  */
 function parseOpaqueFabricUrl (urlStr) {
   if (typeof urlStr !== 'string' || !urlStr.trim()) {
     return { ok: false, error: 'empty url' };
   }
   const raw = urlStr.trim();
+
+  const b64Prefixed = raw.match(BASE64_PREFIX_RE);
+  if (b64Prefixed) {
+    const decoded = tryDecodeBase64Payload(b64Prefixed[1]);
+    if (!decoded.ok) return decoded;
+    return {
+      ok: true,
+      hex: decoded.buffer.toString('hex'),
+      buffer: decoded.buffer,
+      encoding: 'base64'
+    };
+  }
+
   // Fast path: fabric:<hex> without //
   if (/^fabric:[0-9a-fA-F]+$/i.test(raw) && !raw.includes('//')) {
     const hex = normalizeHex(raw.slice('fabric:'.length));
     if (!hex || hex.length % 2 !== 0) return { ok: false, error: 'invalid opaque hex' };
-    return { ok: true, hex };
+    return { ok: true, hex, encoding: 'hex' };
   }
+
   try {
     const url = new URL(raw);
     if (url.protocol !== 'fabric:') return { ok: false, error: 'not a fabric: url' };
     if (url.hostname) return { ok: false, error: 'opaque fabric message has no host' };
-    const pathHex = url.pathname ? String(url.pathname).replace(/^\//, '') : '';
-    const hex = normalizeHex(pathHex);
+    const pathPart = url.pathname ? String(url.pathname).replace(/^\//, '') : '';
+    const search = url.search ? url.search.slice(1) : '';
+    const payload = pathPart || search;
+
+    const nestedB64 = payload.match(/^(?:base64|b64)[,:](.+)$/i);
+    if (nestedB64) {
+      const decoded = tryDecodeBase64Payload(nestedB64[1]);
+      if (!decoded.ok) return decoded;
+      return {
+        ok: true,
+        hex: decoded.buffer.toString('hex'),
+        buffer: decoded.buffer,
+        encoding: 'base64'
+      };
+    }
+
+    const hex = normalizeHex(payload);
     if (!hex || hex.length % 2 !== 0 || !/^[0-9a-fA-F]+$/.test(hex)) {
       return { ok: false, error: 'invalid opaque hex' };
     }
-    return { ok: true, hex };
+    return { ok: true, hex, encoding: 'hex' };
   } catch (_) {
     return { ok: false, error: 'invalid fabric: url' };
   }
 }
 
 /**
- * @param {string} hexOrUrl
- * @returns {{ ok: true, hex: string, buffer: Buffer, message: object } | { ok: false, error: string }}
+ * @param {Buffer} buffer
+ * @returns {{ ok: true, hex: string, base64: string, buffer: Buffer, message: object, encoding: string } | { ok: false, error: string }}
  */
-function parseOpaqueFabricMessage (hexOrUrl) {
-  let hex = null;
-  const asUrl = parseOpaqueFabricUrl(hexOrUrl);
-  if (asUrl.ok) hex = asUrl.hex;
-  else {
-    const norm = normalizeHex(hexOrUrl);
-    if (norm && norm.length % 2 === 0 && /^[0-9a-fA-F]+$/.test(norm)) hex = norm;
+function messageFromBuffer (buffer, encoding) {
+  if (!Buffer.isBuffer(buffer) || buffer.length < 32) {
+    return { ok: false, error: 'buffer too short for Fabric message' };
   }
-  if (!hex) return { ok: false, error: asUrl.error || 'invalid hex' };
-  let buffer;
-  try {
-    buffer = Buffer.from(hex, 'hex');
-  } catch (_) {
-    return { ok: false, error: 'hex decode failed' };
-  }
-  if (buffer.length < 32) return { ok: false, error: 'buffer too short for Fabric message' };
   try {
     const Message = require('@fabric/core/types/message');
     const message = Message.fromBuffer(buffer);
-    return { ok: true, hex, buffer, message };
+    return {
+      ok: true,
+      hex: buffer.toString('hex'),
+      base64: buffer.toString('base64'),
+      buffer,
+      message,
+      encoding: encoding || 'hex'
+    };
   } catch (e) {
     return { ok: false, error: (e && e.message) ? String(e.message) : 'Message.fromBuffer failed' };
   }
+}
+
+/**
+ * @param {string} hexOrUrlOrBase64
+ * @returns {{ ok: true, hex: string, base64: string, buffer: Buffer, message: object, encoding: string } | { ok: false, error: string }}
+ */
+function parseOpaqueFabricMessage (hexOrUrlOrBase64) {
+  if (typeof hexOrUrlOrBase64 !== 'string' || !hexOrUrlOrBase64.trim()) {
+    return { ok: false, error: 'empty message' };
+  }
+  const raw = hexOrUrlOrBase64.trim();
+
+  const asUrl = parseOpaqueFabricUrl(raw);
+  if (asUrl.ok) {
+    const buffer = asUrl.buffer || Buffer.from(asUrl.hex, 'hex');
+    return messageFromBuffer(buffer, asUrl.encoding || 'hex');
+  }
+
+  const norm = normalizeHex(raw);
+  if (norm && norm.length % 2 === 0 && /^[0-9a-fA-F]+$/.test(norm)) {
+    try {
+      return messageFromBuffer(Buffer.from(norm, 'hex'), 'hex');
+    } catch (_) {
+      return { ok: false, error: 'hex decode failed' };
+    }
+  }
+
+  const asB64 = tryDecodeBase64Payload(raw);
+  if (asB64.ok) {
+    const parsed = messageFromBuffer(asB64.buffer, 'base64');
+    if (parsed.ok) return parsed;
+  }
+
+  return { ok: false, error: asUrl.error || 'invalid fabric message encoding' };
 }
 
 /**
@@ -245,6 +343,7 @@ function classifyGroupShareMessage (message) {
 module.exports = {
   GROUP_SHARE_KIND_OFFER,
   normalizeHex,
+  normalizeBase64,
   buildOpaqueFabricUrl,
   parseOpaqueFabricUrl,
   parseOpaqueFabricMessage,

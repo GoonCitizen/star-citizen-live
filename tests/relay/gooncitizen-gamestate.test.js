@@ -26,12 +26,12 @@ test('buildGameStateSnapshot is deterministic for same history', async () => {
   assert.strictEqual(a.digest, b.digest);
   const patches = gooncitizenGameState.patchesForGameState({}, a);
   assert.strictEqual(patches[0].op, 'add');
-  assert.strictEqual(patches[0].path, '/gooncitizen');
-  assert.strictEqual(patches[0].value, a);
+  assert.strictEqual(patches[0].path, '/services');
+  assert.strictEqual(patches[0].value.rsi, a);
   assert.ok(patches.some((p) => p.path === '/namespaces'), 'D-016 parent seal');
   const ns = patches.find((p) => p.path === '/namespaces');
   assert.deepStrictEqual(
-    gooncitizenGameState.patchesForGameState({ gooncitizen: a, namespaces: ns.value }, a),
+    gooncitizenGameState.patchesForGameState({ services: { rsi: a }, namespaces: ns.value }, a),
     [],
     'identical digest is a no-op patch'
   );

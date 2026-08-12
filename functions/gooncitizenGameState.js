@@ -3,7 +3,7 @@
 /**
  * Compact GoonCitizen game-state snapshot for Hub sidechain / statechain sync.
  *
- * Shape is written to Hub `sidechain/STATE` content at `/gooncitizen` and sealed
+ * Shape is written to Hub `sidechain/STATE` content at `/services/rsi` and sealed
  * into Beacon epochs (`payload.sidechain.stateDigest` + `sidechain/SNAPSHOTS`).
  *
  * Keep this small and deterministic — it is public mesh state, not a raw log.
@@ -95,7 +95,8 @@ function buildGameStateSnapshot (history, opts = {}) {
 }
 
 /**
- * RFC6902 patches to publish `snap` at `/gooncitizen` on sidechain content.
+ * RFC6902 patches to publish `snap` at `/services/rsi` on sidechain content
+ * (RFC6902 → `content.services.rsi`).
  * Also seals a namespace head at `/namespaces/<contractId>` (D-016 / ADR-001)
  * when the snapshot carries a `contractId` + `digest`.
  * @param {Object|null|undefined} existingContent sidechain content object
@@ -104,14 +105,18 @@ function buildGameStateSnapshot (history, opts = {}) {
  */
 function patchesForGameState (existingContent, snap) {
   const patches = [];
-  const has = existingContent && Object.prototype.hasOwnProperty.call(existingContent, 'gooncitizen');
-  if (has) {
-    const prev = existingContent.gooncitizen;
+  const services = existingContent && existingContent.services && typeof existingContent.services === 'object'
+    ? existingContent.services
+    : null;
+  if (!services) {
+    patches.push({ op: 'add', path: '/services', value: { rsi: snap } });
+  } else if (Object.prototype.hasOwnProperty.call(services, 'rsi')) {
+    const prev = services.rsi;
     if (!(prev && prev.digest && snap && snap.digest && prev.digest === snap.digest)) {
-      patches.push({ op: 'replace', path: '/gooncitizen', value: snap });
+      patches.push({ op: 'replace', path: '/services/rsi', value: snap });
     }
   } else {
-    patches.push({ op: 'add', path: '/gooncitizen', value: snap });
+    patches.push({ op: 'add', path: '/services/rsi', value: snap });
   }
 
   // Parent seal for the GoonCitizen Contract namespace (same sidechain document helpers).

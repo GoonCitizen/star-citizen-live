@@ -57,7 +57,7 @@ test('default peers: hub.fabric.pub and relay.goon.vc are seeded on first boot; 
   } finally { await clean.stop(); }
 });
 
-test('loopback peers are rejected; restore-seeds puts network hubs back', async () => {
+test('self loopback peers are rejected; other-port loopback and restore-seeds work', async () => {
   const fs = require('fs');
   const os = require('os');
   const path = require('path');
@@ -66,14 +66,21 @@ test('loopback peers are rejected; restore-seeds puts network hubs back', async 
     port: 0,
     settingsDir: dir,
     missions: { enable: false },
-    fabric: { enable: false }
+    fabric: { enable: false, port: 7778 }
   });
   await svc.start();
   const port = svc.server.address().port;
   try {
-    const bad = await request(port, 'POST', '/peers', { address: '127.0.0.1:7777' });
-    assert.strictEqual(bad.status, 400);
-    assert.match(String(bad.body.error || ''), /loopback/i);
+    const selfLoop = await request(port, 'POST', '/peers', { address: '127.0.0.1:7778' });
+    assert.strictEqual(selfLoop.status, 400);
+    assert.match(String(selfLoop.body.error || ''), /self/i);
+
+    const localHub = await request(port, 'POST', '/peers', {
+      address: '127.0.0.1:7777',
+      label: 'local-hub'
+    });
+    assert.strictEqual(localHub.status, 200);
+    assert.strictEqual(localHub.body.data.address, '127.0.0.1:7777');
 
     // Simulate a corrupted roster that only dialed self (forceHubs = UI restore).
     svc.settings.fabric = Object.assign({}, svc.settings.fabric, { port: 7777 });
@@ -229,8 +236,13 @@ test('mission with Bitcoin reward: submit completion → approve (Schnorr) → p
     assert.strictEqual(claim.status, 200, JSON.stringify(claim.body));
     const claimId = claim.body.data.id;
 
-    // Wrong signer cannot approve.
-    const msg = JSON.stringify({ action: 'mission.accept', missionId, claimId, claimantId: pilot.pubkey });
+    // Wrong signer cannot approve. Message must match MissionManager.acceptanceMessage
+    // (includes completionGroupId) — do not hand-roll the JSON.
+    const claimRow = claim.body.data;
+    const msg = svc.missionManager.acceptanceMessage(
+      svc.missionManager.getMission(missionId),
+      claimRow
+    );
     const badSig = Buffer.from(keyFromIdentity(pilot).signSchnorr(Buffer.from(msg))).toString('hex');
     const denied = await request(port, 'POST', `${BASE}/claims/${claimId}/validate`, {
       decision: 'approve', signatures: { [pilot.pubkey]: badSig }

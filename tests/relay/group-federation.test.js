@@ -282,7 +282,8 @@ test('Fabric: star topology hub relays targeted invite spoke→hub→spoke', asy
       && nodeB.registerStore.get('groupinvites', invite.body.data.inviteId));
     const inboxId = `inbox-fi-${invite.body.data.inviteId}`;
     await waitFor(() => nodeB.registerStore.get('inbox', inboxId));
-    assert.strictEqual(nodeB.registerStore.get('inbox', inboxId).kind, 'FederationInvite');
+    // Default invite role is signer → MultisigWalletInvite inbox kind.
+    assert.strictEqual(nodeB.registerStore.get('inbox', inboxId).kind, 'MultisigWalletInvite');
     // Hub must not keep a targeted invite addressed to Bob.
     assert.equal(hub.registerStore.get('groupinvites', invite.body.data.inviteId), null);
 
@@ -408,9 +409,9 @@ test('Fabric: direct group invite (inviteePubkey) persists inbox only on invitee
     const inboxId = `inbox-fi-${invite.body.data.inviteId}`;
     await waitFor(() => nodeB.registerStore.get('inbox', inboxId));
     const inbox = nodeB.registerStore.get('inbox', inboxId);
-    assert.strictEqual(inbox.kind, 'FederationInvite');
+    assert.strictEqual(inbox.kind, 'MultisigWalletInvite');
     assert.strictEqual(inbox.actionable, true);
-    assert.ok(/Invite Wing/i.test(inbox.title));
+    assert.ok(/Invite Wing|Multisig wallet invite/i.test(inbox.title));
 
     // Carol (not the invitee) must not persist the targeted invite.
     await sleep(800);

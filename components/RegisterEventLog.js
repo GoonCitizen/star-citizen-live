@@ -53,6 +53,8 @@ function kindLabel (kind) {
     FederationInvite: 'invite',
     FederationInviteDecision: 'invite decision',
     GroupChange: 'membership',
+    GroupChangeProposal: 'proposal',
+    GroupChangeVote: 'vote',
     GroupIngest: 'received',
     GroupCreated: 'created'
   };

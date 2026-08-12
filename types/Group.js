@@ -10,6 +10,7 @@
 
 const crypto = require('crypto');
 const Federation = require('@fabric/core/types/federation');
+const { pubkeysMatch } = require('../functions/identity');
 
 const PUBKEY_RE = /^0[23][0-9a-f]{64}$/;
 const SLUG_RE = /^[a-z0-9](?:[a-z0-9-]{0,46}[a-z0-9])?$/;
@@ -44,6 +45,7 @@ class Group {
     this.proposedPolicy = data.proposedPolicy || null;
     this.policyFingerprint = data.policyFingerprint || null;
     this.spendLadder = data.spendLadder || null;
+    this.primaryColor = data.primaryColor || null;
     this._federation = null;
   }
 
@@ -74,13 +76,12 @@ class Group {
 
   /** @returns {Boolean} True when `pubkey` is a member (reader or signer). */
   includes (pubkey) {
-    return this.members.includes(pubkey);
+    return this.members.some((m) => pubkeysMatch(m, pubkey));
   }
 
   /** @returns {Boolean} True when pubkey is a signing validator. */
   isSigner (pubkey) {
-    const pk = String(pubkey || '').toLowerCase();
-    return this.validators.some((v) => String(v).toLowerCase() === pk);
+    return this.validators.some((v) => pubkeysMatch(v, pubkey));
   }
 
   /** Member but not a signer. */
@@ -172,6 +173,7 @@ class Group {
       proposedPolicy: this.proposedPolicy || null,
       policyFingerprint: this.policyFingerprint || null,
       spendLadder: this.spendLadder || null,
+      primaryColor: this.primaryColor || null,
       commitment: this.commitment()
     };
   }
@@ -189,7 +191,8 @@ class Group {
       parentId: this.parentId || null,
       path: this.pagePath(),
       createdAt: this.createdAt,
-      contractId: this.contractId || null
+      contractId: this.contractId || null,
+      primaryColor: this.primaryColor || null
     };
   }
 }

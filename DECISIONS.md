@@ -99,7 +99,7 @@ GoonCitizen the same way.
 
 1. **Publish** the frozen GoonCitizen genesis (`CONTRACT_PUBLISH`) so Hub
    operators can Accept it into Beacon-tracked contracts.
-2. **Seal** compact game state at Hub `/gooncitizen` **and**
+2. **Seal** compact game state at Hub `/services/rsi` **and**
    `/namespaces/<gooncitizenContractId>` (parent namespace head).
 3. **Groups** provision a per-contract Statechain document in the Fabric
    **Store** collection `groupsidechains` (not raw `fs` under
@@ -123,7 +123,7 @@ Hubs bootstrap many apps without each inventing a chain.
 **Date:** 2026-07-20 · **Status:** Adopted
 
 **Decision:** Cumulative GoonCitizen aggregation (D-014) is published into the
-Hub **logical sidechain** (`sidechain/STATE` content at `/gooncitizen`) so each
+Hub **logical sidechain** (`sidechain/STATE` content at `/services/rsi`) so each
 **Beacon epoch** on `relay.goon.vc` seals a public **stateDigest** and full
 snapshot (`sidechain/SNAPSHOTS`), following Fabric **sidechain document**
 semantics
@@ -134,7 +134,7 @@ semantics
    or per-peer `shareLogs`).
 2. **relay.goon.vc** (`goon.vc` Hub) folds ingest into durable cumulative
    history, then applies a trusted sidechain patch via
-   `Hub._applySidechainPatchesTrusted` (path policy allows `/gooncitizen`).
+   `Hub._applySidechainPatchesTrusted` (path policy allows `/services/rsi`).
 3. **Beacon** already embeds `payload.sidechain { clock, stateDigest }` and
    writes per-epoch snapshots — no parallel “game chain”; GoonCitizen rides the
    Hub sidechain.
@@ -291,6 +291,9 @@ share one REST contract so either can complete sign-in.
 
 ## D-010 — Fabric Peer is the peering transport (HTTPS uplink retired)
 **Date:** 2026-07-20 · **Status:** Adopted
+
+**Privacy / threat model:** conversational Fabric traffic is signed plaintext
+at relays — see [`docs/THREAT-MODEL.md`](docs/THREAT-MODEL.md).
 
 **Decision:** All GoonCitizen ↔ org-hub peer traffic uses the Fabric
 AMP/`Message` protocol over TCP/NOISE — not HTTP(S) batch uplink or chat pull.

@@ -12,6 +12,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   getServiceStatus: () => ipcRenderer.invoke('get-service-status'),
   restartService: () => ipcRenderer.invoke('restart-service'),
   setOpenAtLogin: (enabled) => ipcRenderer.invoke('set-open-at-login', enabled),
+  setGroupOverlay: (enabled) => ipcRenderer.invoke('set-group-overlay', enabled),
+  getGroupOverlay: () => ipcRenderer.invoke('get-group-overlay'),
   identity: {
     get: () => ipcRenderer.invoke('identity:get'),
     create: (password) => ipcRenderer.invoke('identity:create', { password }),
@@ -30,6 +32,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
       ipcRenderer.on('identity:changed', listener);
       return () => ipcRenderer.removeListener('identity:changed', listener);
     }
+  },
+  /** Fabric mesh publish helpers (prefer over HTTP when available). */
+  fabric: {
+    deliveryReceipt: (opts) => ipcRenderer.invoke('fabric:delivery-receipt', opts || {})
   },
   notify: (payload) => ipcRenderer.invoke('notify:show', payload || {}),
   onNotifyAction: (handler) => {

@@ -21,6 +21,29 @@ const settingsStore = require('../functions/settingsStore');
 const { storeRoot, registerPath } = require('../functions/storePaths');
 const { Store } = require('../types/Store');
 const { applyFabricEnvConfig, loadRepoDotEnv } = require('../functions/fabricEnvIdentity');
+const { applyGoonCitizenEnvAliases } = require('../functions/goonCitizenEnvAliases');
+let resolveFabricPeerInterface;
+try {
+  ({ resolveFabricPeerInterface } = require('@fabric/core/functions/fabricListenInterface'));
+} catch (_) {
+  resolveFabricPeerInterface = function resolveFabricPeerInterfaceFallback (opts = {}) {
+    const env = opts.env || process.env;
+    for (const key of ['FABRIC_INTERFACE', 'FABRIC_PEER_INTERFACE']) {
+      const v = String(env[key] || '').trim();
+      if (v) return v;
+    }
+    const explicit = String(opts.interface || opts.host || '').trim();
+    if (explicit) return explicit;
+    return '0.0.0.0';
+  };
+}
+
+let localSettings = {};
+try {
+  localSettings = require('../settings/local');
+} catch (_) {
+  localSettings = {};
+}
 
 function csv (value) {
   return String(value || '').split(',').map((s) => s.trim()).filter(Boolean);
@@ -71,7 +94,13 @@ async function relaySettings () {
     console.log(`[STAR-CITIZEN] log: ${resolved.channel || '?'} channel (${resolved.source}) -> ${resolved.file}`);
   }
 
-  const webhook = process.env.DISCORD_WEBHOOK_URL || persisted.discordWebhook || null;
+  const discordConfig = require('../functions/discordConfig');
+  const discord = discordConfig.resolveDiscordConfig({
+    localDiscord: localSettings.discord || {},
+    persisted,
+    settingsDir,
+    env: process.env
+  });
   return {
     port: process.env.PORT || 3041,
     logfile: resolved.file,
@@ -89,21 +118,65 @@ async function relaySettings () {
       dir: registerDir,
       officers: csv(process.env.SC_OFFICERS)
     },
-    discord: { enable: !!webhook, webhook },
-    uplink: { enable: !!process.env.SC_UPLINK_URL, url: process.env.SC_UPLINK_URL || null },
+    discord,
+    uplink: { intervalMs: 5000 },
     fabric: {
       enable: process.env.SC_FABRIC === '0' ? false : true,
       listen: true,
-      port: Number(process.env.FABRIC_PORT) || 7777
+      port: Number(process.env.FABRIC_PORT) || 7777,
+      interface: resolveFabricPeerInterface({
+        interface: localSettings.fabric && localSettings.fabric.interface,
+        env: process.env
+      })
     },
     // Wallet: ledger mode by default (auditable obligations, no bitcoind);
     // supply settings.payouts.rpc for on-chain regtest/signet escrow.
-    payouts: { enable: true, ledger: true, network: process.env.SC_BTC_NETWORK || 'regtest' }
+    payouts: Object.assign(
+      { enable: true, ledger: true, network: process.env.SC_BTC_NETWORK || 'regtest' },
+      localSettings.payouts || {}
+    ),
+    bitcoin: Object.assign({
+      enable: true,
+      hub: process.env.SC_BITCOIN_HUB || 'http://127.0.0.1:8080',
+      network: process.env.SC_BTC_NETWORK || 'regtest',
+      adminToken: null,
+      adminTokenFile: null
+    }, localSettings.bitcoin || {}, {
+      adminToken: process.env.FABRIC_HUB_ADMIN_TOKEN ||
+        (localSettings.bitcoin && localSettings.bitcoin.adminToken) ||
+        null,
+      adminTokenFile: process.env.FABRIC_HUB_ADMIN_TOKEN_FILE ||
+        (localSettings.bitcoin && localSettings.bitcoin.adminTokenFile) ||
+        null,
+      hub: process.env.SC_BITCOIN_HUB ||
+        (localSettings.bitcoin && localSettings.bitcoin.hub) ||
+        'http://127.0.0.1:8080'
+    }),
+    documents: Object.assign({
+      enable: false,
+      hub: null
+    }, localSettings.documents || {}, {
+      hub: process.env.SC_DOCUMENTS_HUB ||
+        (localSettings.documents && localSettings.documents.hub) ||
+        process.env.SC_BITCOIN_HUB ||
+        (localSettings.bitcoin && localSettings.bitcoin.hub) ||
+        'http://127.0.0.1:8080'
+    }),
+    // Instance default group — Fabric message id / fabric:<hex> / group id.
+    // Seeds Store primaryGroupId when unset (see LiveRelay._applyDefaultGroupFromLocal).
+    defaultGroupMessageId: localSettings.defaultGroupMessageId ||
+      (localSettings.groups && localSettings.groups.defaultGroupMessageId) ||
+      process.env.SC_DEFAULT_GROUP_MESSAGE_ID ||
+      null
   };
 }
 
 async function main () {
   loadRepoDotEnv();
+  applyGoonCitizenEnvAliases(process.env);
+  if (process.env.SC_UPLINK_URL) {
+    console.warn('[STAR-CITIZEN] SC_UPLINK_URL is ignored (D-010 — use Fabric Peer seeds, not HTTPS uplink)');
+  }
   const { identity, updated, source } = applyFabricEnvConfig(process.env);
   if (identity) {
     console.log(`[STAR-CITIZEN] publishing identity: ${identity.pubkey.slice(0, 16)}… (${source}${updated ? ', FABRIC_XPRV stamped' : ''})`);

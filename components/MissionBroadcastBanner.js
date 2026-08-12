@@ -7,11 +7,14 @@
 
 const React = require('react');
 const { showDesktopNotification } = require('../functions/desktopNotify');
+const {
+  shouldDesktopToast,
+  desktopNotifyMeta
+} = require('../functions/desktopInboxKinds');
 
 const BASE = '/services/star-citizen';
 const LS_SEEN = 'gc.missionBroadcast.seen';
 const LS_INBOX_SEEN = 'gc.inboxNotify.seen';
-const DESKTOP_INBOX_KINDS = new Set(['FederationInvite', 'GroupOffer', 'MissionClaim']);
 
 const CSS = `
   .mbb-stack{position:fixed;left:16px;bottom:16px;z-index:32;display:flex;flex-direction:column;gap:10px;
@@ -166,7 +169,7 @@ class MissionBroadcastBanner extends React.Component {
         // Still toast brand-new invites that arrived while the app was starting
         // (bootstrap would otherwise swallow them forever).
         for (const row of inboxItems) {
-          if (DESKTOP_INBOX_KINDS.has(row.kind) && row.actionable && row.status === 'pending' && isFreshInbox(row)) {
+          if (shouldDesktopToast(row) && isFreshInbox(row)) {
             continue; // leave unseen for the notify loop below
           }
           this._inboxSeen.add(row.id);
@@ -211,30 +214,37 @@ class MissionBroadcastBanner extends React.Component {
       }
 
       for (const row of inboxItems) {
-        if (!row || !DESKTOP_INBOX_KINDS.has(row.kind)) continue;
-        if (row.status !== 'pending' || !row.actionable) continue;
+        if (!shouldDesktopToast(row)) continue;
         if (this._inboxSeen.has(row.id)) continue;
         this._inboxSeen.add(row.id);
         const who = row.handle || shortKey(row.source);
-        const isInvite = row.kind === 'FederationInvite';
-        const isClaim = row.kind === 'MissionClaim';
+        const meta = desktopNotifyMeta(row.kind);
+        const isClaim = row.kind === 'MissionClaim' || row.kind === 'MissionClaimDecision';
+        const isWallet = String(row.kind || '').indexOf('Wallet') === 0;
         await showDesktopNotification({
           id: row.id,
-          kind: isClaim ? 'missionclaim' : (isInvite ? 'federationinvite' : 'groupoffer'),
-          title: isClaim ? 'Mission completion' : (isInvite ? 'Group invite' : 'Group offer'),
-          body: isClaim
-            ? `${who}: ${row.title || 'Completion awaiting approval'}`
-            : `${who}: ${row.title || (isInvite ? 'You were invited to a group' : 'Group share')}`,
+          kind: meta.notifyKind,
+          title: meta.title,
+          body: `${who}: ${row.title || meta.title}`,
           actions: [
             { id: 'open', text: 'Open' }
           ],
           onClick: () => {
-            if (typeof window !== 'undefined') {
-              if (isClaim && row.refs && row.refs.missionId) {
-                window.location.href = `/missions/${encodeURIComponent(row.refs.missionId)}`;
-              } else {
-                window.location.hash = 'notifications';
-              }
+            if (typeof window === 'undefined') return;
+            if (isClaim && row.refs && row.refs.missionId) {
+              window.location.href = `/missions/${encodeURIComponent(row.refs.missionId)}`;
+            } else if (isWallet && row.refs && row.refs.missionId) {
+              window.location.hash = 'wallet';
+            } else if ((row.kind === 'GroupChangeProposal' || row.kind === 'MultisigWalletInvite' ||
+                row.kind === 'FederationInvite' || row.kind === 'FederationInviteDecision' ||
+                row.kind === 'GroupApplication' || row.kind === 'GroupApplicationDecision' ||
+                row.kind === 'WalletWithdrawal') &&
+                row.refs && row.refs.groupId) {
+              window.location.href = `/groups/${encodeURIComponent(row.refs.groupId)}`;
+            } else if (isWallet) {
+              window.location.hash = 'wallet';
+            } else {
+              window.location.hash = 'notifications';
             }
           }
         });

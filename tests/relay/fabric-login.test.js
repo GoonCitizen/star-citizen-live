@@ -55,8 +55,8 @@ describe('fabricLoginClient', () => {
         json: async () => ({
           ok: true,
           signer: 'client',
-          identity: { id: ident.id, xpub: key.xpub },
-          pubkeyHex: key.pubkey
+          identity: { id: ident.id, xpub: ident.fabricKey.xpub },
+          pubkeyHex: ident.fabricKey.pubkey
         })
       };
     };
@@ -72,10 +72,14 @@ describe('fabricLoginClient', () => {
     assert.ok(posted);
     assert.match(posted.url, /\/sessions\/.+\/signatures$/);
     const body = JSON.parse(posted.init.body);
-    assert.equal(body.pubkeyHex, key.pubkey);
+    assert.equal(body.pubkeyHex, ident.fabricKey.pubkey);
     assert.equal(body.identity.id, ident.id);
+    assert.equal(body.identity.xpub, ident.fabricKey.xpub);
     assert.match(body.signature, /^[a-f0-9]{128}$/i);
-    assert.ok(key.verifySchnorr(Buffer.from(message, 'utf8'), Buffer.from(body.signature, 'hex')));
+    assert.ok(ident.fabricKey.verifySchnorr(
+      Buffer.from(message, 'utf8'),
+      Buffer.from(body.signature, 'hex')
+    ));
   });
 
   it('fetchPendingLoginSession maps pending JSON', async () => {

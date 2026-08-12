@@ -41,6 +41,7 @@ test('settingsStore round-trips allowlisted keys on the Fabric Store and rejects
   assert.strictEqual(loaded.logfile, 'C:/Games/SC/LIVE/Game.log');
   assert.strictEqual(loaded.peers.length, 1);
   assert.throws(() => settingsStore.putSetting(store, 'evil', 1), /unknown setting/);
+  assert.throws(() => settingsStore.putSetting(store, 'discordWebhook', 'https://discord.com/api/webhooks/x'), /unknown setting/);
 
   settingsStore.putSetting(store, 'identityAutoLockMinutes', 15);
   assert.strictEqual(settingsStore.loadSettings(store).identityAutoLockMinutes, 15);
@@ -56,6 +57,18 @@ test('settingsStore round-trips allowlisted keys on the Fabric Store and rejects
   assert.strictEqual(settingsStore.loadSettings(reopened).identityAutoLockMinutes, 15);
   assert.strictEqual(settingsStore.loadSettings(reopened).logfile, undefined);
   await reopened.stop();
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test('scrubLegacySecrets removes persisted discordWebhook', async () => {
+  const dir = tmpDir();
+  const store = new Store({ path: path.join(dir, 'register') });
+  await store.start();
+  store.put('settings', 'discordWebhook', { id: 'discordWebhook', value: 'https://discord.com/api/webhooks/legacy' });
+  assert.ok(store.get('settings', 'discordWebhook'));
+  settingsStore.scrubLegacySecrets(store);
+  assert.ok(!store.get('settings', 'discordWebhook'));
+  await store.stop();
   fs.rmSync(dir, { recursive: true, force: true });
 });
 
@@ -119,12 +132,31 @@ test('GET /settings and PUT /settings/:name persist and flag restarts', async ()
     assert.strictEqual(list.body.success, true);
     assert.strictEqual(list.body.editable, true);
     assert.ok(list.body.runtime);
+    assert.ok(list.body.allowedKeys.includes('groupChatSeal'));
+    assert.ok(list.body.allowedKeys.includes('sharePresence'));
+    assert.strictEqual(list.body.runtime.groupChatSeal, false);
+    assert.strictEqual(list.body.runtime.sharePresence, false);
 
     const put = await request(port, 'PUT', '/settings/logfile', { value: '/tmp/Game.log' });
     assert.strictEqual(put.status, 200);
     assert.strictEqual(put.body.requiresRestart, true, 'log path applies on restart');
     assert.strictEqual(settingsStore.loadSettings(svc.registerStore).logfile, '/tmp/Game.log');
     assert.ok(!fs.existsSync(path.join(dir, 'settings.json')), 'settings are in the Fabric Store, not JSON');
+
+    const seal = await request(port, 'PUT', '/settings/groupChatSeal', { value: true });
+    assert.strictEqual(seal.status, 200);
+    assert.strictEqual(seal.body.requiresRestart, false);
+    assert.strictEqual(settingsStore.loadSettings(svc.registerStore).groupChatSeal, true);
+    const afterSeal = await request(port, 'GET', '/settings');
+    assert.strictEqual(afterSeal.body.runtime.groupChatSeal, true);
+
+    const presence = await request(port, 'PUT', '/settings/sharePresence', { value: true });
+    assert.strictEqual(presence.status, 200);
+    const vis = await request(port, 'PUT', '/settings/presenceVisibility', { value: 'peers' });
+    assert.strictEqual(vis.status, 200);
+    const afterPresence = await request(port, 'GET', '/settings');
+    assert.strictEqual(afterPresence.body.runtime.sharePresence, true);
+    assert.strictEqual(afterPresence.body.runtime.presenceVisibility, 'peers');
 
     const bad = await request(port, 'PUT', '/settings/nonsense', { value: 1 });
     assert.strictEqual(bad.status, 400);

@@ -30,7 +30,7 @@
     "make:api": "jsdoc2md --configure jsdoc.json --files types/*.js services/*.js README.md > API.md",
     "refresh:ships": "node scripts/refresh-ship-catalog.js",
     "replay": "node scripts/replay.js",
-    "report:install": "rm -rf node_modules && echo \"\n\" > package-lock.json && echo \"$ npm i --allow-git=all\" > reports/install.log && npm i --allow-git=all >> reports/install.log 2>&1",
+    "report:install": "rm -rf node_modules && echo \"$ npm i --allow-git=all\" > reports/install.log && npm i --allow-git=all >> reports/install.log 2>&1",
     "report:todo": "grep --exclude package.json --exclude-dir=.env --exclude-dir=.git --exclude-dir=_book --exclude-dir=stores --exclude-dir=assets --exclude-dir=node_modules --exclude-dir=reports --exclude-dir=coverage --exclude-dir=docs --exclude-dir=libraries -rEI \"TODO|FIXME\" . | sed 's/\\([^:]*:\\)[ ]*/\\1 /' > reports/TODO.txt",
     "start:browser": "node scripts/node.js",
     "start:desktop:dev": "node scripts/desktop.js . --dev",
@@ -69,14 +69,18 @@
   },
   "homepage": "https://github.com/GoonCitizen/star-citizen-live#readme",
   "dependencies": {
-    "@fabric/core": "FabricLabs/fabric#feature/rsi",
-    "@fabric/http": "FabricLabs/fabric-http#feature/rsi",
-    "@fabric/hub": "FabricLabs/hub.fabric.pub#feature/rsi",
+    "@fabric/core": "FabricLabs/fabric#2e2aec81bd6503e40c2d7cae88f9ab4dc6a8fe41",
+    "@fabric/discord": "FabricLabs/fabric-discord#8b269fb88dac1476f52d76323406d8f9310d48d8",
+    "@fabric/http": "FabricLabs/fabric-http#365f0b4962dc75074b64393cf02d17b338a5196b",
+    "@fabric/hub": "FabricLabs/hub.fabric.pub#e9e8630d67756bf788e5cffd7c4a1350de3d9080",
+    "bip32": "=4.0.0",
+    "bitcoinjs-lib": "=6.1.7",
     "cross-fetch": "=4.0.0",
     "ecpair": "=3.0.1",
     "lodash.merge": "=4.6.2",
-    "screenshot-desktop": "=1.15.1",
-    "tail": "=2.2.6"
+    "screenshot-desktop": "=1.15.4",
+    "tail": "=2.2.6",
+    "tiny-secp256k1": "=2.2.4"
   },
   "devDependencies": {
     "c8": "=7.11.3",

@@ -443,6 +443,32 @@ function fleetFromShareObject (object, sourcePubkey = null) {
   return fleet;
 }
 
+/**
+ * Compact FleetShare tip for group Statechain journal (no canvas export).
+ * @param {object} shareObject From {@link buildFleetShareObject}
+ * @param {{ groupId?: string, source?: string }} [meta]
+ * @returns {object}
+ */
+function fleetShareJournalMessage (shareObject, meta = {}) {
+  const ships = Array.isArray(shareObject && shareObject.ships)
+    ? shareObject.ships.slice(0, 200)
+    : [];
+  return {
+    kind: FLEET_SHARE_TYPE,
+    type: FLEET_SHARE_TYPE,
+    fleetId: shareObject.fleetId || shareObject.id || null,
+    name: shareObject.name || null,
+    ownerPubkey: shareObject.ownerPubkey || null,
+    shipCount: Number(shareObject.shipCount) || ships.reduce((n, s) => n + (s.count || 1), 0),
+    uniqueShips: Number(shareObject.uniqueShips) || ships.length,
+    ships,
+    sharedAt: shareObject.sharedAt || new Date().toISOString(),
+    visibility: shareObject.visibility || 'groups',
+    groupId: meta.groupId || null,
+    source: meta.source || null
+  };
+}
+
 module.exports = {
   FLEET_SHARE_TYPE,
   STARJUMP_TYPE,
@@ -462,5 +488,6 @@ module.exports = {
   parseStarjumpExport,
   summarizeFleet,
   buildFleetShareObject,
-  fleetFromShareObject
+  fleetFromShareObject,
+  fleetShareJournalMessage
 };
