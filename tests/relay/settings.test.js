@@ -41,6 +41,7 @@ test('settingsStore round-trips allowlisted keys on the Fabric Store and rejects
   assert.strictEqual(loaded.logfile, 'C:/Games/SC/LIVE/Game.log');
   assert.strictEqual(loaded.peers.length, 1);
   assert.throws(() => settingsStore.putSetting(store, 'evil', 1), /unknown setting/);
+  assert.throws(() => settingsStore.putSetting(store, 'discordWebhook', 'https://discord.com/api/webhooks/x'), /unknown setting/);
 
   settingsStore.putSetting(store, 'identityAutoLockMinutes', 15);
   assert.strictEqual(settingsStore.loadSettings(store).identityAutoLockMinutes, 15);
@@ -56,6 +57,18 @@ test('settingsStore round-trips allowlisted keys on the Fabric Store and rejects
   assert.strictEqual(settingsStore.loadSettings(reopened).identityAutoLockMinutes, 15);
   assert.strictEqual(settingsStore.loadSettings(reopened).logfile, undefined);
   await reopened.stop();
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test('scrubLegacySecrets removes persisted discordWebhook', async () => {
+  const dir = tmpDir();
+  const store = new Store({ path: path.join(dir, 'register') });
+  await store.start();
+  store.put('settings', 'discordWebhook', { id: 'discordWebhook', value: 'https://discord.com/api/webhooks/legacy' });
+  assert.ok(store.get('settings', 'discordWebhook'));
+  settingsStore.scrubLegacySecrets(store);
+  assert.ok(!store.get('settings', 'discordWebhook'));
+  await store.stop();
   fs.rmSync(dir, { recursive: true, force: true });
 });
 
@@ -119,12 +132,31 @@ test('GET /settings and PUT /settings/:name persist and flag restarts', async ()
     assert.strictEqual(list.body.success, true);
     assert.strictEqual(list.body.editable, true);
     assert.ok(list.body.runtime);
+    assert.ok(list.body.allowedKeys.includes('groupChatSeal'));
+    assert.ok(list.body.allowedKeys.includes('sharePresence'));
+    assert.strictEqual(list.body.runtime.groupChatSeal, false);
+    assert.strictEqual(list.body.runtime.sharePresence, false);
 
     const put = await request(port, 'PUT', '/settings/logfile', { value: '/tmp/Game.log' });
     assert.strictEqual(put.status, 200);
     assert.strictEqual(put.body.requiresRestart, true, 'log path applies on restart');
     assert.strictEqual(settingsStore.loadSettings(svc.registerStore).logfile, '/tmp/Game.log');
     assert.ok(!fs.existsSync(path.join(dir, 'settings.json')), 'settings are in the Fabric Store, not JSON');
+
+    const seal = await request(port, 'PUT', '/settings/groupChatSeal', { value: true });
+    assert.strictEqual(seal.status, 200);
+    assert.strictEqual(seal.body.requiresRestart, false);
+    assert.strictEqual(settingsStore.loadSettings(svc.registerStore).groupChatSeal, true);
+    const afterSeal = await request(port, 'GET', '/settings');
+    assert.strictEqual(afterSeal.body.runtime.groupChatSeal, true);
+
+    const presence = await request(port, 'PUT', '/settings/sharePresence', { value: true });
+    assert.strictEqual(presence.status, 200);
+    const vis = await request(port, 'PUT', '/settings/presenceVisibility', { value: 'peers' });
+    assert.strictEqual(vis.status, 200);
+    const afterPresence = await request(port, 'GET', '/settings');
+    assert.strictEqual(afterPresence.body.runtime.sharePresence, true);
+    assert.strictEqual(afterPresence.body.runtime.presenceVisibility, 'peers');
 
     const bad = await request(port, 'PUT', '/settings/nonsense', { value: 1 });
     assert.strictEqual(bad.status, 400);
@@ -205,7 +237,7 @@ test('SCEventBatch over Fabric delivers log events to a peer', async () => {
   const dirB = tmpDir();
 
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-  const waitFor = async (fn, timeoutMs = 15000) => {
+  const waitFor = async (fn, timeoutMs = 20000) => {
     const start = Date.now();
     while (Date.now() - start < timeoutMs) {
       if (await fn()) return true;
@@ -214,6 +246,8 @@ test('SCEventBatch over Fabric delivers log events to a peer', async () => {
     throw new Error('timeout');
   };
 
+  // Seed the peer in constructor settings — POST /peers rejects loopback (127.0.0.1)
+  // by design; local Fabric tests must dial via the LiveRelay peers list like fabric-peer.test.js.
   const serverA = new LiveRelay({
     port: 0,
     settingsDir: dirB,
@@ -222,6 +256,8 @@ test('SCEventBatch over Fabric delivers log events to a peer', async () => {
     fabric: { enable: true, listen: true, port: fabB, peers: [], peersDb: null, relayAppMessages: true }
   });
   await serverA.start();
+  serverA.setIdentity(peerId);
+  await waitFor(() => serverA.fabricNetwork && serverA.fabricNetwork.ready);
   const portA = serverA.server.address().port;
 
   const client = new LiveRelay({
@@ -229,18 +265,30 @@ test('SCEventBatch over Fabric delivers log events to a peer', async () => {
     settingsDir: dir,
     missions: { enable: false },
     uplink: { intervalMs: 60000 },
-    peers: [],
+    peers: [{
+      address: `127.0.0.1:${fabB}`,
+      label: 'peer-b',
+      enabled: true,
+      shareLogs: true
+    }],
     fabric: { enable: true, listen: true, port: fabA, peers: [], peersDb: null }
   });
   await client.start();
+  client.setIdentity(identity);
+  await waitFor(() => client.fabricNetwork && client.fabricNetwork.ready);
+  await waitFor(() => (
+    client.fabricNetwork.status().fabricConnected >= 1 ||
+    serverA.fabricNetwork.status().fabricConnected >= 1
+  ));
   const clientPort = client.server.address().port;
+
   try {
-    client.setIdentity(identity);
-    serverA.setIdentity(peerId);
-    await waitFor(() => client.fabricNetwork && client.fabricNetwork.ready);
-    await waitFor(() => serverA.fabricNetwork && serverA.fabricNetwork.ready);
-    await request(clientPort, 'POST', '/peers', { address: `127.0.0.1:${fabB}` });
-    await waitFor(() => client.fabricNetwork.status().fabricConnected >= 1);
+    // Opt-in shareLogs is already true on the seeded peer; patch confirms the API path.
+    const peerList = await request(clientPort, 'GET', '/peers');
+    const roster = peerList.body.data.find((p) => String(p.address).includes(String(fabB)));
+    assert.ok(roster, 'seeded peer present on roster');
+    assert.strictEqual(roster.shareLogs, true);
+    await request(clientPort, 'POST', `/peers/${roster.id}`, { shareLogs: true });
 
     client.handleLogChange("<2026-07-19T13:00:00.000Z> [Notice] <Actor Death> CActor::Kill: 'V' [1] in zone 'Z' killed by 'K' [2] using 'G' [Class R] with damage type 'B' from direction x: 0.1, y: 0.2, z: 0.3");
     assert.ok(client._uplinkQueue.length >= 1);

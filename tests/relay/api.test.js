@@ -89,7 +89,9 @@ test('monitor + deaths endpoints expose death + mission-lifecycle data', async (
     assert.strictEqual(r.json.data[0].player, 'Kersa');
 
     r = await call('GET', `${BASE}/monitor`);
+    // Header counts are cumulative; session-scoped live tallies live under counts.session.
     assert.strictEqual(r.json.counts.deaths, 1);
+    assert.strictEqual(r.json.counts.session.deaths, 1);
     assert.deepStrictEqual(r.json.missionStats, { accepted: 1, completed: 1, abandoned: 0, failed: 0, deactivated: 0, active: 0 });
     assert.strictEqual(r.json.missions[0].outcome, 'Complete');
 

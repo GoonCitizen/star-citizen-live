@@ -14,7 +14,7 @@ if (!electron || typeof electron !== 'object' || !electron.app) {
   process.exit(1);
 }
 
-const { app, BrowserWindow, Tray, Menu, nativeImage, ipcMain, shell, Notification } = electron;
+const { app, BrowserWindow, Tray, Menu, nativeImage, ipcMain, shell, Notification, dialog } = electron;
 const path = require('path');
 const fs = require('fs');
 const http = require('http');
@@ -26,6 +26,18 @@ const identityLib = require('./functions/identity');
 const identityStore = require('./functions/identityStore');
 const settingsStore = require('./functions/settingsStore');
 const { storeRoot, registerPath } = require('./functions/storePaths');
+const { FABRIC_PROTOCOL, parseFabricLoginUrl } = require('./functions/fabricProtocolLogin');
+const { parseFabricDeviceLinkUrl } = require('./functions/fabricDeviceLinkProtocol');
+const {
+  fetchPendingLoginSession,
+  completeClientSignedLogin
+} = require('./functions/fabricLoginClient');
+const {
+  fetchPendingDeviceLink,
+  completeDeviceLinkAsResponder
+} = require('./functions/fabricDeviceLinkClient');
+const { applyFabricEnvConfig, loadRepoDotEnv } = require('./functions/fabricEnvIdentity');
+const { applyGoonCitizenEnvAliases } = require('./functions/goonCitizenEnvAliases');
 
 let settings = {};
 try {
@@ -36,6 +48,7 @@ try {
 }
 
 let mainWindow = null;
+let overlayWindow = null;
 let tray = null;
 let starCitizenService = null;
 let activePort = null;
@@ -43,6 +56,12 @@ let activePort = null;
 let isQuitting = false;
 /** Decrypted identity, held in main-process memory only while unlocked. */
 let unlockedIdentity = null;
+/** Pending fabric://login prompt for the renderer (or queued before window ready). */
+let pendingFabricLoginPrompt = null;
+/** In-flight login prompts keyed by sessionId (message retained for sign). */
+const fabricLoginBySession = new Map();
+/** Pending opaque fabric:<hex> group share prompt. */
+let pendingGroupSharePrompt = null;
 
 const startHidden = process.argv.includes('--hidden') ||
   process.argv.includes('--open-as-hidden');
@@ -55,8 +74,10 @@ if (!gotLock) {
   if (process.platform === 'win32' && app.setAppUserModelId) {
     app.setAppUserModelId('vc.goon.desktop');
   }
-  app.on('second-instance', () => {
+  app.on('second-instance', (_event, argv) => {
     showMainWindow();
+    const fabricArg = (argv || []).find((a) => typeof a === 'string' && a.startsWith('fabric:'));
+    if (fabricArg) void handleFabricProtocolUrl(fabricArg);
   });
 }
 
@@ -96,7 +117,32 @@ function buildRelaySettings (port) {
   const resolved = resolveLogFile({ explicit, channel });
 
   const discordIn = settings.discord || {};
-  const webhook = process.env.DISCORD_WEBHOOK_URL || persisted.discordWebhook || discordIn.webhook || null;
+  const discord = (() => {
+    try {
+      const discordConfig = require('./functions/discordConfig');
+      return discordConfig.resolveDiscordConfig({
+        localDiscord: discordIn,
+        persisted,
+        settingsDir: appStoreRoot,
+        env: process.env
+      });
+    } catch (_) {
+      const webhook = process.env.DISCORD_WEBHOOK_URL || discordIn.webhook || null;
+      return {
+        enable: !!(discordIn.enable && (webhook || discordIn.token || process.env.DISCORD_BOT_TOKEN)),
+        webhook,
+        token: process.env.DISCORD_BOT_TOKEN || discordIn.token || null,
+        channel: process.env.DISCORD_CHANNEL_ID || discordIn.channel || null,
+        app: Object.assign({ id: null, secret: null }, discordIn.app || {}),
+        announceKills: discordIn.announceKills !== false,
+        announcePlayerJoins: discordIn.announcePlayerJoins !== false,
+        announceActivities: !!discordIn.announceActivities,
+        announceMissions: !!discordIn.announceMissions,
+        announceCombat: !!discordIn.announceCombat,
+        announceIncaps: !!discordIn.announceIncaps
+      };
+    }
+  })();
 
   return {
     port,
@@ -107,16 +153,7 @@ function buildRelaySettings (port) {
       : (settings.seed !== undefined
         ? settings.seed
         : (resolved.file && fs.existsSync(resolved.file) ? resolved.file : null)),
-    discord: {
-      enable: !!(discordIn.enable && webhook),
-      webhook,
-      announceKills: discordIn.announceKills !== false,
-      announcePlayerJoins: discordIn.announcePlayerJoins !== false,
-      announceActivities: !!discordIn.announceActivities,
-      announceMissions: !!discordIn.announceMissions,
-      announceCombat: !!discordIn.announceCombat,
-      announceIncaps: !!discordIn.announceIncaps
-    },
+    discord,
     missions: Object.assign({
       enable: true,
       officers: process.env.SC_OFFICERS
@@ -124,8 +161,7 @@ function buildRelaySettings (port) {
         : (Array.isArray(settings.missions?.officers) ? settings.missions.officers.map(String) : [])
     }, settings.missions || {}),
     uplink: Object.assign({
-      enable: !!(process.env.SC_UPLINK_URL || settings.uplink?.url),
-      url: process.env.SC_UPLINK_URL || settings.uplink?.url || null
+      intervalMs: Number(settings.uplink?.intervalMs) || 5000
     }, settings.uplink || {}),
     fabric: Object.assign({
       enable: true,
@@ -135,7 +171,35 @@ function buildRelaySettings (port) {
     }, settings.fabric || {}),
     // Wallet: ledger mode unless settings/local.js supplies a bitcoind rpc.
     payouts: Object.assign({ enable: true, ledger: true, network: 'regtest' }, settings.payouts || {}),
+    bitcoin: Object.assign({
+      enable: true,
+      hub: process.env.SC_BITCOIN_HUB || 'http://127.0.0.1:8080',
+      network: process.env.SC_BTC_NETWORK || 'regtest',
+      adminToken: process.env.FABRIC_HUB_ADMIN_TOKEN || null,
+      adminTokenFile: process.env.FABRIC_HUB_ADMIN_TOKEN_FILE || null
+    }, settings.bitcoin || {}, {
+      adminToken: process.env.FABRIC_HUB_ADMIN_TOKEN ||
+        (settings.bitcoin && settings.bitcoin.adminToken) ||
+        null,
+      adminTokenFile: process.env.FABRIC_HUB_ADMIN_TOKEN_FILE ||
+        (settings.bitcoin && settings.bitcoin.adminTokenFile) ||
+        null
+    }),
+    documents: Object.assign({
+      enable: false,
+      hub: null
+    }, settings.documents || {}, {
+      hub: process.env.SC_DOCUMENTS_HUB ||
+        (settings.documents && settings.documents.hub) ||
+        process.env.SC_BITCOIN_HUB ||
+        (settings.bitcoin && settings.bitcoin.hub) ||
+        'http://127.0.0.1:8080'
+    }),
     settingsDir: appStoreRoot,
+    // Cumulative Game.log history lives next to the Fabric store (userData),
+    // not the repo tree — survives restarts and is the Analyze default.
+    historyFile: path.join(appStoreRoot, 'history.json'),
+    cursorsFile: path.join(appStoreRoot, 'log-cursors.json'),
     store: appStore // shared, already-started Fabric Store
   };
 }
@@ -209,6 +273,7 @@ function hideMainWindow () {
 
 function quitApp () {
   isQuitting = true;
+  destroyOverlayWindow();
   app.quit();
 }
 
@@ -257,10 +322,19 @@ function setOpenAtLogin (enabled) {
 function rebuildTrayMenu () {
   if (!tray) return;
   const atLogin = openAtLoginEnabled();
+  const overlayOn = !!(overlayWindow && !overlayWindow.isDestroyed() && overlayWindow.isVisible());
   const menu = Menu.buildFromTemplate([
     {
       label: `Show ${BRAND_NAME}`,
       click: () => showMainWindow()
+    },
+    {
+      label: 'Primary group overlay',
+      type: 'checkbox',
+      checked: overlayOn,
+      click: (item) => {
+        void setGroupOverlayEnabled(item.checked);
+      }
     },
     {
       label: 'Open at Login',
@@ -383,6 +457,110 @@ function createWindow (port) {
   });
 }
 
+/**
+ * Always-on-top, click-through HUD for the primary group's members + ships.
+ * Positioned top-right of the primary display (Windows-first; works elsewhere).
+ */
+function createOverlayWindow (port) {
+  if (overlayWindow && !overlayWindow.isDestroyed()) return overlayWindow;
+  const { screen } = electron;
+  const display = screen.getPrimaryDisplay();
+  const work = display.workArea || display.bounds;
+  const width = 300;
+  const height = 420;
+  const x = Math.max(work.x, work.x + work.width - width - 16);
+  const y = work.y + 16;
+
+  overlayWindow = new BrowserWindow({
+    width,
+    height,
+    x,
+    y,
+    frame: false,
+    transparent: true,
+    alwaysOnTop: true,
+    skipTaskbar: true,
+    resizable: false,
+    maximizable: false,
+    minimizable: false,
+    fullscreenable: false,
+    hasShadow: false,
+    focusable: false,
+    show: false,
+    webPreferences: {
+      nodeIntegration: false,
+      contextIsolation: true,
+      webSecurity: true
+    }
+  });
+
+  // Let clicks fall through to the game (Windows: forward:true keeps hover).
+  try {
+    overlayWindow.setIgnoreMouseEvents(true, { forward: true });
+  } catch (_) {
+    try { overlayWindow.setIgnoreMouseEvents(true); } catch (__) { /* ignore */ }
+  }
+  if (typeof overlayWindow.setAlwaysOnTop === 'function') {
+    // 'screen-saver' level helps stay above fullscreen games on Windows.
+    try { overlayWindow.setAlwaysOnTop(true, 'screen-saver'); } catch (_) {
+      overlayWindow.setAlwaysOnTop(true);
+    }
+  }
+  if (process.platform === 'darwin' && typeof overlayWindow.setVisibleOnAllWorkspaces === 'function') {
+    overlayWindow.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
+  }
+
+  const url = `http://127.0.0.1:${port}/overlay`;
+  overlayWindow.loadURL(url).catch((err) => {
+    console.error('[ELECTRON]', '[ERROR]', 'Failed to load group overlay:', err);
+  });
+  overlayWindow.once('ready-to-show', () => {
+    if (overlayWindow && !overlayWindow.isDestroyed()) overlayWindow.showInactive();
+  });
+  overlayWindow.on('closed', () => {
+    overlayWindow = null;
+    rebuildTrayMenu();
+  });
+  return overlayWindow;
+}
+
+function destroyOverlayWindow () {
+  if (overlayWindow && !overlayWindow.isDestroyed()) {
+    try { overlayWindow.close(); } catch (_) { /* ignore */ }
+  }
+  overlayWindow = null;
+}
+
+/**
+ * Enable/disable the primary-group overlay and persist `groupOverlay`.
+ * @param {boolean} enabled
+ */
+async function setGroupOverlayEnabled (enabled) {
+  const on = enabled === true;
+  try {
+    if (starCitizenService && starCitizenService.registerStore) {
+      settingsStore.putSetting(starCitizenService.registerStore, 'groupOverlay', on);
+      starCitizenService._groupOverlay = on;
+    }
+  } catch (e) {
+    console.warn('[ELECTRON]', '[WARNING]', 'persist groupOverlay:', e && e.message ? e.message : e);
+  }
+  if (on) {
+    if (activePort) createOverlayWindow(activePort);
+  } else {
+    destroyOverlayWindow();
+  }
+  rebuildTrayMenu();
+  return { groupOverlay: on };
+}
+
+function syncOverlayFromSettings () {
+  const enabled = !!(starCitizenService && starCitizenService._groupOverlay);
+  if (enabled && activePort) createOverlayWindow(activePort);
+  else destroyOverlayWindow();
+  rebuildTrayMenu();
+}
+
 async function startService () {
   const preferred = servicePort();
   const candidates = [preferred, preferred + 1, preferred + 2, 0];
@@ -402,13 +580,17 @@ async function startService () {
 
       starCitizenService = new LiveRelay(opts);
       await starCitizenService.start();
+      loadEnvPublishingIdentity();
+      applyIdentityToService();
 
       // If we requested port 0, read the OS-assigned port from the server.
       const bound = starCitizenService.server && starCitizenService.server.address();
       activePort = (bound && bound.port) || opts.port || preferred;
 
       await waitForHttp(activePort);
-      console.log('[ELECTRON]', '[STATUS]', `${BRAND_NAME} listening on http://127.0.0.1:${activePort}/`);
+      const bindHost = (bound && bound.address) || '127.0.0.1';
+      const displayHost = (bindHost === '0.0.0.0' || bindHost === '::') ? '127.0.0.1' : bindHost;
+      console.log('[ELECTRON]', '[STATUS]', `${BRAND_NAME} listening on http://${displayHost}:${activePort}/ (bind ${bindHost})`);
       return starCitizenService;
     } catch (error) {
       lastError = error;
@@ -444,11 +626,247 @@ async function stopService () {
   }
 }
 
+function registerFabricProtocol () {
+  try {
+    let ok = false;
+    if (process.defaultApp) {
+      if (process.argv.length >= 2) {
+        const mainScript = path.resolve(process.argv[1]);
+        ok = app.setAsDefaultProtocolClient(FABRIC_PROTOCOL, process.execPath, [mainScript]);
+      } else {
+        console.warn('[ELECTRON]', '[WARNING]', 'Cannot register fabric: — missing argv[1]');
+      }
+    } else {
+      ok = app.setAsDefaultProtocolClient(FABRIC_PROTOCOL);
+    }
+    if (!ok) {
+      console.warn('[ELECTRON]', '[WARNING]', 'setAsDefaultProtocolClient(fabric) returned false (another app may own fabric:)');
+    } else {
+      console.log('[ELECTRON]', '[STATUS]', 'Registered as fabric: protocol handler');
+    }
+  } catch (e) {
+    console.warn('[ELECTRON]', '[WARNING]', 'setAsDefaultProtocolClient:', e && e.message ? e.message : e);
+  }
+}
+
+function deliverFabricLoginPrompt (payload) {
+  if (!payload) return;
+  pendingFabricLoginPrompt = payload;
+  fabricLoginBySession.set(String(payload.sessionId), payload);
+  showMainWindow();
+  const w = mainWindow && !mainWindow.isDestroyed() ? mainWindow : null;
+  if (w && w.webContents) {
+    const send = () => {
+      if (!mainWindow || mainWindow.isDestroyed()) return;
+      mainWindow.webContents.send('fabric-login-prompt', payload);
+    };
+    // Avoid dropping the IPC if the dashboard has not finished loading yet.
+    if (w.webContents.isLoadingMainFrame && w.webContents.isLoadingMainFrame()) {
+      w.webContents.once('did-finish-load', send);
+    } else {
+      send();
+    }
+  }
+}
+
+/**
+ * Persist a mutual device-link peer on the Fabric Store (non-secret metadata).
+ */
+function mergeLinkedDeviceLocal (entry) {
+  if (!appStore || !entry || !entry.peerFabricId) return;
+  try {
+    const cur = settingsStore.loadSettings(appStore);
+    const list = Array.isArray(cur.linkedDevices) ? cur.linkedDevices.slice() : [];
+    const peer = String(entry.peerFabricId);
+    const idx = list.findIndex((d) => d && String(d.peerFabricId) === peer);
+    const row = {
+      kind: entry.kind || 'device-link',
+      peerFabricId: peer,
+      peerXpub: entry.peerXpub || null,
+      label: entry.label || 'Linked device',
+      hubOrigin: entry.hubOrigin || null,
+      linkedAt: entry.linkedAt || new Date().toISOString(),
+      role: entry.role || 'responder'
+    };
+    if (idx >= 0) list[idx] = { ...list[idx], ...row };
+    else list.push(row);
+    settingsStore.putSetting(appStore, 'linkedDevices', list);
+  } catch (e) {
+    console.warn('[ELECTRON]', '[WARNING]', 'linkedDevices persist:', e && e.message ? e.message : e);
+  }
+}
+
+/**
+ * Handle fabric://login, fabric://link, or opaque fabric:<hex> group shares.
+ */
+async function handleFabricProtocolUrl (urlStr) {
+  const linkParsed = parseFabricDeviceLinkUrl(urlStr);
+  if (linkParsed.ok) {
+    await handleFabricDeviceLinkUrl(linkParsed);
+    return;
+  }
+  const parsed = parseFabricLoginUrl(urlStr);
+  if (parsed.ok) {
+    const { sessionId, hubBase } = parsed;
+    try {
+      const pending = await fetchPendingLoginSession(hubBase, sessionId);
+      if (!pending.ok) {
+        console.error('[ELECTRON]', '[ERROR]', 'fabric login session:', pending.error);
+        deliverFabricLoginPrompt({
+          kind: 'login',
+          sessionId,
+          hubBase,
+          origin: hubBase,
+          message: '',
+          nonce: '',
+          identityLocked: !unlockedIdentity,
+          error: pending.error
+        });
+        return;
+      }
+      deliverFabricLoginPrompt({
+        kind: 'login',
+        sessionId,
+        hubBase,
+        origin: pending.origin || hubBase,
+        message: pending.message,
+        nonce: pending.nonce || '',
+        identityLocked: !unlockedIdentity
+      });
+      console.log('[ELECTRON]', '[STATUS]', 'fabric login prompt delivered:', sessionId.slice(0, 12) + '…');
+    } catch (e) {
+      console.error('[ELECTRON]', '[ERROR]', 'fabric login:', e && e.message ? e.message : e);
+    }
+    return;
+  }
+
+  // Opaque AMP Message: fabric:<hex>
+  try {
+    const {
+      parseOpaqueFabricMessage,
+      classifyGroupShareMessage
+    } = require('./functions/groupShareMessage');
+    const opaque = parseOpaqueFabricMessage(urlStr);
+    if (opaque.ok) {
+      const classified = classifyGroupShareMessage(opaque.message);
+      if (classified.kind === 'GroupOffer' || classified.kind === 'FederationContractInvite' || classified.kind === 'GroupPublish') {
+        deliverGroupSharePrompt({
+          kind: classified.kind,
+          protocolUrl: urlStr.startsWith('fabric:') ? urlStr.trim() : ('fabric:' + opaque.hex),
+          messageHex: opaque.hex,
+          messageBase64: opaque.base64 || null,
+          contractId: classified.contractId,
+          groupId: classified.groupId,
+          offer: classified.kind === 'GroupOffer' ? classified.object : null,
+          invite: classified.kind === 'FederationContractInvite' ? classified.object : null,
+          group: classified.kind === 'GroupOffer' && classified.object && classified.object.meta
+            ? { name: classified.object.meta.name, visibility: classified.object.meta.visibility }
+            : null,
+          identityLocked: !unlockedIdentity
+        });
+        return;
+      }
+      console.warn('[ELECTRON]', '[WARNING]', 'fabric: opaque message not a group share:', classified.kind);
+      return;
+    }
+  } catch (e) {
+    console.warn('[ELECTRON]', '[WARNING]', 'fabric: opaque parse:', e && e.message ? e.message : e);
+  }
+
+  console.warn('[ELECTRON]', '[WARNING]', 'fabric: url ignored:', parsed.error || linkParsed.error);
+}
+
+function deliverGroupSharePrompt (payload) {
+  if (!payload) return;
+  pendingGroupSharePrompt = payload;
+  showMainWindow();
+  const w = mainWindow && !mainWindow.isDestroyed() ? mainWindow : null;
+  if (w && w.webContents) {
+    const send = () => {
+      if (!mainWindow || mainWindow.isDestroyed()) return;
+      mainWindow.webContents.send('fabric-group-share-prompt', payload);
+    };
+    if (w.webContents.isLoadingMainFrame && w.webContents.isLoadingMainFrame()) {
+      w.webContents.once('did-finish-load', send);
+    } else {
+      send();
+    }
+  }
+}
+
+/**
+ * Responder path: fabric://link?sessionId=…&hub=…
+ */
+async function handleFabricDeviceLinkUrl (parsed) {
+  const { sessionId, hubBase } = parsed;
+  try {
+    const pending = await fetchPendingDeviceLink(hubBase, sessionId);
+    if (!pending.ok) {
+      console.error('[ELECTRON]', '[ERROR]', 'fabric device-link session:', pending.error);
+      deliverFabricLoginPrompt({
+        kind: 'device-link',
+        sessionId,
+        hubBase,
+        origin: hubBase,
+        label: '',
+        initiator: null,
+        identityLocked: !unlockedIdentity,
+        error: pending.error
+      });
+      return;
+    }
+    if (pending.status !== 'pending') {
+      deliverFabricLoginPrompt({
+        kind: 'device-link',
+        sessionId,
+        hubBase,
+        origin: pending.origin || hubBase,
+        label: pending.label || '',
+        initiator: pending.initiator || null,
+        identityLocked: !unlockedIdentity,
+        error: pending.status === 'linked'
+          ? 'This link is already complete.'
+          : `Device link status is ${pending.status || 'unknown'} — expected pending.`
+      });
+      return;
+    }
+    deliverFabricLoginPrompt({
+      kind: 'device-link',
+      sessionId,
+      hubBase,
+      origin: pending.origin || hubBase,
+      label: pending.label || '',
+      nonce: pending.nonce || '',
+      initiator: pending.initiator || null,
+      identityLocked: !unlockedIdentity
+    });
+    console.log('[ELECTRON]', '[STATUS]', 'fabric device-link prompt delivered:', sessionId.slice(0, 12) + '…');
+  } catch (e) {
+    console.error('[ELECTRON]', '[ERROR]', 'fabric device-link:', e && e.message ? e.message : e);
+  }
+}
+
+function drainArgvFabricUrl () {
+  const arg = process.argv.find((a) => typeof a === 'string' && a.startsWith('fabric:'));
+  if (arg) void handleFabricProtocolUrl(arg);
+}
+
+// macOS may deliver open-url before ready.
+let earlyFabricUrl = null;
+if (gotLock) {
+  app.on('open-url', (event, url) => {
+    event.preventDefault();
+    if (app.isReady()) void handleFabricProtocolUrl(url);
+    else earlyFabricUrl = url;
+  });
+}
+
 if (gotLock) {
   app.whenReady().then(async () => {
     try {
       // Hide the native application / window menu bar (File, Edit, View…).
       Menu.setApplicationMenu(null);
+      registerFabricProtocol();
       await openAppStore(); // settings come from the Fabric Store
       configureAutoLaunch();
       createTray();
@@ -456,6 +874,14 @@ if (gotLock) {
       applyIdentityToService();
       applySnapshotCaptureToService();
       createWindow(activePort || servicePort());
+      syncOverlayFromSettings();
+      if (earlyFabricUrl) {
+        const u = earlyFabricUrl;
+        earlyFabricUrl = null;
+        void handleFabricProtocolUrl(u);
+      } else {
+        drainArgvFabricUrl();
+      }
     } catch (error) {
       console.error('[ELECTRON]', '[ERROR]', 'Startup failed:', error);
       isQuitting = true;
@@ -464,6 +890,7 @@ if (gotLock) {
     }
 
     app.on('activate', () => {
+      registerFabricProtocol();
       showMainWindow();
     });
   });
@@ -485,6 +912,90 @@ if (gotLock) {
     await stopService();
   });
 }
+
+ipcMain.handle('fabric-login:pull-pending', () => {
+  const p = pendingFabricLoginPrompt;
+  return p || null;
+});
+
+ipcMain.handle('fabric-group-share:pull-pending', () => {
+  return pendingGroupSharePrompt || null;
+});
+
+ipcMain.handle('fabric-group-share:resolve', async (_e, { dismiss, approve } = {}) => {
+  if (dismiss || approve != null) {
+    pendingGroupSharePrompt = null;
+  }
+  return { ok: true };
+});
+
+ipcMain.handle('fabric-login:resolve', async (_e, { approve, sessionId } = {}) => {
+  const sid = sessionId != null ? String(sessionId).trim() : '';
+  const prompt = (sid && fabricLoginBySession.get(sid)) || pendingFabricLoginPrompt;
+  if (!prompt || !prompt.sessionId) return { error: 'No pending request.' };
+  if (sid && String(prompt.sessionId) !== sid) return { error: 'Session mismatch.' };
+
+  const clearPrompt = () => {
+    fabricLoginBySession.delete(String(prompt.sessionId));
+    if (pendingFabricLoginPrompt && String(pendingFabricLoginPrompt.sessionId) === String(prompt.sessionId)) {
+      pendingFabricLoginPrompt = null;
+    }
+  };
+
+  if (!approve) {
+    clearPrompt();
+    return { ok: true, approved: false };
+  }
+
+  if (!unlockedIdentity) {
+    return { error: 'Identity is locked — unlock it, then try the link again.' };
+  }
+
+  if (prompt.kind === 'device-link') {
+    if (prompt.error && !prompt.initiator) {
+      return { error: prompt.error };
+    }
+    const result = await completeDeviceLinkAsResponder(
+      unlockedIdentity,
+      prompt.hubBase,
+      {
+        sessionId: prompt.sessionId,
+        status: 'pending',
+        nonce: prompt.nonce,
+        label: prompt.label,
+        initiator: prompt.initiator
+      }
+    );
+    if (!result.ok) return { error: result.error || 'Device link failed.' };
+    mergeLinkedDeviceLocal({
+      kind: 'device-link',
+      peerFabricId: result.peerFabricId || (prompt.initiator && prompt.initiator.id),
+      peerXpub: result.peerXpub || (prompt.initiator && prompt.initiator.xpub),
+      label: result.label || prompt.label || 'Linked device',
+      hubOrigin: prompt.origin || prompt.hubBase,
+      role: 'responder'
+    });
+    armIdentityAutoLock();
+    clearPrompt();
+    return { ok: true, approved: true, kind: 'device-link', status: result.status };
+  }
+
+  if (!prompt.message) {
+    return { error: prompt.error || 'No challenge message to sign.' };
+  }
+
+  const result = await completeClientSignedLogin(
+    unlockedIdentity,
+    prompt.hubBase,
+    prompt.sessionId,
+    prompt.message
+  );
+  if (!result.ok) return { error: result.error || 'Sign-in failed.' };
+
+  armIdentityAutoLock();
+  clearPrompt();
+  return { ok: true, approved: true, identity: result.identity, signer: result.signer };
+});
 
 // --- Identity (first-run onboarding + Hub-style key safety) ---------------
 //
@@ -511,10 +1022,26 @@ function identityAutoLockMinutes () {
   return Math.min(24 * 60, n);
 }
 
-/** Push the unlocked identity into the running relay for uplink signing. */
+/** Env FABRIC_XPRV / FABRIC_SEED — GoonCitizen publishing identity (wins over UI unlock). */
+let envPublishingIdentity = null;
+
+function loadEnvPublishingIdentity () {
+  loadRepoDotEnv();
+  applyGoonCitizenEnvAliases(process.env);
+  const { identity, updated, source } = applyFabricEnvConfig(process.env);
+  envPublishingIdentity = identity;
+  if (identity) {
+    console.log('[ELECTRON]', '[STATUS]',
+      `Publishing identity from ${source}: ${identity.pubkey.slice(0, 16)}…` +
+      (updated ? ' (FABRIC_XPRV stamped)' : ''));
+  }
+  return identity;
+}
+
+/** Push publishing identity into the running relay (env > unlocked UI identity). */
 function applyIdentityToService () {
   if (starCitizenService && typeof starCitizenService.setIdentity === 'function') {
-    starCitizenService.setIdentity(unlockedIdentity);
+    starCitizenService.setIdentity(envPublishingIdentity || unlockedIdentity);
   }
 }
 
@@ -755,9 +1282,45 @@ ipcMain.handle('get-service-status', () => {
   return { status: 'STOPPED', port: null, brand: BRAND_NAME, openAtLogin: openAtLoginEnabled() };
 });
 
+/**
+ * Delivery sync receipt over in-process Fabric (no HTTP).
+ * Publishes MessageReceipt CONTRACT_MESSAGE via the local peer.
+ */
+ipcMain.handle('fabric:delivery-receipt', (_e, opts = {}) => {
+  if (!starCitizenService || typeof starCitizenService._markDeliveryReceipt !== 'function') {
+    return { error: 'relay not ready' };
+  }
+  const wireHash = opts.wireHash || opts.hash;
+  if (!wireHash) return { error: 'wireHash required' };
+  try {
+    const data = starCitizenService._markDeliveryReceipt(String(wireHash), {
+      contractId: opts.contractId || null,
+      chatMessageId: opts.chatMessageId || null
+    });
+    return { data };
+  } catch (e) {
+    return {
+      error: e && e.message ? e.message : String(e),
+      code: e && e.code ? e.code : null
+    };
+  }
+});
+
 ipcMain.handle('set-open-at-login', (_e, enabled) => {
   setOpenAtLogin(!!enabled);
   return { openAtLogin: openAtLoginEnabled() };
+});
+
+ipcMain.handle('set-group-overlay', async (_e, enabled) => {
+  return setGroupOverlayEnabled(!!enabled);
+});
+
+ipcMain.handle('get-group-overlay', () => {
+  return {
+    groupOverlay: !!(overlayWindow && !overlayWindow.isDestroyed() && overlayWindow.isVisible()),
+    primaryGroupId: (starCitizenService && starCitizenService._primaryGroupId) || null,
+    platform: process.platform
+  };
 });
 
 ipcMain.handle('notify:show', (_e, { title, body, id, kind, actions } = {}) => {
@@ -808,6 +1371,72 @@ ipcMain.handle('restart-service', async () => {
     await mainWindow.loadURL(`http://127.0.0.1:${activePort}/`);
   }
   return { success: true, port: activePort };
+});
+
+// --- Filesystem pickers (Feed log import / Settings Game.log path) ---------
+
+ipcMain.handle('dialog:openDirectory', async () => {
+  const win = BrowserWindow.getFocusedWindow() || mainWindow;
+  const result = await dialog.showOpenDialog(win || undefined, {
+    title: 'Import log folder',
+    properties: ['openDirectory', 'multiSelections'],
+    message: 'Choose folders that contain Star Citizen Game.log / logbackup files'
+  });
+  if (result.canceled || !result.filePaths || !result.filePaths.length) {
+    return { canceled: true, paths: [] };
+  }
+  return { canceled: false, paths: result.filePaths };
+});
+
+ipcMain.handle('dialog:openLogFiles', async () => {
+  const win = BrowserWindow.getFocusedWindow() || mainWindow;
+  const result = await dialog.showOpenDialog(win || undefined, {
+    title: 'Import log files',
+    properties: ['openFile', 'multiSelections'],
+    filters: [
+      { name: 'Star Citizen logs', extensions: ['log'] },
+      { name: 'All files', extensions: ['*'] }
+    ],
+    message: 'Choose one or more .log files to import'
+  });
+  if (result.canceled || !result.filePaths || !result.filePaths.length) {
+    return { canceled: true, paths: [] };
+  }
+  return { canceled: false, paths: result.filePaths };
+});
+
+ipcMain.handle('dialog:openLogFile', async () => {
+  const win = BrowserWindow.getFocusedWindow() || mainWindow;
+  const result = await dialog.showOpenDialog(win || undefined, {
+    title: 'Select Game.log',
+    properties: ['openFile'],
+    filters: [
+      { name: 'Star Citizen logs', extensions: ['log'] },
+      { name: 'All files', extensions: ['*'] }
+    ],
+    message: 'Choose the live Game.log to tail'
+  });
+  if (result.canceled || !result.filePaths || !result.filePaths.length) {
+    return { canceled: true, path: null };
+  }
+  return { canceled: false, path: result.filePaths[0] };
+});
+
+ipcMain.handle('dialog:openFleetJson', async () => {
+  const win = BrowserWindow.getFocusedWindow() || mainWindow;
+  const result = await dialog.showOpenDialog(win || undefined, {
+    title: 'Import Starjump / FleetViewer export',
+    properties: ['openFile'],
+    filters: [
+      { name: 'Fleet JSON', extensions: ['json'] },
+      { name: 'All files', extensions: ['*'] }
+    ],
+    message: 'Choose a Starjump or FleetViewer JSON export'
+  });
+  if (result.canceled || !result.filePaths || !result.filePaths.length) {
+    return { canceled: true, path: null };
+  }
+  return { canceled: false, path: result.filePaths[0] };
 });
 
 process.on('uncaughtException', (error) => {

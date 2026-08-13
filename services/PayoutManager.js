@@ -50,15 +50,42 @@ class PayoutManager extends EventEmitter {
 
   /**
    * Subscribe to a MissionManager: accepted claims flip escrow to 'payable'.
+   * @param {Object} missionManager
+   * @param {Object} [hooks]
+   * @param {Function} [hooks.resolveGroupWallet] `(groupId) => { address }|null`
    */
-  attach (missionManager) {
+  attach (missionManager, hooks = {}) {
+    const resolveGroupWallet = typeof hooks.resolveGroupWallet === 'function'
+      ? hooks.resolveGroupWallet
+      : (typeof this.settings.resolveGroupWallet === 'function' ? this.settings.resolveGroupWallet : null);
     missionManager.on('payout:unlocked', ({ mission, claim, validation }) => {
       const escrow = mission.escrow;
       if (!escrow) return;
       escrow.status = 'payable';
       escrow.claimId = claim.id;
-      escrow.payee = claim.claimantId;
       escrow.unlockedAt = validation.validatedAt;
+      const groupId = claim && claim.completionGroupId ? String(claim.completionGroupId) : null;
+      if (groupId && resolveGroupWallet) {
+        try {
+          const wallet = resolveGroupWallet(groupId);
+          const address = wallet && wallet.address ? String(wallet.address) : null;
+          escrow.payeeKind = 'group';
+          escrow.payee = groupId;
+          escrow.payeeAddress = address;
+          escrow.completionGroupId = groupId;
+        } catch (e) {
+          escrow.payeeKind = 'group';
+          escrow.payee = groupId;
+          escrow.payeeAddress = null;
+          escrow.completionGroupId = groupId;
+          escrow.payeeError = (e && e.message) || String(e);
+        }
+      } else {
+        escrow.payeeKind = 'individual';
+        escrow.payee = claim.claimantId;
+        escrow.payeeAddress = escrow.payeeAddress || null;
+        escrow.completionGroupId = null;
+      }
       missionManager.store.put('missions', mission.id, mission);
       this.emit('payout:payable', { missionId: mission.id, escrow });
     });
@@ -72,7 +99,7 @@ class PayoutManager extends EventEmitter {
    * every member's relay.
    * @param {Array<String>} keys Compressed secp256k1 pubkeys.
    * @param {Number} threshold Signatures required to spend.
-   * @returns {{ address, redeemScript?, descriptor?, keys, threshold, network, mode }}
+   * @returns {Object} `{ address, keys, threshold, network, mode }` plus optional `redeemScript` / `descriptor`
    */
   async multisigAddress (keys, threshold = 1) {
     if (!Array.isArray(keys) || !keys.length) throw new Error('keys required');
@@ -163,7 +190,8 @@ class PayoutManager extends EventEmitter {
    */
   async buildPayout (escrow, toAddress) {
     if (this.mode === 'ledger') throw new Error('ledger mode has no on-chain payout');
-    if (!toAddress) throw new Error('toAddress required');
+    const dest = toAddress || (escrow && escrow.payeeAddress) || null;
+    if (!dest) throw new Error('toAddress required');
     if (escrow.status !== 'payable') throw new Error(`escrow is ${escrow.status}, not payable (claim must be accepted first)`);
 
     const { utxos, totalSats } = await this.checkFunding(escrow);
@@ -173,11 +201,11 @@ class PayoutManager extends EventEmitter {
     if (payoutSats <= 0) throw new Error('escrow balance does not cover the fee');
 
     const inputs = utxos.map((u) => ({ txid: u.txid, vout: u.vout }));
-    const outputs = [{ [toAddress]: payoutSats / SATS_PER_BTC }];
+    const outputs = [{ [dest]: payoutSats / SATS_PER_BTC }];
     const psbt = await this.settings.rpc('createpsbt', [inputs, outputs]);
     escrow.payoutPsbt = psbt;
-    escrow.payoutAddress = toAddress;
-    return { psbt, inputSats: totalSats, payoutSats, toAddress, redeemScript: escrow.redeemScript };
+    escrow.payoutAddress = dest;
+    return { psbt, inputSats: totalSats, payoutSats, toAddress: dest, redeemScript: escrow.redeemScript, payeeKind: escrow.payeeKind || 'individual' };
   }
 
   /**

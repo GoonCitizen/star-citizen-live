@@ -10,17 +10,27 @@
 // Only allowlisted keys are persisted, so the collection stays a small,
 // auditable operator config (never secrets like the identity key).
 
+const { sanitizeCorpusDirs, sanitizeCorpusFiles } = require('./fsBrowser');
+const { sanitizeProfile } = require('./peerProfile');
+const { sanitizePresenceShare } = require('./presence');
+
 // Operator-editable keys (mirrors the Hub's allowlisted-settings approach).
 const ALLOWED_KEYS = [
   'logfile',    // explicit Game.log path (null = auto-detect)
   'channel',    // forced SC channel (LIVE/PTU/EPTU/HOTFIX/TECH-PREVIEW)
+  'corpusDirs', // extra directories of *.log to fold into cumulative history (Feed import)
+  'corpusFiles', // individually selected log files (Feed import)
   'peers',      // [{ id, address, label, enabled }] — Fabric host:port peers
   'fabricPort', // local Fabric Peer listen port (default 7777)
+  'fabricAdvertiseHost', // public host for dial pin + P2P_PEERING_OFFER; null = no dial endpoint
+  'broadcastPeering',    // opt-in: publish P2P_PEERING_OFFER on the mesh (default false)
   'uplinkIntervalMs',
-  'discordWebhook',
   'openAtLogin',
   'identityAutoLockMinutes', // 0 = off; default 30 (mirrors Hub identity lock prefs)
-  'shareLogsGlobal',         // push parsed log events to peer hubs for org aggregation (default true)
+  'shareLogsGlobal',         // broadcast parsed log events to all connected peers (default false; prefer per-peer shareLogs)
+  'groupChatSeal',           // seal outbound GroupChat with tip-bound AES-GCM (default false)
+  'requireSealedGroupChat',  // drop inbound GroupChat without a decryptable seal (default false)
+  'httpSharedMode',          // LAN opt-in: bind dashboard HTTP on 0.0.0.0 (default false → 127.0.0.1)
   'snapshotsEnabled',        // periodic screen snapshots (opt-in; desktop only)
   'snapshotIntervalSeconds', // capture cadence (default 10, min 2)
   'snapshotAutoPurge',       // delete oldest snapshots beyond the disk cap (default true)
@@ -30,10 +40,42 @@ const ALLOWED_KEYS = [
   'notifyChatGroups',        // notify on new group chat messages (default true)
   'notifyWhenFocused',       // also notify while the app window is focused (default false)
   'nickname',                // operator display name for chat (pubkey remains the actor id)
-  'notifyMissionBroadcasts'  // desktop notify when a peer broadcasts a mission (default true)
+  'profile',                 // local social profile { bio, scHandle } (nickname is separate)
+  'notifyMissionBroadcasts', // desktop notify when a peer broadcasts a mission (default true)
+  'linkedDevices',           // mutual device-link attestations [{ peerFabricId, label, … }]
+  'sharePresence',           // publish PeerPresence on Fabric (default false)
+  'presenceVisibility',      // private|peers|groups|public
+  'presenceGroupIds',        // group ids when visibility is groups/public
+  'shipOverrideSlug',        // manual current ship slug; null = autodetect from log
+  'presenceAvailability',    // auto|online|offline (force online/offline vs Game.log)
+  'presenceStatusText',      // short custom status line (max 64)
+  'primaryGroupId',          // preferred group for overlay / defaults (must be a membership)
+  'groupOverlay',            // desktop: show primary-group member/ship overlay (Windows)
+  // Discord bot (non-secrets). Token / app secret / webhook → discord.secrets.json or env.
+  'discordBotEnable',
+  'discordAppId',
+  'discordChannel',
+  'discordAnnounceKills',
+  'discordAnnouncePlayerJoins',
+  'discordAnnounceActivities',
+  'discordAnnounceMissions',
+  'discordAnnounceCombat',
+  'discordAnnounceIncaps'
 ];
 
 const NICKNAME_MAX = 32;
+const PRIMARY_GROUP_ID_RE = /^[a-zA-Z0-9_-]{8,128}$/;
+
+/**
+ * Normalize primary group id. Empty clears it.
+ * @param {*} value
+ * @returns {string|null}
+ */
+function sanitizePrimaryGroupId (value) {
+  if (value === undefined || value === null || value === '') return null;
+  const s = String(value).trim();
+  return PRIMARY_GROUP_ID_RE.test(s) ? s : null;
+}
 
 /**
  * Normalize a display nickname. Empty clears it. Strips control chars;
@@ -68,6 +110,18 @@ function loadSettings (store) {
 }
 
 /**
+ * Remove legacy secrets that must not live in the Fabric Store (e.g. Discord
+ * webhook URLs). Safe to call on every start; no-op when absent.
+ * @param {import('../types/Store').Store} store
+ */
+function scrubLegacySecrets (store) {
+  if (!store || typeof store.del !== 'function') return;
+  try {
+    if (store.get('settings', 'discordWebhook')) store.del('settings', 'discordWebhook');
+  } catch (_) { /* best effort */ }
+}
+
+/**
  * Persist one setting into the Fabric Store. Returns the full updated
  * settings object. `null`/`undefined` clears the setting.
  * @param {import('../types/Store').Store} store Shared register Store.
@@ -79,6 +133,59 @@ function putSetting (store, key, value) {
   if (!store) throw new Error('settings store required');
   let next = value === undefined ? null : value;
   if (key === 'nickname') next = sanitizeNickname(next);
+  if (key === 'profile') next = sanitizeProfile(next);
+  if (key === 'fabricAdvertiseHost') {
+    if (next === undefined || next === null || next === '') next = null;
+    else {
+      const host = String(next).trim().toLowerCase().replace(/^https?:\/\//, '').split('/')[0].split(':')[0];
+      next = host && /^[a-z0-9._-]+$/i.test(host) && host !== 'localhost' && host !== '127.0.0.1'
+        ? host
+        : null;
+    }
+  }
+  if (key === 'corpusDirs') {
+    next = sanitizeCorpusDirs(next);
+    if (!next.length) next = null;
+  }
+  if (key === 'corpusFiles') {
+    next = sanitizeCorpusFiles(next);
+    if (!next.length) next = null;
+  }
+  if (key === 'broadcastPeering') next = next === true;
+  if (key === 'httpSharedMode') next = next === true;
+  if (key === 'shareLogsGlobal') next = next === true;
+  if (key === 'groupChatSeal') next = next === true;
+  if (key === 'requireSealedGroupChat') next = next === true;
+  if (key === 'sharePresence') next = next === true;
+  if (key === 'presenceVisibility') next = sanitizePresenceShare({ presenceVisibility: next }).presenceVisibility;
+  if (key === 'presenceGroupIds') {
+    next = sanitizePresenceShare({ presenceGroupIds: next }).presenceGroupIds;
+    if (!next.length) next = null;
+  }
+  if (key === 'shipOverrideSlug') {
+    next = sanitizePresenceShare({ shipOverrideSlug: next }).shipOverrideSlug;
+  }
+  if (key === 'presenceAvailability') {
+    next = sanitizePresenceShare({ presenceAvailability: next }).presenceAvailability;
+  }
+  if (key === 'presenceStatusText') {
+    next = sanitizePresenceShare({ presenceStatusText: next }).presenceStatusText;
+  }
+  if (key === 'primaryGroupId') next = sanitizePrimaryGroupId(next);
+  if (key === 'groupOverlay') next = next === true;
+  if (key === 'discordBotEnable' ||
+      key === 'discordAnnounceKills' ||
+      key === 'discordAnnouncePlayerJoins' ||
+      key === 'discordAnnounceActivities' ||
+      key === 'discordAnnounceMissions' ||
+      key === 'discordAnnounceCombat' ||
+      key === 'discordAnnounceIncaps') {
+    next = next === true;
+  }
+  if (key === 'discordAppId' || key === 'discordChannel') {
+    if (next === undefined || next === null || next === '') next = null;
+    else next = String(next).trim() || null;
+  }
   store.put('settings', key, { id: key, value: next });
   return loadSettings(store);
 }
@@ -86,7 +193,12 @@ function putSetting (store, key, value) {
 module.exports = {
   ALLOWED_KEYS,
   NICKNAME_MAX,
+  PRIMARY_GROUP_ID_RE,
   sanitizeNickname,
+  sanitizePrimaryGroupId,
+  sanitizeCorpusDirs,
+  sanitizeCorpusFiles,
   loadSettings,
+  scrubLegacySecrets,
   putSetting
 };

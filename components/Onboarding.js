@@ -62,6 +62,8 @@ class Onboarding extends React.Component {
       pubkey: null,
       importPassword: ''
     };
+    this._unsub = null;
+    this._passwordRef = null;
   }
 
   componentDidMount () {
@@ -76,13 +78,77 @@ class Onboarding extends React.Component {
       } else if (info.unlocked) {
         this.finish(info.pubkey);
       } else {
-        this.setState({ step: 'unlock', pubkey: info.pubkey });
+        this.setState({ step: 'unlock', pubkey: info.pubkey || null });
       }
     }).catch(() => this.setState({ step: 'choice' }));
+
+    // Auto-lock / manual lock: re-open the same full-screen unlock as first launch.
+    if (bridge.onChanged) {
+      this._unsub = bridge.onChanged((summary) => {
+        if (!summary || !summary.exists) {
+          if (this.state.step === 'done' || this.state.step === 'unlock') {
+            this.setState({
+              step: 'choice',
+              password: '',
+              error: null,
+              pubkey: null,
+              busy: false
+            });
+          }
+          return;
+        }
+        if (!summary.unlocked) {
+          // Only reset the form when entering unlock from another step —
+          // never clear password while the user is typing.
+          if (this.state.step !== 'unlock') {
+            this.setState({
+              step: 'unlock',
+              password: '',
+              error: null,
+              busy: false,
+              pubkey: summary.pubkey || this.state.pubkey || null
+            });
+            if (this.props.onLocked) this.props.onLocked();
+          } else if (this.props.onLocked) {
+            this.props.onLocked();
+          }
+          return;
+        }
+        if (this.state.step === 'unlock' || this.state.step === 'loading') {
+          this.finish(summary.pubkey);
+        }
+      });
+    }
+  }
+
+  componentDidUpdate (_prevProps, prevState) {
+    if (this.state.step !== prevState.step &&
+      (this.state.step === 'unlock' || this.state.step === 'password' || this.state.step === 'restore')) {
+      this.focusPasswordField();
+    }
+  }
+
+  componentWillUnmount () {
+    if (this._unsub) this._unsub();
+  }
+
+  focusPasswordField () {
+    // Focus once when the step opens — do not select() on every render
+    // (that replaces the whole value with the next keypress).
+    const focus = () => {
+      if (this._passwordRef && typeof this._passwordRef.focus === 'function') {
+        this._passwordRef.focus();
+      }
+    };
+    if (typeof requestAnimationFrame === 'function') {
+      requestAnimationFrame(() => setTimeout(focus, 0));
+    } else {
+      setTimeout(focus, 0);
+    }
   }
 
   finish (pubkey) {
-    this.setState({ step: 'done', pubkey });
+    this.setState({ step: 'done', pubkey, password: '', error: null, busy: false });
     if (this.props.onReady) this.props.onReady(pubkey);
   }
 
@@ -127,21 +193,32 @@ class Onboarding extends React.Component {
     this.finish(res.pubkey);
   }
 
-  field (label, key, type, placeholder) {
-    return React.createElement('div', { className: 'ob-field' },
+  field (label, key, opts = {}) {
+    const {
+      type = 'password',
+      placeholder = '',
+      autoFocus = false,
+      onEnter = null
+    } = opts;
+    return React.createElement('div', { className: 'ob-field', key: 'f-' + key },
       React.createElement('label', null, label),
       React.createElement('input', {
-        type: type || 'password',
+        type,
         value: this.state[key],
-        placeholder: placeholder || '',
-        onChange: (e) => this.setState({ [key]: e.target.value })
+        placeholder,
+        autoFocus: !!autoFocus,
+        ref: autoFocus ? (el) => { this._passwordRef = el; } : undefined,
+        onChange: (e) => this.setState({ [key]: e.target.value }),
+        onKeyDown: onEnter
+          ? (e) => { if (e.key === 'Enter') onEnter(); }
+          : undefined
       })
     );
   }
 
   passwordFields () {
     return [
-      this.field('Password (min 8 characters)', 'password'),
+      this.field('Password (min 8 characters)', 'password', { autoFocus: true }),
       this.field('Confirm password', 'password2'),
       this.state.password && this.state.password2 && !this.passwordsOk()
         ? React.createElement('div', { className: 'ob-error', key: 'pwmm' },
@@ -306,7 +383,10 @@ class Onboarding extends React.Component {
       this.state.pubkey
         ? React.createElement('div', { className: 'ob-pk', key: 'p' }, this.state.pubkey)
         : null,
-      this.field('Password', 'password'),
+      this.field('Password', 'password', {
+        autoFocus: true,
+        onEnter: () => this.unlock()
+      }),
       React.createElement('div', { className: 'ob-actions', key: 'a' },
         React.createElement('button', {
           className: 'ob-btn',

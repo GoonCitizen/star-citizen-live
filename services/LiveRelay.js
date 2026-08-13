@@ -25,6 +25,51 @@ const readline = require('readline');
 const { parseLine, RULES, shipName, parseSessionInfo, missionType, isNPC, missionFaction } = require('../functions/parser');
 const { channelFromPath } = require('../functions/locate');
 const settingsStore = require('../functions/settingsStore');
+const { isHttpSharedModeEnabled, resolveHttpListenHost } = require('../functions/httpSharedMode');
+const { applyGoonCitizenEnvAliases } = require('../functions/goonCitizenEnvAliases');
+let resolveFabricPeerInterface;
+try {
+  ({ resolveFabricPeerInterface } = require('@fabric/core/functions/fabricListenInterface'));
+} catch (_) {
+  resolveFabricPeerInterface = function resolveFabricPeerInterfaceFallback (opts = {}) {
+    const env = opts.env || process.env;
+    for (const key of ['FABRIC_INTERFACE', 'FABRIC_PEER_INTERFACE']) {
+      const v = String(env[key] || '').trim();
+      if (v) return v;
+    }
+    const explicit = String(opts.interface || opts.host || '').trim();
+    if (explicit) return explicit;
+    return opts.fallback != null ? String(opts.fallback) : '0.0.0.0';
+  };
+}
+const cumulativeHistory = require('../functions/cumulativeHistory');
+const logCorpus = require('../functions/logCorpus');
+const fsBrowser = require('../functions/fsBrowser');
+const activityTree = require('../functions/activityTree');
+const gooncitizenGameState = require('../functions/gooncitizenGameState');
+const eventChain = require('../functions/eventChain');
+const peerProfile = require('../functions/peerProfile');
+const hubBitcoinProxy = require('../functions/hubBitcoinProxy');
+const discordConfig = require('../functions/discordConfig');
+const discordContract = require('../functions/discordContract');
+let FabricDiscord = null;
+try {
+  FabricDiscord = require('@fabric/discord');
+} catch (_) {
+  FabricDiscord = null;
+}
+const hubDocumentExchangeProxy = require('../functions/hubDocumentExchangeProxy');
+const peerPeeringString = require('../functions/peerPeeringString');
+const presence = require('../functions/presence');
+const hubPeeringObserve = require('../functions/hubPeeringObserve');
+const liveFeed = require('../functions/liveFeed');
+const {
+  createFabricMessageLog,
+  summarizeMessage
+} = require('../functions/fabricMessageLog');
+const starjumpFleet = require('../functions/starjumpFleet');
+const shipCatalog = require('../functions/shipCatalog');
+const registerInbox = require('../functions/registerInbox');
 
 // Lines worth surfacing in the monitor - combat/death hints AND mission/objective
 // activity. Includes wording the parser may not recognize yet, so we can keep
@@ -52,14 +97,20 @@ function identityLib () {
 // dedicated wire types (P2P_CHAT_MESSAGE / MissionBroadcast).
 const INGEST_COLLECTIONS = ['activities', 'players', 'vehicles', 'kills', 'deaths', 'incaps', 'missionlog', 'chatmessages', 'missionbroadcasts'];
 
-// Org Fabric seed peer (host:port). Removable in Peers; empty saved list is kept.
-const DEFAULT_PEER_ADDRESS = 'relay.goon.vc:7777';
+// Org Fabric seed peers (host:port). Removable in Peers; empty saved list is kept.
+// Both hubs selectively relay relevant Fabric messages for the network.
+const DEFAULT_PEERS = [
+  { address: 'hub.fabric.pub:7777', label: 'hub.fabric.pub' },
+  { address: 'relay.goon.vc:7777', label: 'relay.goon.vc' }
+];
 
 const FabricNetwork = require('./FabricNetwork');
 
 class StarCitizenService extends EventEmitter {
   constructor (settings = {}) {
     super();
+    // Map legacy SC_* listen/advertise/allowlist env onto FABRIC_* (idempotent).
+    applyGoonCitizenEnvAliases(process.env);
     this.settings = Object.assign({
       port: 3041,
       listen: true, // false = embed via apiHandler() on a host HTTP server (goon.vc)
@@ -67,29 +118,86 @@ class StarCitizenService extends EventEmitter {
       logfile: null,
       channel: null, // SC channel (LIVE/PTU/EPTU/HOTFIX/TECH-PREVIEW) for display
       seed: null,   // optional: replay a past log once on start to pre-fill the monitor
-      discord: { enable: false, webhook: null, announceKills: true, announcePlayerJoins: true, announceActivities: false, announceMissions: false, announceCombat: false, announceIncaps: false },
+      discord: {
+        enable: false,
+        token: null,
+        webhook: null,
+        channel: null,
+        app: { id: null, secret: null },
+        announceKills: true,
+        announcePlayerJoins: true,
+        announceActivities: false,
+        announceMissions: false,
+        announceCombat: false,
+        announceIncaps: false
+      },
       missions: { enable: true },
-      uplink: { enable: false, url: null, intervalMs: 5000 }, // legacy; Fabric Peer is the peering transport
+      uplink: { intervalMs: 5000 }, // Fabric SCEventBatch flush cadence (HTTPS uplink retired D-010)
       fabric: null, // { enable, listen, port, interface, peers, peersDb, relayAppMessages }
       settingsDir: null, // Hub-style named store root (stores/gooncitizen); register defaults beneath it
       store: null // optional pre-started types/Store instance (Electron main / scripts/node.js)
     }, settings);
-    this.settings.discord = Object.assign({ enable: false, webhook: null, announceKills: true, announcePlayerJoins: true, announceActivities: false, announceMissions: false, announceCombat: false, announceIncaps: false }, settings.discord || {});
-    this.settings.uplink = Object.assign({ enable: false, url: null, intervalMs: 5000 }, settings.uplink || {});
+    this.settings.discord = Object.assign({
+      enable: false,
+      token: null,
+      webhook: null,
+      channel: null,
+      app: { id: null, secret: null },
+      announceKills: true,
+      announcePlayerJoins: true,
+      announceActivities: false,
+      announceMissions: false,
+      announceCombat: false,
+      announceIncaps: false
+    }, settings.discord || {});
+    if (settings.discord && settings.discord.app) {
+      this.settings.discord.app = Object.assign(
+        { id: null, secret: null },
+        settings.discord.app
+      );
+    }
+    /** @type {import('@fabric/discord')|null} */
+    this.discordBot = null;
+    this._discordBotReady = false;
+    /** Discord Request→Claim→Response journal (auditors / View tree). */
+    this._discordCoord = discordContract.createDiscordCoordJournal({ capacity: 800 });
+    /** @type {Map<string, object>} */
+    this._discordClaimPending = new Map();
+    /** Settle window after claim before executing Discord reply (ms). */
+    this._discordClaimSettleMs = 450;
+    this.settings.uplink = Object.assign({ intervalMs: 5000 }, settings.uplink || {});
+    delete this.settings.uplink.url;
+    delete this.settings.uplink.enable;
     // Fabric Peer (TCP/NOISE). Disabled in hosted server mode (hub agent) and
     // by default under NODE_ENV=test unless explicitly enabled.
     const fabricDefaults = {
       enable: this.settings.mode !== 'server' && process.env.NODE_ENV !== 'test',
       listen: true,
-      port: 7777,
-      interface: '0.0.0.0',
+      port: (() => {
+        const n = Number(process.env.FABRIC_PORT);
+        return Number.isFinite(n) && n > 0 ? n : 7777;
+      })(),
+      // Peer bind: FABRIC_INTERFACE / FABRIC_PEER_INTERFACE (e.g. 65.21.231.149 for relay.goon.vc).
+      interface: resolveFabricPeerInterface({
+        interface: settings.fabric && settings.fabric.interface,
+        env: process.env
+      }),
       peers: null, // null → use operator peer roster
       peersDb: null,
       relayAppMessages: false
     };
     this.settings.fabric = Object.assign(fabricDefaults, settings.fabric || {});
-    // Signed ingest is mandatory in server mode; opt-in locally.
-    this.settings.ingest = Object.assign({ requireSigned: this.settings.mode === 'server' }, settings.ingest || {});
+    // Signed ingest is mandatory in server mode when HTTP ingest is enabled.
+    // HTTP batch ingest is OFF by default — Fabric Peer is the production sync
+    // path (D-010). Opt in with ingest.httpEnable or SC_HTTP_INGEST=1 (tests/legacy).
+    this.settings.ingest = Object.assign({
+      requireSigned: this.settings.mode === 'server',
+      httpEnable: false
+    }, settings.ingest || {});
+    const httpIngestEnv = String(process.env.SC_HTTP_INGEST || '').trim().toLowerCase();
+    if (httpIngestEnv === '1' || httpIngestEnv === 'true' || httpIngestEnv === 'yes' || httpIngestEnv === 'on') {
+      this.settings.ingest.httpEnable = true;
+    }
 
     this.state = { status: 'STOPPED', activities: {}, players: {}, logins: {}, vehicles: {}, kills: {}, incaps: {}, deaths: {}, missionlog: {}, notifications: {}, missionbroadcasts: {}, logs: {}, startedAt: null };
     this.state.missionGroups = {};  // missions grouped by MissionId (built from the log)
@@ -102,7 +210,62 @@ class StarCitizenService extends EventEmitter {
     this.sessions = []; // history of game sessions (one per launch detected)
     this._sessionHandle = null; // the session's player handle (for attributing incaps)
     this._nickname = null; // operator display name for chat (from settings.nickname)
+    /** Local social profile (`bio`, `scHandle`). */
+    /** @type {Object|null} */
+    this._profile = null;
+    /** public hostname for dial pin / P2P_PEERING_OFFER (optional) */
+    this._fabricAdvertiseHost = null;
+    /** Opt-in mesh announce of open peer slots (P2P_PEERING_OFFER). */
+    this._broadcastPeering = false;
+    /** Mesh P2P_PEER_ALIAS by author pubkey. */
+    /** @type {Object.<string, string>} */
+    this._peerAliasByPubkey = Object.create(null);
+    /** PeerProfile cache by pubkey. */
+    /** @type {Object.<string, Object>} */
+    this._peerProfilesByPubkey = Object.create(null);
+    /** PeerPresence cache by pubkey. */
+    /** @type {Object.<string, Object>} */
+    this._peerPresenceByPubkey = Object.create(null);
+    /** ISO timestamp of the last parsed Game.log event (online window). */
+    this._lastLogEventAt = null;
+    /** Autodetected ship from Game.log (`classId`, `vehicleId`, `name`, `slug`, `at`). */
+    /** @type {Object|null} */
+    this._detectedShip = null;
+    /** Manual ship override (`slug`, `name`, `at`). */
+    /** @type {Object|null} */
+    this._shipOverride = null;
+    this._sharePresence = false;
+    this._presenceVisibility = 'private';
+    this._presenceGroupIds = [];
+    this._shipOverrideSlug = null;
+    this._presenceAvailability = 'auto';
+    this._presenceStatusText = null;
+    this._lastPresencePublish = 0;
+    /** Preferred group id for the desktop member/ship overlay. */
+    this._primaryGroupId = null;
+    /** Opt-in always-on-top overlay window (Electron). */
+    this._groupOverlay = false;
+    /** Raw defaultGroupMessageId from settings/local.js (for Settings UI hint). */
+    this._defaultGroupMessageId = null;
+    /** Last nickname announced on the mesh (dedupe ensure → alias spam). */
+    this._lastPublishedAlias = null;
+    /** Cached Hub / WebRTC observe snapshot. */
+    /** @type {Object|null} */
+    this._hubObserve = null;
+    this._hubObserveTimer = null;
+    this._hubObserveInflight = null;
+    /** Max auto-rostered non-hub peers from gossip/offer. */
+    this._maxDiscoveredPeers = 12;
+    /** @type {Promise|null} */
+    this._fabricEnsureInflight = null;
     this._seq = 0;
+    this._shareLogsGlobal = false;
+    /** Seal outbound GroupChat with tip-bound AES-GCM (default off; plaintext still accepted). */
+    this._groupChatSeal = false;
+    /** Drop inbound GroupChat that lacks a decryptable seal. */
+    this._requireSealedGroupChat = false;
+    /** LAN opt-in for dashboard HTTP (`0.0.0.0`); default loopback. */
+    this._httpSharedMode = isHttpSharedModeEnabled(this.settings.httpSharedMode);
     this._pos = 0;      // byte offset consumed by the live poller
     this._partial = ''; // trailing incomplete line between polls
     this._ino = null;   // file identity, to detect log recreation (restart)
@@ -113,10 +276,12 @@ class StarCitizenService extends EventEmitter {
     this._uplinkTimer = null;
     this._uplinkWired = false;
 
-    // Peers: Fabric `host:port` addresses (seed relay.goon.vc:7777). Loaded
-    // from the Fabric Store in start(); managed via REST / Peers UI.
+    // Peers: Fabric `host:port` addresses (seed hub.fabric.pub + relay.goon.vc).
+    // Loaded from the Fabric Store in start(); managed via REST / Peers UI.
     this.peers = [];
     this.fabricNetwork = null;
+    /** In-memory Fabric AMP Message ring buffer (advanced UI; not Game.log). */
+    this._fabricMessageLog = createFabricMessageLog({ capacity: 500 });
 
     // Safety net: a stray 'error' (e.g. the game rotating Game.log) must never
     // crash the process. Without a listener, EventEmitter throws on 'error'.
@@ -140,7 +305,11 @@ class StarCitizenService extends EventEmitter {
     }
 
     this.missionManager = (this.settings.missions && this.settings.missions.enable)
-      ? new MissionManager(Object.assign({}, this.settings.missions, { store: this.registerStore }))
+      ? new MissionManager(Object.assign({}, this.settings.missions, {
+        store: this.registerStore,
+        // Hosted API must not run empty-allowlist bootstrap (everyone-is-officer).
+        requireOfficers: this.settings.mode === 'server' || this.settings.missions.requireOfficers === true
+      }))
       : null;
 
     // Groups: member-created k-of-n Schnorr multisig units (mission scoping +
@@ -151,11 +320,34 @@ class StarCitizenService extends EventEmitter {
       { store: this.registerStore }
     );
     this.groupManager = groupSettings.enable !== false ? new GroupManager(groupSettings) : null;
-    if (this.missionManager && this.groupManager) this.missionManager.groupManager = this.groupManager;
+    if (this.missionManager && this.groupManager) {
+      this.missionManager.groupManager = this.groupManager;
+      this.missionManager.settings.isGroupMember = (groupId, pubkey) => (
+        this.groupManager.isInGroupTree(groupId, pubkey)
+      );
+    }
+    if (this.groupManager) {
+      // Federation contract publish + GroupChange fan-out (best-effort).
+      this.groupManager.on('group:created', (group, meta) => {
+        this._publishGroupContractFor(group, meta && meta.definition).catch((e) => this.emit('error', e));
+      });
+      this.groupManager.on('group:local-change', (change) => {
+        this._publishGroupChange(change).catch((e) => this.emit('error', e));
+      });
+      this.groupManager.on('group:proposal', (proposal) => {
+        this._onLocalGroupProposal(proposal).catch((e) => this.emit('error', e));
+      });
+      this.groupManager.on('group:vote', (ev) => {
+        this._publishGroupChangeVote(ev && ev.proposal, ev && ev.voter).catch((e) => this.emit('error', e));
+      });
+      this.groupManager.on('group:journal-needed', (ev) => {
+        this._requestGroupJournal(ev).catch((e) => this.emit('error', e));
+      });
+    }
+    this._wireRegisterInbox();
 
     // Chat: Hub-style ChatMessage records — global channel + one per group.
-    // Local posts publish P2P_CHAT_MESSAGE over Fabric; remote messages arrive
-    // via the Peer chat handler (idempotent content ids).
+    // Global posts use P2P_CHAT_MESSAGE; group posts use GroupChat CONTRACT_MESSAGE.
     const ChatManager = require('../services/ChatManager');
     this.chatManager = new ChatManager({ store: this.registerStore, groupManager: this.groupManager });
 
@@ -168,8 +360,11 @@ class StarCitizenService extends EventEmitter {
       dir: this.settings.settingsDir ? path.join(this.settings.settingsDir, 'snapshots') : null
     });
 
-    // Bearer sessions issued by POST …/auth (Schnorr login challenge).
+    // Bearer sessions issued by POST …/auth (Schnorr login challenge)
+    // or by client-signed Fabric site login (POST /sessions/…/signatures).
     this._sessions = {};
+    // Pending Fabric site-login challenges (D-011) — Passport / GoonCitizen.
+    this._siteLoginSessions = null;
 
     // Bitcoin payouts: escrow mission rewards in authority multisig addresses.
     // settings.payouts = { enable, network, rpc, allowMainnet, feeSats }.
@@ -177,16 +372,433 @@ class StarCitizenService extends EventEmitter {
     if (this.settings.payouts && this.settings.payouts.enable !== false && (this.settings.payouts.rpc || this.settings.payouts.ledger)) {
       const PayoutManager = require('../services/PayoutManager');
       this.payoutManager = new PayoutManager(this.settings.payouts);
-      if (this.missionManager) this.payoutManager.attach(this.missionManager);
+      if (this.missionManager) {
+        this.payoutManager.attach(this.missionManager, {
+          resolveGroupWallet: (groupId) => this._resolveCompletionGroupWallet(groupId)
+        });
+        this.payoutManager.on('payout:payable', (ev) => {
+          const escrow = ev && ev.escrow;
+          const missionId = ev && ev.missionId;
+          const row = registerInbox.entryFromWalletEvent({
+            kind: 'WalletPayout',
+            status: 'pending',
+            actionable: true,
+            title: 'Mission payout unlocked',
+            body: escrow && escrow.amountSats != null
+              ? `${Number(escrow.amountSats).toLocaleString()} sats ready to pay`
+              : 'Escrow is payable',
+            source: escrow && escrow.payee,
+            refs: {
+              missionId,
+              claimId: escrow && escrow.claimId,
+              groupId: escrow && escrow.completionGroupId,
+              payeeKind: escrow && escrow.payeeKind,
+              address: escrow && escrow.payeeAddress
+            },
+            dedupeKey: `wallet-payout-${missionId || ''}-${(escrow && escrow.claimId) || ''}`
+          });
+          if (row) this._appendInbox(row);
+        });
+        this.payoutManager.on('payout:paid', (ev) => {
+          const escrow = ev && ev.escrow;
+          const row = registerInbox.entryFromWalletEvent({
+            kind: 'WalletPayout',
+            status: 'accepted',
+            actionable: false,
+            title: 'Mission payout broadcast',
+            body: ev && ev.txid ? `txid ${String(ev.txid).slice(0, 16)}…` : 'Payout sent',
+            refs: {
+              missionId: escrow && escrow.missionId,
+              txid: ev && ev.txid,
+              groupId: escrow && escrow.completionGroupId
+            },
+            dedupeKey: `wallet-paid-${(ev && ev.txid) || Date.now()}`
+          });
+          if (row) this._appendInbox(row);
+        });
+      }
     }
 
-    this.history = this._loadHistory();   // compact backfill of past logs (Analyze tab)
+    // Compact cumulative history (ended missions, deaths, sessions, heat).
+    // Durable under settingsDir/history.json; updated on startup sync + live tail.
+    this.history = this._loadHistory();
+    this._historyIndex = cumulativeHistory.indexHistory(this.history);
+    this._logCursors = this._loadLogCursors();
+    this._historyDirty = false;
+    this._historyFlushTimer = null;
+    this._historyApplyLive = false; // true only after startup sync (avoids double heat on seed)
+    this._historyGenerators = {}; // missionId → generator (for live mission:end typing)
+    // Gossip Chain of Blocks (D-018, consensus=gossip): union-mergeable firehose; history.json remains the fold.
+    this.eventChain = eventChain.available
+      ? eventChain.fromHistory(this.history, null)
+      : null;
 
     // Deterministic historical re-parse job (oldest log forward). Idle until
     // POST …/reparse; progress + result exposed on the monitor payload.
     this._reparse = { status: 'idle' };
 
     if (this.settings.discord.enable) this._wireDiscord();
+  }
+
+  /**
+   * Re-resolve Discord config from Store + secrets file + constructor/local bag.
+   * @returns {object}
+   */
+  _applyDiscordConfig () {
+    const persisted = settingsStore.loadSettings(this.registerStore);
+    const resolved = discordConfig.resolveDiscordConfig({
+      localDiscord: this.settings.discord,
+      persisted,
+      settingsDir: this.settings.settingsDir,
+      env: process.env
+    });
+    this.settings.discord = Object.assign({}, this.settings.discord, resolved);
+    return resolved;
+  }
+
+  _discordRuntime () {
+    return discordConfig.discordRuntimeSummary(this.settings.discord || {}, {
+      botReady: this._discordBotReady === true,
+      botUser: (this.discordBot && this.discordBot.client && this.discordBot.client.user)
+        ? String(this.discordBot.client.user.tag || this.discordBot.client.user.username || '')
+        : null
+    });
+  }
+
+  async _startDiscordBot () {
+    const cfg = this._applyDiscordConfig();
+    if (!cfg.enable || !cfg.token) {
+      if (this.discordBot) {
+        try { await this.discordBot.stop(); } catch (_) { /* ignore */ }
+        this.discordBot = null;
+        this._discordBotReady = false;
+      }
+      return null;
+    }
+    if (!FabricDiscord) {
+      this.emit('error', new Error('@fabric/discord is not installed — cannot start Discord bot'));
+      return null;
+    }
+    if (this.discordBot) {
+      try { await this.discordBot.stop(); } catch (_) { /* ignore */ }
+      this.discordBot = null;
+      this._discordBotReady = false;
+    }
+    const bot = new FabricDiscord({
+      token: cfg.token,
+      channel: cfg.channel,
+      app: cfg.app,
+      authority: this.settings.authority || 'localhost:3041',
+      // Fabric DiscordRequest/Claim/Response owns replies (multi-operator safe).
+      autoCommands: false
+    });
+    bot.on('error', (e) => this.emit('error', e));
+    bot.on('log', (m) => this.emit('debug', `[discord] ${m}`));
+    bot.on('ready', () => {
+      this._discordBotReady = true;
+      this.emit('discord:ready');
+    });
+    bot.on('activity', (activity) => {
+      this._onDiscordActivity(activity).catch((e) => this.emit('error', e));
+    });
+    try {
+      await bot.start();
+      this.discordBot = bot;
+      console.log('[STAR-CITIZEN] Discord bot started' +
+        (cfg.channel ? ` (channel ${cfg.channel})` : ' (no default channel — set discord.channel)') +
+        ' — Fabric DiscordRequest coordination enabled');
+      return bot;
+    } catch (e) {
+      this.emit('error', e);
+      this.discordBot = null;
+      this._discordBotReady = false;
+      return null;
+    }
+  }
+
+  /**
+   * Ingress from @fabric/discord ActivityStreams → DiscordRequest on the mesh.
+   * @param {object} activity
+   */
+  async _onDiscordActivity (activity) {
+    const cfg = this.settings.discord || {};
+    const request = discordContract.requestFromDiscordActivity(activity, {
+      appId: cfg.app && cfg.app.id,
+      guildId: null
+    });
+    if (!request) return null;
+
+    // Optional: only coordinate the configured announce channel when set.
+    if (cfg.channel && request.channelId && String(cfg.channel) !== String(request.channelId)) {
+      return null;
+    }
+
+    this._discordCoord.append(discordContract.DISCORD_REQUEST, request, {
+      direction: 'local',
+      signer: (this._identity && this._identity.pubkey) || null,
+      ts: request.createdAt
+    });
+
+    let published = null;
+    if (this.fabricNetwork && this.fabricNetwork.ready && this._identity) {
+      try {
+        published = this.fabricNetwork.publishDiscordRequest(request);
+      } catch (e) {
+        this.emit('error', e);
+      }
+    }
+
+    // Race claim so only one operator replies on Discord.
+    await this._maybeClaimDiscordRequest(request, { localOrigin: true });
+    return { request, published };
+  }
+
+  /**
+   * First-claim-wins: publish DiscordClaim after a small jitter when we can reply.
+   * @param {object} request
+   * @param {{ localOrigin?: boolean }} [opts]
+   */
+  async _maybeClaimDiscordRequest (request, opts = {}) {
+    if (!request || !request.requestId) return null;
+    if (!this._discordBotReady || !this.discordBot) return null;
+    if (!this._identity || !this._identity.pubkey) return null;
+
+    const requestId = String(request.requestId);
+    const existing = this._discordCoord.getWinningClaim(requestId);
+    if (existing && discordContract.claimIsActive(existing)) {
+      // Someone already claimed — only settle if we own it.
+      if (String(existing.claimantPubkey) === String(this._identity.pubkey)) {
+        this._scheduleDiscordClaimSettle(requestId, request, existing);
+      }
+      return existing;
+    }
+
+    if (this._discordClaimPending.has(requestId)) return this._discordClaimPending.get(requestId).claim;
+
+    const jitter = 40 + Math.floor(Math.random() * 180);
+    await new Promise((r) => setTimeout(r, jitter));
+
+    const again = this._discordCoord.getWinningClaim(requestId);
+    if (again && discordContract.claimIsActive(again) &&
+        String(again.claimantPubkey) !== String(this._identity.pubkey)) {
+      return again;
+    }
+
+    let claim;
+    try {
+      claim = discordContract.buildDiscordClaim(request, this._identity.pubkey);
+    } catch (e) {
+      this.emit('error', e);
+      return null;
+    }
+
+    this._discordCoord.append(discordContract.DISCORD_CLAIM, claim, {
+      direction: 'out',
+      signer: this._identity.pubkey,
+      ts: claim.claimedAt
+    });
+
+    if (this.fabricNetwork && this.fabricNetwork.ready) {
+      try {
+        this.fabricNetwork.publishDiscordClaim(claim);
+      } catch (e) {
+        this.emit('error', e);
+      }
+    }
+
+    this._scheduleDiscordClaimSettle(requestId, request, claim);
+    return claim;
+  }
+
+  _scheduleDiscordClaimSettle (requestId, request, claim) {
+    const id = String(requestId);
+    const prev = this._discordClaimPending.get(id);
+    if (prev && prev.settleTimer) clearTimeout(prev.settleTimer);
+    const settleTimer = setTimeout(() => {
+      this._settleDiscordClaim(id).catch((e) => this.emit('error', e));
+    }, this._discordClaimSettleMs);
+    this._discordClaimPending.set(id, { request, claim, settleTimer, replied: false });
+  }
+
+  /**
+   * After settle window: if we still hold the winning claim, reply + DiscordResponse.
+   * @param {string} requestId
+   */
+  async _settleDiscordClaim (requestId) {
+    const id = String(requestId || '');
+    const pending = this._discordClaimPending.get(id);
+    if (!pending || pending.replied) return null;
+
+    const win = this._discordCoord.getWinningClaim(id);
+    const me = this._identity && this._identity.pubkey;
+    if (!win || !me || String(win.claimantPubkey) !== String(me)) {
+      this._discordClaimPending.delete(id);
+      return null;
+    }
+    if (!discordContract.claimIsActive(win)) {
+      this._discordClaimPending.delete(id);
+      return null;
+    }
+
+    pending.replied = true;
+    const request = pending.request || (this._discordCoord.treeFor(id).request);
+    if (!request) {
+      this._discordClaimPending.delete(id);
+      return null;
+    }
+
+    let replyPayload = null;
+    let status = 'ok';
+    let error = null;
+    let discordReplyMessageId = null;
+
+    try {
+      replyPayload = this._discordReplyForRequest(request);
+      if (replyPayload && this.discordBot && this._discordBotReady) {
+        const sent = await this.discordBot.postToChannel(request.channelId, replyPayload);
+        if (sent && sent.id) discordReplyMessageId = String(sent.id);
+      } else if (!replyPayload) {
+        status = 'ignored';
+      }
+    } catch (e) {
+      status = 'error';
+      error = (e && e.message) || String(e);
+      this.emit('error', e);
+    }
+
+    const response = discordContract.buildDiscordResponse(request, win, {
+      responderPubkey: me,
+      status,
+      reply: replyPayload,
+      discordReplyMessageId,
+      error
+    });
+
+    this._discordCoord.append(discordContract.DISCORD_RESPONSE, response, {
+      direction: 'out',
+      signer: me,
+      ts: response.respondedAt
+    });
+
+    if (this.fabricNetwork && this.fabricNetwork.ready) {
+      try {
+        this.fabricNetwork.publishDiscordResponse(response);
+      } catch (e) {
+        this.emit('error', e);
+      }
+    }
+
+    this._discordClaimPending.delete(id);
+    this.emit('discord:response', { request, claim: win, response });
+    return response;
+  }
+
+  /**
+   * Map DiscordRequest content → outbound Discord payload (claim winner only).
+   * @param {object} request
+   * @returns {object|null}
+   */
+  _discordReplyForRequest (request) {
+    const content = String((request && request.content) || '').trim();
+    const now = new Date().toISOString();
+    if (content === '!ping') {
+      return { content: `Pong! Coordinated reply at ${now}.` };
+    }
+    if (content === '!help') {
+      return {
+        content: 'GoonCitizen Discord bot (Fabric-coordinated). Commands: !ping !help !status'
+      };
+    }
+    if (content === '!status') {
+      const peer = this.fabricNetwork && this.fabricNetwork.ready ? 'up' : 'down';
+      return {
+        content: `Alive. Fabric peer ${peer}. Identity ${this._identity ? 'unlocked' : 'locked'}.`
+      };
+    }
+    // Non-command traffic: no auto-reply (operators extend via events / future handlers).
+    return null;
+  }
+
+  _ingestDiscordCoordFrame (type, object, signer, meta = {}) {
+    if (!object || !object.requestId) return;
+    this._discordCoord.append(type, object, {
+      signer: signer || null,
+      ts: object.createdAt || object.claimedAt || object.respondedAt || new Date().toISOString(),
+      messageId: meta.messageId || null,
+      direction: meta.origin === 'local' ? 'out' : 'in'
+    });
+  }
+
+  /**
+   * Auditor tree for one Discord requestId (journal + Fabric message log seed).
+   * @param {string} requestId
+   * @returns {object}
+   */
+  discordSequenceTree (requestId) {
+    const id = String(requestId || '').trim();
+    const fromJournal = this._discordCoord.treeFor(id);
+    const seeded = [];
+    const messages = this._fabricMessageLog.list({
+      limit: 500,
+      hideKeepalive: true,
+      q: id
+    });
+    for (const m of messages) {
+      const body = m.body;
+      if (!body || typeof body !== 'object') continue;
+      const appType = body.type || m.appType;
+      const object = body.object != null ? body.object : body;
+      if (!object || String(object.requestId || '') !== id) continue;
+      if (![
+        discordContract.DISCORD_REQUEST,
+        discordContract.DISCORD_CLAIM,
+        discordContract.DISCORD_RESPONSE
+      ].includes(String(appType))) continue;
+      seeded.push({
+        type: appType,
+        object,
+        signer: m.actor || null,
+        ts: m.ts,
+        messageId: m.hash || null,
+        direction: m.direction
+      });
+    }
+    if (!seeded.length) return fromJournal;
+    const merged = discordContract.buildDiscordSequenceTree(id, [
+      ...(this._discordCoord.listRecent(500).filter((r) => r.object && r.object.requestId === id)),
+      ...seeded
+    ]);
+    // Dedupe nodes by type+claimId/requestId+ts
+    const seen = new Set();
+    merged.nodes = merged.nodes.filter((n) => {
+      const key = [
+        n.type,
+        n.object && (n.object.claimId || n.object.requestId),
+        n.ts,
+        n.messageId
+      ].join('|');
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+    return merged;
+  }
+
+  /**
+   * Extract Discord requestId from a Fabric message log entry body.
+   * @param {object} entry
+   * @returns {string|null}
+   */
+  _discordRequestIdFromLogEntry (entry) {
+    if (!entry) return null;
+    const body = entry.body;
+    if (body && typeof body === 'object') {
+      const object = body.object != null ? body.object : body;
+      if (object && object.requestId) return String(object.requestId);
+    }
+    const preview = String(entry.bodyPreview || '');
+    const m = preview.match(/"requestId"\s*:\s*"([a-f0-9]{64})"/i);
+    return m ? m[1] : null;
   }
 
   /** Where the live Game.log is and whether it is actually visible right now. */
@@ -218,19 +830,25 @@ class StarCitizenService extends EventEmitter {
     const crypto = require('crypto');
     const readlineLib = require('readline');
     const { canonicalStringify } = identityLib();
-    const { defaultDirs, findLogs } = require('../scripts/backfill');
+    const { findLogs } = require('../scripts/backfill');
     const sha256hex = (s) => crypto.createHash('sha256').update(s).digest('hex');
 
-    // Collect candidate files: backup dirs + the live log; oldest first by mtime.
-    // settings.reparse.dirs overrides the auto-detected locations (tests / custom corpora).
-    const dirs = (this.settings.reparse && Array.isArray(this.settings.reparse.dirs))
-      ? this.settings.reparse.dirs
-      : defaultDirs();
-    const seen = new Set();
-    const files = [];
-    for (const dir of dirs) for (const f of findLogs(dir)) { if (!seen.has(f)) { seen.add(f); files.push(f); } }
-    if (this.settings.logfile && !seen.has(this.settings.logfile) && fs.existsSync(this.settings.logfile)) {
-      files.push(this.settings.logfile);
+    // Collect candidate files: full corpus discovery (or reparse.dirs override).
+    let files = [];
+    if (this.settings.reparse && Array.isArray(this.settings.reparse.dirs)) {
+      const seen = new Set();
+      for (const dir of this.settings.reparse.dirs) {
+        for (const f of findLogs(dir)) {
+          const abs = path.resolve(f);
+          if (!seen.has(abs)) { seen.add(abs); files.push(abs); }
+        }
+      }
+      if (this.settings.logfile && fs.existsSync(this.settings.logfile)) {
+        const abs = path.resolve(this.settings.logfile);
+        if (!seen.has(abs)) files.push(abs);
+      }
+    } else {
+      files = this._discoverCorpusFileList();
     }
     const dated = files
       .map((f) => { try { return { f, mtime: fs.statSync(f).mtimeMs }; } catch (_) { return null; } })
@@ -292,32 +910,295 @@ class StarCitizenService extends EventEmitter {
    * cadence). Called after the Store has started so the collections are live.
    */
   _loadPersistedSettings () {
+    settingsStore.scrubLegacySecrets(this.registerStore);
     const persisted = settingsStore.loadSettings(this.registerStore);
+    // Explicit constructor `peers: []` keeps an empty roster (tests / custom).
+    const constructorEmpty = Array.isArray(this.settings.peers) && this.settings.peers.length === 0;
+    // Explicit empty save via Peers UI — do not re-seed hubs (removal respected).
+    const persistedCleared = Array.isArray(persisted.peers) && persisted.peers.length === 0;
     if (!this.peers.length && Array.isArray(persisted.peers)) {
       this.peers = persisted.peers.map((p) => this._normalizePeerRecord(p)).filter(Boolean);
     } else if (!this.peers.length && persisted.peers === undefined && this.settings.mode !== 'server') {
-      // First boot (peers never configured): seed the org's Fabric relay.
-      // A user-saved empty list stays empty — removal is respected. Tests and
-      // custom deployments override the seed via settings.peers.
+      // First boot (peers never configured): seed network Fabric hubs.
       const seeds = this.settings.peers !== undefined
         ? this.settings.peers
-        : [{ address: DEFAULT_PEER_ADDRESS, label: 'goon.vc Fabric relay' }];
+        : DEFAULT_PEERS;
       this.peers = (seeds || []).map((p) => this._normalizePeerRecord(p)).filter(Boolean);
+    }
+    // Public hostname for self-dial filter (must be set before heal).
+    // Fabric-canonical env only — GoonCitizen maps SC_FABRIC_PUBLIC_HOST at boot.
+    this._fabricAdvertiseHost = persisted.fabricAdvertiseHost || null;
+    if (!this._fabricAdvertiseHost) {
+      const envHost = String(
+        process.env.FABRIC_PUBLIC_HOST ||
+        process.env.FABRIC_ADVERTISE_HOST ||
+        ''
+      ).trim();
+      if (envHost) this._fabricAdvertiseHost = envHost;
+    }
+    // Constructor peers (tests / custom deploys): only strip true self-loops.
+    // Persisted desktop roster: drop self-loops and re-seed hubs when none left
+    // (old saves that only dialed localhost break chat gossip).
+    if (!constructorEmpty && this.settings.mode !== 'server') {
+      const fromConstructor = Array.isArray(this.settings.peers) && this.settings.peers.length > 0;
+      if (fromConstructor) {
+        this._healPeerRoster({ persist: false, dropSelf: true });
+      } else if (!persistedCleared) {
+        this._healPeerRoster({ persist: true, dropSelf: true, ensureHubs: true });
+      }
     }
     if (persisted.uplinkIntervalMs) this.settings.uplink.intervalMs = persisted.uplinkIntervalMs;
     if (persisted.fabricPort != null && Number(persisted.fabricPort) > 0) {
       this.settings.fabric.port = Number(persisted.fabricPort);
     }
-    // Sharing parsed log events with peer hubs (org aggregation): default ON.
-    this._shareLogsGlobal = persisted.shareLogsGlobal !== false;
+    // Sharing parsed log events: default OFF (explicit authorize on Peers / Settings).
+    this._shareLogsGlobal = persisted.shareLogsGlobal === true;
+    this._groupChatSeal = persisted.groupChatSeal === true;
+    this._requireSealedGroupChat = persisted.requireSealedGroupChat === true;
+    // Dashboard HTTP: loopback by default; LAN requires httpSharedMode (or server mode / env).
+    this._httpSharedMode = isHttpSharedModeEnabled(
+      persisted.httpSharedMode != null ? persisted.httpSharedMode : this.settings.httpSharedMode
+    );
     this._nickname = persisted.nickname || null;
+    this._profile = peerProfile.sanitizeProfile(persisted.profile);
+    this._broadcastPeering = persisted.broadcastPeering === true;
     this._notifyMissionBroadcasts = persisted.notifyMissionBroadcasts !== false;
+    this._primaryGroupId = settingsStore.sanitizePrimaryGroupId(persisted.primaryGroupId);
+    this._groupOverlay = persisted.groupOverlay === true;
     this._applySnapshotSettings(persisted);
+    this._applyPresenceSettings(persisted);
   }
 
   /**
-   * Normalize a peer roster entry to `{ id, address, label, enabled }`.
+   * Seed primaryGroupId from settings/local.js `defaultGroupMessageId` when the
+   * Store has no primary group yet. Accepts fabric:<hex>, message hash, or group id.
+   */
+  _applyDefaultGroupFromLocal () {
+    const { sanitizeDefaultGroupMessageId, resolveDefaultGroup } = require('../functions/defaultGroupMessage');
+    const raw = sanitizeDefaultGroupMessageId(
+      this.settings.defaultGroupMessageId ||
+      (this.settings.groups && this.settings.groups.defaultGroupMessageId) ||
+      null
+    );
+    this._defaultGroupMessageId = raw;
+    if (!raw) return;
+    if (this._primaryGroupId) {
+      console.log('[STAR-CITIZEN] defaultGroupMessageId present; Store primaryGroupId already set — leaving Store value');
+      return;
+    }
+    const resolved = resolveDefaultGroup(raw, {
+      messageLog: this._fabricMessageLog,
+      groupManager: this.groupManager
+    });
+    if (!resolved.ok || !resolved.groupId) {
+      // Opaque shares / group ids can still apply before the group is imported;
+      // try group-id-only parse without requiring the group to exist yet.
+      const { parseDefaultGroupRef } = require('../functions/defaultGroupMessage');
+      const parsed = parseDefaultGroupRef(raw);
+      if (parsed.groupId) {
+        this._primaryGroupId = parsed.groupId;
+        if (this.registerStore) {
+          try {
+            settingsStore.putSetting(this.registerStore, 'primaryGroupId', parsed.groupId);
+          } catch (e) {
+            this.emit('error', e);
+          }
+        }
+        console.log(`[STAR-CITIZEN] primaryGroupId seeded from defaultGroupMessageId → ${parsed.groupId.slice(0, 12)}…`);
+        return;
+      }
+      console.warn('[STAR-CITIZEN] defaultGroupMessageId not resolved yet:', resolved.error || parsed.error || 'unknown');
+      return;
+    }
+    this._primaryGroupId = resolved.groupId;
+    if (this.registerStore) {
+      try {
+        settingsStore.putSetting(this.registerStore, 'primaryGroupId', resolved.groupId);
+      } catch (e) {
+        this.emit('error', e);
+      }
+    }
+    console.log(`[STAR-CITIZEN] primaryGroupId seeded from defaultGroupMessageId → ${resolved.groupId.slice(0, 12)}…`);
+  }
+
+  /**
+   * Primary group's brand color (for dashboard theming), if set.
+   * @returns {string|null}
+   */
+  _primaryGroupColor () {
+    if (!this._primaryGroupId || !this.groupManager) return null;
+    const g = this.groupManager.getGroup(this._primaryGroupId);
+    if (!g || !g.primaryColor) return null;
+    const { sanitizePrimaryColor } = require('../functions/groupPrimaryColor');
+    return sanitizePrimaryColor(g.primaryColor);
+  }
+
+  /**
+   * Resolve a pasted Fabric message id / share into a primary group and persist.
+   * @param {string} paste
+   * @param {Object} [opts]
+   * @param {boolean} [opts.apply=true]
+   * @returns {object}
+   */
+  resolveAndSetDefaultGroup (paste, opts = {}) {
+    const { resolveDefaultGroup, localJsSnippetFor } = require('../functions/defaultGroupMessage');
+    const resolved = resolveDefaultGroup(paste, {
+      messageLog: this._fabricMessageLog,
+      groupManager: this.groupManager
+    });
+    if (!resolved.ok) return resolved;
+    if (opts.apply === false) return resolved;
+    this._primaryGroupId = resolved.groupId;
+    if (this.registerStore) {
+      settingsStore.putSetting(this.registerStore, 'primaryGroupId', resolved.groupId);
+    }
+    return Object.assign({}, resolved, {
+      primaryGroupId: resolved.groupId,
+      primaryColor: this._primaryGroupColor(),
+      localJsSnippet: resolved.localJsSnippet || localJsSnippetFor(resolved.messageId || paste)
+    });
+  }
+
+  _applyPresenceSettings (persisted = {}) {
+    const share = presence.sanitizePresenceShare({
+      sharePresence: persisted.sharePresence,
+      presenceVisibility: persisted.presenceVisibility,
+      presenceGroupIds: persisted.presenceGroupIds,
+      shipOverrideSlug: persisted.shipOverrideSlug,
+      presenceAvailability: persisted.presenceAvailability,
+      presenceStatusText: persisted.presenceStatusText
+    });
+    this._sharePresence = share.sharePresence;
+    this._presenceVisibility = share.presenceVisibility;
+    this._presenceGroupIds = share.presenceGroupIds.slice();
+    this._shipOverrideSlug = share.shipOverrideSlug;
+    this._presenceAvailability = share.presenceAvailability;
+    this._presenceStatusText = share.presenceStatusText;
+    this._shipOverride = share.shipOverrideSlug
+      ? presence.buildShipOverride(share.shipOverrideSlug)
+      : null;
+  }
+
+  /**
+   * Host for the local dashboard / REST listener.
+   * Loopback unless LAN shared mode, hosted server mode, or FABRIC_HUB_INTERFACE.
+   * Legacy SC_HTTP_* is mapped onto FABRIC_* via applyGoonCitizenEnvAliases at boot.
+   * @returns {string}
+   */
+  _httpListenHost () {
+    return resolveHttpListenHost({
+      mode: this.settings.mode,
+      httpSharedMode: this._httpSharedMode,
+      host: this.settings.httpHost
+    });
+  }
+
+  /**
+   * Close and re-open the HTTP server on the resolved listen host (LAN toggle).
+   * No-op when embedded (`listen: false`) or not yet started.
+   * @returns {Promise<void>}
+   */
+  async _rebindHttpListener () {
+    if (this.settings.listen === false || !this.server) return;
+    const port = this.settings.port;
+    const host = this._httpListenHost();
+    await new Promise((resolve) => this.server.close(resolve));
+    this.server = http.createServer((req, res) => this._handle(req, res));
+    await new Promise((resolve, reject) => {
+      this.server.once('error', reject);
+      this.server.listen(port, host, () => {
+        this.server.removeListener('error', reject);
+        resolve();
+      });
+    });
+    const addr = this.server.address();
+    if (addr && typeof addr === 'object' && addr.port) this.settings.port = addr.port;
+  }
+
+  /**
+   * Options for {@link FabricNetwork.isSelfFabricAddress} — public hostname +
+   * local interface IPs so network hubs never dial themselves.
+   * @returns {Object}
+   */
+  _selfFabricDialOpts () {
+    return {
+      listenPort: Number(this.settings.fabric && this.settings.fabric.port) || 7777,
+      advertiseHost: this._fabricAdvertiseHost || null
+    };
+  }
+
+  /**
+   * True when hex is this node's publishing Fabric pubkey (x-only or compressed).
+   * @param {*} hex
+   * @returns {boolean}
+   */
+  _isOwnFabricPubkeyHex (hex) {
+    const mine = this._identity && this._identity.pubkey
+      ? String(this._identity.pubkey).trim().toLowerCase().replace(/^0[23]/, '')
+      : '';
+    const theirs = String(hex || '').trim().toLowerCase().replace(/^0[23]/, '');
+    return !!(mine && theirs && mine === theirs);
+  }
+
+  /**
+   * Drop self-loop dials from the peer roster. With `ensureHubs` / `forceHubs`,
+   * re-seed network hubs when none remain (unless this node *is* that hub).
+   * `forceHubs` (Peers → Restore network seeds) also strips all loopback and
+   * re-adds missing hub seeds (minus self).
+   */
+  _healPeerRoster (opts = {}) {
+    const removed = [];
+    const forceHubs = opts.forceHubs === true;
+    const dropSelf = forceHubs || opts.dropSelf === true;
+    const dropAllLoopback = forceHubs;
+    const selfOpts = this._selfFabricDialOpts();
+    const listenPort = selfOpts.listenPort;
+    const before = this.peers.slice();
+    this.peers = before.filter((p) => {
+      if (!p || !p.address) return false;
+      if (dropAllLoopback && FabricNetwork.isLoopbackFabricAddress(p.address)) {
+        removed.push(p.address);
+        return false;
+      }
+      if (dropSelf && FabricNetwork.isSelfFabricAddress(p.address, selfOpts)) {
+        removed.push(p.address);
+        return false;
+      }
+      return true;
+    });
+    const added = [];
+    const ensureHubs = forceHubs || opts.ensureHubs === true;
+    const hasHub = this.peers.some((p) => FabricNetwork.isNetworkHubAddress(p.address));
+    if (ensureHubs && (forceHubs || !hasHub)) {
+      const have = new Set(this.peers.map((p) => p.address));
+      for (const seed of DEFAULT_PEERS) {
+        const address = seed.address;
+        if (have.has(address)) continue;
+        if (FabricNetwork.isSelfFabricAddress(address, selfOpts)) continue;
+        const row = this._normalizePeerRecord(seed);
+        if (!row) continue;
+        this.peers.push(row);
+        have.add(address);
+        added.push(address);
+      }
+    }
+    if (opts.persist && (removed.length || added.length)) {
+      this._persistPeers();
+    }
+    if (removed.length) {
+      console.log(`[STAR-CITIZEN] dropped self/loopback Fabric peers: ${removed.join(', ')}`);
+    }
+    if (added.length) {
+      console.log(`[STAR-CITIZEN] restored network hub seeds: ${added.join(', ')}`);
+    }
+    return { removed, added };
+  }
+
+  /**
+   * Normalize a peer roster entry to `{ id, address, label, enabled, shareLogs }`.
    * Migrates legacy `url: https://host` → `address: host:7777`.
+   * Loopback to another port is valid (local hub in tests). Self-listen
+   * addresses are excluded from dialing ({@link #_fabricPeerAddresses}).
    * @returns {Object|null}
    */
   _normalizePeerRecord (p) {
@@ -332,9 +1213,348 @@ class StarCitizenService extends EventEmitter {
       address,
       label: p.label || null,
       enabled: p.enabled !== false,
+      // Opt-in: authorize SCEventBatch / GameStateSnapshot to this peer.
+      shareLogs: p.shareLogs === true,
+      discovered: p.discovered === true,
+      expectedPubkey: p.expectedPubkey
+        ? String(p.expectedPubkey).trim().toLowerCase()
+        : null,
       lastSeen: p.lastSeen || null,
       lastError: p.lastError || null
     };
+  }
+
+  /** Enabled Fabric peer addresses (`host:port`) — excludes self-loop dials. */
+  _fabricPeerAddresses () {
+    const selfOpts = this._selfFabricDialOpts();
+    return this.peers
+      .filter((p) => p.enabled !== false && p.address)
+      .filter((p) => !this._isOwnFabricPubkeyHex(p.expectedPubkey))
+      .map((p) => p.address)
+      .filter((a) => !FabricNetwork.isSelfFabricAddress(a, selfOpts));
+  }
+
+  /** Fabric addresses authorized to receive log events (null = all connected when global on). */
+  _logShareTargets () {
+    if (this._shareLogsGlobal) return null;
+    return this.peers
+      .filter((p) => p && p.enabled !== false && p.shareLogs === true)
+      .map((p) => p.address)
+      .filter(Boolean);
+  }
+
+  /** True when identity unlocked and at least one share path is authorized. */
+  _canShareLogs () {
+    if (!this._identity) return false;
+    if (this._shareLogsGlobal) return true;
+    return this.peers.some((p) => p && p.enabled !== false && p.shareLogs === true);
+  }
+
+  /**
+   * Publish options for log uplink: `{}` broadcasts (global), `{ to }` directs,
+   * `null` means nothing authorized.
+   * @returns {Object|null} optional `{ to: string[] }` when directed
+   */
+  _logSharePublishOpts () {
+    if (!this._canShareLogs()) return null;
+    const targets = this._logShareTargets();
+    if (targets === null) return {};
+    if (!targets.length) return null;
+    return { to: targets };
+  }
+
+  /**
+   * Unified chat-style activity stream for the Feed tab.
+   * @param {number} [limit]
+   * @returns {{ items: object[], categories: string[][], sources: string[][] }}
+   */
+  _liveFeedSnapshot (limit = 400) {
+    let chat = [];
+    try {
+      if (this.chatManager) {
+        chat = this.chatManager.list('global', { limit: Math.min(limit, 200) });
+        // Include recent group chat too (best-effort; capped).
+        const channels = this.chatManager.channelsFor(
+          this._identity && this._identity.pubkey,
+          { enforceMembership: this.settings.mode === 'server' }
+        );
+        for (const ch of channels) {
+          if (!ch || ch.key === 'global') continue;
+          const more = this.chatManager.list(ch.key, { limit: 40 });
+          chat = chat.concat(more);
+        }
+      }
+    } catch (_) { /* chat optional */ }
+    try {
+      const chatDelivery = require('../functions/chatDelivery');
+      chat = chatDelivery.enrichChatMessages(
+        this.registerStore,
+        chat,
+        (this._identity && this._identity.pubkey) || null
+      );
+    } catch (_) { /* delivery optional */ }
+    let broadcasts = [];
+    try {
+      broadcasts = this._listMissionBroadcasts({ pendingOnly: false, viewer: null }) || [];
+    } catch (_) { broadcasts = []; }
+    return liveFeed.buildLiveFeed({
+      chat,
+      broadcasts: broadcasts.slice(-100),
+      kills: this.kills,
+      deaths: this.deaths,
+      incaps: this.incaps,
+      vehicles: this.vehicles,
+      missionlog: this.missionlog,
+      notifications: this.notifications,
+      logins: this.logins,
+      recent: this.recent
+    }, {
+      limit,
+      aliases: this._peerAliasByPubkey || {},
+      profiles: this._peerProfilesByPubkey || {},
+      selfPubkey: (this._identity && this._identity.pubkey) || null
+    });
+  }
+
+  /**
+   * Roster + live connection flags for Peers UI (Hub PeerList-inspired).
+   * Desktop peering is Fabric TCP/NOISE; browser WebRTC mesh lives on Hub.
+   */
+  _peersWithStatus () {
+    const connections = (this.fabricNetwork && typeof this.fabricNetwork.connectedAddresses === 'function')
+      ? this.fabricNetwork.connectedAddresses()
+      : [];
+    const connectedSet = connections.map((c) => String(c).toLowerCase());
+    const listenPort = Number(this.settings.fabric && this.settings.fabric.port) || 7777;
+    const selfPk = (this._identity && this._identity.pubkey) || null;
+    const { pubkeysMatch } = identityLib();
+    return this.peers.map((p) => {
+      const address = p.address;
+      const connected = connectedSet.some((id) => FabricNetwork.connectionMatchesAddress(id, address));
+      const isPrimary = FabricNetwork.isNetworkHubAddress(address) ||
+        /hub\.fabric\.pub|relay\.goon\.vc|goon\.vc/i.test(String(p.label || ''));
+      const reg = this.fabricNetwork && typeof this.fabricNetwork.lookupPeerRegistry === 'function'
+        ? this.fabricNetwork.lookupPeerRegistry(address)
+        : null;
+      // Peer registry keys are often host:port while candidates dial; only treat
+      // hex compressed pubkeys as identity (else prefer expectedPubkey from offers).
+      const regId = reg && reg.id != null ? String(reg.id).trim().toLowerCase() : null;
+      const expectedPk = p.expectedPubkey ? String(p.expectedPubkey).trim().toLowerCase() : null;
+      const pubkey = (regId && peerPeeringString.isLikelyCompressedPubkeyHex(regId) ? regId : null)
+        || (expectedPk && peerPeeringString.isLikelyCompressedPubkeyHex(expectedPk) ? expectedPk : null)
+        || null;
+      const cached = pubkey ? this._peerProfilesByPubkey[pubkey] : null;
+      const alias = (pubkey && this._peerAliasByPubkey[pubkey]) ||
+        (reg && (reg.alias || reg.nickname)) ||
+        (cached && cached.nickname) ||
+        null;
+      const isSelf = !!(pubkey && selfPk && pubkeysMatch(pubkey, selfPk));
+      const peering = peerPeeringString.peeringInfoForGoonCitizen({
+        peer: p,
+        pubkey,
+        address,
+        advertiseHost: isSelf ? this._fabricAdvertiseHost : null,
+        listenPort
+      });
+      return Object.assign({}, p, {
+        shareLogs: p.shareLogs === true,
+        connected,
+        transport: 'fabric-tcp',
+        primary: isPrimary,
+        discovered: p.discovered === true,
+        pubkey,
+        alias,
+        peering: peering.string || null,
+        status: p.enabled === false ? 'disabled' : (connected ? 'connected' : 'offline')
+      });
+    });
+  }
+
+  /**
+   * Detailed peer view for inspect UI (roster + mesh profile + registry).
+   * @param {string} peerId
+   * @returns {object|null}
+   */
+  _peerDetail (peerId) {
+    const row = this._peersWithStatus().find((p) => p.id === peerId);
+    if (!row) return null;
+    const pubkey = row.pubkey || null;
+    const profile = pubkey && this._peerProfilesByPubkey[pubkey]
+      ? this._peerProfilesByPubkey[pubkey]
+      : null;
+    const local = this._localProfile();
+    const isSelf = !!(pubkey && this._identity && pubkey === this._identity.pubkey);
+    const remotePresence = pubkey && this._peerPresenceByPubkey[pubkey]
+      ? this._peerPresenceByPubkey[pubkey]
+      : null;
+    const listenPort = Number(this.settings.fabric && this.settings.fabric.port) || 7777;
+    const peering = peerPeeringString.peeringInfoForGoonCitizen({
+      peer: row,
+      profile: isSelf ? local : profile,
+      pubkey,
+      advertiseHost: isSelf ? this._fabricAdvertiseHost : null,
+      listenPort
+    });
+    return {
+      peer: row,
+      profile: isSelf
+        ? local
+        : (profile || {
+          type: peerProfile.PEER_PROFILE_TYPE,
+          nickname: row.alias || null,
+          bio: null,
+          scHandle: null,
+          pubkey,
+          updatedAt: null
+        }),
+      presence: isSelf ? this.getPresenceStatus().presence : remotePresence,
+      meshAlias: row.alias || null,
+      registry: this.fabricNetwork ? this.fabricNetwork.lookupPeerRegistry(row.address) : null,
+      linkedDevice: this._linkedDeviceForPubkey(pubkey),
+      self: isSelf,
+      peering
+    };
+  }
+
+  _localProfile () {
+    return peerProfile.buildLocalProfile({
+      nickname: this._nickname,
+      profile: this._profile,
+      pubkey: this._identity ? this._identity.pubkey : null
+    });
+  }
+
+  /**
+   * Profile page payload keyed by Fabric pubkey (chat members, presence roster).
+   * Works even when the peer is not in the configured TCP roster.
+   * @param {string} pubkey
+   * @returns {object|null}
+   */
+  _profileDetailByPubkey (pubkey) {
+    const { pubkeysMatch } = identityLib();
+    const pk = String(pubkey || '').trim();
+    if (!/^0[23][0-9a-fA-F]{64}$/.test(pk) && !/^[0-9a-fA-F]{64}$/.test(pk)) return null;
+    const isSelf = !!(this._identity && pubkeysMatch(this._identity.pubkey, pk));
+    const rosterPeer = this._peersWithStatus().find((p) => pubkeysMatch(p.pubkey, pk)) || null;
+    const cached = this._peerProfilesByPubkey[pk] || null;
+    const alias = this._peerAliasByPubkey[pk] || (rosterPeer && rosterPeer.alias) || null;
+    const local = this._localProfile();
+    const remotePresence = this._peerPresenceByPubkey[pk] || null;
+    const listenPort = Number(this.settings.fabric && this.settings.fabric.port) || 7777;
+    const peering = peerPeeringString.peeringInfoForGoonCitizen({
+      peer: rosterPeer,
+      profile: isSelf ? local : cached,
+      pubkey: pk,
+      advertiseHost: isSelf ? this._fabricAdvertiseHost : null,
+      listenPort
+    });
+    return {
+      pubkey: pk,
+      peer: rosterPeer,
+      profile: isSelf
+        ? local
+        : (cached || {
+          type: peerProfile.PEER_PROFILE_TYPE,
+          nickname: alias || null,
+          bio: null,
+          scHandle: null,
+          pubkey: pk,
+          updatedAt: null
+        }),
+      presence: isSelf ? this.getPresenceStatus().presence : remotePresence,
+      meshAlias: alias || null,
+      linkedDevice: this._linkedDeviceForPubkey(pk),
+      self: isSelf,
+      peering
+    };
+  }
+
+  _linkedDeviceForPubkey (pubkey) {
+    if (!pubkey || !this.registerStore) return null;
+    const persisted = settingsStore.loadSettings(this.registerStore);
+    const list = Array.isArray(persisted.linkedDevices) ? persisted.linkedDevices : [];
+    return list.find((d) => d && (d.peerFabricId === pubkey || d.pubkey === pubkey)) || null;
+  }
+
+  /**
+   * Promote gossip/offer addresses onto the roster (shareLogs off) and dial.
+   * @param {string[]} addresses
+   * @param {'offer'|'gossip'} kind
+   */
+  _considerDiscoveredPeers (addresses, kind, meta = {}) {
+    if (!Array.isArray(addresses) || !addresses.length) return;
+    const selfOpts = this._selfFabricDialOpts();
+    const have = new Set(this.peers.map((p) => p.address));
+    const discoveredCount = this.peers.filter((p) => p.discovered === true && !FabricNetwork.isNetworkHubAddress(p.address)).length;
+    const expectedPubkey = meta.pubkey
+      ? String(meta.pubkey).trim().toLowerCase()
+      : null;
+    if (this._isOwnFabricPubkeyHex(expectedPubkey)) {
+      console.log(`[STAR-CITIZEN] ignoring discovered peers (${kind}): pubkey is our own`);
+      return;
+    }
+    let added = 0;
+    for (const raw of addresses) {
+      const address = FabricNetwork.normalizeFabricAddress(raw, { migrate: false });
+      if (!address || have.has(address)) continue;
+      if (FabricNetwork.isSelfFabricAddress(address, selfOpts)) continue;
+      if (FabricNetwork.isLoopbackFabricAddress(address)) continue;
+      if (FabricNetwork.isNetworkHubAddress(address)) continue;
+      if (discoveredCount + added >= this._maxDiscoveredPeers) break;
+      const peer = {
+        id: idFor(address),
+        address,
+        label: kind === 'gossip' ? 'discovered (gossip)' : 'discovered (offer)',
+        enabled: true,
+        shareLogs: false,
+        discovered: true,
+        expectedPubkey: expectedPubkey || null
+      };
+      this.peers.push(peer);
+      have.add(address);
+      added += 1;
+      this.emit('peer:discovered', peer);
+    }
+    if (added) {
+      this._persistPeers();
+      this._refreshFabric().catch((e) => this.emit('error', e));
+    }
+  }
+
+  /**
+   * Refresh Hub /services/peering observe (TCP + WebRTC registration counts).
+   * @param {Object} [opts]
+   * @param {boolean} [opts.force]
+   */
+  async _refreshHubObserve (opts = {}) {
+    if (this._hubObserveInflight) return this._hubObserveInflight;
+    const age = this._hubObserve && this._hubObserve.summary && this._hubObserve.summary.fetchedAt
+      ? Date.now() - Date.parse(this._hubObserve.summary.fetchedAt)
+      : Infinity;
+    if (!opts.force && age < 15000 && this._hubObserve) return this._hubObserve;
+    this._hubObserveInflight = hubPeeringObserve.observeHubPeering(undefined, { timeoutMs: 4000 })
+      .then((snap) => {
+        this._hubObserve = snap;
+        return snap;
+      })
+      .catch((e) => {
+        this._hubObserve = {
+          hubs: [],
+          summary: { observed: 0, online: 0, p2pConnections: 0, webrtcRegistered: 0, error: (e && e.message) || String(e) }
+        };
+        return this._hubObserve;
+      })
+      .finally(() => { this._hubObserveInflight = null; });
+    return this._hubObserveInflight;
+  }
+
+  _startHubObserveTimer () {
+    if (this._hubObserveTimer || this.settings.mode === 'server') return;
+    this._refreshHubObserve().catch(() => {});
+    this._hubObserveTimer = setInterval(() => {
+      this._refreshHubObserve({ force: true }).catch(() => {});
+    }, 60000);
+    if (this._hubObserveTimer.unref) this._hubObserveTimer.unref();
   }
 
   /** Map persisted snapshot* settings onto the SnapshotManager (live). */
@@ -380,54 +1600,405 @@ class StarCitizenService extends EventEmitter {
     return null;
   }
 
-  // Load the backfilled history aggregate (built by `npm run backfill`), if present.
-  _loadHistory () {
-    const empty = { missions: [], deaths: [], sessions: [], heat: {}, players: [], meta: {} };
-    try {
-      const f = this.settings.historyFile || path.join(__dirname, '..', 'stores', 'history.json');
-      if (fs.existsSync(f)) return Object.assign(empty, JSON.parse(fs.readFileSync(f, 'utf8')));
-    } catch (e) { console.error('[STAR-CITIZEN] history load failed:', e.message); }
-    return empty;
+  /**
+   * Durable history.json — requires settingsDir (desktop / npm start) or an
+   * explicit historyFile. Without either, cumulative state stays in-memory for
+   * the process (unit tests) and is not loaded from a shared repo path.
+   */
+  _historyFile () {
+    if (this.settings.historyFile) return this.settings.historyFile;
+    if (this.settings.settingsDir) return cumulativeHistory.historyPath(this.settings.settingsDir);
+    return null;
   }
 
-  // Merge backfilled history with the current live session into one compact dataset
-  // for the Analyze tab. Local-player today; the same shape serves shared multi-pilot history (M4).
+  _cursorsFile () {
+    if (this.settings.cursorsFile) return this.settings.cursorsFile;
+    if (this.settings.settingsDir) return cumulativeHistory.cursorsPath(this.settings.settingsDir);
+    return null;
+  }
+
+  _loadHistory () {
+    try {
+      return cumulativeHistory.loadHistory(this._historyFile());
+    } catch (e) {
+      console.error('[STAR-CITIZEN] history load failed:', e.message);
+      return cumulativeHistory.emptyHistory();
+    }
+  }
+
+  _loadLogCursors () {
+    try {
+      return cumulativeHistory.loadCursors(this._cursorsFile());
+    } catch (e) {
+      console.error('[STAR-CITIZEN] log cursors load failed:', e.message);
+      return {};
+    }
+  }
+
+  _markHistoryDirty () {
+    this._historyDirty = true;
+    if (this._historyFlushTimer || this.settings.mode === 'server') return;
+    this._historyFlushTimer = setTimeout(() => {
+      this._historyFlushTimer = null;
+      this._flushHistory();
+    }, 2000);
+    if (this._historyFlushTimer.unref) this._historyFlushTimer.unref();
+  }
+
+  _flushHistory () {
+    if (!this._historyDirty) return;
+    try {
+      cumulativeHistory.saveHistory(this._historyFile(), this.history);
+      cumulativeHistory.saveCursors(this._cursorsFile(), this._logCursors);
+      this._historyDirty = false;
+    } catch (e) {
+      console.error('[STAR-CITIZEN] history flush failed:', e.message);
+    }
+  }
+
+  /**
+   * Startup (and catch-up): fold every locatable Game.log + logbackup into
+   * durable history using byte cursors. Only new bytes are read. Does not
+   * mutate live session collections — seed/openLog still own the Live tab feed.
+   */
+  async _syncCumulativeHistory () {
+    if (this.settings.mode === 'server') return { changed: false, files: 0, lines: 0 };
+
+    const explicitDirs = this.settings.reparse && Array.isArray(this.settings.reparse.dirs)
+      ? this.settings.reparse.dirs
+      : null;
+
+    let files;
+    if (explicitDirs) {
+      const seen = new Set();
+      files = [];
+      for (const dir of explicitDirs) {
+        for (const f of logCorpus.findLogs(dir)) {
+          const abs = path.resolve(f);
+          if (!seen.has(abs)) { seen.add(abs); files.push(abs); }
+        }
+      }
+      if (this.settings.logfile && fs.existsSync(this.settings.logfile)) {
+        const abs = path.resolve(this.settings.logfile);
+        if (!seen.has(abs)) files.push(abs);
+      }
+    } else if (this.settings.settingsDir || this.settings.logfile) {
+      // Desktop / npm start: all install channels + logbackups + ./Gamelogs +
+      // operator-imported dirs (Analyze file browser) + live log.
+      files = logCorpus.discoverCorpusFiles({
+        logfile: this.settings.logfile || null,
+        repoRoot: path.join(__dirname, '..'),
+        extraDirs: this._corpusDirs(),
+        extraFiles: this._corpusFiles()
+      });
+    } else {
+      return { changed: false, files: 0, lines: 0 };
+    }
+
+    if (!files.length) return { changed: false, files: 0, lines: 0 };
+
+    const result = await cumulativeHistory.syncFiles(
+      files,
+      this.history,
+      this._logCursors,
+      (done, total) => {
+        if (done === total || done === 1) {
+          console.log(`[STAR-CITIZEN] cumulative sync ${done}/${total} log files`);
+        }
+      }
+    );
+    this._historyIndex = result.index || cumulativeHistory.indexHistory(this.history);
+    logCorpus.stampHistoryOwnership(this.history, {
+      ownerPubkey: (this._identity && this._identity.pubkey) || null,
+      fileCount: files.length
+    });
+    if (result.changed || result.lines > 0 || files.length) {
+      this._historyDirty = true;
+      this._flushHistory();
+    }
+    if (result.lines > 0) {
+      const c = cumulativeHistory.cumulativeCounts(this.history);
+      console.log(`[STAR-CITIZEN] cumulative history: ${c.missions} missions · ${c.deaths} deaths · ${c.players} pilots (${result.lines} new lines · ${files.length} files)`);
+    }
+    return Object.assign({}, result, { files: files.length });
+  }
+
+  /** Operator-imported directories (Feed file browser). */
+  _corpusDirs () {
+    if (!this.registerStore) return [];
+    const persisted = settingsStore.loadSettings(this.registerStore);
+    return fsBrowser.sanitizeCorpusDirs(persisted.corpusDirs);
+  }
+
+  /** Operator-selected individual log files (Feed file browser). */
+  _corpusFiles () {
+    if (!this.registerStore) return [];
+    const persisted = settingsStore.loadSettings(this.registerStore);
+    return fsBrowser.sanitizeCorpusFiles(persisted.corpusFiles);
+  }
+
+  /**
+   * Persist imported corpus dirs and/or files; optionally sync into history.
+   * @param {Object} [opts]
+   * @param {string[]} [opts.dirs]
+   * @param {string[]} [opts.files]
+   * @param {boolean} [opts.sync]
+   * @param {boolean} [opts.replaceDirs]
+   * @param {boolean} [opts.replaceFiles]
+   */
+  async _importCorpus (opts = {}) {
+    if (!this.registerStore || !this.registerStore.persistent) {
+      throw new Error('No persistent store configured (settingsDir)');
+    }
+    if (opts.dirs !== undefined) {
+      // Allow relative paths (e.g. "samples") resolved from the relay cwd / repo root.
+      const resolved = (opts.dirs || []).map((d) => {
+        if (typeof d !== 'string' || !d.trim()) return d;
+        return path.isAbsolute(d.trim()) ? d.trim() : path.resolve(process.cwd(), d.trim());
+      });
+      const incoming = fsBrowser.sanitizeCorpusDirs(resolved);
+      const next = opts.replaceDirs
+        ? incoming
+        : fsBrowser.sanitizeCorpusDirs(this._corpusDirs().concat(incoming));
+      settingsStore.putSetting(this.registerStore, 'corpusDirs', next.length ? next : null);
+    }
+    if (opts.files !== undefined) {
+      const incoming = fsBrowser.sanitizeCorpusFiles(opts.files);
+      const next = opts.replaceFiles
+        ? incoming
+        : fsBrowser.sanitizeCorpusFiles(this._corpusFiles().concat(incoming));
+      settingsStore.putSetting(this.registerStore, 'corpusFiles', next.length ? next : null);
+    }
+    let result = null;
+    if (opts.sync !== false) {
+      result = await this._syncCumulativeHistory();
+    }
+    return {
+      type: 'LogCorpusImport',
+      importedDirs: this._corpusDirs(),
+      importedFiles: this._corpusFiles(),
+      result,
+      corpus: this._corpusStatus()
+    };
+  }
+
+  /** List of log files that feed Analyze (live + backups + corpus). */
+  _discoverCorpusFileList () {
+    if (this.settings.reparse && Array.isArray(this.settings.reparse.dirs)) {
+      const seen = new Set();
+      const files = [];
+      for (const dir of this.settings.reparse.dirs) {
+        for (const f of logCorpus.findLogs(dir)) {
+          const abs = path.resolve(f);
+          if (!seen.has(abs)) { seen.add(abs); files.push(abs); }
+        }
+      }
+      if (this.settings.logfile && fs.existsSync(this.settings.logfile)) {
+        const abs = path.resolve(this.settings.logfile);
+        if (!seen.has(abs)) files.push(abs);
+      }
+      return files;
+    }
+    return logCorpus.discoverCorpusFiles({
+      logfile: this.settings.logfile || null,
+      repoRoot: path.join(__dirname, '..'),
+      extraDirs: this._corpusDirs(),
+      extraFiles: this._corpusFiles()
+    });
+  }
+
+  _corpusStatus () {
+    const summary = logCorpus.summarizeCorpus({
+      files: this._discoverCorpusFileList(),
+      cursors: this._logCursors,
+      history: this.history,
+      liveLogfile: this.settings.logfile || null
+    });
+    summary.importedDirs = this._corpusDirs();
+    summary.importedFiles = this._corpusFiles();
+    return summary;
+  }
+
+  /** Fold a live (or ingested) parsed event into durable history. */
+  _applyHistoryEvent (ev, extra = {}) {
+    if (!ev) return;
+    if (!this._historyApplyLive && !extra.force) return;
+    if (ev.kind === 'mission:marker' && ev.missionId) {
+      this._historyGenerators[ev.missionId] = ev.generator;
+    }
+    const changed = cumulativeHistory.applyLiveEvent(this.history, this._historyIndex, ev, {
+      handle: extra.handle || this._sessionHandle,
+      generators: this._historyGenerators,
+      countHeat: extra.countHeat !== false
+    });
+    if (changed) {
+      this._markHistoryDirty();
+      if (this.eventChain && eventChain.available) {
+        try {
+          eventChain.appendEvent(this.eventChain, ev, {
+            source: (this._identity && this._identity.pubkey) || extra.handle || this._sessionHandle || null
+          });
+        } catch (e) { this.emit('error', e); }
+      }
+      this.emit('history:updated', { via: 'event', kind: ev.kind });
+    }
+  }
+
+  /**
+   * Compact game-state document for Hub sidechain `/services/rsi` (beacon-sealed).
+   * @param {Object} [opts]
+   * @param {string|null} [opts.source]
+   */
+  buildGameStateSnapshot (opts = {}) {
+    return gooncitizenGameState.buildGameStateSnapshot(this.history, {
+      source: opts.source || (this._identity && this._identity.pubkey) || null,
+      sources: this.history && this.history._sources
+    });
+  }
+
+  /**
+   * Merge a peer GameStateSnapshot into cumulative history (hub / desktop).
+   * @returns {{ changed: Boolean, snapshot: Object|null }}
+   */
+  ingestGameStateSnapshot (source, snap) {
+    if (!snap || typeof snap !== 'object') return { changed: false, snapshot: null };
+    const changed = gooncitizenGameState.mergeSnapshotIntoHistory(
+      this.history,
+      this._historyIndex,
+      snap,
+      source || null
+    );
+    if (changed) {
+      this._markHistoryDirty();
+      this.emit('history:updated', { via: 'GameStateSnapshot', source });
+    }
+    return { changed, snapshot: this.buildGameStateSnapshot() };
+  }
+
+  /** Publish local cumulative snapshot over Fabric (share-consent-gated). */
+  async publishGameStateSnapshot () {
+    const opts = this._logSharePublishOpts();
+    if (!opts) return null;
+    await this._ensureFabric();
+    if (!this.fabricNetwork || !this.fabricNetwork.ready) return null;
+    const snap = this.buildGameStateSnapshot({ source: this._identity.pubkey });
+    try {
+      this.fabricNetwork.publishGameStateSnapshot(snap, opts);
+      this.emit('gamestate:published', { digest: snap.digest, counts: snap.counts });
+      return snap;
+    } catch (e) {
+      this.emit('error', e);
+      return null;
+    }
+  }
+
+  _touchLogCursor () {
+    if (!this.settings.logfile || this.settings.mode === 'server') return;
+    try {
+      const st = fs.statSync(this.settings.logfile);
+      const key = path.resolve(this.settings.logfile);
+      this._logCursors[key] = { size: st.size, mtimeMs: st.mtimeMs };
+      this._markHistoryDirty();
+    } catch (_) { /* log gone mid-rotation */ }
+  }
+
+  // Cumulative history is the analytics source of truth. Active (not-yet-ended)
+  // missions from the live session are merged in so the current flight still shows.
   _analyticsDataset () {
-    const h = this.history || { missions: [], deaths: [], sessions: [], heat: {}, players: [], meta: {} };
+    const h = this.history || cumulativeHistory.emptyHistory();
     const me = this._sessionHandle || 'you';
-    const liveM = this.missionGroups.map((m) => ({ type: m.type, faction: missionFaction(m.generator), outcome: m.outcome, player: m.player || me, ts: m.startedAt || m.firstSeen })).filter((x) => x.ts);
-    const liveD = this.deaths.map((d) => ({ player: d.player || me, ts: d.timestamp })).filter((x) => x.ts);
-    const liveS = this.sessions.map((s) => ({ player: me, ts: s.detectedAt })).filter((x) => x.ts);
+    const liveActive = this.missionGroups
+      .filter((m) => m.startedAt && !m.outcome)
+      .map((m) => ({
+        type: m.type,
+        faction: missionFaction(m.generator),
+        outcome: null,
+        player: m.player || me,
+        ts: m.startedAt || m.firstSeen,
+        active: true
+      }))
+      .filter((x) => x.ts);
 
     const heat = Object.assign({}, h.heat);
-    for (const a of this.activities) {
-      const t = Date.parse(a.timestamp); if (Number.isNaN(t)) continue;
-      const d = new Date(t);
-      const k = (d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0')) + '|' + ((d.getDay() + 6) % 7) + '|' + d.getHours();
-      heat[k] = (heat[k] || 0) + 1;
-    }
-    const heatcells = Object.keys(heat).map((k) => { const p = k.split('|'); return { ym: p[0], d: +p[1], h: +p[2], n: heat[k] }; });
+    const heatcells = Object.keys(heat).map((k) => {
+      const p = k.split('|');
+      return { ym: p[0], d: +p[1], h: +p[2], n: heat[k] };
+    });
 
-    const missions = h.missions.concat(liveM);
-    const deaths = h.deaths.concat(liveD);
-    const sessions = (h.sessions || []).concat(liveS);
+    const missions = (h.missions || []).concat(liveActive);
+    const deaths = h.deaths || [];
+    const sessions = h.sessions || [];
+    const quantum = h.quantum || [];
+    const incap = h.incap || [];
+    const crimestat = h.crimestat || [];
     const ymOf = (s) => (typeof s === 'string' && s.length >= 7) ? s.slice(0, 7) : null;
     const months = new Set();
     missions.forEach((m) => { const y = ymOf(m.ts); if (y) months.add(y); });
     deaths.forEach((d) => { const y = ymOf(d.ts); if (y) months.add(y); });
+    quantum.forEach((q) => { const y = ymOf(q.ts); if (y) months.add(y); });
+    incap.forEach((i) => { const y = ymOf(i.ts); if (y) months.add(y); });
+    crimestat.forEach((c) => { const y = ymOf(c.ts); if (y) months.add(y); });
     heatcells.forEach((c) => months.add(c.ym));
-    const players = [...new Set([].concat(h.players || [], this.players.map((p) => p.name), missions.map((m) => m.player), deaths.map((d) => d.player)))].filter(Boolean);
+    const players = [...new Set([].concat(
+      h.players || [],
+      this.players.map((p) => p.name),
+      missions.map((m) => m.player),
+      deaths.map((d) => d.player),
+      quantum.map((q) => q.player),
+      incap.map((i) => i.player),
+      crimestat.map((c) => c.player)
+    ))].filter(Boolean);
 
+    const corpus = this._corpusStatus();
     return {
       type: 'Analytics',
-      generatedAt: (h.meta && h.meta.generatedAt) || null,
+      generatedAt: (h.meta && (h.meta.lastFlushAt || h.meta.generatedAt)) || null,
+      cumulative: true,
       availableMonths: [...months].sort().reverse(),
       players,
       missions: missions.slice(-20000),
       deaths: deaths.slice(-20000),
       sessions,
-      heatcells
+      quantum: quantum.slice(-20000),
+      incap: incap.slice(-20000),
+      crimestat: crimestat.slice(-20000),
+      heatcells,
+      counts: cumulativeHistory.cumulativeCounts(h),
+      corpus,
+      sources: {
+        fileCount: corpus.fileCount || 0,
+        importedDirs: (corpus.importedDirs || []).length,
+        importedFiles: (corpus.importedFiles || []).length,
+        pendingFiles: corpus.pendingFiles || 0
+      },
+      ownerPubkey: (h.meta && h.meta.ownerPubkey) || (this._identity && this._identity.pubkey) || null
     };
+  }
+
+  /**
+   * Build (and optionally publish) a Fabric Tree of cumulative history leaves
+   * into a Group Contract namespace.
+   */
+  async publishActivityTreeToGroup (groupId, opts = {}) {
+    if (!this.groupManager) throw new Error('groups unavailable');
+    const group = this.groupManager.getGroup(groupId);
+    if (!group || !group.contractId) throw new Error('group not found or missing contractId');
+    const tree = activityTree.buildActivityTree(this.history, {
+      ownerPubkey: (this._identity && this._identity.pubkey) || null
+    });
+    const body = activityTree.toContractBody(tree, {
+      contractId: group.contractId,
+      groupId: group.id
+    });
+    this.groupManager.ingestActivityTree(group.id, body, body.ownerPubkey);
+    let published = null;
+    if (opts.publish !== false) {
+      await this._ensureFabric();
+      if (this.fabricNetwork && this.fabricNetwork.ready && this._identity) {
+        published = this.fabricNetwork.publishGroupActivityTree(group.contractId, body);
+      }
+    }
+    return { tree: body, published: !!published, groupId: group.id, contractId: group.contractId };
   }
 
   get activities () { return Object.values(this.state.activities); }
@@ -490,6 +2061,19 @@ class StarCitizenService extends EventEmitter {
     const base = '/services/star-citizen';
     return async (req, res) => {
       const pathname = new URL(req.url, 'http://localhost').pathname;
+      // Fabric site login (D-011) lives at the HTTP root so Passport / desktop
+      // can use the same /sessions contract as Hub when this service is the
+      // public origin (relay.goon.vc).
+      if (pathname === '/sessions' || pathname.startsWith('/sessions/')) {
+        await this._handle(req, res);
+        return true;
+      }
+      // Hub-compatible discovery: OPTIONS / ARC + GET /services/peering.
+      if (pathname === '/' || pathname === '/services/peering' ||
+          pathname.startsWith('/services/peering/')) {
+        await this._handle(req, res);
+        return true;
+      }
       if (pathname !== base && !pathname.startsWith(`${base}/`)) return false;
       await this._handle(req, res);
       return true;
@@ -594,6 +2178,22 @@ class StarCitizenService extends EventEmitter {
     if (!existed) {
       this.state[collection][id] = Object.assign({ id, source }, data);
       if (collection === 'kills') this.emit('kill', this.state[collection][id]);
+      // Fold peer-sourced gameplay into cumulative analytics (desktop + hosted hub).
+      if (collection === 'deaths' || collection === 'missionlog') {
+        const kind = data.kind || (collection === 'deaths' ? 'player:death' : null);
+        if (kind === 'player:death' || kind === 'mission:end') {
+          this._applyHistoryEvent({
+            kind,
+            timestamp: data.timestamp,
+            player: data.player,
+            bodyId: data.bodyId,
+            completionType: data.completionType || data.outcome,
+            missionId: data.missionId,
+            generator: data.generator
+          }, { countHeat: false, force: true, handle: data.player || null });
+          this.emit('history:updated', { via: 'ingest', collection });
+        }
+      }
     }
     return { id, created: !existed };
   }
@@ -632,6 +2232,185 @@ class StarCitizenService extends EventEmitter {
     }
     const ingested = this.missionManager.ingestRemote(Object.assign({}, mission, { source }));
     return { id: mission.id, created: !!ingested.created, mission: ingested.mission };
+  }
+
+  /**
+   * Persist browseable register/gossip events into the inbox collection
+   * (Notifications UI). Complements audit chains — does not replace them.
+   */
+  _wireRegisterInbox () {
+    if (this._inboxWired) return;
+    this._inboxWired = true;
+    if (this.missionManager) {
+      this.missionManager.on('audit', (entry) => {
+        const row = registerInbox.entryFromMissionAudit(entry);
+        if (row) this._appendInbox(row);
+      });
+      this.missionManager.on('application:accepted', (app) => {
+        this._resolveInboxWhere(
+          (r) => r.kind === 'MissionApplication' && r.refs && r.refs.applicationId === app.id,
+          { status: 'accepted', actionable: false, resolvedAt: new Date().toISOString() }
+        );
+      });
+      this.missionManager.on('application:rejected', (app) => {
+        this._resolveInboxWhere(
+          (r) => r.kind === 'MissionApplication' && r.refs && r.refs.applicationId === app.id,
+          { status: 'rejected', actionable: false, resolvedAt: new Date().toISOString() }
+        );
+      });
+      this.missionManager.on('claim:validated', (validation) => {
+        const claimId = validation && validation.claimId;
+        if (!claimId) return;
+        this._resolveInboxWhere(
+          (r) => r.kind === 'MissionClaim' && r.refs && r.refs.claimId === claimId,
+          { status: 'accepted', actionable: false, resolvedAt: new Date().toISOString() }
+        );
+      });
+      this.missionManager.on('claim:rejected', (validation) => {
+        const claimId = validation && validation.claimId;
+        if (!claimId) return;
+        this._resolveInboxWhere(
+          (r) => r.kind === 'MissionClaim' && r.refs && r.refs.claimId === claimId,
+          { status: 'rejected', actionable: false, resolvedAt: new Date().toISOString() }
+        );
+      });
+      this.missionManager.on('claim:superseded', (claim) => {
+        if (!claim || !claim.id) return;
+        this._resolveInboxWhere(
+          (r) => r.kind === 'MissionClaim' && r.refs && r.refs.claimId === claim.id,
+          {
+            status: 'superseded',
+            actionable: false,
+            resolvedAt: new Date().toISOString(),
+            summary: claim.supersedeReason || 'another claim accepted'
+          }
+        );
+      });
+    }
+    if (this.groupManager) {
+      this.groupManager.on('audit', (entry) => {
+        const row = registerInbox.entryFromGroupAudit(entry);
+        if (row) this._appendInbox(row);
+      });
+      this.groupManager.on('group:proposal', (proposal) => {
+        const row = registerInbox.entryFromGroupChangeProposal(proposal);
+        if (row) this._appendInbox(row);
+      });
+      this.groupManager.on('group:vote', (ev) => {
+        const proposal = ev && ev.proposal;
+        const row = registerInbox.entryFromGroupChangeProposal(proposal);
+        if (!row || !this.registerStore) return;
+        const existing = this.registerStore.get('inbox', row.id);
+        if (existing) {
+          registerInbox.patch(this.registerStore, row.id, {
+            title: row.title,
+            body: row.body,
+            status: row.status,
+            actionable: row.actionable
+          });
+        } else {
+          this._appendInbox(row);
+        }
+      });
+      this.groupManager.on('group:proposal-adopted', (ev) => {
+        const proposal = ev && ev.proposal;
+        if (!proposal || !proposal.id) return;
+        this._resolveInboxWhere(
+          (r) => r.kind === 'GroupChangeProposal' && r.refs && r.refs.proposalId === proposal.id,
+          {
+            status: 'accepted',
+            actionable: false,
+            resolvedAt: proposal.adoptedAt || new Date().toISOString(),
+            title: `Proposal ${proposal.action || 'change'} (adopted)`
+          }
+        );
+      });
+      this.groupManager.on('group:application-accepted', (app) => {
+        this._resolveInboxWhere(
+          (r) => r.kind === 'GroupApplication' && (
+            (r.refs && r.refs.applicationId === app.id) ||
+            (r.refs && r.refs.groupId === app.groupId && r.source === app.applicantId)
+          ),
+          { status: 'accepted', actionable: false, resolvedAt: app.decidedAt || new Date().toISOString() }
+        );
+        const notice = registerInbox.normalizeEntry({
+          kind: 'GroupApplicationDecision',
+          status: 'accepted',
+          actionable: false,
+          ts: app.decidedAt || new Date().toISOString(),
+          title: 'Group join accepted',
+          body: app.message || null,
+          source: app.decidedBy || null,
+          refs: {
+            groupId: app.groupId,
+            applicationId: app.id,
+            applicantId: app.applicantId
+          },
+          dedupeKey: `gapp-decision-${app.id}`
+        });
+        if (notice) this._appendInbox(notice);
+      });
+      this.groupManager.on('group:application-rejected', (app) => {
+        this._resolveInboxWhere(
+          (r) => r.kind === 'GroupApplication' && (
+            (r.refs && r.refs.applicationId === app.id) ||
+            (r.refs && r.refs.groupId === app.groupId && r.source === app.applicantId)
+          ),
+          { status: 'rejected', actionable: false, resolvedAt: app.decidedAt || new Date().toISOString() }
+        );
+        const notice = registerInbox.normalizeEntry({
+          kind: 'GroupApplicationDecision',
+          status: 'rejected',
+          actionable: false,
+          ts: app.decidedAt || new Date().toISOString(),
+          title: 'Group join rejected',
+          body: app.reason || app.message || null,
+          source: app.decidedBy || null,
+          refs: {
+            groupId: app.groupId,
+            applicationId: app.id,
+            applicantId: app.applicantId
+          },
+          dedupeKey: `gapp-decision-${app.id}`
+        });
+        if (notice) this._appendInbox(notice);
+      });
+    }
+  }
+
+  _appendInbox (partial) {
+    if (!this.registerStore || !partial) return null;
+    const enriched = registerInbox.enrichRefs(this.registerStore, partial);
+    const { entry, created } = registerInbox.append(this.registerStore, enriched);
+    if (created && entry) this.emit('inbox:item', entry);
+    return entry;
+  }
+
+  _resolveInboxWhere (pred, patchObj) {
+    if (!this.registerStore || typeof pred !== 'function') return;
+    for (const row of this.registerStore.all('inbox') || []) {
+      if (!pred(row)) continue;
+      registerInbox.patch(this.registerStore, row.id, patchObj);
+    }
+  }
+
+  _syncInboxMissionBroadcast (rec) {
+    const row = registerInbox.entryFromMissionBroadcast(rec);
+    if (!row) return null;
+    const prev = this.registerStore && this.registerStore.get('inbox', row.id);
+    if (prev) {
+      return registerInbox.patch(this.registerStore, row.id, {
+        status: row.status,
+        actionable: row.actionable,
+        resolvedAt: row.resolvedAt,
+        resolvedBy: row.resolvedBy,
+        refs: row.refs,
+        title: row.title,
+        body: row.body,
+        reward: row.reward
+      });
+    }
+    return this._appendInbox(row);
   }
 
   /**
@@ -692,6 +2471,7 @@ class StarCitizenService extends EventEmitter {
       this.state.missionbroadcasts = this.state.missionbroadcasts || {};
       this.state.missionbroadcasts[id] = record;
     }
+    this._syncInboxMissionBroadcast(record);
     if (record.status === 'pending') this.emit('mission:broadcast', record);
     return { id, created: true };
   }
@@ -756,7 +2536,9 @@ class StarCitizenService extends EventEmitter {
    * Group scope is membership-filtered on receive (group + subgroups).
    * @param {string} missionId
    * @param {string} actor Creator pubkey
-   * @param {{ scope?: 'global'|'group', groupId?: string }} [opts]
+   * @param {Object} [opts]
+   * @param {string} [opts.scope] `'global'` or `'group'`
+   * @param {string} [opts.groupId]
    */
   async broadcastMission (missionId, actor, opts = {}) {
     if (!this.missionManager) throw Object.assign(new Error('Mission system not available'), { code: 'UNAVAILABLE' });
@@ -795,7 +2577,18 @@ class StarCitizenService extends EventEmitter {
       handle: this._nickname || this._sessionHandle || null,
       mission: this._missionWireSnapshot(m)
     };
-    this.fabricNetwork.publishMissionBroadcast(payload);
+    if (scope === 'group') {
+      const contractId = await this._ensureGroupContractId(groupId);
+      if (!contractId) throw new Error('group Federation contract is not ready');
+      this.fabricNetwork.publishGroupShare(contractId, {
+        kind: 'MissionBroadcast',
+        groupId,
+        contractId,
+        object: payload
+      });
+    } else {
+      this.fabricNetwork.publishMissionBroadcast(payload);
+    }
     const st = this.fabricNetwork.status();
     return {
       missionId: m.id,
@@ -805,6 +2598,597 @@ class StarCitizenService extends EventEmitter {
       peers: st.fabricConnected,
       fabricPeerId: st.fabricPeerId
     };
+  }
+
+  /**
+   * Ensure a group's Federation contract is persisted + published. Returns contractId.
+   * @param {string} groupId
+   * @returns {Promise<string|null>}
+   */
+  async _ensureGroupContractId (groupId) {
+    if (!this.groupManager || !groupId) return null;
+    const { group, definition } = this.groupManager.ensureContract(groupId);
+    await this._publishGroupContractFor(group, definition);
+    return group.contractId || null;
+  }
+
+  /**
+   * Group wallet address for a mission completion payout (Taproot primary).
+   * @param {string} groupId
+   * @returns {{ address: string, groupId: string, mode: string }|null}
+   */
+  _resolveCompletionGroupWallet (groupId) {
+    if (!this.groupManager || !groupId) return null;
+    const group = this.groupManager.getGroup(groupId);
+    if (!group) throw new Error('completion group not found');
+    const { groupTaprootWallet } = require('../functions/groupSpendLadder');
+    const pm = this.payoutManager;
+    const tapWallet = groupTaprootWallet(group, {
+      network: (pm && pm.settings && pm.settings.network) || 'regtest'
+    });
+    if (!tapWallet || !tapWallet.address) throw new Error('completion group wallet unavailable');
+    return {
+      address: tapWallet.address,
+      groupId: group.id,
+      mode: tapWallet.mode || 'taproot',
+      keys: tapWallet.keys,
+      threshold: tapWallet.threshold
+    };
+  }
+
+  async _publishGroupContractFor (group, definition) {
+    if (!group) return null;
+    let def = definition;
+    let g = group;
+    if (!def && this.groupManager) {
+      try {
+        const ensured = this.groupManager.ensureContract(group.id);
+        def = ensured.definition;
+        g = ensured.group;
+      } catch (_) { return null; }
+    }
+    if (!def) return null;
+    await this._ensureFabric();
+    if (!this.fabricNetwork || !this.fabricNetwork.ready) return null;
+    const { groupContractId } = require('../contracts/gooncitizenGroup');
+    this.fabricNetwork.setGroupContractKnown(g.contractId || groupContractId(def), true);
+    this.fabricNetwork.publishGroupContract(def);
+    return def;
+  }
+
+  async _publishGroupChange (change) {
+    if (!change) return null;
+    let contractId = change.contractId;
+    if (!contractId && change.groupId) {
+      contractId = await this._ensureGroupContractId(change.groupId);
+    }
+    if (!contractId) return null;
+    await this._ensureFabric();
+    if (!this.fabricNetwork || !this.fabricNetwork.ready) return null;
+    const msg = this.fabricNetwork.publishGroupChange(contractId, change);
+    this._attachJournalFabricMessage(contractId, change.id, msg, 'GroupChange');
+    // Tip attestation: Schnorr over folded stateDigest (member threshold).
+    try {
+      await this._publishGroupStateTip(contractId, change.groupId || null);
+    } catch (e) { this.emit('error', e); }
+    return change;
+  }
+
+  /**
+   * Publish a local GroupChangeProposal and attach a BIP340 vote when possible.
+   * @param {object} proposal
+   */
+  async _onLocalGroupProposal (proposal) {
+    if (!proposal || !proposal.id) return null;
+    let contractId = proposal.contractId;
+    if (!contractId && proposal.groupId) {
+      contractId = await this._ensureGroupContractId(proposal.groupId);
+    }
+    if (contractId) {
+      await this._ensureFabric();
+      if (this.fabricNetwork && this.fabricNetwork.ready) {
+        const gcp = require('../functions/groupChangeProposal');
+        const msg = this.fabricNetwork.publishGroupChangeProposal(
+          contractId,
+          gcp.proposalWireObject(proposal)
+        );
+        this._attachJournalFabricMessage(contractId, proposal.id, msg, 'GroupChangeProposal');
+      }
+    }
+    // Upgrade local trust vote to a real Schnorr signature when identity is unlocked.
+    await this._trySignLocalProposalVote(proposal);
+    return proposal;
+  }
+
+  /**
+   * If the unlocked identity is a signer and the proposal still has a local:
+   * vote (or no vote yet), replace/add a BIP340 signature and publish the vote.
+   * @param {object} proposal
+   */
+  async _trySignLocalProposalVote (proposal) {
+    if (!proposal || proposal.status !== 'pending' || !this.groupManager) return null;
+    const identity = this._identity;
+    if (!identity || !identity.pubkey) return null;
+    const group = this.groupManager.getGroup(proposal.groupId);
+    if (!group || !group.isSigner(identity.pubkey)) return null;
+    const gcp = require('../functions/groupChangeProposal');
+    const existing = proposal.signatures && (
+      proposal.signatures[identity.pubkey] ||
+      proposal.signatures[String(identity.pubkey).toLowerCase()]
+    );
+    if (existing && !String(existing).startsWith('local:')) return null;
+    try {
+      const signed = gcp.signProposalVote(identity, proposal);
+      // Replace local placeholder before cast so verify path sees BIP340.
+      const fresh = this.groupManager.getProposal(proposal.id);
+      if (!fresh || fresh.status !== 'pending') return null;
+      if (fresh.signatures) {
+        for (const k of Object.keys(fresh.signatures)) {
+          if (String(fresh.signatures[k] || '').startsWith('local:')) {
+            delete fresh.signatures[k];
+          }
+        }
+        this.groupManager.store.put('groupchangeproposals', fresh.id, fresh);
+      }
+      return this.groupManager.castVote(proposal.id, signed.pubkey, signed.signature, {
+        requireVerify: true,
+        local: true
+      });
+    } catch (e) {
+      this.emit('warning', '[LiveRelay] proposal vote sign failed:', e && e.message);
+      return null;
+    }
+  }
+
+  async _publishGroupChangeVote (proposal, voter) {
+    if (!proposal || !proposal.id || !voter) return null;
+    let contractId = proposal.contractId;
+    if (!contractId && proposal.groupId) {
+      contractId = await this._ensureGroupContractId(proposal.groupId);
+    }
+    if (!contractId) return null;
+    const sig = proposal.signatures && (
+      proposal.signatures[voter] || proposal.signatures[String(voter).toLowerCase()]
+    );
+    if (!sig || String(sig).startsWith('local:')) return null;
+    await this._ensureFabric();
+    if (!this.fabricNetwork || !this.fabricNetwork.ready) return null;
+    const gcp = require('../functions/groupChangeProposal');
+    const body = gcp.voteWireObject(proposal, voter, sig);
+    const msg = this.fabricNetwork.publishGroupChangeVote(contractId, body);
+    this._attachJournalFabricMessage(contractId, `${proposal.id}:vote:${voter}`, msg, 'GroupChangeVote');
+    return body;
+  }
+
+  /**
+   * Persist the signed AMP Message onto the local Statechain journal row so
+   * peers can later replay bit-identical Fabric frames.
+   * @param {string} contractId
+   * @param {string} entryId
+   * @param {object|null} msg Fabric Message
+   * @param {string} [type]
+   */
+  _attachJournalFabricMessage (contractId, entryId, msg, type) {
+    if (!this.registerStore || !contractId || !entryId || !msg) return;
+    try {
+      const groupStatechain = require('../functions/groupStatechain');
+      const buf = typeof msg.toBuffer === 'function' ? msg.toBuffer() : null;
+      const hash = msg.id
+        || msg.hash
+        || (buf && require('crypto').createHash('sha256').update(buf).digest('hex'))
+        || null;
+      groupStatechain.attachFabricMessage(this.registerStore, contractId, entryId, {
+        hash: hash ? String(hash) : null,
+        hex: buf ? buf.toString('hex') : null,
+        type: type || 'GroupChange'
+      });
+    } catch (e) {
+      this.emit('warning', '[LiveRelay] attach journal fabric message failed:', e && e.message);
+    }
+  }
+
+  /**
+   * Fold a signed CONTRACT_MESSAGE into the ARC accumulate collection
+   * (`contractmessages`) via `@fabric/core` — same tip for mesh / paste / local.
+   * @param {string} contractId
+   * @param {{ messageHex?: string, wireMessage?: object, origin?: string }|null} meta
+   * @param {string} [originHint]
+   * @returns {object|null} ingestMessageBuffer result
+   */
+  _accumulateContractMessageWire (contractId, meta = {}, originHint) {
+    if (!this.registerStore || !contractId) return null;
+    let buffer = null;
+    if (meta && meta.messageHex) {
+      buffer = meta.messageHex;
+    } else if (meta && meta.wireMessage && typeof meta.wireMessage.toBuffer === 'function') {
+      buffer = meta.wireMessage.toBuffer();
+    }
+    if (!buffer) return null;
+    try {
+      const accumulate = require('../functions/contractMessageAccumulate');
+      const origin = originHint
+        || (meta && meta.origin)
+        || 'mesh';
+      const ingestMeta = { origin };
+      // ARC F1: signer mutations need genesis/tip signers (or capabilityToken).
+      const group = this.groupManager && this.groupManager.getGroupByContractId(contractId);
+      if (group) {
+        const signers = group.validators
+          || (group.proposedPolicy && group.proposedPolicy.validators)
+          || group.members
+          || [];
+        if (signers.length) {
+          ingestMeta.genesis = {
+            signers,
+            readers: group.members || signers,
+            threshold: group.threshold
+          };
+        }
+      }
+      if (meta && meta.capabilityToken) ingestMeta.capabilityToken = meta.capabilityToken;
+      if (meta && meta.bitcoinBlockHash) {
+        ingestMeta.bitcoinBlockHash = meta.bitcoinBlockHash;
+        if (meta.bitcoinHeight != null) ingestMeta.bitcoinHeight = meta.bitcoinHeight;
+      } else if (this.fabricNetwork && typeof this.fabricNetwork.getBitcoinTip === 'function') {
+        try {
+          const tip = this.fabricNetwork.getBitcoinTip();
+          if (tip && tip.blockHash) {
+            ingestMeta.bitcoinBlockHash = tip.blockHash;
+            if (tip.height != null) ingestMeta.bitcoinHeight = tip.height;
+          }
+        } catch (_) { /* optional */ }
+      }
+      const result = accumulate.ingestMessageBuffer(this.registerStore, contractId, buffer, ingestMeta);
+      if (result && result.accepted && result.entry) {
+        // Generalized delivery sync filter (not GroupChat-only).
+        const doc = accumulate.loadDoc(this.registerStore, contractId);
+        if (accumulate.isSyncTrackedType(result.entry.type, doc, ingestMeta)) {
+          this._noteContractMessageReceived(contractId, result, meta);
+        }
+      }
+      return result;
+    } catch (e) {
+      this.emit('debug', `[ARC] accumulate failed: ${e && e.message ? e.message : e}`);
+      return null;
+    }
+  }
+
+  /**
+   * Phase-1 delivery sync after accepting a sync-tracked CONTRACT_MESSAGE:
+   * mark local received, then publish Fabric MessageReceived when remote.
+   * Filter: {@link @fabric/core/functions/contractMessageAccumulate.isSyncTrackedType}.
+   * @param {string} contractId
+   * @param {object} result accumulate result
+   * @param {object} [meta]
+   */
+  _noteContractMessageReceived (contractId, result, meta = {}) {
+    if (!this.registerStore || !result || !result.entry) return;
+    const me = this._identity && this._identity.pubkey;
+    if (!me) return;
+    try {
+      const commit = require('../functions/contractMessageCommit');
+      const chatDelivery = require('../functions/chatDelivery');
+      const hash = String(result.entry.hash || '').toLowerCase();
+      if (!hash) return;
+      let readers = [];
+      if (this.groupManager) {
+        const group = this.groupManager.getGroupByContractId(contractId);
+        if (group && typeof this.groupManager.getChatSealTip === 'function') {
+          const tip = this.groupManager.getChatSealTip(group.id);
+          if (tip && Array.isArray(tip.memberPubkeys)) readers = tip.memberPubkeys;
+        }
+      }
+      if (!readers.length && result.tip && result.tip.content && Array.isArray(result.tip.content.members)) {
+        readers = result.tip.content.members;
+      }
+      if (!readers.length) readers = [me];
+      let record = this.registerStore.get('contractmessagecommits', hash);
+      if (!record) {
+        record = commit.createPending({
+          id: hash,
+          contractId,
+          wireHash: hash,
+          readers
+        });
+      }
+      commit.markReceived(record, me);
+      this.registerStore.put('contractmessagecommits', hash, record);
+      const chatId = result.entry.object && result.entry.object.id
+        ? String(result.entry.object.id)
+        : null;
+      if (chatId) chatDelivery.attachWireHash(this.registerStore, chatId, hash, contractId);
+
+      // Remote sync-tracked frame → publish Fabric MessageReceived.
+      const origin = (meta && meta.origin) || result.entry.origin || 'mesh';
+      if (origin !== 'local' && this.fabricNetwork && this.fabricNetwork.ready) {
+        try {
+          const ack = this.fabricNetwork.publishMessageReceived(contractId, {
+            messageId: hash,
+            chatMessageId: chatId,
+            sourceType: result.entry.type || null,
+            receivedAt: new Date().toISOString()
+          });
+          if (ack && typeof ack.toBuffer === 'function') {
+            this._accumulateContractMessageWire(contractId, {
+              wireMessage: ack,
+              messageHex: ack.toBuffer().toString('hex'),
+              origin: 'local'
+            }, 'local');
+          }
+        } catch (e) {
+          this.emit('debug', `[ARC] MessageReceived publish failed: ${e && e.message ? e.message : e}`);
+        }
+      }
+    } catch (e) {
+      this.emit('debug', `[ARC] 2PC received note failed: ${e && e.message ? e.message : e}`);
+    }
+  }
+
+  /**
+   * Ensure a FabricNetwork exists that can Schnorr-sign CONTRACT_MESSAGEs.
+   * Does not require fabric.enable or a listening peer (NODE_ENV=test disables
+   * the peer by default; GroupShare / receipts still need local AMP signatures).
+   * @returns {FabricNetwork|null}
+   */
+  _ensureFabricSignerSync () {
+    if (!this._identity) return null;
+    if (this.fabricNetwork) {
+      this.fabricNetwork.setIdentity(this._identity);
+      return this.fabricNetwork;
+    }
+    this.fabricNetwork = new FabricNetwork({
+      enable: false,
+      listen: false,
+      peers: [],
+      peersDb: null,
+      messageLog: this._fabricMessageLog
+    });
+    this.fabricNetwork.setIdentity(this._identity);
+    return this.fabricNetwork;
+  }
+
+  /**
+   * Local reader phase-2 receipt by AMP wire hash (unified Fabric path).
+   * @param {string} wireHash
+   * @param {{ contractId?: string, chatMessageId?: string }} [hints]
+   * @returns {object}
+   */
+  _markDeliveryReceipt (wireHash, hints = {}) {
+    const chatDelivery = require('../functions/chatDelivery');
+    const me = this._identity && this._identity.pubkey;
+    if (!me) {
+      const e = new Error('Unlock your identity to send a receipt');
+      e.code = 'UNAUTHORIZED';
+      throw e;
+    }
+    const target = chatDelivery.resolveDeliveryTarget({
+      store: this.registerStore,
+      groupManager: this.groupManager
+    }, wireHash, hints);
+
+    if (!target.contractId) {
+      const e = new Error('contractId required (unknown wire hash / group)');
+      e.code = 'BAD_REQUEST';
+      throw e;
+    }
+    // Sign locally even when fabric peer is disabled / not ready (same as
+    // GroupShare clipboard CONTRACT_MESSAGE). Mesh relay is best-effort.
+    const fabricNetwork = this._ensureFabricSignerSync();
+    if (!fabricNetwork) {
+      const e = new Error('Fabric network unavailable — receipt requires a signed CONTRACT_MESSAGE');
+      e.code = 'UNAVAILABLE';
+      throw e;
+    }
+
+    let readers = target.readers && target.readers.length ? target.readers : [me];
+    const { keyFromIdentity } = require('../functions/identity');
+    const signerKey = keyFromIdentity(this._identity);
+    const receiptSig = chatDelivery.signReceiptSig(signerKey, target.wireHash);
+    const msg = fabricNetwork.publishMessageReceipt(target.contractId, {
+      messageId: target.wireHash,
+      chatMessageId: target.chatMessageId || null,
+      sourceType: target.sourceType || null,
+      receiptAt: new Date().toISOString(),
+      receiptSig
+    }, { relay: !!(fabricNetwork.ready) });
+    if (!msg || typeof msg.toBuffer !== 'function') {
+      const e = new Error('MessageReceipt publish failed');
+      e.code = 'UNAVAILABLE';
+      throw e;
+    }
+    const result = this._accumulateContractMessageWire(target.contractId, {
+      wireMessage: msg,
+      messageHex: msg.toBuffer().toString('hex'),
+      origin: 'local'
+    }, 'local');
+    if (!result || result.error) {
+      const e = new Error((result && result.error) || 'MessageReceipt accumulate failed');
+      e.code = 'BAD_REQUEST';
+      throw e;
+    }
+    if (!result.accepted && !result.duplicate) {
+      const e = new Error('MessageReceipt was not stored');
+      e.code = 'BAD_REQUEST';
+      throw e;
+    }
+
+    const out = chatDelivery.markLocalReceipt(this.registerStore, {
+      wireHash: target.wireHash,
+      contractId: target.contractId,
+      readers,
+      viewerPubkey: me,
+      receiptSig,
+      signerKey
+    });
+    return {
+      wireHash: target.wireHash,
+      contractId: target.contractId,
+      chatMessageId: target.chatMessageId,
+      messageHex: msg.toBuffer().toString('hex'),
+      delivery: chatDelivery.deliverySummary(out.record, me)
+    };
+  }
+
+  /**
+   * Chat-row convenience wrapper → unified wireHash receipt path.
+   * @param {string} chatMessageId
+   * @returns {object}
+   */
+  _markChatMessageReceipt (chatMessageId) {
+    const row = this.registerStore && this.registerStore.get('chatmessages', String(chatMessageId));
+    if (!row || !row.wireHash) {
+      const e = new Error('message has no wire hash yet (await mesh/accumulate)');
+      e.code = 'NOT_FOUND';
+      throw e;
+    }
+    if (!String(row.channel || '').startsWith('group:')) {
+      const e = new Error('delivery sync applies to contract (group) channels only');
+      e.code = 'BAD_REQUEST';
+      throw e;
+    }
+    const data = this._markDeliveryReceipt(row.wireHash, {
+      contractId: row.contractId || null,
+      chatMessageId: row.id
+    });
+    return Object.assign({ id: row.id }, data);
+  }
+
+  /**
+   * Mesh MessageReceived / MessageReceipt → accumulate AMP bytes, then 2PC sidecar.
+   * @param {object} object
+   * @param {*} source
+   * @param {object} [meta]
+   * @param {string} [kind]
+   */
+  _applyRemoteDeliveryAck (object, source, meta = {}, kind = 'MessageReceipt') {
+    if (!object) return;
+    const contractId = (meta && meta.contract) || object.contractId || null;
+    if (contractId && meta && (meta.wireMessage || meta.messageHex)) {
+      this._accumulateContractMessageWire(contractId, meta, (meta && meta.origin) || 'mesh');
+      return;
+    }
+    // Fallback when wire bytes are unavailable (legacy / tests).
+    if (!this.registerStore) return;
+    try {
+      const chatDelivery = require('../functions/chatDelivery');
+      const { resolveSignerPubkey } = require('../functions/identity');
+      const signer = resolveSignerPubkey(source) || source || object.author;
+      let readers = null;
+      if (contractId && this.groupManager) {
+        const group = this.groupManager.getGroupByContractId(contractId);
+        if (group && typeof this.groupManager.getChatSealTip === 'function') {
+          const tip = this.groupManager.getChatSealTip(group.id);
+          if (tip && tip.memberPubkeys && tip.memberPubkeys.length) readers = tip.memberPubkeys;
+        } else if (group && group.members) {
+          readers = group.members;
+        }
+      }
+      const body = Object.assign({}, object, {
+        type: object.type || object['@type'] || kind,
+        '@type': object['@type'] || object.type || kind
+      });
+      chatDelivery.applyRemoteDeliveryAck(this.registerStore, body, signer, {
+        contractId,
+        readers
+      });
+    } catch (e) {
+      this.emit('debug', `[ARC] ${kind} ack failed: ${e && e.message ? e.message : e}`);
+    }
+  }
+
+  /**
+   * Ask peers for missing journal rows (newly connected / invite shell).
+   * @param {Object} ev
+   * @param {string} [ev.contractId]
+   * @param {object} [ev.group]
+   * @param {number} [ev.fromClock]
+   */
+  async _requestGroupJournal (ev = {}) {
+    const contractId = (ev && ev.contractId)
+      || (ev.group && ev.group.contractId)
+      || null;
+    if (!contractId) return null;
+    await this._ensureFabric().catch(() => null);
+    if (!this.fabricNetwork || !this.fabricNetwork.ready) return null;
+    const groupId = (ev.group && ev.group.id) || ev.groupId || null;
+    return this.fabricNetwork.publishGroupJournalRequest(contractId, {
+      fromClock: ev.fromClock != null ? ev.fromClock : 1,
+      groupId
+    });
+  }
+
+  /**
+   * Respond to a GroupJournalRequest with a Schnorr-attested batch.
+   * @param {object} request
+   * @param {string|null} source
+   */
+  async _respondGroupJournalRequest (request, source = null) {
+    if (!request || !this.groupManager || !this.registerStore) return null;
+    const contractId = String(request.contractId || '').trim();
+    if (!contractId) return null;
+    const group = this.groupManager.getGroupByContractId(contractId)
+      || (request.groupId && this.groupManager.getGroup(request.groupId));
+    if (!group) return null;
+    // Only members serve journal catch-up.
+    const me = this._identity && this._identity.pubkey;
+    if (!me || !group.includes(me)) return null;
+
+    const data = this.groupManager.store.get('groups', group.id);
+    const definition = this.groupManager._groupDefinition
+      ? this.groupManager._groupDefinition(data)
+      : null;
+    if (!definition) return null;
+
+    const groupStatechain = require('../functions/groupStatechain');
+    const { gooncitizenContractId } = require('../contracts/gooncitizen');
+    const { signGroupStateTip } = require('../functions/groupStateSigning');
+    const fromClock = request.fromClock != null ? Number(request.fromClock) : 1;
+    const batch = groupStatechain.buildJournalBatch(
+      this.registerStore,
+      contractId,
+      definition,
+      fromClock,
+      { name: 'GoonCitizenGroup', parentContractId: gooncitizenContractId() }
+    );
+    if (this._identity) {
+      const tip = signGroupStateTip(this._identity, contractId, batch.tipClock, batch.stateDigest);
+      batch.signatures = { [tip.pubkey]: tip.signature };
+    }
+    await this._ensureFabric().catch(() => null);
+    if (!this.fabricNetwork || !this.fabricNetwork.ready) return null;
+    return this.fabricNetwork.publishGroupJournalBatch(contractId, batch);
+  }
+
+  /**
+   * Publish GroupStateJournal tip attestation after a local mutation.
+   * @param {string} contractId
+   * @param {string|null} groupId
+   */
+  async _publishGroupStateTip (contractId, groupId = null) {
+    if (!this._identity || !this.groupManager || !this.registerStore) return null;
+    const group = this.groupManager.getGroupByContractId(contractId)
+      || (groupId && this.groupManager.getGroup(groupId));
+    if (!group || !group.includes(this._identity.pubkey)) return null;
+    const data = this.groupManager.store.get('groups', group.id);
+    const definition = this.groupManager._groupDefinition(data);
+    if (!definition) return null;
+    const groupStatechain = require('../functions/groupStatechain');
+    const { signGroupStateTip, groupFabricIdentity } = require('../functions/groupStateSigning');
+    const doc = groupStatechain.loadDoc(this.registerStore, contractId);
+    const content = groupStatechain.foldGroupState(definition, doc.journal.entries);
+    const stateDigest = groupStatechain.stateDigestOfContent(content);
+    const tip = signGroupStateTip(this._identity, contractId, doc.clock, stateDigest);
+    await this._ensureFabric().catch(() => null);
+    if (!this.fabricNetwork || !this.fabricNetwork.ready) return null;
+    return this.fabricNetwork.publishGroupStateJournal(contractId, {
+      contractId,
+      groupId: group.id,
+      tipClock: doc.clock,
+      stateDigest,
+      identity: groupFabricIdentity(Object.assign({}, group, { contractId })),
+      signatures: { [tip.pubkey]: tip.signature },
+      attestedAt: new Date().toISOString()
+    });
   }
 
   async _handle (req, res) {
@@ -820,8 +3204,21 @@ class StarCitizenService extends EventEmitter {
     };
 
     try {
-      // SPA shell — dashboard at / and dedicated group pages at /groups/:id (or :slug).
-      if (req.method === 'GET' && (pathname === '/' || pathname === `${base}/ui` || pathname === '/groups' || /^\/groups\/[^/]+$/.test(pathname))) {
+      // Fabric site login (D-011) — Passport / GoonCitizen client-signed sessions.
+      const { tryHandleSiteLogin } = require('../functions/fabricSiteLogin');
+      const siteLogin = await tryHandleSiteLogin(this, req, res, pathname, body);
+      if (siteLogin === true) return;
+      // Hub-compatible peering discovery (OPTIONS ARC + /services/peering).
+      // Must run before the SPA GET `/` branch so OPTIONS is not 404'd.
+      const liveRelayPeeringHttp = require('../functions/liveRelayPeeringHttp');
+      if (liveRelayPeeringHttp.tryHandlePeeringDiscovery(this, req, res, pathname)) return;
+      // GET /sessions → same dashboard (header SiteLogin buttons).
+      const serveSpa = siteLogin === 'spa' ||
+        (req.method === 'GET' && (pathname === '/' || pathname === `${base}/ui` ||
+          pathname === '/groups' || /^\/groups\/[^/]+$/.test(pathname) ||
+          pathname === '/profiles' || /^\/profiles\/[^/]+$/.test(pathname) ||
+          pathname === '/missions' || /^\/missions\/[^/]+$/.test(pathname)));
+      if (serveSpa) {
         let html;
         try {
           const uiPath = path.join(__dirname, '..', 'assets', 'index.html');
@@ -831,6 +3228,21 @@ class StarCitizenService extends EventEmitter {
         }
         res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
         return res.end(html);
+      }
+      // Always-on-top desktop overlay (primary group members + ships).
+      if (req.method === 'GET' && (pathname === '/overlay' || pathname === '/overlay.html')) {
+        try {
+          const overlayPath = path.join(__dirname, '..', 'assets', 'overlay.html');
+          const html = fs.readFileSync(overlayPath, 'utf8');
+          res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+          return res.end(html);
+        } catch (_) {
+          res.writeHead(404, { 'Content-Type': 'text/plain' });
+          return res.end('overlay missing');
+        }
+      }
+      if (req.method === 'GET' && pathname === `${base}/overlay/primary-group`) {
+        return send(200, { type: 'PrimaryGroupOverlay', data: this.getPrimaryGroupOverlay() });
       }
       // Parser rules — the configured regular expressions, for the dashboard's
       // rules table (toggle-to-highlight in the live log browser).
@@ -861,28 +3273,144 @@ class StarCitizenService extends EventEmitter {
       if (req.method === 'GET' && pathname === `${base}/analytics`) {
         return send(200, this._analyticsDataset());
       }
+      // Player log corpus: every Game.log + logbackup feeding cumulative Analyze.
+      if (req.method === 'GET' && pathname === `${base}/corpus`) {
+        return send(200, this._corpusStatus());
+      }
+      if (req.method === 'POST' && pathname === `${base}/corpus/sync`) {
+        if (this.settings.mode === 'server') {
+          return send(400, { error: 'corpus sync is a local-player operation' });
+        }
+        const result = await this._syncCumulativeHistory();
+        return send(200, { type: 'LogCorpusSync', result, corpus: this._corpusStatus() });
+      }
+      // Import folders and/or individual *.log files into cumulative history (local only).
+      if (req.method === 'POST' && pathname === `${base}/corpus/import`) {
+        if (this.settings.mode === 'server') {
+          return send(400, { error: 'corpus import is a local-player operation' });
+        }
+        const d = await body();
+        const dirs = Array.isArray(d.dirs) ? d.dirs : (d.dir ? [d.dir] : []);
+        const files = Array.isArray(d.files) ? d.files : (d.file ? [d.file] : []);
+        if (!dirs.length && !files.length) {
+          return send(400, { error: 'dirs and/or files required' });
+        }
+        try {
+          const out = await this._importCorpus({
+            dirs: dirs.length ? dirs : undefined,
+            files: files.length ? files : undefined,
+            sync: d.sync !== false
+          });
+          return send(200, out);
+        } catch (e) {
+          return send(400, { error: e.message });
+        }
+      }
+      if (req.method === 'POST' && pathname === `${base}/corpus/remove`) {
+        if (this.settings.mode === 'server') {
+          return send(400, { error: 'corpus remove is a local-player operation' });
+        }
+        const d = await body();
+        const removeDirs = new Set(fsBrowser.sanitizeCorpusDirs(Array.isArray(d.dirs) ? d.dirs : (d.dir ? [d.dir] : [])));
+        const removeFiles = new Set(fsBrowser.sanitizeCorpusFiles(Array.isArray(d.files) ? d.files : (d.file ? [d.file] : [])));
+        if (!removeDirs.size && !removeFiles.size) {
+          return send(400, { error: 'dirs and/or files required' });
+        }
+        try {
+          const out = await this._importCorpus({
+            dirs: removeDirs.size ? this._corpusDirs().filter((p) => !removeDirs.has(p)) : undefined,
+            files: removeFiles.size ? this._corpusFiles().filter((p) => !removeFiles.has(p)) : undefined,
+            replaceDirs: !!removeDirs.size,
+            replaceFiles: !!removeFiles.size,
+            sync: false
+          });
+          return send(200, Object.assign(out, {
+            type: 'LogCorpusRemove',
+            removedDirs: [...removeDirs],
+            removedFiles: [...removeFiles]
+          }));
+        } catch (e) {
+          return send(400, { error: e.message });
+        }
+      }
+      // Read-only directory listing for the Feed / Analyze file browser (local only).
+      if (req.method === 'GET' && pathname === `${base}/fs`) {
+        if (this.settings.mode === 'server') {
+          return send(400, { error: 'filesystem browse is a local-player operation' });
+        }
+        const listing = fsBrowser.listDirectory(url.searchParams.get('path'));
+        return send(listing.error && listing.error === 'path not found' ? 404 : 200, listing);
+      }
+      // Fabric Tree over cumulative history leaves (preview or publish to a Group).
+      if (req.method === 'GET' && pathname === `${base}/activity-tree`) {
+        const tree = activityTree.buildActivityTree(this.history, {
+          ownerPubkey: (this._identity && this._identity.pubkey) || null
+        });
+        return send(200, tree);
+      }
+      if (req.method === 'POST' && pathname === `${base}/activity-tree/publish`) {
+        const d = await body();
+        const groupId = d.groupId || d.id;
+        if (!groupId) return send(400, { error: 'groupId required' });
+        try {
+          const out = await this.publishActivityTreeToGroup(groupId, { publish: d.publish !== false });
+          return send(200, Object.assign({ type: 'GroupActivityTreePublish' }, out));
+        } catch (e) {
+          return send(400, { error: e.message });
+        }
+      }
       // Snapshot for the monitor UI: counts + recent + combat candidates (newest first).
       if (req.method === 'GET' && pathname === `${base}/monitor`) {
+        if (this.settings.mode === 'server' && !this._authPubkey(req)) {
+          return send(401, { error: 'Authentication required' });
+        }
         const limit = Math.min(parseInt(url.searchParams.get('limit'), 10) || 250, 1000);
         const newest = (arr) => arr.slice(-limit).reverse();
+        const cumulative = cumulativeHistory.cumulativeCounts(this.history);
+        const feed = this._liveFeedSnapshot(limit);
         return send(200, {
           status: this.status, startedAt: this.state.startedAt, now: new Date().toISOString(),
-          loginfo: this._logInfo(), reparse: this._reparse,
+          loginfo: this._logInfo(), reparse: this._reparse, corpus: this._corpusStatus(),
           channel: this.channel, session: this.session, sessions: this.sessions,
           missions: this.missionGroups,
           missionStats: this.missionStats(),
           kills: newest(this.kills),
           deaths: newest(this.deaths),
+          feed,
           counts: {
-            activities: this.activities.length, players: this.players.length, logins: this.logins.length,
-            vehicles: this.vehicles.length, kills: this.kills.length, incaps: this.incaps.length, deaths: this.deaths.length,
-            missionlog: this.missionlog.length, missions: this.missionGroups.length, notifications: this.notifications.length,
-            combat: this.combatlog.length,
-            logs: this.logs.length, flagged: this.flagged.length
+            // Header / home default to cumulative (all-time local history).
+            missions: cumulative.missions,
+            deaths: cumulative.deaths,
+            players: cumulative.players,
+            sessions: cumulative.sessions,
+            completed: cumulative.completed,
+            abandoned: cumulative.abandoned,
+            failed: cumulative.failed,
+            // Session-scoped (this process / current Game.log seed + live).
+            session: {
+              activities: this.activities.length, players: this.players.length, logins: this.logins.length,
+              vehicles: this.vehicles.length, kills: this.kills.length, incaps: this.incaps.length, deaths: this.deaths.length,
+              missionlog: this.missionlog.length, missions: this.missionGroups.length, notifications: this.notifications.length,
+              combat: this.combatlog.length,
+              logs: this.logs.length, flagged: this.flagged.length
+            },
+            // Aliases kept for older UI bits that still read session fields.
+            activities: this.activities.length, kills: this.kills.length, incaps: this.incaps.length,
+            vehicles: this.vehicles.length, logins: this.logins.length,
+            missionlog: this.missionlog.length, notifications: this.notifications.length,
+            combat: this.combatlog.length, logs: this.logs.length, flagged: this.flagged.length
           },
           recent: newest(this.recent),
           flagged: newest(this.flagged)
         });
+      }
+      // Chat-style unified activity stream (local parse + peer ingest).
+      if (req.method === 'GET' && pathname === `${base}/feed`) {
+        if (this.settings.mode === 'server' && !this._authPubkey(req)) {
+          return send(401, { error: 'Authentication required' });
+        }
+        const limit = Math.min(parseInt(url.searchParams.get('limit'), 10) || 400, 2000);
+        return send(200, Object.assign({ type: 'LiveFeed' }, this._liveFeedSnapshot(limit)));
       }
       if (req.method === 'GET' && pathname === base) {
         return send(200, { type: 'StarCitizen', data: {
@@ -917,15 +3445,49 @@ class StarCitizenService extends EventEmitter {
               logfile: this.settings.logfile,
               channel: this.channel,
               port: this.settings.port,
+              httpHost: this._httpListenHost(),
+              httpSharedMode: this._httpSharedMode === true,
               mode: this.settings.mode,
               identity: this._identity ? this._identity.pubkey : null,
               uplinkActive: !!this._uplinkTimer,
               uplinkQueued: this._uplinkQueue.length,
+              shareLogsGlobal: this._shareLogsGlobal === true,
+              groupChatSeal: this._groupChatSeal === true,
+              requireSealedGroupChat: this._requireSealedGroupChat === true,
+              sharePresence: this._sharePresence === true,
+              presenceVisibility: this._presenceVisibility || 'private',
+              shareLogsActive: this._canShareLogs(),
+              shareLogsTargets: this._logShareTargets(),
               fabricListenPort: fabricStatus.fabricListenPort,
               fabricPeerId: fabricStatus.fabricPeerId,
               fabricConnected: fabricStatus.fabricConnected,
+              fabricConnections: fabricStatus.fabricConnections || [],
               fabricReady: fabricStatus.ready,
-              snapshots: this.snapshotManager ? this.snapshotManager.stats() : null
+              meshAliases: Object.keys(this._peerAliasByPubkey || {}).map((pubkey) => ({
+                pubkey,
+                alias: this._peerAliasByPubkey[pubkey]
+              })),
+              localProfile: this._localProfile(),
+              networkObserve: this._hubObserve,
+              fabricAdvertiseHost: this._fabricAdvertiseHost || null,
+              broadcastPeering: this._broadcastPeering === true,
+              primaryGroupId: this._primaryGroupId || null,
+              primaryGroupColor: this._primaryGroupColor(),
+              defaultGroupMessageId: this._defaultGroupMessageId || null,
+              groupOverlay: this._groupOverlay === true,
+              selfPeering: (() => {
+                const listenPort = Number(this.settings.fabric && this.settings.fabric.port) || 7777;
+                const info = peerPeeringString.peeringInfoForGoonCitizen({
+                  pubkey: this._identity && this._identity.pubkey,
+                  advertiseHost: this._fabricAdvertiseHost,
+                  listenPort
+                });
+                return info.string || null;
+              })(),
+              snapshots: this.snapshotManager ? this.snapshotManager.stats() : null,
+              bitcoin: hubBitcoinProxy.bitcoinRuntimeForSettings(this.settings),
+              documents: hubDocumentExchangeProxy.documentsRuntimeForSettings(this.settings),
+              discord: this._discordRuntime()
             }
           });
         }
@@ -936,7 +3498,7 @@ class StarCitizenService extends EventEmitter {
           try {
             const updated = settingsStore.putSetting(store, sMatch[1], d.value);
             // Live-applicable settings take effect immediately; the rest on restart.
-            let requiresRestart = ['logfile', 'channel', 'discordWebhook'].includes(sMatch[1]);
+            let requiresRestart = ['logfile', 'channel'].includes(sMatch[1]);
             if (sMatch[1] === 'peers') {
               this.peers = (updated.peers || []).map((p) => this._normalizePeerRecord(p)).filter(Boolean);
               this._refreshFabric().catch((e) => this.emit('error', e));
@@ -948,33 +3510,370 @@ class StarCitizenService extends EventEmitter {
               requiresRestart = false;
             }
             if (sMatch[1] === 'uplinkIntervalMs') { this.settings.uplink.intervalMs = updated.uplinkIntervalMs || 5000; requiresRestart = false; }
-            if (sMatch[1] === 'shareLogsGlobal') { this._shareLogsGlobal = updated.shareLogsGlobal !== false; requiresRestart = false; }
-            if (sMatch[1] === 'nickname') { this._nickname = updated.nickname || null; requiresRestart = false; }
+            if (sMatch[1] === 'shareLogsGlobal') { this._shareLogsGlobal = updated.shareLogsGlobal === true; requiresRestart = false; }
+            if (sMatch[1] === 'groupChatSeal') { this._groupChatSeal = updated.groupChatSeal === true; requiresRestart = false; }
+            if (sMatch[1] === 'requireSealedGroupChat') {
+              this._requireSealedGroupChat = updated.requireSealedGroupChat === true;
+              requiresRestart = false;
+            }
+            if (sMatch[1] === 'httpSharedMode') {
+              this._httpSharedMode = updated.httpSharedMode === true;
+              requiresRestart = false;
+              // Rebind after this response finishes — closing the server while the
+              // PUT is still open would deadlock server.close().
+              res.once('finish', () => {
+                this._rebindHttpListener().catch((e) => this.emit('error', e));
+              });
+            }
+            if (sMatch[1] === 'nickname') {
+              this._nickname = updated.nickname || null;
+              this._publishPeerAlias(this._nickname).catch((e) => this.emit('error', e));
+              this._publishLocalProfile().catch((e) => this.emit('error', e));
+              requiresRestart = false;
+            }
+            if (sMatch[1] === 'profile') {
+              this._profile = peerProfile.sanitizeProfile(updated.profile);
+              this._publishLocalProfile().catch((e) => this.emit('error', e));
+              requiresRestart = false;
+            }
+            if (sMatch[1] === 'fabricAdvertiseHost') {
+              this._fabricAdvertiseHost = updated.fabricAdvertiseHost || null;
+              if (this.fabricNetwork) {
+                this.fabricNetwork.setAdvertiseHost(this._fabricAdvertiseHost);
+                // Opt-in gate: only announce when broadcastPeering is on.
+                this.fabricNetwork.maybePublishPeeringOffer();
+              }
+              requiresRestart = false;
+            }
+            if (sMatch[1] === 'broadcastPeering') {
+              this._broadcastPeering = updated.broadcastPeering === true;
+              if (this.fabricNetwork) {
+                this.fabricNetwork.setBroadcastPeering(this._broadcastPeering);
+                if (this._broadcastPeering) {
+                  this.fabricNetwork.maybePublishPeeringOffer({ force: true });
+                }
+              }
+              requiresRestart = false;
+            }
             if (sMatch[1] === 'notifyMissionBroadcasts') { this._notifyMissionBroadcasts = updated.notifyMissionBroadcasts !== false; requiresRestart = false; }
+            if (sMatch[1] === 'primaryGroupId') {
+              this._primaryGroupId = settingsStore.sanitizePrimaryGroupId(updated.primaryGroupId);
+              requiresRestart = false;
+            }
+            if (sMatch[1] === 'groupOverlay') {
+              this._groupOverlay = updated.groupOverlay === true;
+              requiresRestart = false;
+            }
+            if (sMatch[1] === 'corpusDirs' || sMatch[1] === 'corpusFiles') {
+              // Imported log folders/files apply live — sync into cumulative history.
+              requiresRestart = false;
+              this._syncCumulativeHistory().catch((e) => this.emit('error', e));
+            }
             if (sMatch[1].startsWith('snapshot')) { this._applySnapshotSettings(updated); requiresRestart = false; }
             if (sMatch[1].startsWith('notify')) { requiresRestart = false; }
-            return send(200, { success: true, settings: updated, requiresRestart });
+            if (sMatch[1] === 'sharePresence' || sMatch[1] === 'presenceVisibility' ||
+              sMatch[1] === 'presenceGroupIds' || sMatch[1] === 'shipOverrideSlug' ||
+              sMatch[1] === 'presenceAvailability' || sMatch[1] === 'presenceStatusText') {
+              this._applyPresenceSettings(updated);
+              if (this._sharePresence) {
+                this.publishPresence().catch((e) => this.emit('error', e));
+              }
+              requiresRestart = false;
+            }
+            if (sMatch[1] === 'presenceAvailability' || sMatch[1] === 'presenceStatusText' ||
+                sMatch[1] === 'sharePresence' || sMatch[1] === 'presenceVisibility' ||
+                sMatch[1] === 'presenceGroupIds' || sMatch[1] === 'shipOverrideSlug') {
+              // presence handlers above set requiresRestart
+            }
+            if (String(sMatch[1]).startsWith('discord')) {
+              this._applyDiscordConfig();
+              if (['discordBotEnable', 'discordAppId', 'discordChannel'].includes(sMatch[1])) {
+                this._startDiscordBot().catch((e) => this.emit('error', e));
+              }
+              requiresRestart = false;
+            }
+            return send(200, {
+              success: true,
+              settings: updated,
+              requiresRestart,
+              runtime: {
+                primaryGroupId: this._primaryGroupId || null,
+                primaryGroupColor: this._primaryGroupColor(),
+                discord: this._discordRuntime()
+              }
+            });
+          } catch (e) { return send(400, { error: e.message }); }
+        }
+        if (pathname === '/settings/discord/secrets' && req.method === 'PUT') {
+          if (!editable) return send(400, { error: 'No persistent store configured (settingsDir)' });
+          const d = await body();
+          try {
+            const summary = discordConfig.writeSecretsFile(this.settings.settingsDir, {
+              token: d.token,
+              appSecret: d.appSecret != null ? d.appSecret : d.clientSecret,
+              webhook: d.webhook
+            });
+            this._applyDiscordConfig();
+            await this._startDiscordBot();
+            return send(200, {
+              success: true,
+              secrets: summary,
+              runtime: { discord: this._discordRuntime() }
+            });
+          } catch (e) {
+            return send(400, { error: e.message });
+          }
+        }
+        if (pathname === '/settings/primaryGroup/from-message' && req.method === 'POST') {
+          if (!editable) return send(400, { error: 'No persistent store configured (settingsDir)' });
+          const d = await body();
+          try {
+            const result = this.resolveAndSetDefaultGroup(d.value != null ? d.value : d.paste, {
+              apply: d.apply !== false
+            });
+            if (!result.ok) return send(400, { error: result.error || 'resolve failed', data: result });
+            return send(200, {
+              success: true,
+              data: result,
+              settings: this.registerStore ? settingsStore.loadSettings(this.registerStore) : {},
+              runtime: {
+                primaryGroupId: this._primaryGroupId || null,
+                primaryGroupColor: this._primaryGroupColor(),
+                defaultGroupMessageId: this._defaultGroupMessageId || null
+              }
+            });
           } catch (e) { return send(400, { error: e.message }); }
         }
         if (pathname === `${base}/peers` || pathname === '/peers') {
-          if (req.method === 'GET') return send(200, { type: 'Collection', data: this.peers });
+          if (req.method === 'GET') return send(200, { type: 'Collection', data: this._peersWithStatus() });
           if (req.method === 'POST') {
             const d = await body();
-            const address = FabricNetwork.normalizeFabricAddress(d.address || d.url, { migrate: false });
-            if (!address) return send(400, { error: 'peer address must be host:port (Fabric), e.g. relay.goon.vc:7777' });
+            const raw = d.address || d.url || d.peering || '';
+            const parsed = peerPeeringString.parsePeerDialInput(raw) ||
+              (() => {
+                const address = FabricNetwork.normalizeFabricAddress(raw, { migrate: false });
+                return address ? { address, pubkey: null } : null;
+              })();
+            if (!parsed || !parsed.address) {
+              return send(400, {
+                error: 'peer address must be host:port or pubkey@host:port (Fabric), e.g. relay.goon.vc:7777'
+              });
+            }
+            const address = parsed.address;
+            // Loopback to *another* port is valid (local Hub faucet on :7777 while
+            // desktop listens on :7778). Same-port loopback is caught as self below.
+            if (FabricNetwork.isSelfFabricAddress(address, this._selfFabricDialOpts())) {
+              return send(400, { error: 'refusing to dial this node (self) — set fabricAdvertiseHost / FABRIC_PUBLIC_HOST if this keeps happening' });
+            }
             if (this.peers.some((p) => p.address === address)) return send(400, { error: 'peer already exists' });
-            const peer = { id: idFor(address), address, label: d.label || null, enabled: d.enabled !== false };
+            const peer = {
+              id: idFor(address),
+              address,
+              label: d.label || null,
+              enabled: d.enabled !== false,
+              shareLogs: d.shareLogs === true,
+              expectedPubkey: parsed.pubkey || (d.pubkey ? String(d.pubkey).trim().toLowerCase() : null)
+            };
             this.peers.push(peer);
             this._persistPeers();
             this._refreshFabric().catch((e) => this.emit('error', e));
             this.emit('peer:added', peer);
-            return send(200, { type: 'Peer', data: peer });
+            return send(200, { type: 'Peer', data: this._peersWithStatus().find((p) => p.id === peer.id) || peer });
+          }
+        }
+        if (pathname === `${base}/peers/announce` || pathname === '/peers/announce') {
+          if (req.method === 'POST') {
+            if (!this._identity) {
+              return send(400, { error: 'Unlock your identity to announce peering' });
+            }
+            if (!this._fabricAdvertiseHost) {
+              return send(400, { error: 'Set fabricAdvertiseHost before announcing (Settings or Network → Peers)' });
+            }
+            try {
+              await this._ensureFabric();
+              if (!this.fabricNetwork || !this.fabricNetwork.ready) {
+                return send(400, { error: 'Fabric peer is not ready' });
+              }
+              const msg = this.fabricNetwork.publishPeeringOffer({ force: true });
+              if (!msg) {
+                return send(400, {
+                  error: 'Could not announce — need at least one live Fabric connection and an open peer slot'
+                });
+              }
+              const listenPort = Number(this.settings.fabric && this.settings.fabric.port) || 7777;
+              const selfPeering = peerPeeringString.peeringInfoForGoonCitizen({
+                pubkey: this._identity.pubkey,
+                advertiseHost: this._fabricAdvertiseHost,
+                listenPort
+              });
+              return send(200, {
+                type: 'PeeringAnnounce',
+                data: {
+                  ok: true,
+                  peering: selfPeering.string || null,
+                  broadcastPeering: this._broadcastPeering === true
+                }
+              });
+            } catch (e) {
+              return send(400, { error: e.message || String(e) });
+            }
+          }
+        }
+        if (pathname === `${base}/peers/restore-seeds` || pathname === '/peers/restore-seeds') {
+          if (req.method === 'POST') {
+            const result = this._healPeerRoster({ persist: true, forceHubs: true });
+            this._refreshFabric().catch((e) => this.emit('error', e));
+            return send(200, {
+              type: 'PeerRosterHeal',
+              data: {
+                removed: result.removed,
+                added: result.added,
+                peers: this._peersWithStatus()
+              }
+            });
+          }
+        }
+        if (pathname === `${base}/profile` || pathname === '/profile') {
+          if (req.method === 'GET') {
+            return send(200, { type: 'PeerProfile', data: this._localProfile() });
+          }
+        }
+        let profileMatch;
+        if ((profileMatch = pathname.match(new RegExp(`^(?:${base})?/profiles/([^/]+)$`))) && req.method === 'GET') {
+          const detail = this._profileDetailByPubkey(decodeURIComponent(profileMatch[1]));
+          if (!detail) return send(404, { error: 'Profile not found (invalid pubkey)' });
+          return send(200, { type: 'PeerProfileDetail', data: detail });
+        }
+        if (pathname === `${base}/presence` || pathname === '/presence') {
+          if (req.method === 'GET') {
+            return send(200, { type: presence.PRESENCE_TYPE, data: this.getPresenceStatus() });
+          }
+          if (req.method === 'PUT') {
+            const d = await body();
+            try {
+              const result = this.setPresenceSettings(d || {});
+              return send(200, { type: presence.PRESENCE_TYPE, data: result });
+            } catch (e) {
+              return send(400, { error: e.message, code: e.code || null });
+            }
+          }
+        }
+        if (pathname === `${base}/presence/ship` || pathname === '/presence/ship') {
+          if (req.method === 'PUT') {
+            const d = await body();
+            try {
+              let slug = null;
+              if (d && d.autodetect === true) slug = null;
+              else if (d && (d.clear === true || presence.isShipClearedSlug(d.slug))) {
+                slug = presence.SHIP_NONE_SLUG;
+              } else if (d && d.slug !== undefined) slug = d.slug;
+              const result = this.setShipOverride(slug);
+              return send(200, { type: presence.PRESENCE_TYPE, data: result });
+            } catch (e) {
+              return send(400, { error: e.message, code: e.code || null });
+            }
+          }
+        }
+        if (pathname === `${base}/presence/roster` || pathname === '/presence/roster') {
+          if (req.method === 'GET') {
+            return send(200, {
+              type: 'PeerPresenceRoster',
+              data: this.getPresenceRoster()
+            });
+          }
+        }
+        // Fabric AMP Message log (wire Messages only — not Game.log). Advanced UI.
+        if (pathname === `${base}/fabric/messages` || pathname === '/fabric/messages') {
+          if (req.method === 'GET') {
+            const q = url.searchParams;
+            const hideKeepalive = q.get('keepalive') !== '1' && q.get('hideKeepalive') !== '0';
+            const messages = this._fabricMessageLog.list({
+              limit: Number(q.get('limit')) || 200,
+              direction: q.get('dir') || q.get('direction') || null,
+              type: q.get('type') || null,
+              q: q.get('q') || q.get('filter') || null,
+              contract: q.get('contract') || q.get('contractId') || null,
+              hideKeepalive
+            });
+            return send(200, {
+              type: 'FabricMessageLog',
+              data: messages,
+              meta: this._fabricMessageLog.status()
+            });
+          }
+          if (req.method === 'DELETE') {
+            return send(200, { type: 'FabricMessageLog', data: this._fabricMessageLog.clear() });
+          }
+        }
+        if (pathname === `${base}/fabric/messages/clear` || pathname === '/fabric/messages/clear') {
+          if (req.method === 'POST' || req.method === 'DELETE') {
+            return send(200, { type: 'FabricMessageLog', data: this._fabricMessageLog.clear() });
+          }
+        }
+        if (pathname === `${base}/fabric/messages/pause` || pathname === '/fabric/messages/pause') {
+          if (req.method === 'POST') {
+            this._fabricMessageLog.pause();
+            return send(200, { type: 'FabricMessageLog', meta: this._fabricMessageLog.status() });
+          }
+        }
+        if (pathname === `${base}/fabric/messages/resume` || pathname === '/fabric/messages/resume') {
+          if (req.method === 'POST') {
+            this._fabricMessageLog.resume();
+            return send(200, { type: 'FabricMessageLog', meta: this._fabricMessageLog.status() });
+          }
+        }
+        if ((pathname === `${base}/fabric/messages/decode` || pathname === '/fabric/messages/decode') &&
+            req.method === 'POST') {
+          const d = await body();
+          try {
+            const data = this.decodeOpaqueFabricMessage(
+              d.protocolUrl || d.messageHex || d.messageBase64 || d.hex || d.base64 || d.message || ''
+            );
+            return send(200, { type: 'FabricMessageDecode', data });
+          } catch (e) {
+            return send(400, { error: e.message || String(e) });
+          }
+        }
+        // Discord coordination sequence tree (Request → Claim → Response).
+        if ((pathname === `${base}/fabric/messages/tree` || pathname === '/fabric/messages/tree') &&
+            req.method === 'GET') {
+          const requestId = String(url.searchParams.get('requestId') || url.searchParams.get('id') || '').trim();
+          if (!requestId) return send(400, { error: 'requestId required' });
+          return send(200, {
+            type: 'DiscordSequenceTree',
+            data: this.discordSequenceTree(requestId)
+          });
+        }
+        let discordTreeMatch;
+        if ((discordTreeMatch = pathname.match(new RegExp(`^(?:${base})?/discord/coordination/([^/]+)$`))) &&
+            req.method === 'GET') {
+          const requestId = decodeURIComponent(discordTreeMatch[1]);
+          return send(200, {
+            type: 'DiscordSequenceTree',
+            data: this.discordSequenceTree(requestId)
+          });
+        }
+        if ((pathname === `${base}/discord/coordination` || pathname === '/discord/coordination') &&
+            req.method === 'GET') {
+          return send(200, {
+            type: 'Collection',
+            data: this._discordCoord.listRecent(Number(url.searchParams.get('limit')) || 100)
+          });
+        }
+        if (pathname === `${base}/network/observe` || pathname === '/network/observe') {
+          if (req.method === 'GET') {
+            const force = url.searchParams.get('refresh') === '1';
+            const snap = await this._refreshHubObserve({ force });
+            return send(200, { type: 'NetworkObserve', data: snap });
           }
         }
         let pMatch;
         if ((pMatch = pathname.match(new RegExp(`^(?:${base})?/peers/([^/]+)$`)))) {
           const peer = this.peers.find((p) => p.id === pMatch[1]);
           if (!peer) return send(404, { error: 'Peer not found' });
+          if (req.method === 'GET') {
+            return send(200, { type: 'PeerDetail', data: this._peerDetail(peer.id) });
+          }
           if (req.method === 'DELETE') {
             this.peers = this.peers.filter((p) => p.id !== peer.id);
             this._persistPeers();
@@ -986,9 +3885,10 @@ class StarCitizenService extends EventEmitter {
             const d = await body();
             if (d.enabled !== undefined) peer.enabled = !!d.enabled;
             if (d.label !== undefined) peer.label = d.label || null;
+            if (d.shareLogs !== undefined) peer.shareLogs = !!d.shareLogs;
             this._persistPeers();
             this._refreshFabric().catch((e) => this.emit('error', e));
-            return send(200, { type: 'Peer', data: peer });
+            return send(200, { type: 'Peer', data: this._peersWithStatus().find((p) => p.id === peer.id) || peer });
           }
         }
 
@@ -1022,6 +3922,114 @@ class StarCitizenService extends EventEmitter {
           return send(200, { type: 'Reparse', data: this._reparse });
         }
 
+        // ---- Ship catalog + personal fleets (Starjump / custom) ----
+        if (pathname === `${base}/ships` || pathname === '/ships') {
+          if (req.method === 'GET') {
+            const q = url.searchParams.get('q') || url.searchParams.get('query') || '';
+            const limit = Number(url.searchParams.get('limit')) || 40;
+            const ships = q
+              ? shipCatalog.searchShips(q, { limit })
+              : shipCatalog.listShips().slice(0, Math.min(200, Math.max(1, limit)));
+            return send(200, {
+              type: 'ShipCatalog',
+              data: ships,
+              meta: shipCatalog.catalogStatus()
+            });
+          }
+        }
+        if (pathname === `${base}/fleets` || pathname === '/fleets') {
+          if (req.method === 'GET') {
+            const scope = url.searchParams.get('scope') || 'all';
+            return send(200, { type: 'Collection', data: this.listFleets({ scope }) });
+          }
+          if (req.method === 'POST') {
+            const d = await body();
+            try {
+              const isCustom = d.custom === true ||
+                (Array.isArray(d.ships) && d.json == null && !d.path && !d.sample);
+              const fleet = isCustom ? this.createFleet(d) : this.importFleet(d);
+              return send(200, { type: 'Fleet', data: starjumpFleet.summarizeFleet(fleet) });
+            } catch (e) {
+              return send(e.code === 'NOT_FOUND' ? 404 : 400, { error: e.message, code: e.code || null });
+            }
+          }
+        }
+        if (pathname === `${base}/fleets/samples` || pathname === '/fleets/samples') {
+          if (req.method === 'GET') {
+            return send(200, { type: 'Collection', data: this.listFleetSamples() });
+          }
+        }
+        let fleetMatch;
+        if ((fleetMatch = pathname.match(new RegExp(`^(?:${base})?/fleets/([^/]+)/ships$`)))) {
+          const fleetId = decodeURIComponent(fleetMatch[1]);
+          if (req.method === 'POST') {
+            const d = await body();
+            try {
+              const fleet = this.updateFleetShips(fleetId, d || {});
+              return send(200, { type: 'Fleet', data: starjumpFleet.summarizeFleet(fleet) });
+            } catch (e) {
+              const code = e.code === 'NOT_FOUND' ? 404 : (e.code === 'FORBIDDEN' ? 403 : 400);
+              return send(code, { error: e.message, code: e.code || null });
+            }
+          }
+          if (req.method === 'PUT') {
+            const d = await body();
+            try {
+              const fleet = this.updateFleet(fleetId, { ships: (d && d.ships) || d });
+              return send(200, { type: 'Fleet', data: starjumpFleet.summarizeFleet(fleet) });
+            } catch (e) {
+              const code = e.code === 'NOT_FOUND' ? 404 : (e.code === 'FORBIDDEN' ? 403 : 400);
+              return send(code, { error: e.message, code: e.code || null });
+            }
+          }
+        }
+        if ((fleetMatch = pathname.match(new RegExp(`^(?:${base})?/fleets/([^/]+)/ships/([^/]+)$`))) &&
+          req.method === 'DELETE') {
+          try {
+            const fleet = this.updateFleetShips(decodeURIComponent(fleetMatch[1]), {
+              slug: decodeURIComponent(fleetMatch[2]),
+              remove: true
+            });
+            return send(200, { type: 'Fleet', data: starjumpFleet.summarizeFleet(fleet) });
+          } catch (e) {
+            const code = e.code === 'NOT_FOUND' ? 404 : (e.code === 'FORBIDDEN' ? 403 : 400);
+            return send(code, { error: e.message, code: e.code || null });
+          }
+        }
+        if ((fleetMatch = pathname.match(new RegExp(`^(?:${base})?/fleets/([^/]+)$`)))) {
+          const fleetId = decodeURIComponent(fleetMatch[1]);
+          if (req.method === 'GET') {
+            const full = url.searchParams.get('export') === '1';
+            const fleet = this.getFleet(fleetId, { includeExport: full });
+            if (!fleet) return send(404, { error: 'Fleet not found' });
+            return send(200, { type: 'Fleet', data: fleet });
+          }
+          if (req.method === 'PATCH' || req.method === 'PUT') {
+            const d = await body();
+            try {
+              const fleet = this.updateFleet(fleetId, d);
+              return send(200, { type: 'Fleet', data: starjumpFleet.summarizeFleet(fleet) });
+            } catch (e) {
+              return send(e.code === 'NOT_FOUND' ? 404 : 400, { error: e.message, code: e.code || null });
+            }
+          }
+          if (req.method === 'DELETE') {
+            const ok = this.deleteFleet(fleetId);
+            if (!ok) return send(404, { error: 'Fleet not found' });
+            return send(200, { success: true });
+          }
+        }
+        if ((fleetMatch = pathname.match(new RegExp(`^(?:${base})?/fleets/([^/]+)/share$`))) && req.method === 'POST') {
+          const d = await body();
+          try {
+            const result = await this.shareFleet(decodeURIComponent(fleetMatch[1]), d || {});
+            return send(200, { type: 'FleetShare', data: result });
+          } catch (e) {
+            const code = e.code === 'NOT_FOUND' ? 404 : (e.code === 'FORBIDDEN' ? 403 : 400);
+            return send(code, { error: e.message, code: e.code || null });
+          }
+        }
+
         // ---- Snapshot library (periodic screen captures; LOCAL relay only) ----
         const sm = this.snapshotManager;
         if (sm && pathname === `${base}/snapshots`) {
@@ -1051,11 +4059,12 @@ class StarCitizenService extends EventEmitter {
         return send(200, { type: 'Session', data: result });
       }
 
-      // ---- Groups (k-of-n Schnorr multisig units) ----
+      // ---- Groups (k-of-n Schnorr multisig units / Federation contracts) ----
       const Group = require('../types/Group');
       const gm = this.groupManager;
       const viewer = this._authPubkey(req);
       const serverMode = this.settings.mode === 'server';
+      let gmatch = null;
       // In hosted mode every mutation requires an authenticated session.
       const requireAuth = () => {
         if (serverMode && !viewer) { send(401, { error: 'Authentication required (POST …/auth with a signed login envelope)' }); return false; }
@@ -1075,7 +4084,13 @@ class StarCitizenService extends EventEmitter {
           }
           const since = url.searchParams.get('since') || null;
           const limit = parseInt(url.searchParams.get('limit'), 10) || 200;
-          return send(200, { type: 'Collection', data: cm.list(channel, { since, limit }) });
+          const chatDelivery = require('../functions/chatDelivery');
+          const rows = chatDelivery.enrichChatMessages(
+            this.registerStore,
+            cm.list(channel, { since, limit }),
+            viewer || (this._identity && this._identity.pubkey) || null
+          );
+          return send(200, { type: 'Collection', data: rows });
         }
         if (req.method === 'POST') {
           const d = await body();
@@ -1083,28 +4098,81 @@ class StarCitizenService extends EventEmitter {
             let record;
             if (serverMode) {
               // Hosted: a Schnorr-signed envelope is the message of record —
-              // { pubkey, payload: { channel, body, ts, handle? }, signature }.
+              // {Object}.
               const check = this._checkEnvelope(d);
               if (!check.ok) return send(check.code, { error: check.error });
               const p = d.payload || {};
               if (!cm.canAccess(p.channel || 'global', d.pubkey, { enforceMembership: true })) {
                 return send(403, { error: 'forbidden: not a member of this channel' });
               }
-              record = cm.post({ channel: p.channel, body: p.body, ts: p.ts, handle: p.handle, author: d.pubkey });
+              record = cm.post({
+                channel: p.channel,
+                body: p.body,
+                ts: p.ts,
+                handle: p.handle,
+                author: d.pubkey,
+                attachment: p.attachment || null
+              });
             } else {
               // Local relay: author is the unlocked identity (or session pubkey).
               const author = viewer || (this._identity && this._identity.pubkey) || d.author || null;
               if (!author) return send(401, { error: 'Unlock your identity to chat' });
+              let attachment = d.attachment || null;
+              // Optional inline Hub create+publish (chat attach): contentBase64 → inventory.
+              if (!attachment && d.file && d.file.contentBase64) {
+                if (!hubDocumentExchangeProxy.isDocumentsEnabled(this.settings)) {
+                  return send(503, {
+                    error: 'File attach requires settings.documents.enable (Document Exchange / inventory)'
+                  });
+                }
+                const chatAttachment = require('../functions/chatAttachment');
+                const price = d.purchasePriceSats != null
+                  ? Math.max(0, Math.floor(Number(d.purchasePriceSats)))
+                  : chatAttachment.defaultAttachPriceSats(this.settings);
+                const docsCfg = Object.assign({}, this.settings.documents || {});
+                const btcHub = (this.settings.bitcoin && this.settings.bitcoin.hub) || null;
+                const docs = {
+                  hub: hubDocumentExchangeProxy.normalizeHubBase(docsCfg.hub || btcHub)
+                };
+                const created = await hubDocumentExchangeProxy.createDocument(docs, {
+                  name: d.file.name || 'attachment',
+                  mime: d.file.mime || 'application/octet-stream',
+                  contentBase64: d.file.contentBase64,
+                  size: d.file.size
+                });
+                const docMeta = (created && created.document) || created || {};
+                const documentId = docMeta.id || docMeta.sha256;
+                if (!documentId) {
+                  return send(502, { error: 'Hub CreateDocument returned no document id' });
+                }
+                await hubDocumentExchangeProxy.publishDocument(docs, {
+                  id: documentId,
+                  purchasePriceSats: price
+                });
+                attachment = {
+                  kind: chatAttachment.ATTACHMENT_KIND,
+                  documentId,
+                  name: docMeta.name || d.file.name || 'attachment',
+                  mime: docMeta.mime || d.file.mime || 'application/octet-stream',
+                  purchasePriceSats: price,
+                  sealed: price > 0,
+                  hub: docs.hub,
+                  size: docMeta.size != null ? docMeta.size : d.file.size
+                };
+              }
               record = cm.post({
                 channel: d.channel,
                 body: d.body,
                 // Prefer an explicit handle, then the operator nickname, then
                 // the in-game session login — pubkey remains the author id.
                 handle: d.handle || this._nickname || this._sessionHandle || null,
-                author
+                author,
+                attachment
               });
               // Publish over Fabric (P2P_CHAT_MESSAGE); Peer auto-relays.
-              if (this._identity && this._identity.pubkey === record.author) {
+              // ChatManager stores x-only authors; identity.pubkey is often compressed.
+              const { pubkeysMatch } = identityLib();
+              if (this._identity && pubkeysMatch(this._identity.pubkey, record.author)) {
                 this._publishChat(record).catch((e) => this.emit('error', e));
               }
             }
@@ -1112,6 +4180,55 @@ class StarCitizenService extends EventEmitter {
           } catch (e) {
             return send(/forbidden/i.test(e.message) ? 403 : 400, { error: e.message });
           }
+        }
+      }
+      const receiptMatch = pathname.match(new RegExp(`^${base.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}/chat/messages/([^/]+)/receipt$`));
+      if (cm && receiptMatch && req.method === 'POST') {
+        if (serverMode && !viewer) {
+          return send(401, { error: 'Authentication required' });
+        }
+        try {
+          const data = this._markChatMessageReceipt(decodeURIComponent(receiptMatch[1]));
+          return send(200, { type: 'ChatMessageReceipt', data });
+        } catch (e) {
+          const code = e.code === 'UNAUTHORIZED' ? 401
+            : (e.code === 'NOT_FOUND' ? 404
+              : (e.code === 'UNAVAILABLE' ? 503 : 400));
+          return send(code, { error: e.message || String(e) });
+        }
+      }
+      // Unified delivery sync (wireHash-first; Chat route above is an alias).
+      const deliveryGet = pathname.match(new RegExp(`^${base.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}/delivery/([^/]+)$`));
+      if (deliveryGet && req.method === 'GET') {
+        const chatDelivery = require('../functions/chatDelivery');
+        const hash = decodeURIComponent(deliveryGet[1]).toLowerCase();
+        const record = this.registerStore && this.registerStore.get('contractmessagecommits', hash);
+        const me = viewer || (this._identity && this._identity.pubkey) || null;
+        return send(200, {
+          type: 'DeliverySync',
+          data: {
+            wireHash: hash,
+            delivery: chatDelivery.deliverySummary(record, me)
+          }
+        });
+      }
+      const deliveryReceipt = pathname.match(new RegExp(`^${base.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}/delivery/([^/]+)/receipt$`));
+      if (deliveryReceipt && req.method === 'POST') {
+        if (serverMode && !viewer) {
+          return send(401, { error: 'Authentication required' });
+        }
+        try {
+          const d = await body();
+          const data = this._markDeliveryReceipt(decodeURIComponent(deliveryReceipt[1]), {
+            contractId: d.contractId || null,
+            chatMessageId: d.chatMessageId || null
+          });
+          return send(200, { type: 'DeliveryReceipt', data });
+        } catch (e) {
+          const code = e.code === 'UNAUTHORIZED' ? 401
+            : (e.code === 'NOT_FOUND' ? 404
+              : (e.code === 'UNAVAILABLE' ? 503 : 400));
+          return send(code, { error: e.message || String(e) });
         }
       }
       if (pathname === `${base}/groups`) {
@@ -1134,11 +4251,76 @@ class StarCitizenService extends EventEmitter {
           if (!requireAuth()) return;
           const d = await body();
           const creator = viewer || d.creator; // local relay may specify creator explicitly
-          try { return send(200, { type: 'Group', data: await gm.createGroup(d, creator) }); }
-          catch (e) { return send(e.code === 'FORBIDDEN' ? 403 : 400, { error: e.message }); }
+          try {
+            const group = await gm.createGroup(d, creator);
+            // group:created listener publishes CONTRACT_PUBLISH when Fabric is up.
+            this._publishGroupContractFor(group).catch((e) => this.emit('error', e));
+            return send(200, { type: 'Group', data: group });
+          } catch (e) { return send(e.code === 'FORBIDDEN' ? 403 : 400, { error: e.message }); }
         }
       }
-      let gmatch;
+      // Opaque Fabric GroupOffer / invite share (copy-paste fabric:<hex>).
+      if ((gmatch = pathname.match(new RegExp(`^${base}/groups/([^/]+)/share$`))) && (req.method === 'GET' || req.method === 'POST')) {
+        if (!gm) return send(503, { error: 'Group system not available' });
+        if (!requireAuth()) return;
+        const group = gm.findGroup(gmatch[1]);
+        if (!group) return send(404, { error: 'Group not found' });
+        const actor = viewer || (this._identity && this._identity.pubkey);
+        if (!actor || !group.includes(actor)) return send(403, { error: 'forbidden: members only' });
+        const d = req.method === 'POST' ? await body() : {};
+        try {
+          const data = await this.createGroupShare(group.id, actor, { note: d.note, relay: d.relay !== false });
+          return send(200, { type: 'GroupShare', data });
+        } catch (e) {
+          return send(e.code === 'FORBIDDEN' ? 403 : 400, { error: e.message });
+        }
+      }
+      if (pathname === `${base}/groups/share/ingest` && req.method === 'POST') {
+        if (!gm) return send(503, { error: 'Group system not available' });
+        if (!requireAuth()) return;
+        const d = await body();
+        try {
+          const data = await this.ingestOpaqueGroupShare(
+            d.protocolUrl || d.messageHex || d.messageBase64 || d.hex || d.base64 || d.message || ''
+          );
+          return send(200, { type: 'GroupShareIngest', data });
+        } catch (e) {
+          return send(e.code === 'FORBIDDEN' ? 403 : 400, { error: e.message });
+        }
+      }
+      // FederationContractInvite — Hub-shaped join / co-signer invite under a group contract.
+      if ((gmatch = pathname.match(new RegExp(`^${base}/groups/([^/]+)/invites$`))) && req.method === 'POST') {
+        if (!gm) return send(503, { error: 'Group system not available' });
+        if (!requireAuth()) return;
+        const group = gm.findGroup(gmatch[1]);
+        if (!group) return send(404, { error: 'Group not found' });
+        const actor = viewer || (this._identity && this._identity.pubkey);
+        if (!actor || !group.includes(actor)) return send(403, { error: 'forbidden: members only' });
+        const d = await body();
+        try {
+          const data = await this.inviteToGroupFederation(group.id, actor, {
+            note: d.note,
+            inviteId: d.inviteId,
+            inviteePubkey: d.inviteePubkey || d.invitee || d.pubkey || null,
+            role: d.role || 'signer'
+          });
+          return send(200, { type: 'FederationContractInvite', data });
+        } catch (e) {
+          return send(e.code === 'FORBIDDEN' ? 403 : 400, { error: e.message });
+        }
+      }
+      if ((gmatch = pathname.match(new RegExp(`^${base}/groups/([^/]+)/invites/([^/]+)/(accept|reject)$`))) && req.method === 'POST') {
+        if (!gm) return send(503, { error: 'Group system not available' });
+        if (!requireAuth()) return;
+        const actor = viewer || (this._identity && this._identity.pubkey);
+        if (!actor) return send(401, { error: 'Authentication required' });
+        try {
+          const data = await this.respondToGroupFederationInvite(gmatch[1], gmatch[2], actor, gmatch[3] === 'accept');
+          return send(200, { type: 'FederationContractInviteResponse', data });
+        } catch (e) {
+          return send(e.code === 'FORBIDDEN' ? 403 : /not found/i.test(e.message) ? 404 : 400, { error: e.message });
+        }
+      }
       if ((gmatch = pathname.match(new RegExp(`^${base}/groups/([^/]+)$`)))) {
         if (!gm) return send(503, { error: 'Group system not available' });
         const group = gm.findGroup(gmatch[1]);
@@ -1156,6 +4338,85 @@ class StarCitizenService extends EventEmitter {
           catch (e) { return send(e.code === 'FORBIDDEN' ? 403 : /not found/i.test(e.message) ? 404 : 400, { error: e.message }); }
         }
       }
+      if ((gmatch = pathname.match(new RegExp(`^${base}/groups/([^/]+)/fleets$`))) && req.method === 'GET') {
+        if (!gm) return send(503, { error: 'Group system not available' });
+        const group = gm.findGroup(gmatch[1]);
+        if (!group) return send(404, { error: 'Group not found' });
+        const view = gm.viewFor(group, viewer);
+        if (!view) return send(403, { error: 'forbidden: this group is private' });
+        const me = viewer || (this._identity && this._identity.pubkey) || null;
+        const isMember = !!(me && Array.isArray(group.members) && group.members.includes(me));
+        if (!isMember && group.visibility !== 'public') {
+          return send(403, { error: 'forbidden: members only' });
+        }
+        try {
+          const fleets = this.listGroupFleets(group.id);
+          return send(200, { type: 'GroupFleets', data: fleets });
+        } catch (e) {
+          return send(400, { error: e.message });
+        }
+      }
+      if ((gmatch = pathname.match(new RegExp(`^${base}/groups/([^/]+)/statechain$`))) && req.method === 'GET') {
+        if (!gm) return send(503, { error: 'Group system not available' });
+        const group = gm.findGroup(gmatch[1]);
+        if (!group) return send(404, { error: 'Group not found' });
+        const view = gm.viewFor(group, viewer);
+        if (!view) return send(403, { error: 'forbidden: this group is private' });
+        const me = viewer || (this._identity && this._identity.pubkey) || null;
+        const isMember = !!(me && Array.isArray(group.members) && group.members.includes(me));
+        if (!isMember && group.visibility !== 'public') {
+          return send(403, { error: 'forbidden: members only' });
+        }
+        if (!group.contractId) {
+          return send(200, {
+            type: 'GroupStatechain',
+            data: {
+              groupId: group.id,
+              contractId: null,
+              clock: 0,
+              stateDigest: null,
+              content: null,
+              journal: { entries: [] },
+              activityTree: null,
+              fleets: {}
+            }
+          });
+        }
+        try {
+          const groupStatechain = require('../functions/groupStatechain');
+          const doc = groupStatechain.loadDoc(this.registerStore, group.contractId);
+          const digest = groupStatechain.stateDigestOfContent(doc.content || {});
+          const journalLimit = Math.min(500, Math.max(1, parseInt(url.searchParams.get('limit'), 10) || 100));
+          const entries = (doc.journal.entries || []).slice(-journalLimit).reverse();
+          const fleets = (doc.content && doc.content.fleets) || {};
+          return send(200, {
+            type: 'GroupStatechain',
+            data: {
+              groupId: group.id,
+              contractId: group.contractId,
+              clock: doc.clock,
+              version: doc.version,
+              stateDigest: digest,
+              content: isMember ? doc.content : {
+                groupId: doc.content && doc.content.groupId,
+                members: doc.content && doc.content.members,
+                activityTree: doc.content && doc.content.activityTree,
+                fleets
+              },
+              journal: { entries: isMember ? entries : entries.map((e) => ({
+                id: e.id,
+                type: e.type,
+                clock: e.clock,
+                acceptedAt: e.acceptedAt
+              })) },
+              activityTree: (doc.content && doc.content.activityTree) || null,
+              fleets
+            }
+          });
+        } catch (e) {
+          return send(400, { error: e.message });
+        }
+      }
       if ((gmatch = pathname.match(new RegExp(`^${base}/groups/([^/]+)/members$`))) && req.method === 'POST') {
         if (!gm) return send(503, { error: 'Group system not available' });
         if (!requireAuth()) return;
@@ -1164,10 +4425,76 @@ class StarCitizenService extends EventEmitter {
         const group = gm.findGroup(gmatch[1]);
         if (!group) return send(404, { error: 'Group not found' });
         try {
-          const data = d.remove
-            ? await gm.removeMember(group.id, d.pubkey, actor)
-            : await gm.addMember(group.id, d.pubkey, actor);
-          return send(200, { type: 'Group', data });
+          const result = d.remove
+            ? gm.proposeChange({
+              groupId: group.id,
+              action: 'member.remove',
+              actor,
+              member: d.pubkey
+            })
+            : gm.proposeChange({
+              groupId: group.id,
+              action: 'member.add',
+              actor,
+              member: d.pubkey,
+              role: d.role
+            });
+          return send(result.adopted || !result.proposal ? 200 : 202, {
+            type: result.adopted ? 'Group' : 'GroupChangeProposal',
+            data: result.adopted ? result.group : result.proposal,
+            group: result.group,
+            adopted: !!result.adopted
+          });
+        } catch (e) {
+          return send(e.code === 'FORBIDDEN' ? 403 : /not found/i.test(e.message) ? 404 : 400, { error: e.message });
+        }
+      }
+      if ((gmatch = pathname.match(new RegExp(`^${base}/groups/([^/]+)/proposals$`)))) {
+        if (!gm) return send(503, { error: 'Group system not available' });
+        const group = gm.findGroup(gmatch[1]);
+        if (!group) return send(404, { error: 'Group not found' });
+        if (!viewer || !gm.isMember(group.id, viewer)) {
+          return send(403, { error: 'forbidden: members only' });
+        }
+        if (req.method === 'GET') {
+          const includeAdopted = /^(1|true|yes)$/i.test(String(url.searchParams.get('includeAdopted') || ''));
+          return send(200, {
+            type: 'Collection',
+            data: gm.listProposals(group.id, { includeAdopted })
+          });
+        }
+      }
+      if ((gmatch = pathname.match(new RegExp(`^${base}/groups/([^/]+)/proposals/([^/]+)/votes$`))) &&
+          req.method === 'POST') {
+        if (!gm) return send(503, { error: 'Group system not available' });
+        if (!requireAuth()) return;
+        const group = gm.findGroup(gmatch[1]);
+        if (!group) return send(404, { error: 'Group not found' });
+        const proposal = gm.getProposal(gmatch[2]);
+        if (!proposal || proposal.groupId !== group.id) return send(404, { error: 'proposal not found' });
+        const d = await body();
+        const actor = viewer || d.actor;
+        try {
+          let signature = d.signature || null;
+          if (!signature && this._identity && this._identity.pubkey) {
+            const { pubkeysMatch } = require('../functions/identity');
+            if (pubkeysMatch(this._identity.pubkey, actor)) {
+              const gcp = require('../functions/groupChangeProposal');
+              signature = gcp.signProposalVote(this._identity, proposal).signature;
+            }
+          }
+          if (!signature) return send(400, { error: 'signature required (or unlock identity)' });
+          const result = gm.castVote(proposal.id, actor, signature, {
+            requireVerify: true,
+            local: true
+          });
+          return send(result.adopted ? 200 : 202, {
+            type: result.adopted ? 'Group' : 'GroupChangeProposal',
+            data: result.adopted ? result.group : result.proposal,
+            group: result.group,
+            proposal: result.proposal,
+            adopted: !!result.adopted
+          });
         } catch (e) {
           return send(e.code === 'FORBIDDEN' ? 403 : /not found/i.test(e.message) ? 404 : 400, { error: e.message });
         }
@@ -1183,7 +4510,10 @@ class StarCitizenService extends EventEmitter {
         if (req.method === 'POST') {
           if (!requireAuth()) return;
           const d = await body();
-          const applicant = viewer || d.applicantId;
+          // Local relay: publishing identity is the default applicant when no Bearer.
+          const applicant = viewer
+            || (this._identity && this._identity.pubkey)
+            || d.applicantId;
           try { return send(200, { type: 'GroupApplication', data: await gm.applyToGroup(group.id, applicant, d.message) }); }
           catch (e) { return send(e.code === 'FORBIDDEN' ? 403 : 400, { error: e.message }); }
         }
@@ -1205,10 +4535,15 @@ class StarCitizenService extends EventEmitter {
         return send(200, { type: 'Collection', data: gm ? gm.audit : [] });
       }
 
-      // Signed batch ingest: remote relays push Schnorr-signed event batches.
-      // Envelope: { pubkey, payload: { events: [{ collection, data }, …] }, signature }.
-      // Idempotent — replayed batches upsert to the same content-derived ids.
+      // Signed batch ingest: legacy HTTP path for Schnorr-signed event batches.
+      // Disabled by default — production peering is Fabric Peer (D-010). Enable
+      // with ingest.httpEnable or SC_HTTP_INGEST=1 for tests / transitional hubs.
       if (req.method === 'POST' && pathname === `${base}/events`) {
+        if (this.settings.ingest.httpEnable !== true) {
+          return send(403, {
+            error: 'HTTP event ingest is disabled; use Fabric Peer SCEventBatch (set ingest.httpEnable or SC_HTTP_INGEST=1 for legacy)'
+          });
+        }
         const envelope = await body();
         const check = this._checkEnvelope(envelope);
         if (!check.ok) return send(check.code, { error: check.error });
@@ -1235,9 +4570,14 @@ class StarCitizenService extends EventEmitter {
           if (req.method === 'GET') return send(200, { type: 'Collection', data: getter() });
           if (req.method === 'POST' && name !== 'messages' && name !== 'logins' && name !== 'notifications' && name !== 'incaps' && name !== 'deaths') {
             const data = await body();
-            // Server mode (goon.vc): unsigned single-event POSTs are rejected —
-            // remote relays must use the signed batch endpoint above.
+            // Server mode: remote collection writes only via enabled HTTP ingest
+            // (signed) or Fabric Peer — never unsigned.
             if (this.settings.ingest.requireSigned) {
+              if (this.settings.ingest.httpEnable !== true) {
+                return send(403, {
+                  error: 'HTTP collection ingest is disabled; use Fabric Peer (set ingest.httpEnable or SC_HTTP_INGEST=1 for legacy)'
+                });
+              }
               const check = this._checkEnvelope(data);
               if (!check.ok) return send(check.code, { error: check.error });
               try {
@@ -1301,11 +4641,31 @@ class StarCitizenService extends EventEmitter {
         try { return send(200, { type, data: await fn() }); }
         catch (e) { return send(e.code === 'FORBIDDEN' ? 403 : /not found/i.test(e.message) ? 404 : 400, { error: e.message }); }
       };
-      // Read-only lists.
-      if (req.method === 'GET' && pathname === `${base}/applications`) return send(200, { type: 'Collection', data: reg ? reg.applications : [] });
-      if (req.method === 'GET' && pathname === `${base}/claims`) return send(200, { type: 'Collection', data: reg ? reg.claims : [] });
-      if (req.method === 'GET' && pathname === `${base}/validations`) return send(200, { type: 'Collection', data: reg ? reg.validations : [] });
-      if (req.method === 'GET' && pathname === `${base}/audit`) return send(200, { type: 'Collection', data: reg ? reg.audit : [] });
+      // Read-only lists (server mode: Bearer session required — PII / register audit).
+      if (req.method === 'GET' && pathname === `${base}/applications`) {
+        if (this.settings.mode === 'server' && !this._authPubkey(req)) {
+          return send(401, { error: 'Authentication required' });
+        }
+        return send(200, { type: 'Collection', data: reg ? reg.applications : [] });
+      }
+      if (req.method === 'GET' && pathname === `${base}/claims`) {
+        if (this.settings.mode === 'server' && !this._authPubkey(req)) {
+          return send(401, { error: 'Authentication required' });
+        }
+        return send(200, { type: 'Collection', data: reg ? reg.claims : [] });
+      }
+      if (req.method === 'GET' && pathname === `${base}/validations`) {
+        if (this.settings.mode === 'server' && !this._authPubkey(req)) {
+          return send(401, { error: 'Authentication required' });
+        }
+        return send(200, { type: 'Collection', data: reg ? reg.validations : [] });
+      }
+      if (req.method === 'GET' && pathname === `${base}/audit`) {
+        if (this.settings.mode === 'server' && !this._authPubkey(req)) {
+          return send(401, { error: 'Authentication required' });
+        }
+        return send(200, { type: 'Collection', data: reg ? reg.audit : [] });
+      }
       // Mission sub-resources and actions.
       let mr;
       if ((mr = pathname.match(new RegExp(`^${base}/missions/([^/]+)/applications$`))) && req.method === 'GET')
@@ -1353,20 +4713,64 @@ class StarCitizenService extends EventEmitter {
           rec.resolvedAt = new Date().toISOString();
           rec.resolvedBy = actor;
           this._putMissionBroadcast(rec);
+          this._syncInboxMissionBroadcast(rec);
           return send(200, { type: 'MissionBroadcast', data: rec });
         }
         if (!actor) return send(401, { error: 'Unlock your identity to accept' });
         try {
-          const app = await reg.applyToMission({ missionId: rec.missionId, applicantId: actor, message: 'via broadcast' });
+          // Accept = apply (pending officer decision), not auto-join/assign.
+          const app = await reg.applyToMission({
+            missionId: rec.missionId,
+            applicantId: actor,
+            message: 'via broadcast'
+          });
           rec.status = 'accepted';
           rec.resolvedAt = new Date().toISOString();
           rec.resolvedBy = actor;
           rec.applicationId = app.id;
           this._putMissionBroadcast(rec);
+          this._syncInboxMissionBroadcast(rec);
           return send(200, { type: 'MissionBroadcast', data: rec, application: app });
         } catch (e) {
           return send(/not found/i.test(e.message) ? 404 : 400, { error: e.message });
         }
+      }
+      if (pathname === `${base}/inbox` && req.method === 'GET') {
+        const pendingOnly = url.searchParams.get('pending') === '1';
+        const kind = url.searchParams.get('kind') || null;
+        const scope = url.searchParams.get('scope') || null;
+        const missionId = url.searchParams.get('missionId') || null;
+        const groupId = url.searchParams.get('groupId') || null;
+        const notificationsOnly = scope === 'notifications' || url.searchParams.get('notifications') === '1';
+        const data = registerInbox.list(this.registerStore, {
+          pendingOnly,
+          kind,
+          missionId,
+          groupId,
+          notificationsOnly,
+          backfill: true
+        }).filter((r) => r.status !== 'self');
+        return send(200, {
+          type: 'Collection',
+          data,
+          pending: registerInbox.pendingCount(this.registerStore)
+        });
+      }
+      if ((mr = pathname.match(new RegExp(`^${base}/inbox/([^/]+)/(dismiss|ignore)$`))) && req.method === 'POST') {
+        const row = this.registerStore && this.registerStore.get('inbox', decodeURIComponent(mr[1]));
+        if (!row) return send(404, { error: 'Inbox item not found' });
+        if (row.kind === 'MissionBroadcast' && row.refs && row.refs.broadcastId) {
+          // Prefer the dedicated broadcast accept/ignore endpoints for missions.
+          return send(400, { error: 'Use /missionbroadcasts/:id/ignore for mission offers' });
+        }
+        const actor = this._actor(req, null) || (this._identity && this._identity.pubkey) || null;
+        const updated = registerInbox.patch(this.registerStore, row.id, {
+          status: 'ignored',
+          actionable: false,
+          resolvedAt: new Date().toISOString(),
+          resolvedBy: actor
+        });
+        return send(200, { type: registerInbox.INBOX_TYPE, data: updated });
       }
       if ((mr = pathname.match(new RegExp(`^${base}/missions/([^/]+)/claim$`))) && req.method === 'POST') {
         if (!requireAuth()) return;
@@ -1398,9 +4802,165 @@ class StarCitizenService extends EventEmitter {
             mode: pm ? pm.mode : 'disabled',
             network: pm ? pm.settings.network : null,
             feeSats: pm ? pm.settings.feeSats : null,
-            escrows
+            escrows,
+            bitcoin: hubBitcoinProxy.bitcoinRuntimeForSettings(this.settings)
           }
         });
+      }
+
+      // ---- Hub-backed personal Bitcoin (proxy; identity xpub watch + Hub-wallet send) ----
+      const btcPath = `${base}/bitcoin`;
+      if (pathname === `${btcPath}/status` || pathname.startsWith(`${btcPath}/`)) {
+        const btcCfg = Object.assign({}, this.settings.bitcoin || {});
+        if (!hubBitcoinProxy.isBitcoinEnabled(this.settings)) {
+          return send(503, { error: 'Bitcoin wallet disabled (settings.bitcoin.enable)' });
+        }
+        const btc = hubBitcoinProxy.withResolvedHubAdminToken({
+          hub: hubBitcoinProxy.normalizeHubBase(btcCfg.hub),
+          network: String(btcCfg.network || 'regtest'),
+          adminToken: btcCfg.adminToken || null,
+          adminTokenFile: btcCfg.adminTokenFile || null
+        });
+        try {
+          if (pathname === `${btcPath}/status` && req.method === 'GET') {
+            const status = await hubBitcoinProxy.fetchStatus(btc);
+            return send(200, { type: 'BitcoinStatus', data: status, hub: btc.hub, network: btc.network });
+          }
+          if (pathname === `${btcPath}/wallet` && req.method === 'GET') {
+            const xpubParam = String(url.searchParams.get('xpub') || '').trim();
+            const ident = this._identity || {};
+            const watchXpub = hubBitcoinProxy.bitcoinWatchXpubFromIdentity(ident) || xpubParam;
+            if (!watchXpub) return send(400, { error: 'xpub query param required (or unlock identity)' });
+            const summary = await hubBitcoinProxy.fetchWalletSummary(btc, { xpub: watchXpub });
+            return send(200, {
+              type: 'BitcoinWallet',
+              data: summary,
+              walletId: hubBitcoinProxy.deriveWalletIdFromXpub(watchXpub),
+              watchXpub
+            });
+          }
+          if (pathname === `${btcPath}/receive` && req.method === 'GET') {
+            const xpubParam = String(url.searchParams.get('xpub') || '').trim();
+            const index = Number(url.searchParams.get('index') || 0);
+            const ident = this._identity || {};
+            const xpub = xpubParam || String(ident.xpub || '').trim();
+            if (!xpub && !ident.xprv) return send(400, { error: 'xpub query param required (or unlock identity)' });
+            const derived = hubBitcoinProxy.deriveReceiveAddress(xpub, index, btc.network, {
+              xprv: ident.xprv || null
+            });
+            if (!derived) return send(400, { error: 'unable to derive receive address from identity' });
+            const watchXpub = derived.accountXpub || hubBitcoinProxy.bitcoinWatchXpubFromIdentity(ident) || xpub;
+            return send(200, {
+              type: 'BitcoinReceive',
+              data: Object.assign({}, derived, {
+                network: btc.network,
+                walletId: hubBitcoinProxy.deriveWalletIdFromXpub(watchXpub)
+              })
+            });
+          }
+          if (pathname === `${btcPath}/transactions` && req.method === 'GET') {
+            const xpubParam = String(url.searchParams.get('xpub') || '').trim();
+            const limit = Number(url.searchParams.get('limit') || 50);
+            const ident = this._identity || {};
+            const watchXpub = hubBitcoinProxy.bitcoinWatchXpubFromIdentity(ident) || xpubParam;
+            if (!watchXpub) return send(400, { error: 'xpub query param required (or unlock identity)' });
+            const txs = await hubBitcoinProxy.fetchTransactions(btc, { xpub: watchXpub, limit });
+            return send(200, { type: 'BitcoinTransactions', data: txs });
+          }
+          if (pathname === `${btcPath}/send` && req.method === 'POST') {
+            const d = await body();
+            const result = await hubBitcoinProxy.sendHubPayment(btc, {
+              to: d.to || d.address,
+              amountSats: d.amountSats,
+              memo: d.memo,
+              xpub: d.xpub,
+              walletId: d.walletId
+            });
+            return send(200, { type: 'BitcoinSend', data: result });
+          }
+          if (pathname === `${btcPath}/faucet` && req.method === 'GET') {
+            const discovered = await hubBitcoinProxy.discoverFaucet(btc);
+            return send(200, { type: 'BitcoinFaucet', data: discovered });
+          }
+          if (pathname === `${btcPath}/faucet` && req.method === 'POST') {
+            const d = await body();
+            const result = await hubBitcoinProxy.requestFaucet(btc, {
+              address: d.address || d.to,
+              amountSats: d.amountSats
+            });
+            return send(200, { type: 'BitcoinFaucetResult', data: result });
+          }
+          return send(404, { error: 'unknown bitcoin route' });
+        } catch (e) {
+          const status = (e && e.status) || 502;
+          return send(status, { error: e.message || String(e), data: e.data || null });
+        }
+      }
+
+      // ---- Hub Document Exchange (list / create / publish / purchase / claim) ----
+      const docsPath = `${base}/documents`;
+      if (pathname === docsPath || pathname.startsWith(`${docsPath}/`)) {
+        const docsCfg = Object.assign({}, this.settings.documents || {});
+        if (!hubDocumentExchangeProxy.isDocumentsEnabled(this.settings)) {
+          return send(503, { error: 'Document Exchange disabled (settings.documents.enable)' });
+        }
+        const btcHub = (this.settings.bitcoin && this.settings.bitcoin.hub) || null;
+        const docs = {
+          hub: hubDocumentExchangeProxy.normalizeHubBase(docsCfg.hub || btcHub)
+        };
+        try {
+          if (pathname === docsPath && req.method === 'GET') {
+            const listed = await hubDocumentExchangeProxy.listDocuments(docs);
+            return send(200, {
+              type: 'DocumentList',
+              data: listed,
+              hub: docs.hub
+            });
+          }
+          if (pathname === docsPath && req.method === 'POST') {
+            const d = await body();
+            const created = await hubDocumentExchangeProxy.createDocument(docs, d || {});
+            return send(200, { type: 'DocumentCreate', data: created, hub: docs.hub });
+          }
+          if (pathname === `${docsPath}/inventory` && req.method === 'POST') {
+            const d = await body();
+            const result = await hubDocumentExchangeProxy.requestPeerInventory(docs, d || {});
+            return send(200, { type: 'DocumentInventoryRequest', data: result, hub: docs.hub });
+          }
+          let docMatch = pathname.match(new RegExp(`^${docsPath}/([^/]+)$`));
+          if (docMatch && req.method === 'GET') {
+            const got = await hubDocumentExchangeProxy.getDocument(docs, decodeURIComponent(docMatch[1]));
+            return send(200, { type: 'Document', data: got, hub: docs.hub });
+          }
+          docMatch = pathname.match(new RegExp(`^${docsPath}/([^/]+)/publish$`));
+          if (docMatch && req.method === 'POST') {
+            const d = await body();
+            const published = await hubDocumentExchangeProxy.publishDocument(docs, Object.assign({}, d || {}, {
+              id: decodeURIComponent(docMatch[1])
+            }));
+            return send(200, { type: 'DocumentPublish', data: published, hub: docs.hub });
+          }
+          docMatch = pathname.match(new RegExp(`^${docsPath}/([^/]+)/purchase$`));
+          if (docMatch && req.method === 'POST') {
+            const d = await body();
+            const invoice = await hubDocumentExchangeProxy.createPurchaseInvoice(docs, Object.assign({}, d || {}, {
+              documentId: decodeURIComponent(docMatch[1])
+            }));
+            return send(200, { type: 'DocumentPurchaseInvoice', data: invoice, hub: docs.hub });
+          }
+          docMatch = pathname.match(new RegExp(`^${docsPath}/([^/]+)/claim$`));
+          if (docMatch && req.method === 'POST') {
+            const d = await body();
+            const claimed = await hubDocumentExchangeProxy.claimPurchase(docs, Object.assign({}, d || {}, {
+              documentId: decodeURIComponent(docMatch[1])
+            }));
+            return send(200, { type: 'DocumentClaim', data: claimed, hub: docs.hub });
+          }
+          return send(404, { error: 'unknown documents route' });
+        } catch (e) {
+          const status = (e && e.status) || 502;
+          return send(status, { error: e.message || String(e), data: e.data || null });
+        }
       }
       let wMatch;
       if ((wMatch = pathname.match(new RegExp(`^${base}/groups/([^/]+)/wallet$`))) && req.method === 'GET') {
@@ -1417,9 +4977,68 @@ class StarCitizenService extends EventEmitter {
           });
         }
         try {
-          const wallet = await pm.multisigAddress(group.members, group.threshold);
-          return send(200, { type: 'GroupWallet', data: Object.assign({ groupId: group.id }, wallet) });
+          const { groupTaprootWallet } = require('../functions/groupSpendLadder');
+          const tapWallet = groupTaprootWallet(group, { network: (pm && pm.network) || 'regtest' });
+          let legacy = null;
+          try {
+            const signers = group.validators || group.members;
+            legacy = await pm.multisigAddress(signers, group.threshold);
+          } catch (_) { /* optional */ }
+          return send(200, {
+            type: 'GroupWallet',
+            data: Object.assign({ groupId: group.id }, tapWallet, {
+              legacyP2wsh: legacy,
+              keys: tapWallet.keys,
+              threshold: tapWallet.threshold
+            })
+          });
         } catch (e) { return send(400, { error: e.message }); }
+      }
+
+      // ---- Group Taproot withdrawals (failover ladder) ----
+      if ((wMatch = pathname.match(new RegExp(`^${base}/groups/([^/]+)/withdrawals$`)))) {
+        if (!gm) return send(503, { error: 'Group system not available' });
+        const group = gm.findGroup(wMatch[1]);
+        if (!group) return send(404, { error: 'Group not found' });
+        if (req.method === 'GET') {
+          if (serverMode && !(viewer && group.includes(viewer))) {
+            return send(403, { error: 'forbidden: members only' });
+          }
+          const list = (this.store && this.store.all)
+            ? this.store.all('groupwithdrawals').filter((w) => w.groupId === group.id)
+            : [];
+          return send(200, { type: 'GroupWithdrawalList', data: list });
+        }
+        if (req.method === 'POST') {
+          if (!requireAuth()) return;
+          const actor = viewer || (this._identity && this._identity.pubkey);
+          if (!actor || group.creator !== actor) {
+            return send(403, { error: 'forbidden: only the group creator (publisher) may propose withdrawals' });
+          }
+          const d = await body();
+          try {
+            const data = await this.proposeGroupWithdrawal(group.id, actor, d);
+            return send(200, { type: 'GroupWithdrawal', data });
+          } catch (e) {
+            return send(e.code === 'FORBIDDEN' ? 403 : 400, { error: e.message });
+          }
+        }
+      }
+      if ((wMatch = pathname.match(new RegExp(`^${base}/groups/([^/]+)/withdrawals/([^/]+)/(witness|finalize)$`))) && req.method === 'POST') {
+        if (!gm) return send(503, { error: 'Group system not available' });
+        if (!requireAuth()) return;
+        const group = gm.findGroup(wMatch[1]);
+        if (!group) return send(404, { error: 'Group not found' });
+        const actor = viewer || (this._identity && this._identity.pubkey);
+        const d = await body();
+        try {
+          const data = wMatch[3] === 'finalize'
+            ? await this.finalizeGroupWithdrawal(group.id, wMatch[2], actor, d)
+            : await this.witnessGroupWithdrawal(group.id, wMatch[2], actor, d);
+          return send(200, { type: 'GroupWithdrawal', data });
+        } catch (e) {
+          return send(e.code === 'FORBIDDEN' ? 403 : /not found/i.test(e.message) ? 404 : 400, { error: e.message });
+        }
       }
 
       // ---- Bitcoin escrow / payouts ----
@@ -1449,6 +5068,23 @@ class StarCitizenService extends EventEmitter {
             m.escrow = await pm.createEscrow(m, d.amountSats);
             reg.store.put('missions', m.id, m);
             reg._audit(actor, 'escrow.create', 'mission', m.id, `${m.escrow.amountSats} sats -> ${m.escrow.address || 'ledger'}`);
+            const escrowNotice = registerInbox.entryFromWalletEvent({
+              kind: 'WalletEscrow',
+              status: 'info',
+              actionable: false,
+              title: 'Mission escrow created',
+              body: m.escrow.address
+                ? `${m.escrow.amountSats} sats → ${m.escrow.address}`
+                : `${m.escrow.amountSats} sats (ledger)`,
+              source: actor,
+              refs: {
+                missionId: m.id,
+                address: m.escrow.address || null,
+                amountSats: m.escrow.amountSats
+              },
+              dedupeKey: `wallet-escrow-${m.id}`
+            });
+            if (escrowNotice) this._appendInbox(escrowNotice);
             return send(200, { type: 'Escrow', data: m.escrow });
           } catch (e) { return send(400, { error: e.message }); }
         }
@@ -1466,7 +5102,10 @@ class StarCitizenService extends EventEmitter {
             reg._audit(this._actor(req, d.actor), 'escrow.paid', 'mission', m.id, result.txid);
             return send(200, { type: 'Payout', data: result });
           }
-          const built = await pm.buildPayout(m.escrow, d.toAddress || m.escrow.payee);
+          const built = await pm.buildPayout(
+            m.escrow,
+            d.toAddress || m.escrow.payeeAddress || null
+          );
           reg.store.put('missions', m.id, m);
           return send(200, { type: 'PayoutPsbt', data: built });
         } catch (e) { return send(400, { error: e.message }); }
@@ -1484,6 +5123,10 @@ class StarCitizenService extends EventEmitter {
   handleLogChange (entry) {
     const ev = parseLine(entry);
     const id = idFor(entry);
+
+    if (ev.timestamp) this._lastLogEventAt = ev.timestamp;
+    else this._lastLogEventAt = new Date().toISOString();
+    this._updateDetectedShipFromEvent(ev);
 
     // Stamp session build/hardware from header lines (one-shot, additive).
     const sinfo = parseSessionInfo(entry);
@@ -1514,7 +5157,8 @@ class StarCitizenService extends EventEmitter {
           killerNpc: isNPC(ev.killer), victimNpc: isNPC(ev.victim),
           // who, relative to the relay's player: 'kill' (we got it), 'death' (we died), or 'other'
           involves: ev.killer === this._sessionHandle ? 'kill' : (ev.victim === this._sessionHandle ? 'death' : 'other'),
-          timestamp: ev.timestamp
+          timestamp: ev.timestamp,
+          raw: String(entry)
         };
         this.state.kills[id] = kill;
         this.emit('kill', kill);
@@ -1523,10 +5167,14 @@ class StarCitizenService extends EventEmitter {
       case 'player:login': {
         this._sessionHandle = ev.handle;
         this.recordPlayer(ev.handle, ev.timestamp);
+        this._applyHistoryEvent(ev);
         break;
       }
       case 'player:incap': {
-        const inc = { id, kind: ev.kind, player: this._sessionHandle || null, text: ev.text, timestamp: ev.timestamp };
+        const inc = {
+          id, kind: ev.kind, player: this._sessionHandle || null, text: ev.text,
+          timestamp: ev.timestamp, raw: String(entry)
+        };
         this.state.incaps[id] = inc;
         this.emit('player:incap', inc);
         break;
@@ -1534,13 +5182,21 @@ class StarCitizenService extends EventEmitter {
       case 'player:death': {
         // Local-player death (corpse-recovery body marker). One event per death;
         // SC stopped logging kills after 4.3.0, so this is the current-build signal.
-        const d = { id, kind: ev.kind, player: this._sessionHandle || null, bodyId: ev.bodyId, timestamp: ev.timestamp };
+        const d = {
+          id, kind: ev.kind, player: this._sessionHandle || null, bodyId: ev.bodyId,
+          timestamp: ev.timestamp, raw: String(entry)
+        };
         this.state.deaths[id] = d;
         this.emit('player:death', d);
+        this._applyHistoryEvent(ev);
         break;
       }
       case 'vehicle:destroy': {
-        const v = { id, vehicle: ev.vehicle, vehicleName: shipName(ev.vehicle), cause: ev.cause, attacker: ev.attacker, fromLevel: ev.fromLevel, toLevel: ev.toLevel, timestamp: ev.timestamp };
+        const v = {
+          id, vehicle: ev.vehicle, vehicleName: shipName(ev.vehicle), cause: ev.cause,
+          attacker: ev.attacker, fromLevel: ev.fromLevel, toLevel: ev.toLevel,
+          timestamp: ev.timestamp, raw: String(entry)
+        };
         this.state.vehicles[id] = v;
         this.emit('vehicle:destroy', v);
         break;
@@ -1553,15 +5209,17 @@ class StarCitizenService extends EventEmitter {
       case 'mission:end': {
         const me = { id, kind: ev.kind, timestamp: ev.timestamp,
           contract: ev.contract, generator: ev.generator, text: ev.text, objectiveId: ev.objectiveId, missionId: ev.missionId,
-          contractId: ev.contractId, completionType: ev.completionType, reason: ev.reason, player: ev.player };
+          contractId: ev.contractId, completionType: ev.completionType, reason: ev.reason, player: ev.player,
+          raw: String(entry) };
         this.state.missionlog[id] = me;
         this._indexMission(ev);
         this.emit(ev.kind, me);
         this.emit('mission:event', me);
+        this._applyHistoryEvent(ev);
         break;
       }
       case 'hud:notification': {
-        const n = { id, kind: ev.kind, text: ev.text, timestamp: ev.timestamp };
+        const n = { id, kind: ev.kind, text: ev.text, timestamp: ev.timestamp, raw: String(entry) };
         this.state.notifications[id] = n;
         this.emit('notification', n);
         break;
@@ -1576,6 +5234,13 @@ class StarCitizenService extends EventEmitter {
         break;
       }
       default: break;
+    }
+
+    // Activity heat for other live lines (mission/death/login already applied above).
+    if (this._historyApplyLive && ev.timestamp) {
+      const folded = ev.kind === 'player:login' || ev.kind === 'player:death' ||
+        (ev.kind && ev.kind.indexOf('mission:') === 0);
+      if (!folded) this._applyHistoryEvent(ev, { countHeat: true });
     }
 
     this.emit('event', ev);       // every parsed line (used by replay tally)
@@ -1688,6 +5353,12 @@ class StarCitizenService extends EventEmitter {
         const lines = (this._partial + buf).split(/\r?\n/);
         this._partial = lines.pop();                    // hold back any incomplete final line
         for (const line of lines) { if (line.trim()) { try { this.handleLogChange(line); } catch (e) { this.emit('error', e); } } }
+        // Advance durable cursor to the last fully consumed byte (exclude partial).
+        if (this.settings.logfile) {
+          const key = path.resolve(this.settings.logfile);
+          this._logCursors[key] = { size: this._pos, mtimeMs: st.mtimeMs };
+          this._markHistoryDirty();
+        }
         this._scheduleNextPoll();
       });
     });
@@ -1747,11 +5418,27 @@ class StarCitizenService extends EventEmitter {
   }
 
   async postToDiscord (payload) {
-    if (!this.settings.discord.enable || !this.settings.discord.webhook) return null;
+    if (!this.settings.discord || !this.settings.discord.enable) return null;
+    const channel = String(this.settings.discord.channel || '').trim();
+    if (this.discordBot && this._discordBotReady && channel) {
+      try {
+        return await this.discordBot.postToChannel(channel, payload);
+      } catch (e) {
+        this.emit('error', e);
+      }
+    }
+    if (!this.settings.discord.webhook) return null;
     if (typeof fetch !== 'function') return null;
     try {
-      return await fetch(this.settings.discord.webhook, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
-    } catch (e) { this.emit('error', e); return null; }
+      return await fetch(this.settings.discord.webhook, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+    } catch (e) {
+      this.emit('error', e);
+      return null;
+    }
   }
 
   // ---- Fabric P2P peering (AMP/Message over TCP/NOISE) ----
@@ -1769,11 +5456,9 @@ class StarCitizenService extends EventEmitter {
     this._fabricTransition = prev
       .then(() => (this._identity ? this._refreshFabric() : this._stopFabric()))
       .catch((e) => this.emit('error', e));
-  }
-
-  /** Enabled Fabric peer addresses (`host:port`). */
-  _fabricPeerAddresses () {
-    return this.peers.filter((p) => p.enabled !== false && p.address).map((p) => p.address);
+    if (this._identity) {
+      try { this._flushPendingFederationInvites(); } catch (e) { this.emit('error', e); }
+    }
   }
 
   /** @deprecated Use {@link #_fabricPeerAddresses}; kept for older tests. */
@@ -1786,7 +5471,8 @@ class StarCitizenService extends EventEmitter {
    * MissionBroadcast / SCEventBatch / chat are ingested into this LiveRelay
    * and optionally re-relayed to other TCP peers.
    * @param {Object} peer Fabric Peer
-   * @param {{ relay?: boolean }} [opts]
+   * @param {Object} [opts]
+   * @param {boolean} [opts.relay]
    */
   attachFabricPeer (peer, { relay = true } = {}) {
     FabricNetwork.attachAppHandlers(peer, this._fabricIngestHandlers(), { relay });
@@ -1824,6 +5510,11 @@ class StarCitizenService extends EventEmitter {
         const actor = meta && meta.msg && meta.msg.actor;
         const resolved = actorId(source, actor);
         if (!resolved || !object || !Array.isArray(object.events)) return;
+        if (this.eventChain && eventChain.available) {
+          try {
+            eventChain.mergeBatch(this.eventChain, object.events, resolved);
+          } catch (e) { this.emit('error', e); }
+        }
         let created = 0;
         for (const ev of object.events) {
           if (!ev || !ev.collection) continue;
@@ -1837,6 +5528,21 @@ class StarCitizenService extends EventEmitter {
           if (p.enabled !== false) { p.lastSeen = new Date().toISOString(); p.lastError = null; }
         }
       },
+      onGameStateSnapshot: (object, source, meta) => {
+        const actor = meta && meta.msg && meta.msg.actor;
+        const resolved = actorId(source, actor);
+        if (!resolved || !object) return;
+        try {
+          const r = this.ingestGameStateSnapshot(resolved, object);
+          this.emit('ingest', {
+            source: resolved,
+            received: 1,
+            created: r.changed ? 1 : 0,
+            via: 'fabric',
+            kind: 'GameStateSnapshot'
+          });
+        } catch (e) { this.emit('error', e); }
+      },
       onProposal: (payload, source) => {
         // Mission escrow / payout ContractProposals scoped to the GoonCitizen
         // contract. Transport only — the officer-validated register remains the
@@ -1846,36 +5552,958 @@ class StarCitizenService extends EventEmitter {
       },
       onChat: (msg, source) => {
         if (!this.chatManager || !msg) return;
-        const obj = msg.object || {};
-        const actorPk = msg.actor && (msg.actor.publicKey || msg.actor.pubkey || msg.actor.id);
-        const author = obj.author || actorPk || null;
-        const body = obj.body != null ? obj.body : obj.content;
-        const ts = obj.ts || (obj.created ? new Date(obj.created).toISOString() : null);
-        if (!author || !body || !ts) return;
-        // Direct hop: the verified wire signer equals the author. Relayed hop:
-        // the relaying peer re-signs (per-connection key pinning), so the wire
-        // signer is that hop — fall back to the declared author pubkey (`actor`),
-        // which the trusted relay preserves in the body.
-        const signer = resolveSignerPubkey(source, msg.actor) || author;
-        if (!pubkeysMatch(author, signer)) {
-          if (!actorPk || !pubkeysMatch(author, actorPk)) return;
-        }
+        // First-class P2P_CHAT_MESSAGE: Peer emits `{ text }` + meta.signer.
+        // Legacy JSON envelopes (object.body/content) are no longer accepted on the wire.
+        const text = (msg && msg.text != null)
+          ? String(msg.text)
+          : ((msg.object && (msg.object.body != null ? msg.object.body : msg.object.content)) || null);
+        const author = resolveSignerPubkey(source, msg && msg.actor) || source || null;
+        if (!author || text == null || !String(text).trim()) return;
+        const ts = new Date().toISOString();
+        const handle = this._peerAliasByPubkey[author] || null;
         try {
           this.chatManager.ingest(author, {
-            channel: obj.channel || 'global',
-            body,
+            channel: 'global',
+            body: String(text),
             author,
-            handle: obj.handle || null,
+            handle,
             ts
           });
         } catch (e) {
           if (!/must match|unknown channel/i.test(e.message || '')) this.emit('error', e);
         }
+      },
+      onPeerAlias: (ev, source) => {
+        const alias = ev && ev.alias != null ? String(ev.alias).trim().slice(0, 64) : '';
+        const signer = (ev && ev.signer) || resolveSignerPubkey(source) || source || null;
+        if (!alias || !signer) return;
+        this._peerAliasByPubkey[signer] = alias;
+        this._peerProfilesByPubkey[signer] = peerProfile.mergeRemoteProfile(
+          this._peerProfilesByPubkey[signer],
+          { pubkey: signer, nickname: alias, alias }
+        );
+        // Refresh handle on recent local chat rows from this author (best-effort).
+        try {
+          if (this.chatManager) {
+            const all = this.chatManager.list('global', { limit: 200 });
+            for (const m of all) {
+              if (m && m.author === signer && m.handle !== alias) {
+                m.handle = alias;
+                this.store.put('chatmessages', m.id, m);
+              }
+            }
+          }
+        } catch (_) { /* ignore */ }
+      },
+      onPeerProfile: (object, source) => {
+        const signer = resolveSignerPubkey(source) || source || null;
+        if (!signer || !object) return;
+        this._peerProfilesByPubkey[signer] = peerProfile.mergeRemoteProfile(
+          this._peerProfilesByPubkey[signer],
+          Object.assign({}, object, { pubkey: signer })
+        );
+        if (object.nickname) {
+          const alias = String(object.nickname).trim().slice(0, 64);
+          if (alias) this._peerAliasByPubkey[signer] = alias;
+        }
+      },
+      onFleetShare: (object, source) => {
+        try {
+          this._ingestFleetShare(object, resolveSignerPubkey(source) || source || null);
+        } catch (e) { this.emit('error', e); }
+      },
+      onPeerPresence: (object, source) => {
+        const signer = resolveSignerPubkey(source) || source || null;
+        if (!signer || !object) return;
+        this._peerPresenceByPubkey[signer] = presence.mergeRemotePresence(
+          this._peerPresenceByPubkey[signer],
+          Object.assign({}, object, { pubkey: signer })
+        );
+      },
+      onDirectChat: (object, source, meta) => {
+        if (!object) return;
+        const ChatManager = require('../services/ChatManager');
+        const author = resolveSignerPubkey(source) || source || null;
+        if (!author) return;
+        const channel = object.channel || ChatManager.dmChannelKey(object.peerA, object.peerB);
+        if (!channel || !ChatManager.parseDmChannel(channel)) return;
+        const me = this._identity && this._identity.pubkey;
+        // Only keep DMs addressed to this node (or authored here).
+        if (me && this.chatManager && !this.chatManager.canAccess(channel, me, { enforceMembership: true })) return;
+        // Group invites also ride DirectChat so spoke↔spoke via a shared hub
+        // still lands when CONTRACT_MESSAGE fan-out is flaky / peer offline briefly.
+        const embedded = object.invite
+          || (() => {
+            try {
+              const p = typeof object.body === 'string' ? JSON.parse(object.body) : null;
+              return (p && p.type === 'FederationContractInvite') ? p : null;
+            } catch (_) { return null; }
+          })();
+        if (embedded && embedded.type === 'FederationContractInvite') {
+          try {
+            this._ingestFederationInvite(embedded, author, meta || {});
+          } catch (e) { this.emit('error', e); }
+        }
+        if (!this.chatManager || object.body == null || object.body === '') return;
+        // Don't dump raw invite JSON into the DM transcript.
+        let body = object.body;
+        if (embedded && typeof body === 'string' && body.trim().charAt(0) === '{') {
+          body = `Group invite: ${embedded.groupName || embedded.note || 'open Notifications to accept'}`;
+        }
+        try {
+          this.chatManager.ingest(author, {
+            channel,
+            body,
+            author: object.author || author,
+            handle: object.handle || this._peerAliasByPubkey[author] || null,
+            ts: object.ts || new Date().toISOString(),
+            attachment: object.attachment || null
+          });
+        } catch (e) {
+          if (!/must match|unknown channel|invalid/i.test(e.message || '')) this.emit('error', e);
+        }
+      },
+      onPeeringCandidate: (ev) => {
+        if (!ev || !Array.isArray(ev.addresses)) return;
+        this._considerDiscoveredPeers(ev.addresses, ev.kind || 'gossip', {
+          pubkey: ev.pubkey || null,
+          peering: ev.peering || null
+        });
+      },
+      isKnownGroupContract: (id) => !!(this.groupManager && this.groupManager.getGroupByContractId(id)),
+      onGroupContractPublish: (object, source) => {
+        if (!this.groupManager || !object) return;
+        try {
+          this.groupManager.ingestContractPublish(object, resolveSignerPubkey(source) || source);
+          if (this.fabricNetwork) {
+            const { groupContractId } = require('../contracts/gooncitizenGroup');
+            this.fabricNetwork.setGroupContractKnown(groupContractId(object), true);
+          }
+        } catch (e) { this.emit('error', e); }
+      },
+      onGroupChat: (object, source, meta) => {
+        if (!this.chatManager || !this.groupManager || !object) return;
+        const contractId = (meta && meta.contract) || object.contractId;
+        const group = (contractId && this.groupManager.getGroupByContractId(contractId))
+          || (object.groupId && this.groupManager.getGroup(object.groupId));
+        if (!group) return;
+        const me = this._identity && this._identity.pubkey;
+        if (me && !this.groupManager.isInGroupTree(group.id, me) && this.settings.mode !== 'server') return;
+        const author = object.author || resolveSignerPubkey(source) || source;
+        const ts = object.ts || new Date().toISOString();
+        let body = object.body != null ? object.body : object.content;
+        const {
+          isSealedGroupChat,
+          isParticipantSealedGroupChat,
+          openGroupChatBody
+        } = require('../functions/groupChatSeal');
+        if (isSealedGroupChat(object)) {
+          try {
+            if (isParticipantSealedGroupChat(object.seal)) {
+              if (!this._identity) throw new Error('identity required to open participant seal');
+              const { keyFromIdentity } = require('../functions/identity');
+              body = openGroupChatBody(object.seal, {
+                keyOrPrivate: keyFromIdentity(this._identity),
+                pubkey: this._identity.pubkey
+              });
+            } else {
+              const tip = this.groupManager.getChatSealTip(group.id);
+              body = openGroupChatBody(object.seal, {
+                contractId: tip.contractId,
+                clock: object.seal.basisClock,
+                stateDigest: object.seal.stateDigest,
+                memberPubkeys: tip.memberPubkeys
+              });
+            }
+          } catch (e) {
+            this.emit('debug', `[GroupChat] seal open failed: ${e && e.message ? e.message : e}`);
+            if (this._requireSealedGroupChat || body == null || body === '') return;
+          }
+        } else if (this._requireSealedGroupChat) {
+          return;
+        }
+        if (!author || body == null || body === '') return;
+        // Persist ChatMessage before ARC accumulate so wireHash can attach to the row.
+        try {
+          this.chatManager.ingest(author, {
+            channel: `group:${group.id}`,
+            body,
+            author,
+            handle: object.handle || null,
+            ts,
+            id: object.id || null,
+            attachment: object.attachment || null
+          });
+        } catch (e) {
+          if (!/must match|unknown channel/i.test(e.message || '')) this.emit('error', e);
+        }
+        if (contractId) {
+          this._accumulateContractMessageWire(contractId, meta || {}, (meta && meta.origin) || 'mesh');
+        }
+      },
+      onMessageReceipt: (object, source, meta) => {
+        this._applyRemoteDeliveryAck(object, source, meta, 'MessageReceipt');
+      },
+      onMessageReceived: (object, source, meta) => {
+        this._applyRemoteDeliveryAck(object, source, meta, 'MessageReceived');
+      },
+      onGroupChange: (object, source, meta) => {
+        if (!this.groupManager || !object) return;
+        try {
+          const change = Object.assign({}, object, {
+            contractId: object.contractId || (meta && meta.contract) || null
+          });
+          this.groupManager.ingestGroupChange(change, resolveSignerPubkey(source) || source);
+          // Retain inbound GroupChange as a Fabric-message journal row when possible.
+          const contractId = change.contractId;
+          const entryId = change.id;
+          const wire = meta && (meta.wireMessage || meta.msg);
+          if (contractId && entryId && meta && meta.origin !== 'local') {
+            // Wire hex may be on the peer event; best-effort from signed outbound path.
+            if (wire && wire.hex) {
+              this._attachJournalFabricMessage(contractId, entryId, {
+                hash: wire.hash,
+                toBuffer: () => Buffer.from(String(wire.hex), 'hex')
+              }, 'GroupChange');
+            }
+          }
+        } catch (e) { this.emit('error', e); }
+      },
+      onGroupChangeProposal: (object, source, meta) => {
+        if (!this.groupManager || !object) return;
+        try {
+          const body = Object.assign({}, object, {
+            contractId: object.contractId || (meta && meta.contract) || null
+          });
+          this.groupManager.ingestGroupChangeProposal(body, resolveSignerPubkey(source) || source);
+          if (meta && meta.origin !== 'local') {
+            this._accumulateContractMessageWire(
+              body.contractId,
+              meta || {},
+              (meta && meta.origin) || 'mesh'
+            );
+          }
+        } catch (e) { this.emit('error', e); }
+      },
+      onGroupChangeVote: (object, source, meta) => {
+        if (!this.groupManager || !object) return;
+        try {
+          const body = Object.assign({}, object, {
+            contractId: object.contractId || (meta && meta.contract) || null
+          });
+          this.groupManager.ingestGroupChangeVote(body, resolveSignerPubkey(source) || source);
+          if (meta && meta.origin !== 'local') {
+            this._accumulateContractMessageWire(
+              body.contractId,
+              meta || {},
+              (meta && meta.origin) || 'mesh'
+            );
+          }
+        } catch (e) { this.emit('error', e); }
+      },
+      onGroupJournalRequest: (object, source, meta) => {
+        this._respondGroupJournalRequest(
+          Object.assign({}, object || {}, {
+            contractId: (object && object.contractId) || (meta && meta.contract) || null
+          }),
+          resolveSignerPubkey(source) || source
+        ).catch((e) => this.emit('error', e));
+      },
+      onGroupJournalBatch: (object, source, meta) => {
+        if (!this.groupManager || !object) return;
+        try {
+          const batch = Object.assign({}, object, {
+            contractId: object.contractId || (meta && meta.contract) || null
+          });
+          this.groupManager.ingestJournalBatch(batch, resolveSignerPubkey(source) || source);
+        } catch (e) { this.emit('error', e); }
+      },
+      onGroupStateJournal: (object, source, meta) => {
+        if (!this.groupManager || !object) return;
+        try {
+          const { verifyGroupStateTip } = require('../functions/groupStateSigning');
+          const contractId = object.contractId || (meta && meta.contract) || null;
+          if (!contractId || !object.signatures) return;
+          const group = this.groupManager.getGroupByContractId(contractId);
+          if (!group) return;
+          const ok = verifyGroupStateTip(
+            group,
+            contractId,
+            object.tipClock,
+            object.stateDigest,
+            object.signatures
+          );
+          if (ok) this.emit('group:state-tip', { contractId, object, source, verified: true });
+        } catch (e) { this.emit('error', e); }
+      },
+      onGroupShare: (object, source, meta) => {
+        if (!object) return;
+        const kind = object.kind || object['@type'];
+        const inner = object.object != null ? object.object : object;
+        const resolved = actorId(source, meta && meta.msg && meta.msg.actor)
+          || resolveSignerPubkey(source)
+          || source
+          || null;
+        try {
+          if (kind === 'GroupOffer') {
+            this._ingestGroupOffer(object, resolved, meta);
+            return;
+          }
+          if (kind === 'MissionBroadcast' || (inner && inner.mission)) {
+            if (!resolved) return;
+            this._ingestMissionBroadcast(resolved, inner);
+          }
+          if (kind === starjumpFleet.FLEET_SHARE_TYPE ||
+            (inner && (inner.kind === starjumpFleet.FLEET_SHARE_TYPE || inner.type === starjumpFleet.FLEET_SHARE_TYPE))) {
+            const fleetObj = inner && inner.kind === starjumpFleet.FLEET_SHARE_TYPE ? inner : (inner || object);
+            this._ingestFleetShare(fleetObj, resolved);
+            // Journal into the group Statechain when we know the group contract.
+            try {
+              const contractId = (meta && meta.contract) || (object && object.contract);
+              const group = contractId && this.groupManager
+                ? this.groupManager.getGroupByContractId(contractId)
+                : null;
+              if (group) this.groupManager.ingestFleetShare(group.id, fleetObj, resolved);
+            } catch (e) {
+              this.emit('warning', '[LiveRelay] inbound FleetShare journal failed:', e && e.message);
+            }
+          }
+          if (kind === presence.PRESENCE_TYPE ||
+            (inner && (inner.kind === presence.PRESENCE_TYPE || inner.type === presence.PRESENCE_TYPE))) {
+            const doc = inner && inner.kind === presence.PRESENCE_TYPE ? inner : (inner || object);
+            if (resolved && doc) {
+              this._peerPresenceByPubkey[resolved] = presence.mergeRemotePresence(
+                this._peerPresenceByPubkey[resolved],
+                Object.assign({}, doc, { pubkey: resolved })
+              );
+            }
+          }
+        } catch (e) { this.emit('error', e); }
+      },
+      onGroupActivityTree: (object, source, meta) => {
+        if (!this.groupManager || !object) return;
+        try {
+          const contractId = (meta && meta.contract) || object.contractId;
+          const group = (contractId && this.groupManager.getGroupByContractId(contractId))
+            || (object.groupId && this.groupManager.getGroup(object.groupId));
+          if (!group) return;
+          this.groupManager.ingestActivityTree(
+            group.id,
+            object,
+            resolveSignerPubkey(source) || object.ownerPubkey || source
+          );
+        } catch (e) { this.emit('error', e); }
+      },
+      onFederationInvite: (object, source, meta) => {
+        try {
+          this._ingestFederationInvite(object, resolveSignerPubkey(source) || source, meta);
+        } catch (e) { this.emit('error', e); }
+      },
+      onFederationInviteResponse: (object, source, meta) => {
+        try {
+          this._ingestFederationInviteResponse(object, resolveSignerPubkey(source) || source, meta);
+        } catch (e) { this.emit('error', e); }
+      },
+      onDiscordRequest: (object, source, meta) => {
+        try {
+          this._ingestDiscordCoordFrame(discordContract.DISCORD_REQUEST, object, resolveSignerPubkey(source) || source, meta);
+          // Remote (or echoed) requests: try claim if we can reply.
+          if (meta && meta.origin !== 'local') {
+            this._maybeClaimDiscordRequest(object, { localOrigin: false }).catch((e) => this.emit('error', e));
+          }
+        } catch (e) { this.emit('error', e); }
+      },
+      onDiscordClaim: (object, source, meta) => {
+        try {
+          this._ingestDiscordCoordFrame(discordContract.DISCORD_CLAIM, object, resolveSignerPubkey(source) || source, meta);
+          const id = object && object.requestId;
+          if (!id) return;
+          const pending = this._discordClaimPending.get(String(id));
+          if (!pending) return;
+          const win = this._discordCoord.getWinningClaim(String(id));
+          const me = this._identity && this._identity.pubkey;
+          if (win && me && String(win.claimantPubkey) !== String(me)) {
+            if (pending.settleTimer) clearTimeout(pending.settleTimer);
+            this._discordClaimPending.delete(String(id));
+          }
+        } catch (e) { this.emit('error', e); }
+      },
+      onDiscordResponse: (object, source, meta) => {
+        try {
+          this._ingestDiscordCoordFrame(discordContract.DISCORD_RESPONSE, object, resolveSignerPubkey(source) || source, meta);
+          const id = object && object.requestId;
+          if (id) this._discordClaimPending.delete(String(id));
+        } catch (e) { this.emit('error', e); }
       }
     };
   }
 
+  // ---- Personal fleets (Starjump / FleetViewer) ---------------------------
+
+  _fleetsDir () {
+    return path.join(__dirname, '..', 'data', 'fleets');
+  }
+
+  listFleetSamples () {
+    const dir = this._fleetsDir();
+    let names = [];
+    try { names = fs.readdirSync(dir).filter((n) => n.endsWith('.json')); } catch (_) { return []; }
+    return names.map((name) => {
+      try {
+        const raw = JSON.parse(fs.readFileSync(path.join(dir, name), 'utf8'));
+        const ships = starjumpFleet.extractShips(raw);
+        return {
+          name,
+          shipCount: ships.reduce((n, s) => n + (s.count || 1), 0),
+          uniqueShips: ships.length,
+          sourceType: raw.type || null
+        };
+      } catch (_) {
+        return { name, shipCount: 0, uniqueShips: 0, sourceType: null };
+      }
+    }).sort((a, b) => a.name.localeCompare(b.name));
+  }
+
+  /**
+   * @param {Object} [opts]
+   * @param {string} [opts.scope] `'all'` | `'mine'` | `'shared'` | `'public'`
+   */
+  listFleets (opts = {}) {
+    const me = this._identity && this._identity.pubkey;
+    const scope = String(opts.scope || 'all');
+    let rows = (this.registerStore ? this.registerStore.all('fleets') : []).map((f) => starjumpFleet.summarizeFleet(f)).filter(Boolean);
+    if (scope === 'mine') rows = rows.filter((f) => me && f.ownerPubkey === me && !f.remote);
+    else if (scope === 'shared') rows = rows.filter((f) => f.remote || (f.visibility && f.visibility !== 'private'));
+    else if (scope === 'public') rows = rows.filter((f) => f.visibility === 'public');
+    rows.sort((a, b) => String(b.updatedAt || '').localeCompare(String(a.updatedAt || '')));
+    return rows;
+  }
+
+  getFleet (id, { includeExport = false } = {}) {
+    if (!this.registerStore || !id) return null;
+    const fleet = this.registerStore.get('fleets', id);
+    if (!fleet) return null;
+    const summary = starjumpFleet.summarizeFleet(fleet);
+    if (includeExport && fleet.export) summary.export = fleet.export;
+    return summary;
+  }
+
+  /**
+   * Create an empty or pre-filled custom fleet (editable roster).
+   * @param {Object} data
+   * @param {string} [data.name]
+   * @param {object[]} [data.ships]
+   * @param {string} [data.visibility]
+   * @param {string[]} [data.groupIds]
+   */
+  createFleet (data = {}) {
+    if (!this.registerStore) {
+      const e = new Error('store unavailable'); e.code = 'UNAVAILABLE'; throw e;
+    }
+    const owner = this._identity && this._identity.pubkey;
+    const fleet = starjumpFleet.createCustomFleet({
+      name: data.name,
+      ships: Array.isArray(data.ships) ? data.ships : [],
+      ownerPubkey: owner || null,
+      visibility: data.visibility || 'private',
+      groupIds: data.groupIds
+    });
+    this.registerStore.put('fleets', fleet.id, fleet);
+    this.emit('fleet:created', starjumpFleet.summarizeFleet(fleet));
+    return fleet;
+  }
+
+  /**
+   * Import from JSON body, filesystem path, or bundled sample name.
+   * @param {Object} data
+   * @param {object|string} [data.json]
+   * @param {string} [data.path]
+   * @param {string} [data.sample]
+   * @param {string} [data.name]
+   * @param {string} [data.visibility]
+   */
+  importFleet (data = {}) {
+    let raw = data.json != null ? data.json : null;
+    let sourceFile = data.sourceFile || null;
+    if (!raw && data.sample) {
+      const name = path.basename(String(data.sample));
+      if (!name.endsWith('.json') || name.includes('..')) {
+        const e = new Error('invalid sample name'); e.code = 'INVALID_SAMPLE'; throw e;
+      }
+      const file = path.join(this._fleetsDir(), name);
+      if (!fs.existsSync(file)) {
+        const e = new Error('sample not found'); e.code = 'NOT_FOUND'; throw e;
+      }
+      raw = JSON.parse(fs.readFileSync(file, 'utf8'));
+      sourceFile = name;
+    }
+    if (!raw && data.path) {
+      const file = path.resolve(String(data.path));
+      if (!fs.existsSync(file) || !fs.statSync(file).isFile()) {
+        const e = new Error('file not found'); e.code = 'NOT_FOUND'; throw e;
+      }
+      raw = JSON.parse(fs.readFileSync(file, 'utf8'));
+      sourceFile = path.basename(file);
+    }
+    if (raw == null) {
+      const e = new Error('json, path, or sample required'); e.code = 'INVALID'; throw e;
+    }
+    if (!this.registerStore) {
+      const e = new Error('store unavailable'); e.code = 'UNAVAILABLE'; throw e;
+    }
+    const owner = this._identity && this._identity.pubkey;
+    const fleet = starjumpFleet.parseStarjumpExport(raw, {
+      name: data.name,
+      ownerPubkey: owner || null,
+      sourceFile,
+      visibility: data.visibility || 'private',
+      keepExport: true
+    });
+    // Prefer stable id per owner+ships; overwrite prior import of same roster.
+    this.registerStore.put('fleets', fleet.id, fleet);
+    this.emit('fleet:imported', starjumpFleet.summarizeFleet(fleet));
+    return fleet;
+  }
+
+  updateFleet (id, patch = {}) {
+    if (!this.registerStore) {
+      const e = new Error('store unavailable'); e.code = 'UNAVAILABLE'; throw e;
+    }
+    const fleet = this.registerStore.get('fleets', id);
+    if (!fleet) {
+      const e = new Error('Fleet not found'); e.code = 'NOT_FOUND'; throw e;
+    }
+    const me = this._identity && this._identity.pubkey;
+    if (fleet.remote && fleet.ownerPubkey && me && fleet.ownerPubkey !== me) {
+      const e = new Error('cannot edit a peer fleet'); e.code = 'FORBIDDEN'; throw e;
+    }
+    if (patch.name !== undefined) {
+      const name = starjumpFleet.sanitizeName(patch.name);
+      if (name) fleet.name = name;
+    }
+    if (patch.visibility !== undefined) {
+      fleet.visibility = starjumpFleet.sanitizeVisibility(patch.visibility);
+    }
+    if (Array.isArray(patch.groupIds)) {
+      fleet.groupIds = patch.groupIds.map(String).filter(Boolean);
+    }
+    if (Array.isArray(patch.ships)) {
+      starjumpFleet.setFleetShips(fleet, patch.ships, { replace: true });
+    }
+    fleet.updatedAt = new Date().toISOString();
+    this.registerStore.put('fleets', fleet.id, fleet);
+    return fleet;
+  }
+
+  /**
+   * Add, set count, or remove a ship on a fleet.
+   * Body: `{Object}` or `{ ships: [...] }` to replace.
+   */
+  updateFleetShips (id, op = {}) {
+    if (!this.registerStore) {
+      const e = new Error('store unavailable'); e.code = 'UNAVAILABLE'; throw e;
+    }
+    const fleet = this.registerStore.get('fleets', id);
+    if (!fleet) {
+      const e = new Error('Fleet not found'); e.code = 'NOT_FOUND'; throw e;
+    }
+    const me = this._identity && this._identity.pubkey;
+    if (fleet.remote && fleet.ownerPubkey && me && fleet.ownerPubkey !== me) {
+      const e = new Error('cannot edit a peer fleet'); e.code = 'FORBIDDEN'; throw e;
+    }
+    if (Array.isArray(op.ships)) {
+      starjumpFleet.setFleetShips(fleet, op.ships, { replace: true });
+    } else {
+      starjumpFleet.applyShipOp(fleet, op);
+    }
+    this.registerStore.put('fleets', fleet.id, fleet);
+    return fleet;
+  }
+
+  deleteFleet (id) {
+    if (!this.registerStore || !id) return false;
+    return this.registerStore.del('fleets', id);
+  }
+
+  _ingestFleetShare (object, sourcePubkey) {
+    if (!this.registerStore || !object) return null;
+    const fleet = starjumpFleet.fleetFromShareObject(object, sourcePubkey);
+    const prev = this.registerStore.get('fleets', fleet.id);
+    if (prev && !prev.remote && prev.ownerPubkey && prev.ownerPubkey === fleet.ownerPubkey) {
+      // Do not clobber our own local export with a peer echo.
+      return prev;
+    }
+    this.registerStore.put('fleets', fleet.id, fleet);
+    this.emit('fleet:shared', starjumpFleet.summarizeFleet(fleet));
+    return fleet;
+  }
+
+  /**
+   * Fleets folded into a group's Statechain (latest FleetShare tip per fleetId).
+   * @param {string} groupIdOrSlug
+   * @returns {object[]}
+   */
+  listGroupFleets (groupIdOrSlug) {
+    if (!this.groupManager) return [];
+    const group = this.groupManager.findGroup(groupIdOrSlug) || this.groupManager.getGroup(groupIdOrSlug);
+    if (!group || !group.contractId || !this.registerStore) return [];
+    const groupStatechain = require('../functions/groupStatechain');
+    const doc = groupStatechain.loadDoc(this.registerStore, group.contractId);
+    const map = (doc && doc.content && doc.content.fleets) || {};
+    return Object.keys(map).sort().map((id) => map[id]);
+  }
+
+  /**
+   * Share a fleet to peers, groups, and/or public mesh.
+   * @param {string} id
+   * @param {Object} [opts]
+   * @param {string} [opts.visibility]
+   * @param {string[]} [opts.groupIds]
+   * @param {boolean} [opts.includeExport]
+   * @param {boolean} [opts.relay]
+   */
+  async shareFleet (id, opts = {}) {
+    if (!this.registerStore) {
+      const e = new Error('store unavailable'); e.code = 'UNAVAILABLE'; throw e;
+    }
+    const fleet = this.registerStore.get('fleets', id);
+    if (!fleet) {
+      const e = new Error('Fleet not found'); e.code = 'NOT_FOUND'; throw e;
+    }
+    const me = this._identity && this._identity.pubkey;
+    if (!me) {
+      const e = new Error('Unlock your identity to share fleets'); e.code = 'LOCKED'; throw e;
+    }
+    if (fleet.remote && fleet.ownerPubkey && fleet.ownerPubkey !== me) {
+      const e = new Error('cannot re-share a peer fleet from this UI yet'); e.code = 'FORBIDDEN'; throw e;
+    }
+    if (!fleet.ownerPubkey) fleet.ownerPubkey = me;
+
+    const visibility = starjumpFleet.sanitizeVisibility(opts.visibility || fleet.visibility || 'peers');
+    let groupIds = Array.isArray(opts.groupIds) ? opts.groupIds.map(String).filter(Boolean) : (fleet.groupIds || []);
+    if (visibility === 'groups' && !groupIds.length && this.groupManager) {
+      groupIds = (this.groupManager.groups || []).map((g) => g.id);
+    }
+    fleet.visibility = visibility;
+    fleet.groupIds = groupIds;
+    fleet.sharedAt = new Date().toISOString();
+    fleet.updatedAt = fleet.sharedAt;
+    this.registerStore.put('fleets', fleet.id, fleet);
+
+    const shareObject = starjumpFleet.buildFleetShareObject(fleet, {
+      includeExport: opts.includeExport !== false
+    });
+    const published = { peers: false, groups: [], public: false };
+
+    if (visibility === 'private') {
+      return { fleet: starjumpFleet.summarizeFleet(fleet), published, share: shareObject };
+    }
+
+    await this._ensureFabric().catch(() => null);
+    if (!this.fabricNetwork || !this.fabricNetwork.ready) {
+      const e = new Error('Fabric peer not ready — unlock identity and wait for peering');
+      e.code = 'NOT_READY';
+      throw e;
+    }
+
+    if (visibility === 'peers' || visibility === 'public') {
+      this.fabricNetwork.publishFleetShare(shareObject);
+      published.peers = true;
+      if (visibility === 'public') published.public = true;
+    }
+
+    if (visibility === 'groups' || (groupIds.length && visibility === 'public')) {
+      for (const groupId of groupIds) {
+        const group = this.groupManager && this.groupManager.getGroup(groupId);
+        if (!group) continue;
+        if (!group.includes(me)) continue;
+        const contractId = group.contractId || null;
+        if (!contractId) continue;
+        this.fabricNetwork.publishGroupShare(contractId, {
+          kind: starjumpFleet.FLEET_SHARE_TYPE,
+          object: shareObject
+        });
+        try {
+          this.groupManager.ingestFleetShare(groupId, shareObject, me);
+        } catch (e) {
+          this.emit('warning', '[LiveRelay] journal FleetShare failed:', e && e.message);
+        }
+        published.groups.push(groupId);
+      }
+    }
+
+    return { fleet: starjumpFleet.summarizeFleet(fleet), published, share: shareObject };
+  }
+
+  _updateDetectedShipFromEvent (ev) {
+    if (!ev || !ev.kind) return;
+    const at = ev.timestamp || this._lastLogEventAt || new Date().toISOString();
+    // Quantum travel lines carry the vehicle currently under local control.
+    if (ev.kind && ev.kind.indexOf('quantum:') === 0 && ev.vehicle) {
+      this._detectedShip = presence.buildDetectedShip(ev.vehicle, ev.vehicleId, at);
+      return;
+    }
+    // ClearDriver = just left the seat — still the last piloted ship (keep for presence).
+    if (ev.kind === 'vehicle:control' && ev.vehicle) {
+      this._detectedShip = presence.buildDetectedShip(ev.vehicle, ev.vehicleId, at);
+    }
+  }
+
+  _buildPresenceDocument () {
+    return presence.buildPresenceDocument({
+      pubkey: this._identity ? this._identity.pubkey : null,
+      nickname: this._nickname,
+      lastEventAt: this._lastLogEventAt,
+      detectedShip: this._detectedShip,
+      shipOverride: this._shipOverride,
+      visibility: this._presenceVisibility,
+      groupIds: this._presenceGroupIds,
+      availability: this._presenceAvailability,
+      statusText: this._presenceStatusText
+    });
+  }
+
+  getPresenceStatus () {
+    const doc = this._buildPresenceDocument();
+    return {
+      presence: doc,
+      settings: {
+        sharePresence: this._sharePresence,
+        presenceVisibility: this._presenceVisibility,
+        presenceGroupIds: this._presenceGroupIds.slice(),
+        shipOverrideSlug: this._shipOverrideSlug,
+        presenceAvailability: this._presenceAvailability,
+        presenceStatusText: this._presenceStatusText
+      },
+      detectedShip: this._detectedShip,
+      shipOverride: this._shipOverride,
+      online: doc.online,
+      lastEventAt: this._lastLogEventAt
+    };
+  }
+
+  /**
+   * Cached PeerPresence keyed by pubkey (includes self when sharing).
+   * Remote entries are only those received while peers opted into sharePresence.
+   */
+  getPresenceRoster () {
+    const out = Object.create(null);
+    for (const [pubkey, doc] of Object.entries(this._peerPresenceByPubkey || {})) {
+      if (!pubkey || !doc) continue;
+      out[pubkey] = {
+        // Trust published online (supports force online/offline).
+        online: doc.online === true,
+        statusText: doc.statusText || null,
+        lastEventAt: doc.lastEventAt || null,
+        ship: doc.ship || null,
+        nickname: doc.nickname || null,
+        updatedAt: doc.updatedAt || doc.lastSeen || null
+      };
+    }
+    const me = this._identity && this._identity.pubkey;
+    if (me) {
+      const local = this._buildPresenceDocument();
+      out[me] = {
+        online: local.online,
+        statusText: local.statusText || null,
+        lastEventAt: local.lastEventAt,
+        ship: local.ship,
+        nickname: local.nickname,
+        updatedAt: local.updatedAt,
+        sharing: this._sharePresence === true,
+        visibility: this._presenceVisibility,
+        availability: this._presenceAvailability
+      };
+    }
+    return out;
+  }
+
+  /**
+   * Primary-group overlay payload: members + PeerPresence ships for the HUD.
+   * @returns {object}
+   */
+  getPrimaryGroupOverlay () {
+    const groupId = this._primaryGroupId || null;
+    const overlayEnabled = this._groupOverlay === true;
+    if (!groupId || !this.groupManager) {
+      return { groupId: null, name: null, members: [], overlayEnabled };
+    }
+    const group = this.groupManager.getGroup(groupId);
+    if (!group) {
+      return { groupId, name: null, members: [], overlayEnabled, error: 'primary group not found' };
+    }
+    const me = this._identity && this._identity.pubkey;
+    if (me && !group.includes(me)) {
+      return {
+        groupId,
+        name: group.name,
+        members: [],
+        overlayEnabled,
+        error: 'you are not a member of the primary group'
+      };
+    }
+    const roster = this.getPresenceRoster();
+    const { pubkeysMatch } = identityLib();
+    const presenceFor = (pk) => {
+      if (roster[pk]) return roster[pk];
+      for (const [key, row] of Object.entries(roster)) {
+        if (pubkeysMatch(key, pk)) return row;
+      }
+      return null;
+    };
+    const members = (group.members || []).map((pk) => {
+      const p = presenceFor(pk);
+      return {
+        pubkey: pk,
+        nickname: (p && p.nickname) || null,
+        online: !!(p && p.online),
+        ship: (p && p.ship) || null,
+        statusText: (p && p.statusText) || null,
+        lastEventAt: (p && p.lastEventAt) || null
+      };
+    });
+    members.sort((a, b) => {
+      if (a.online !== b.online) return a.online ? -1 : 1;
+      const an = String(a.nickname || a.pubkey).toLowerCase();
+      const bn = String(b.nickname || b.pubkey).toLowerCase();
+      return an < bn ? -1 : an > bn ? 1 : 0;
+    });
+    return {
+      groupId: group.id,
+      name: group.name,
+      members,
+      overlayEnabled
+    };
+  }
+
+  /**
+   * Update presence share settings (persisted to Fabric Store when available).
+   */
+  setPresenceSettings (patch = {}) {
+    if (!this.registerStore) {
+      const e = new Error('store unavailable'); e.code = 'UNAVAILABLE'; throw e;
+    }
+    const next = presence.sanitizePresenceShare(Object.assign({
+      sharePresence: this._sharePresence,
+      presenceVisibility: this._presenceVisibility,
+      presenceGroupIds: this._presenceGroupIds,
+      shipOverrideSlug: this._shipOverrideSlug,
+      presenceAvailability: this._presenceAvailability,
+      presenceStatusText: this._presenceStatusText
+    }, patch));
+    settingsStore.putSetting(this.registerStore, 'sharePresence', next.sharePresence);
+    settingsStore.putSetting(this.registerStore, 'presenceVisibility', next.presenceVisibility);
+    settingsStore.putSetting(this.registerStore, 'presenceGroupIds', next.presenceGroupIds.length ? next.presenceGroupIds : null);
+    settingsStore.putSetting(this.registerStore, 'shipOverrideSlug', next.shipOverrideSlug);
+    settingsStore.putSetting(this.registerStore, 'presenceAvailability', next.presenceAvailability);
+    settingsStore.putSetting(this.registerStore, 'presenceStatusText', next.presenceStatusText);
+    this._applyPresenceSettings(next);
+    if (this._sharePresence) {
+      this.publishPresence().catch((e) => this.emit('error', e));
+    }
+    return this.getPresenceStatus();
+  }
+
+  /**
+   * Manual current-ship override (`slug`), clear published ship
+   * ({@link presence.SHIP_NONE_SLUG}), or autodetect (`null`).
+   * @param {string|null} slug
+   */
+  setShipOverride (slug) {
+    if (!this.registerStore) {
+      const e = new Error('store unavailable'); e.code = 'UNAVAILABLE'; throw e;
+    }
+    const normalized = slug === undefined || slug === null || slug === ''
+      ? null
+      : presence.sanitizePresenceShare({ shipOverrideSlug: slug }).shipOverrideSlug;
+    settingsStore.putSetting(this.registerStore, 'shipOverrideSlug', normalized);
+    this._shipOverrideSlug = normalized;
+    this._shipOverride = normalized ? presence.buildShipOverride(normalized) : null;
+    if (this._sharePresence) {
+      this.publishPresence().catch((e) => this.emit('error', e));
+    }
+    return this.getPresenceStatus();
+  }
+
+  /**
+   * Publish PeerPresence to peers / groups per visibility settings.
+   */
+  async publishPresence () {
+    if (!this._sharePresence) {
+      return { presence: this.getPresenceStatus(), published: { peers: false, groups: [], public: false } };
+    }
+    const me = this._identity && this._identity.pubkey;
+    if (!me) {
+      const e = new Error('Unlock your identity to share presence'); e.code = 'LOCKED'; throw e;
+    }
+
+    const doc = this._buildPresenceDocument();
+    if (me) {
+      this._peerPresenceByPubkey[me] = presence.mergeRemotePresence(
+        this._peerPresenceByPubkey[me],
+        doc
+      );
+    }
+
+    const visibility = presence.sanitizeVisibility(this._presenceVisibility);
+    let groupIds = this._presenceGroupIds.slice();
+    if (visibility === 'groups' && !groupIds.length && this.groupManager) {
+      groupIds = (this.groupManager.groups || []).map((g) => g.id);
+    }
+
+    const shareObject = presence.buildPresenceShareObject(doc);
+    const published = { peers: false, groups: [], public: false };
+
+    if (visibility === 'private') {
+      return { presence: this.getPresenceStatus(), published, share: shareObject };
+    }
+
+    await this._ensureFabric().catch(() => null);
+    if (!this.fabricNetwork || !this.fabricNetwork.ready) {
+      const e = new Error('Fabric peer not ready — unlock identity and wait for peering');
+      e.code = 'NOT_READY';
+      throw e;
+    }
+
+    if (visibility === 'peers' || visibility === 'public') {
+      this.fabricNetwork.publishPeerPresence(shareObject);
+      published.peers = true;
+      if (visibility === 'public') published.public = true;
+    }
+
+    if (visibility === 'groups' || (groupIds.length && visibility === 'public')) {
+      for (const groupId of groupIds) {
+        const group = this.groupManager && this.groupManager.getGroup(groupId);
+        if (!group) continue;
+        if (!group.includes(me)) continue;
+        const contractId = group.contractId || null;
+        if (!contractId) continue;
+        this.fabricNetwork.publishGroupShare(contractId, {
+          kind: presence.PRESENCE_TYPE,
+          object: shareObject
+        });
+        published.groups.push(groupId);
+      }
+    }
+
+    this._lastPresencePublish = Date.now();
+    return { presence: this.getPresenceStatus(), published, share: shareObject };
+  }
+
   async _ensureFabric () {
+    // Re-entrancy guard: _publishPeerAlias (and other callers) await this method.
+    // Without coalescing, a sync path that schedules alias publish from inside
+    // ensure re-enters ensure before any await yields → stack overflow.
+    if (this._fabricEnsureInflight) return this._fabricEnsureInflight;
+    this._fabricEnsureInflight = this._ensureFabricBody();
+    try {
+      return await this._fabricEnsureInflight;
+    } finally {
+      this._fabricEnsureInflight = null;
+    }
+  }
+
+  async _ensureFabricBody () {
     if (this._stopping) return null;
     if (this.settings.fabric.enable === false || this.settings.mode === 'server') return null;
     if (!this._identity) return null;
@@ -1891,16 +6519,95 @@ class StarCitizenService extends EventEmitter {
         peers: this._fabricPeerAddresses(),
         peersDb,
         relayAppMessages: !!this.settings.fabric.relayAppMessages,
-        reconnectToKnownPeers: false
+        reconnectToKnownPeers: false,
+        advertiseHost: this._fabricAdvertiseHost || null,
+        broadcastPeering: this._broadcastPeering === true,
+        messageLog: this._fabricMessageLog
       });
       this.fabricNetwork.setHandlers(this._fabricIngestHandlers());
       this.fabricNetwork.on('error', (e) => this.emit('error', e));
+      this.fabricNetwork.on('peer:self', (ev) => {
+        const addr = ev && ev.address
+          ? FabricNetwork.normalizeFabricAddress(ev.address, { migrate: false })
+          : null;
+        if (!addr) return;
+        const before = this.peers.length;
+        this.peers = this.peers.filter((p) => p.address !== addr);
+        if (this.peers.length !== before) {
+          this._persistPeers();
+          console.log(`[STAR-CITIZEN] dropped peer ${addr} after fabric self-session`);
+          this._refreshFabric().catch((e) => this.emit('error', e));
+        }
+      });
     }
     this.fabricNetwork.setIdentity(this._identity);
+    this.fabricNetwork.setAdvertiseHost(this._fabricAdvertiseHost || null);
+    this.fabricNetwork.setBroadcastPeering(this._broadcastPeering === true);
     this.fabricNetwork.setPeers(this._fabricPeerAddresses());
-    if (!this.fabricNetwork.peer) await this.fabricNetwork.start();
+    if (this.groupManager) {
+      this.fabricNetwork.setKnownGroupContracts(this.groupManager.knownContractIds());
+    }
+    const starting = !this.fabricNetwork.peer;
+    if (starting) await this.fabricNetwork.start();
     this._startFabricFlush();
+    this._startHubObserveTimer();
+    // Alias publish must never await _ensureFabric (ensure → alias → ensure overflow).
+    // Only (re)announce when the peer just came up or the nickname changed.
+    this._maybeSendPeerAlias();
+    this._publishLocalProfile().catch((e) => this.emit('error', e));
     return this.fabricNetwork;
+  }
+
+  async _publishLocalProfile () {
+    try {
+      if (!this.fabricNetwork || !this.fabricNetwork.ready) return null;
+      const doc = this._localProfile();
+      // Always refresh self cache for inspect UI.
+      if (doc.pubkey) {
+        this._peerProfilesByPubkey[doc.pubkey] = peerProfile.mergeRemoteProfile(
+          this._peerProfilesByPubkey[doc.pubkey],
+          doc
+        );
+      }
+      // Publish when there is something beyond empty fields.
+      if (!doc.nickname && !doc.bio && !doc.scHandle) return null;
+      return this.fabricNetwork.publishPeerProfile(doc);
+    } catch (e) {
+      this.emit('error', e);
+      return null;
+    }
+  }
+
+  /**
+   * Publish P2P_PEER_ALIAS when the Fabric peer is already up.
+   * Does not call _ensureFabric (avoids re-entrancy with ensure → alias → ensure).
+   * @param {string} [nickname] defaults to current operator nickname
+   * @param {Object} [opts] force=true republishes even if unchanged
+   * @param {boolean} [opts.force]
+   */
+  _sendPeerAlias (nickname, opts = {}) {
+    if (!this.fabricNetwork || !this.fabricNetwork.ready) return false;
+    const name = (nickname != null ? String(nickname) : String(this._nickname || '')).trim();
+    if (!name) {
+      this._lastPublishedAlias = null;
+      return false;
+    }
+    if (!opts.force && this._lastPublishedAlias === name) return true;
+    try {
+      this.fabricNetwork.publishPeerAlias(name);
+      this._lastPublishedAlias = name;
+      const self = this._identity && this._identity.pubkey;
+      if (self) this._peerAliasByPubkey[self] = name.slice(0, 64);
+      return true;
+    } catch (e) {
+      this.emit('error', e);
+      return false;
+    }
+  }
+
+  _maybeSendPeerAlias () {
+    if (!this._nickname) return false;
+    return this._sendPeerAlias(this._nickname);
   }
 
   async _refreshFabric () {
@@ -1925,6 +6632,11 @@ class StarCitizenService extends EventEmitter {
 
   async _stopFabric () {
     this._stopUplink();
+    this._lastPublishedAlias = null;
+    if (this._hubObserveTimer) {
+      clearInterval(this._hubObserveTimer);
+      this._hubObserveTimer = null;
+    }
     if (this.fabricNetwork) {
       await this.fabricNetwork.stop();
       this.fabricNetwork = null;
@@ -1936,10 +6648,10 @@ class StarCitizenService extends EventEmitter {
     this._uplinkQueue = this._uplinkQueue || [];
     if (!this._uplinkWired) {
       this._uplinkWired = true;
-      // Log events publish only while "share logs to global" is on; chat +
-      // mission broadcasts publish immediately and ignore this toggle.
+      // Log events queue only when share is authorized (global or per-peer);
+      // chat + mission broadcasts publish immediately and ignore this gate.
       const queue = (collection) => (ev) => {
-        if (!this._identity || this._shareLogsGlobal === false) return;
+        if (!this._canShareLogs()) return;
         this._uplinkQueue.push({ collection, data: ev });
         if (this._uplinkQueue.length > 5000) this._uplinkQueue.shift();
       };
@@ -1949,17 +6661,53 @@ class StarCitizenService extends EventEmitter {
       this.on('vehicle:destroy', queue('vehicles'));
       this.on('mission:event', queue('missionlog'));
       this.on('player:join', (p) => {
-        if (!this._identity || this._shareLogsGlobal === false) return;
+        if (!this._canShareLogs()) return;
         this._uplinkQueue.push({ collection: 'players', data: { name: p.name, timestamp: p.lastSeen } });
       });
     }
     const interval = this.settings.uplink.intervalMs || 5000;
     this._uplinkTimer = setInterval(() => {
       this._flushUplink().catch((e) => this.emit('error', e));
+      this._maybePublishGameState().catch((e) => this.emit('error', e));
+      this._maybePublishPresence().catch((e) => this.emit('error', e));
     }, interval);
     if (this._uplinkTimer.unref) this._uplinkTimer.unref();
     const seeds = this._fabricPeerAddresses();
     console.log(`[STAR-CITIZEN] fabric peering active` + (seeds.length ? ` → ${seeds.join(', ')}` : ''));
+  }
+
+  /**
+   * Periodically publish cumulative GameStateSnapshot so org hubs
+   * (relay.goon.vc) can fold analytics into the Hub sidechain / beacon seal.
+   */
+  async _maybePublishGameState () {
+    if (!this._canShareLogs()) return null;
+    const minMs = Number(this.settings.gameStatePublishIntervalMs) || 60000;
+    const now = Date.now();
+    if (this._lastGameStatePublish && (now - this._lastGameStatePublish) < minMs) return null;
+    const h = this.history || {};
+    if (!(h.missions && h.missions.length) && !(h.deaths && h.deaths.length)) return null;
+    const snap = await this.publishGameStateSnapshot();
+    if (snap) this._lastGameStatePublish = now;
+    return snap;
+  }
+
+  /**
+   * Periodic PeerPresence publish when sharing is enabled (default 60s cadence).
+   */
+  async _maybePublishPresence () {
+    if (!this._sharePresence) return null;
+    const minMs = Number(this.settings.presencePublishIntervalMs) || 60000;
+    const now = Date.now();
+    if (this._lastPresencePublish && (now - this._lastPresencePublish) < minMs) return null;
+    try {
+      const result = await this.publishPresence();
+      if (result) this._lastPresencePublish = now;
+      return result;
+    } catch (e) {
+      if (e && (e.code === 'NOT_READY' || e.code === 'LOCKED')) return null;
+      throw e;
+    }
   }
 
   _stopUplink () {
@@ -1969,8 +6717,11 @@ class StarCitizenService extends EventEmitter {
   /**
    * Publish a mission escrow / payout proposal as a GoonCitizen-namespaced
    * ContractProposal (transport only; register internals unchanged).
-   * @param {import('@fabric/core/types/message')[]} messages signed acceptance / PSBT frames
-   * @param {{ purpose?: string, statePatch?: object[], psbtProposalBase64?: string }} [opts]
+   * @param {Object[]} messages signed acceptance / PSBT frames
+   * @param {Object} [opts]
+   * @param {string} [opts.purpose]
+   * @param {object[]} [opts.statePatch]
+   * @param {string} [opts.psbtProposalBase64]
    */
   async broadcastMissionProposal (messages, opts = {}) {
     await this._ensureFabric();
@@ -1980,11 +6731,86 @@ class StarCitizenService extends EventEmitter {
     return this.fabricNetwork.publishContractProposal(messages, opts);
   }
 
+  async _publishPeerAlias (nickname) {
+    try {
+      // Settings updates must force a new announce even if the string matches.
+      if (!this.fabricNetwork || !this.fabricNetwork.ready) await this._ensureFabric();
+      this._sendPeerAlias(nickname, { force: true });
+    } catch (e) {
+      this.emit('error', e);
+    }
+  }
+
   async _publishChat (record) {
     try {
-      await this._ensureFabric();
-      if (this.fabricNetwork && this.fabricNetwork.ready) {
+      // Hot path: do not re-enter full ensure (setPeers / alias) on every message.
+      if (!this.fabricNetwork || !this.fabricNetwork.ready) await this._ensureFabric();
+      if (!this.fabricNetwork || !this.fabricNetwork.ready || !record) return;
+      // Star gossip needs at least one hub socket; re-dial seeds if we are lonely.
+      if (!(this.fabricNetwork.status().fabricConnected > 0)) {
+        this.fabricNetwork.setPeers(this._fabricPeerAddresses());
+      }
+      const channel = record.channel || 'global';
+      if (channel === 'global') {
         this.fabricNetwork.publishChat(record);
+        return;
+      }
+      const ChatManager = require('../services/ChatManager');
+      const dm = ChatManager.parseDmChannel(channel);
+      if (dm) {
+        this.fabricNetwork.publishDirectChat({
+          id: record.id,
+          channel,
+          peerA: dm.a,
+          peerB: dm.b,
+          author: record.author,
+          body: record.body,
+          handle: record.handle || null,
+          ts: record.ts,
+          attachment: record.attachment || null
+        });
+        return;
+      }
+      const groupId = ChatManager.groupIdOf(channel);
+      if (!groupId) return;
+      const contractId = await this._ensureGroupContractId(groupId);
+      if (!contractId) return;
+      const payload = {
+        id: record.id,
+        groupId,
+        contractId,
+        author: record.author,
+        handle: record.handle || null,
+        ts: record.ts
+      };
+      if (record.attachment) payload.attachment = record.attachment;
+      if (this._groupChatSeal && this.groupManager) {
+        try {
+          const { sealGroupChatBody } = require('../functions/groupChatSeal');
+          const tip = this.groupManager.getChatSealTip(groupId);
+          // Prefer hub-blind participant wraps (v2); tip fields are metadata only.
+          payload.seal = sealGroupChatBody({
+            mode: 'participant',
+            body: record.body,
+            contractId: tip.contractId,
+            clock: tip.clock,
+            stateDigest: tip.stateDigest,
+            memberPubkeys: tip.memberPubkeys
+          });
+        } catch (e) {
+          this.emit('error', e);
+          payload.body = record.body;
+        }
+      } else {
+        payload.body = record.body;
+      }
+      const msg = this.fabricNetwork.publishGroupChat(contractId, payload);
+      if (msg && typeof msg.toBuffer === 'function') {
+        this._accumulateContractMessageWire(contractId, {
+          wireMessage: msg,
+          messageHex: msg.toBuffer().toString('hex'),
+          origin: 'local'
+        }, 'local');
       }
     } catch (e) {
       this.emit('error', e);
@@ -1992,23 +6818,757 @@ class StarCitizenService extends EventEmitter {
   }
 
   /**
+   * Sign a GroupOffer CONTRACT_MESSAGE for copy-paste (`fabric:<hex>`).
+   * Optionally relays on the mesh when the peer is ready.
+   */
+  async createGroupShare (groupId, actor, opts = {}) {
+    if (!this.groupManager) throw Object.assign(new Error('Group system not available'), { code: 'UNAVAILABLE' });
+    const group = this.groupManager.getGroup(groupId);
+    if (!group) throw Object.assign(new Error('Group not found'), { code: 'NOT_FOUND' });
+    if (!group.includes(actor)) {
+      const e = new Error('forbidden: only members may share'); e.code = 'FORBIDDEN'; throw e;
+    }
+    if (!this._identity) throw new Error('Unlock your identity to share');
+    const { group: g, definition } = this.groupManager.ensureContract(groupId);
+    const contractId = g.contractId || (definition && require('../contracts/gooncitizenGroup').groupContractId(definition));
+    if (!contractId || !definition) throw new Error('group Federation contract is not ready');
+
+    const {
+      buildGroupOfferBody,
+      GROUP_SHARE_KIND_OFFER
+    } = require('../functions/groupShareMessage');
+    const offer = buildGroupOfferBody({
+      group: g,
+      definition,
+      actor,
+      note: opts.note
+    });
+
+    await this._ensureFabric().catch(() => null);
+    if (!this.fabricNetwork) {
+      this.fabricNetwork = new FabricNetwork({
+        enable: false,
+        listen: false,
+        peers: [],
+        peersDb: null,
+        messageLog: this._fabricMessageLog
+      });
+    }
+    this.fabricNetwork.setIdentity(this._identity);
+    // Prefer a live peer so Share actually hits the mesh (not clipboard-only).
+    if (opts.relay !== false && !this.fabricNetwork.ready) {
+      await this._ensureFabric().catch(() => null);
+    }
+    const msg = this.fabricNetwork.signContractMessage(contractId, 'GroupShare', offer, { relay: false });
+    let relayed = false;
+    let relayError = null;
+    if (opts.relay !== false) {
+      try {
+        if (!(this.fabricNetwork.status().fabricConnected > 0)) {
+          this.fabricNetwork.setPeers(this._fabricPeerAddresses());
+        }
+        if (!this.fabricNetwork.ready) {
+          throw new Error('Fabric peer not ready — unlock identity and wait for peering');
+        }
+        // Group namespace (members / known contracts) + GoonCitizen genesis
+        // so peers who have never seen this group still receive the offer.
+        this.fabricNetwork.publishGroupShare(contractId, offer);
+        const { gooncitizenContractId } = require('../contracts/gooncitizen');
+        this.fabricNetwork.publishGroupShare(gooncitizenContractId(), offer);
+        relayed = true;
+      } catch (e) {
+        relayError = e && e.message ? e.message : String(e);
+        this.emit('error', e);
+      }
+    }
+    const encoded = this.fabricNetwork.encodeOpaqueMessage(msg);
+    const st = this.fabricNetwork.status();
+    const messageId = (msg && (msg.id || msg.hash))
+      ? String(msg.id || msg.hash).toLowerCase()
+      : null;
+    return {
+      kind: GROUP_SHARE_KIND_OFFER,
+      offerId: offer.offerId,
+      groupId: g.id,
+      contractId,
+      messageId,
+      protocolUrl: encoded.protocolUrl,
+      protocolUrlHex: encoded.protocolUrlHex || encoded.protocolUrl,
+      protocolUrlBase64: encoded.protocolUrlBase64,
+      messageHex: encoded.messageHex,
+      messageBase64: encoded.messageBase64,
+      pagePath: g.path || `/groups/${g.slug || g.id}`,
+      visibility: g.visibility,
+      relayed,
+      relayError,
+      peers: st.fabricConnected || 0,
+      localJsSnippet: messageId
+        ? require('../functions/defaultGroupMessage').localJsSnippetFor(messageId)
+        : require('../functions/defaultGroupMessage').localJsSnippetFor(encoded.protocolUrl)
+    };
+  }
+
+  /**
+   * Decode an opaque fabric:<hex|base64> Message without ingesting/mutating state.
+   * @param {string} protocolUrlOrPayload
+   * @returns {object}
+   */
+  decodeOpaqueFabricMessage (protocolUrlOrPayload) {
+    const {
+      parseOpaqueFabricMessage,
+      classifyGroupShareMessage,
+      buildOpaqueFabricUrl
+    } = require('../functions/groupShareMessage');
+    const parsed = parseOpaqueFabricMessage(protocolUrlOrPayload);
+    if (!parsed.ok) throw new Error(parsed.error || 'invalid fabric message');
+    let classified = { kind: 'unknown' };
+    try {
+      classified = classifyGroupShareMessage(parsed.message) || classified;
+    } catch (_) { /* best-effort */ }
+    const msgType = (parsed.message && parsed.message.type) || null;
+    const hash = (parsed.message && (parsed.message.id || parsed.message.hash)) || null;
+    return {
+      encoding: parsed.encoding || 'hex',
+      hex: parsed.hex,
+      base64: parsed.base64,
+      messageHex: parsed.hex,
+      messageBase64: parsed.base64,
+      protocolUrl: buildOpaqueFabricUrl(parsed.buffer, { encoding: parsed.encoding || 'hex' }),
+      protocolUrlHex: buildOpaqueFabricUrl(parsed.buffer, { encoding: 'hex' }),
+      protocolUrlBase64: buildOpaqueFabricUrl(parsed.buffer, { encoding: 'base64' }),
+      type: msgType,
+      wireType: msgType,
+      kind: classified.kind || null,
+      contractId: classified.contractId || null,
+      groupId: classified.groupId || null,
+      hash: hash ? String(hash) : null,
+      bytes: parsed.buffer.length
+    };
+  }
+
+  /**
+   * Ingest an opaque fabric:<hex|base64> GroupOffer / invite / group CONTRACT_PUBLISH.
+   */
+  async ingestOpaqueGroupShare (protocolUrlOrHex) {
+    const {
+      parseOpaqueFabricMessage,
+      classifyGroupShareMessage,
+      GROUP_SHARE_KIND_OFFER
+    } = require('../functions/groupShareMessage');
+    const parsed = parseOpaqueFabricMessage(protocolUrlOrHex);
+    if (!parsed.ok) throw new Error(parsed.error || 'invalid fabric message');
+    try {
+      const summary = summarizeMessage(parsed.message, { direction: 'in', via: 'opaque' });
+      if (summary) this._fabricMessageLog.append(summary);
+    } catch (_) { /* best-effort log */ }
+    const classified = classifyGroupShareMessage(parsed.message);
+    if (classified.kind === 'GroupPublish') {
+      const result = this.groupManager.ingestContractPublish(classified.object, 'opaque-share');
+      return { kind: 'GroupPublish', ...result };
+    }
+    if (classified.kind === 'GroupOffer') {
+      return this._ingestGroupOffer(classified.object, 'opaque-share', {
+        contract: classified.contractId
+      });
+    }
+    if (classified.kind === 'FederationContractInvite') {
+      return this._ingestFederationInvite(classified.object, 'opaque-share', {
+        contract: classified.contractId
+      });
+    }
+    throw new Error(`unsupported share kind: ${classified.kind || 'unknown'} (expected ${GROUP_SHARE_KIND_OFFER})`);
+  }
+
+  _ingestGroupOffer (object, source, meta = {}) {
+    if (!object || object.kind !== 'GroupOffer') return null;
+    const definition = object.definition;
+    let group = null;
+    let created = false;
+    if (definition && this.groupManager) {
+      const pub = this.groupManager.ingestContractPublish(definition, source || 'group-offer');
+      group = pub && pub.group;
+      created = !!(pub && pub.created);
+    } else if (object.contractId && this.groupManager) {
+      group = this.groupManager.getGroupByContractId(object.contractId);
+    } else if (object.groupId && this.groupManager) {
+      group = this.groupManager.getGroup(object.groupId);
+    }
+    const payload = {
+      kind: 'GroupOffer',
+      offer: object,
+      group: group ? (typeof group.toJSON === 'function' ? group.toJSON() : group) : null,
+      created,
+      source: source || null,
+      contractId: object.contractId || (meta && meta.contract) || null
+    };
+    const inboxRow = registerInbox.entryFromGroupOffer(payload);
+    if (inboxRow) this._appendInbox(inboxRow);
+    this.emit('group:offer', payload);
+    return payload;
+  }
+
+  /**
+   * Publish a Hub-shaped FederationContractInvite under the group's contract
+   * (and GoonCitizen genesis when targeting an invitee so they receive it
+   * without already knowing the group).
+   * @param {string} groupId
+   * @param {string} actor Member inviting
+   * @param {Object} [opts]
+   * @param {string} [opts.note]
+   * @param {string} [opts.inviteId]
+   * @param {string} [opts.inviteePubkey]
+   * @param {string} [opts.role] `'reader'` or `'signer'`
+   */
+  async inviteToGroupFederation (groupId, actor, opts = {}) {
+    if (!this.groupManager) throw Object.assign(new Error('Group system not available'), { code: 'UNAVAILABLE' });
+    const group = this.groupManager.getGroup(groupId);
+    if (!group) throw Object.assign(new Error('Group not found'), { code: 'NOT_FOUND' });
+    if (!group.includes(actor)) {
+      const e = new Error('forbidden: only members may invite'); e.code = 'FORBIDDEN'; throw e;
+    }
+    if (!this._identity) throw new Error('Unlock your identity to invite');
+    const contractId = await this._ensureGroupContractId(groupId);
+    if (!contractId) throw new Error('group Federation contract is not ready');
+    const { pubkeysMatch, pubkeyXOnly } = identityLib();
+    const PUBKEY_RE = /^(0[23][0-9a-f]{64}|[0-9a-f]{64})$/;
+    let invitee = opts.inviteePubkey != null ? String(opts.inviteePubkey).trim().toLowerCase() : null;
+    if (invitee) {
+      if (!PUBKEY_RE.test(invitee)) {
+        const e = new Error('invalid invitee pubkey'); e.code = 'BAD_REQUEST'; throw e;
+      }
+      if (pubkeysMatch(invitee, actor)) {
+        const e = new Error('cannot invite yourself'); e.code = 'BAD_REQUEST'; throw e;
+      }
+      if (group.members && group.members.some((m) => pubkeysMatch(m, invitee))) {
+        const e = new Error('already a member of this group'); e.code = 'BAD_REQUEST'; throw e;
+      }
+      // Prefer compressed form when the invitee is already a known member/author.
+      // X-only wire ids are accepted and matched via pubkeysMatch on ingest.
+      if (pubkeyXOnly(invitee) && !/^0[23]/.test(invitee)) {
+        /* keep x-only — destination matches with pubkeysMatch */
+      }
+    } else {
+      invitee = null;
+    }
+    const { buildFederationContractInvite } = require('../functions/federationContractInvite');
+    const { normalizeProposedPolicy } = require('../contracts/gooncitizenGroup');
+    const { gooncitizenContractId } = require('../contracts/gooncitizen');
+    const role = String(opts.role || 'signer').toLowerCase() === 'reader' ? 'reader' : 'signer';
+    let capabilityToken = null;
+    try {
+      const { issueContractCapability, roleToCapability } = require('@fabric/core/functions/contractCapability');
+      capabilityToken = issueContractCapability({
+        issuerKey: require('../functions/identity').keyFromIdentity(this._identity),
+        subject: invitee || actor,
+        contractId,
+        capability: roleToCapability(role)
+      });
+    } catch (_) { /* token optional if key path fails */ }
+    const inviteId = opts.inviteId || idFor(`invite:${groupId}:${Date.now()}:${actor}:${invitee || ''}`);
+    const signers = group.validators || (group.proposedPolicy && group.proposedPolicy.validators) || group.members;
+    const invite = buildFederationContractInvite({
+      inviteId,
+      inviterHubId: actor,
+      contractId,
+      note: opts.note || `Join group ${group.name}`,
+      inviteePubkey: invitee || undefined,
+      groupId: group.id,
+      groupName: group.name,
+      role,
+      capabilityToken: capabilityToken || undefined,
+      proposedPolicy: normalizeProposedPolicy({
+        validators: signers,
+        threshold: group.threshold
+      })
+    });
+    await this._ensureFabric().catch(() => null);
+    if (!this.fabricNetwork) {
+      this.fabricNetwork = new FabricNetwork({
+        enable: false,
+        listen: false,
+        peers: [],
+        peersDb: null,
+        messageLog: this._fabricMessageLog
+      });
+    }
+    this.fabricNetwork.setIdentity(this._identity);
+    // Prefer a live peer so direct invites actually hit the mesh.
+    if (!this.fabricNetwork.ready) {
+      await this._ensureFabric().catch(() => null);
+    }
+    // Sign for clipboard even if peer is not ready; relay when possible.
+    const msg = this.fabricNetwork.signContractMessage(contractId, 'FederationContractInvite', invite, { relay: false });
+    let relayed = false;
+    let relayError = null;
+    if (this.fabricNetwork.ready) {
+      try {
+        if (!(this.fabricNetwork.status().fabricConnected > 0)) {
+          this.fabricNetwork.setPeers(this._fabricPeerAddresses());
+        }
+        this.fabricNetwork.publishFederationInvite(contractId, invite);
+        // Genesis namespace so invitees who have never seen this group still get it.
+        this.fabricNetwork.publishFederationInvite(gooncitizenContractId(), invite);
+        // Dual-path: DirectChat to the invitee (same hub flood as DMs) so
+        // spoke↔spoke delivery does not depend on group-contract awareness.
+        if (invitee) {
+          const ChatManager = require('../services/ChatManager');
+          const channel = ChatManager.dmChannelKey(actor, invitee);
+          if (channel) {
+            const dm = ChatManager.parseDmChannel(channel);
+            this.fabricNetwork.publishDirectChat({
+              id: `invite-dm:${inviteId}`,
+              channel,
+              peerA: dm.a,
+              peerB: dm.b,
+              author: actor,
+              body: `Group invite: ${group.name} — open Notifications to accept`,
+              handle: null,
+              ts: new Date().toISOString(),
+              invite
+            });
+          }
+        }
+        relayed = true;
+      } catch (e) {
+        relayError = e && e.message ? e.message : String(e);
+        this.emit('error', e);
+      }
+    } else {
+      relayError = 'Fabric peer not ready — unlock identity and wait for peering';
+    }
+    const encoded = this.fabricNetwork.encodeOpaqueMessage(msg);
+    const stored = Object.assign({}, invite, {
+      groupId: group.id,
+      groupName: group.name,
+      status: 'pending',
+      createdAt: new Date().toISOString(),
+      protocolUrl: encoded.protocolUrl,
+      messageHex: encoded.messageHex,
+      direction: 'outbound'
+    });
+    if (this.registerStore) {
+      this.registerStore.put('groupinvites', inviteId, stored);
+    }
+    const st = this.fabricNetwork.status();
+    return Object.assign({}, invite, {
+      groupId: group.id,
+      groupName: group.name,
+      protocolUrl: encoded.protocolUrl,
+      messageHex: encoded.messageHex,
+      relayed,
+      relayError,
+      peers: st.fabricConnected || 0
+    });
+  }
+
+  /**
+   * Publisher proposes a Taproot spend or decay-migrate for the group vault.
+   * @param {string} groupId
+   * @param {string} actor Must be group.creator
+   * @param {object} opts
+   */
+  async proposeGroupWithdrawal (groupId, actor, opts = {}) {
+    if (!this.groupManager) throw Object.assign(new Error('Group system not available'), { code: 'UNAVAILABLE' });
+    const group = this.groupManager.getGroup(groupId);
+    if (!group) throw Object.assign(new Error('Group not found'), { code: 'NOT_FOUND' });
+    if (group.creator !== actor) {
+      const e = new Error('forbidden: only the creator may propose withdrawals'); e.code = 'FORBIDDEN'; throw e;
+    }
+    const { groupSpendLadder } = require('../functions/groupSpendLadder');
+    const tap = require('@fabric/core/functions/contractTaproot');
+    const policy = groupSpendLadder(group, { network: opts.network || 'regtest' });
+    const action = String(opts.action || 'spend').toLowerCase() === 'migrate' ? 'migrate' : 'spend';
+    const ctx = {
+      utxoAgeBlocks: Number(opts.utxoAgeBlocks) || 0,
+      tipHeight: Number(opts.tipHeight) || 0,
+      tipClock: Number(opts.tipClock) || 0,
+      contractState: opts.contractState || null
+    };
+    let prepared = null;
+    if (action === 'migrate') {
+      if (!opts.fundedTxHex) {
+        prepared = {
+          action: 'migrate',
+          target: tap.selectMigrateTarget(policy, ctx),
+          note: 'Provide fundedTxHex to build PSBT'
+        };
+      } else {
+        prepared = tap.prepareDecayMigrationPsbt({
+          policy,
+          fundedTxHex: opts.fundedTxHex,
+          vaultAddress: opts.vaultAddress,
+          feeSats: opts.feeSats,
+          ctx
+        });
+      }
+    } else {
+      if (!opts.fundedTxHex || !opts.destinationAddress) {
+        const active = tap.selectActiveTiers(policy, ctx);
+        prepared = {
+          action: 'spend',
+          activeTiers: active.map((t) => ({ id: t.id, threshold: t.threshold, after: t.after, until: t.until })),
+          preferredTierId: active[0] ? active[0].id : null,
+          address: tap.toAddress(policy),
+          note: 'Provide fundedTxHex + destinationAddress to build PSBT'
+        };
+      } else {
+        prepared = tap.prepareTierWithdrawalPsbt({
+          policy,
+          tierId: opts.tierId,
+          fundedTxHex: opts.fundedTxHex,
+          vaultAddress: opts.vaultAddress,
+          destinationAddress: opts.destinationAddress,
+          feeSats: opts.feeSats,
+          ctx
+        });
+      }
+    }
+    const id = opts.requestId || idFor(`gwd:${groupId}:${Date.now()}`);
+    const record = {
+      id,
+      groupId,
+      contractId: group.contractId || null,
+      action,
+      tierId: prepared.tierId || opts.tierId || null,
+      status: prepared.psbtBase64 ? 'prepared' : 'proposed',
+      proposedBy: actor,
+      createdAt: new Date().toISOString(),
+      destinationAddress: opts.destinationAddress || prepared.childAddress || null,
+      prepared,
+      signatures: {},
+      type: 'ContractWithdrawalRequest'
+    };
+    if (this.registerStore) this.registerStore.put('groupwithdrawals', id, record);
+    const wdNotice = registerInbox.entryFromWalletEvent({
+      kind: 'WalletWithdrawal',
+      status: record.status === 'prepared' ? 'pending' : 'info',
+      actionable: record.status === 'prepared' || record.status === 'proposed',
+      title: 'Group withdrawal proposed',
+      body: record.destinationAddress
+        ? `to ${record.destinationAddress}`
+        : (record.prepared && record.prepared.address) || 'Taproot withdrawal',
+      source: actor,
+      refs: {
+        groupId,
+        withdrawalId: id,
+        contractId: record.contractId,
+        tierId: record.tierId
+      },
+      dedupeKey: `wallet-wd-${id}`
+    });
+    if (wdNotice) this._appendInbox(wdNotice);
+    try {
+      await this._ensureFabric().catch(() => null);
+      if (this.fabricNetwork && group.contractId) {
+        this.fabricNetwork._publishContractMessage(group.contractId, 'ContractWithdrawalRequest', {
+          type: 'ContractWithdrawalRequest',
+          contractId: group.contractId,
+          requestId: id,
+          action,
+          tierId: record.tierId,
+          destinationAddress: record.destinationAddress,
+          proposedBy: actor,
+          createdAt: record.createdAt
+        });
+      }
+    } catch (_) { /* best-effort mesh */ }
+    return record;
+  }
+
+  async witnessGroupWithdrawal (groupId, requestId, actor, opts = {}) {
+    if (!this.registerStore) throw new Error('store unavailable');
+    const group = this.groupManager && this.groupManager.getGroup(groupId);
+    if (!group) throw Object.assign(new Error('Group not found'), { code: 'NOT_FOUND' });
+    if (!group.isSigner || !group.isSigner(actor)) {
+      // Group instance from getGroup is Group class
+      const g = group;
+      const signers = g.validators || [];
+      if (!signers.includes(actor)) {
+        const e = new Error('forbidden: only signers may witness'); e.code = 'FORBIDDEN'; throw e;
+      }
+    }
+    const rec = this.registerStore.get('groupwithdrawals', requestId);
+    if (!rec || rec.groupId !== groupId) throw Object.assign(new Error('withdrawal not found'), { code: 'NOT_FOUND' });
+    const sig = opts.signature || opts.sig;
+    if (!sig) throw new Error('signature required');
+    rec.signatures = rec.signatures || {};
+    rec.signatures[actor] = String(sig);
+    rec.status = 'witnessing';
+    this.registerStore.put('groupwithdrawals', requestId, rec);
+    return rec;
+  }
+
+  async finalizeGroupWithdrawal (groupId, requestId, actor, opts = {}) {
+    if (!this.registerStore) throw new Error('store unavailable');
+    const group = this.groupManager && this.groupManager.getGroup(groupId);
+    if (!group) throw Object.assign(new Error('Group not found'), { code: 'NOT_FOUND' });
+    if (group.creator !== actor && !(group.isSigner && group.isSigner(actor))) {
+      const signers = group.validators || [];
+      if (group.creator !== actor && !signers.includes(actor)) {
+        const e = new Error('forbidden'); e.code = 'FORBIDDEN'; throw e;
+      }
+    }
+    const rec = this.registerStore.get('groupwithdrawals', requestId);
+    if (!rec || rec.groupId !== groupId) throw Object.assign(new Error('withdrawal not found'), { code: 'NOT_FOUND' });
+    const need = group.threshold || 1;
+    const sigCount = Object.keys(rec.signatures || {}).length;
+    if (rec.action === 'spend' && sigCount < need && !opts.force) {
+      throw new Error(`need ${need} signer witnesses, have ${sigCount}`);
+    }
+    rec.status = 'finalized';
+    rec.finalizedAt = new Date().toISOString();
+    rec.finalizedBy = actor;
+    if (opts.txid) rec.txid = String(opts.txid);
+    this.registerStore.put('groupwithdrawals', requestId, rec);
+    return rec;
+  }
+
+  /**
+   * Accept or reject a FederationContractInvite. Accept adds the responder
+   * as a member via GroupChange (local + published).
+   */
+  async respondToGroupFederationInvite (groupIdOrSlug, inviteId, actor, accept) {
+    if (!this.groupManager) throw Object.assign(new Error('Group system not available'), { code: 'UNAVAILABLE' });
+    if (!actor) throw Object.assign(new Error('actor required (unlock identity or authenticate)'), { code: 'FORBIDDEN' });
+    let group = this.groupManager.findGroup(groupIdOrSlug);
+    const stored = this.registerStore && this.registerStore.get('groupinvites', inviteId);
+    if (!group && stored && stored.contractId) {
+      group = this.groupManager.getGroupByContractId(stored.contractId);
+    }
+    if (!group && stored) {
+      const shell = this.groupManager.ingestFederationInviteShell(stored, 'invite-accept');
+      group = shell && shell.group;
+    }
+    if (!group) throw Object.assign(new Error('Group not found'), { code: 'NOT_FOUND' });
+    const contractId = (stored && stored.contractId) || group.contractId || await this._ensureGroupContractId(group.id);
+    if (!contractId) throw new Error('group Federation contract is not ready');
+    const { buildFederationContractInviteResponse } = require('../functions/federationContractInvite');
+    const response = buildFederationContractInviteResponse({
+      inviteId,
+      accept: !!accept,
+      responderPubkey: actor
+    });
+    await this._ensureFabric().catch(() => null);
+    if (this.fabricNetwork && this.fabricNetwork.ready) {
+      try {
+        this.fabricNetwork.publishFederationInviteResponse(contractId, response);
+      } catch (e) {
+        this.emit('error', e);
+      }
+    }
+    // Local invitee membership: join immediately so paste-accept is usable
+    // without waiting for the inviter's GroupChange round-trip.
+    let joined = null;
+    if (accept) {
+      joined = await this.groupManager.joinFromPendingInvite(group.id, actor, stored || {
+        inviteId,
+        contractId
+      });
+    }
+    if (stored && this.registerStore) {
+      stored.status = accept ? 'accepted' : 'rejected';
+      stored.respondedAt = new Date().toISOString();
+      stored.responderPubkey = actor;
+      stored.groupId = group.id;
+      this.registerStore.put('groupinvites', inviteId, stored);
+      const inboxRow = registerInbox.entryFromFederationInvite(stored, stored.source || stored.inviterHubId);
+      if (inboxRow) {
+        const prev = this.registerStore.get('inbox', inboxRow.id);
+        if (prev) {
+          registerInbox.patch(this.registerStore, inboxRow.id, {
+            status: stored.status,
+            actionable: false,
+            resolvedAt: stored.respondedAt,
+            resolvedBy: actor,
+            refs: Object.assign({}, prev.refs || {}, { groupId: group.id })
+          });
+        } else {
+          this._appendInbox(Object.assign({}, inboxRow, {
+            status: stored.status,
+            actionable: false,
+            resolvedAt: stored.respondedAt,
+            resolvedBy: actor
+          }));
+        }
+      }
+    }
+    return Object.assign({}, response, {
+      group: joined || (typeof group.toJSON === 'function' ? group.toJSON() : group)
+    });
+  }
+
+  _queuePendingFederationInvite (invite, source, meta) {
+    if (!invite || !invite.inviteId) return;
+    if (!this._pendingFederationInvites) this._pendingFederationInvites = new Map();
+    this._pendingFederationInvites.set(invite.inviteId, {
+      invite,
+      source: source || null,
+      meta: meta || {},
+      queuedAt: Date.now()
+    });
+    // Bound memory if unlock never happens.
+    if (this._pendingFederationInvites.size > 64) {
+      const oldest = this._pendingFederationInvites.keys().next().value;
+      this._pendingFederationInvites.delete(oldest);
+    }
+  }
+
+  _flushPendingFederationInvites () {
+    const pending = this._pendingFederationInvites;
+    if (!pending || !pending.size || !this._identity) return;
+    const rows = Array.from(pending.values());
+    pending.clear();
+    for (const row of rows) {
+      try {
+        this._ingestFederationInvite(row.invite, row.source, row.meta);
+      } catch (e) { this.emit('error', e); }
+    }
+  }
+
+  _ingestFederationInvite (object, source, meta) {
+    const {
+      parseFederationContractInviteLoose
+    } = require('../functions/federationContractInvite');
+    const { pubkeysMatch } = identityLib();
+    const invite = parseFederationContractInviteLoose(object)
+      || parseFederationContractInviteLoose(JSON.stringify(object));
+    if (!invite || !invite.inviteId) {
+      return { kind: 'FederationContractInvite', invite: null, pending: false };
+    }
+    // Dedup: inviter already persisted outbound; ignore mesh echo.
+    if (this.registerStore && this.registerStore.get('groupinvites', invite.inviteId)) {
+      return { kind: 'FederationContractInvite', invite, pending: false, duplicate: true };
+    }
+    const me = this._identity && this._identity.pubkey
+      ? String(this._identity.pubkey)
+      : null;
+    const invitee = invite.inviteePubkey ? String(invite.inviteePubkey) : null;
+    // Targeted invite: only the invitee keeps a persistent copy + inbox row.
+    // Match compressed ↔ x-only (wire authors / chat hover ids often differ).
+    if (invitee) {
+      if (!me) {
+        // Identity locked — queue until unlock rather than drop (spoke may
+        // receive the frame while the wallet is locked).
+        this._queuePendingFederationInvite(invite, source, meta);
+        return { kind: 'FederationContractInvite', invite, pending: false, skipped: 'identity-locked' };
+      }
+      if (!pubkeysMatch(me, invitee)) {
+        return { kind: 'FederationContractInvite', invite, pending: false, skipped: 'not-invitee' };
+      }
+    }
+    if (me && invite.inviterHubId && pubkeysMatch(me, invite.inviterHubId)) {
+      return { kind: 'FederationContractInvite', invite, pending: false, skipped: 'self-inviter' };
+    }
+    const contractId = invite.contractId || (meta && meta.contract) || null;
+    let group = null;
+    let created = false;
+    if (this.groupManager && contractId) {
+      group = this.groupManager.getGroupByContractId(contractId);
+      if (!group && invite.proposedPolicy) {
+        const shell = this.groupManager.ingestFederationInviteShell(
+          Object.assign({}, invite, { contractId }),
+          source || 'federation-invite'
+        );
+        if (shell) {
+          group = shell.group;
+          created = !!shell.created;
+        }
+      }
+    }
+    const storedInvite = Object.assign({}, invite, {
+      groupId: (group && group.id) || invite.groupId || null,
+      groupName: invite.groupName || (group && group.name) || null,
+      contractId: contractId || null,
+      status: 'pending',
+      source: source || null,
+      direction: 'inbound',
+      receivedAt: new Date().toISOString()
+    });
+    if (this.registerStore) {
+      this.registerStore.put('groupinvites', invite.inviteId, storedInvite);
+    }
+    const inboxRow = registerInbox.entryFromFederationInvite(storedInvite, source);
+    if (inboxRow) this._appendInbox(inboxRow);
+    this.emit('group:invite', invite);
+    return {
+      kind: 'FederationContractInvite',
+      invite,
+      group: group || null,
+      created,
+      pending: true,
+      contractId
+    };
+  }
+
+  _ingestFederationInviteResponse (object, source, meta) {
+    const {
+      parseFederationContractInviteResponseLoose
+    } = require('../functions/federationContractInvite');
+    const response = parseFederationContractInviteResponseLoose(object)
+      || parseFederationContractInviteResponseLoose(JSON.stringify(object));
+    if (!response) return;
+    const stored = this.registerStore && this.registerStore.get('groupinvites', response.inviteId);
+    if (stored && this.registerStore) {
+      stored.status = response.accept ? 'accepted' : 'rejected';
+      stored.respondedAt = new Date().toISOString();
+      stored.responderPubkey = response.responderPubkey || source;
+      this.registerStore.put('groupinvites', response.inviteId, stored);
+      // Patch any local MultisigWalletInvite / FederationInvite row.
+      this._resolveInboxWhere(
+        (r) => (r.kind === 'FederationInvite' || r.kind === 'MultisigWalletInvite') &&
+          r.refs && r.refs.inviteId === response.inviteId,
+        {
+          status: stored.status,
+          actionable: false,
+          resolvedAt: stored.respondedAt,
+          resolvedBy: stored.responderPubkey
+        }
+      );
+      // Inviter (and anyone holding the outbound invite) gets a decision notice.
+      const decision = registerInbox.entryFromFederationInviteDecision(response, stored, source);
+      if (decision) this._appendInbox(decision);
+    }
+    // When a peer accepts, add them as a member if we have the group locally.
+    if (response.accept && response.responderPubkey && this.groupManager && stored) {
+      const group = (stored.groupId && this.groupManager.getGroup(stored.groupId))
+        || (stored.contractId && this.groupManager.getGroupByContractId(stored.contractId));
+      if (group && group.creator && !group.includes(response.responderPubkey)) {
+        this.groupManager._appendGroupStatechain(group.id, {
+          id: `invite-resp:${response.inviteId}`,
+          type: 'FederationContractInviteResponse',
+          message: response,
+          acceptedAt: new Date().toISOString()
+        });
+        this.groupManager.addMember(group.id, response.responderPubkey, group.creator).catch((e) => this.emit('error', e));
+      }
+    }
+    this.emit('group:invite-response', response);
+  }
+
+  /**
    * Publish queued log events as one SCEventBatch over Fabric.
    * Requeues when the peer is not ready.
    */
   async _flushUplink () {
-    if (!this._identity || !this._uplinkQueue || !this._uplinkQueue.length) return null;
+    if (!this._uplinkQueue || !this._uplinkQueue.length) return null;
+    const opts = this._logSharePublishOpts();
+    if (!opts) return null;
     await this._ensureFabric();
     if (!this.fabricNetwork || !this.fabricNetwork.ready) return null;
     const connected = this.fabricNetwork.status().fabricConnected;
     if (!connected) return null; // keep queue until at least one Fabric peer is up
     const events = this._uplinkQueue.splice(0, 200);
     try {
-      this.fabricNetwork.publishEventBatch(events);
+      this.fabricNetwork.publishEventBatch(events, new Date().toISOString(), opts);
+      const targets = opts.to || null;
       for (const p of this.peers) {
-        if (p.enabled !== false) { p.lastSeen = new Date().toISOString(); p.lastError = null; }
+        if (p.enabled === false) continue;
+        const hit = !targets || targets.some((addr) => FabricNetwork.connectionMatchesAddress(p.address, addr)
+          || FabricNetwork.connectionMatchesAddress(addr, p.address));
+        if (hit) { p.lastSeen = new Date().toISOString(); p.lastError = null; }
       }
-      this.emit('uplink:sent', { count: events.length, via: 'fabric' });
-      return { created: events.length, via: 'fabric' };
+      this.emit('uplink:sent', { count: events.length, via: 'fabric', to: targets });
+      return { created: events.length, via: 'fabric', to: targets };
     } catch (e) {
       this._uplinkQueue.unshift(...events);
       if (this._uplinkQueue.length > 5000) this._uplinkQueue.length = 5000;
@@ -2025,28 +7585,63 @@ class StarCitizenService extends EventEmitter {
     this.state.status = 'STARTING';
     if (this.registerStore) await this.registerStore.start();
     this._loadPersistedSettings(); // peers + uplink cadence from the Fabric Store
+    this._applyDiscordConfig();
     if (this.missionManager) await this.missionManager.start();
     if (this.groupManager) await this.groupManager.start();
+    this._applyDefaultGroupFromLocal();
     const serverMode = this.settings.mode === 'server';
-    // Seed FIRST (replays history), then start the live poller at the current
-    // end-of-file so we only stream genuinely new lines and don't double-read.
-    // A seed pointing at a not-yet-written log (default location) is skipped;
-    // the poller below tails it the moment the game creates it.
-    if (!serverMode && this.settings.seed && fs.existsSync(this.settings.seed)) {
-      try { const n = await this.replayLog(this.settings.seed); console.log(`[STAR-CITIZEN] seeded ${n} lines from ${this.settings.seed}`); }
-      catch (e) { this.emit('error', e); }
+    // 1) Fold Game.log + logbackups into durable cumulative history (cursor-based).
+    // 2) Seed the Live tab from the current Game.log (session memory only).
+    // 3) Tail new lines; those update both session state and cumulative history.
+    if (!serverMode) {
+      try { await this._syncCumulativeHistory(); } catch (e) { this.emit('error', e); }
+      this._historyApplyLive = false;
+      if (this.settings.seed && fs.existsSync(this.settings.seed)) {
+        try {
+          const n = await this.replayLog(this.settings.seed);
+          console.log(`[STAR-CITIZEN] seeded ${n} lines from ${this.settings.seed}`);
+        } catch (e) { this.emit('error', e); }
+      }
+      this._historyApplyLive = true;
+      this.openLog();
+    } else if (this._historyFile()) {
+      // Hosted hub (relay.goon.vc): durable cumulative aggregation from peer
+      // SCEventBatch / GameStateSnapshot ingest — sealed into Hub sidechain.
+      this._historyApplyLive = true;
+      console.log(`[STAR-CITIZEN] cumulative aggregator: ${this._historyFile()}`);
     }
-    if (!serverMode) this.openLog();
     if (this.settings.listen !== false) {
       this.server = http.createServer((req, res) => this._handle(req, res));
-      await new Promise((resolve) => this.server.listen(this.settings.port, resolve));
+      const host = this._httpListenHost();
+      await new Promise((resolve, reject) => {
+        this.server.once('error', reject);
+        this.server.listen(this.settings.port, host, () => {
+          this.server.removeListener('error', reject);
+          resolve();
+        });
+      });
+      const addr = this.server.address();
+      if (addr && typeof addr === 'object' && addr.port) this.settings.port = addr.port;
+    }
+    if (this.missionManager && this.missionManager.officers.size === 0) {
+      if (this.missionManager.settings.requireOfficers) {
+        console.error('[STAR-CITIZEN] SC_OFFICERS empty — mission officer mutations are denied until an allowlist is set');
+      } else {
+        console.warn('[STAR-CITIZEN] SC_OFFICERS empty — bootstrap mode (everyone is an officer). Set SC_OFFICERS for production.');
+      }
     }
     if (this._identity) await this._refreshFabric();
+    await this._startDiscordBot();
     this.state.status = 'STARTED';
     this.state.startedAt = new Date().toISOString();
     this.emit('ready');
-    if (this.server) console.log(`[STAR-CITIZEN] listening on http://localhost:${this.settings.port}/services/star-citizen`);
-    else console.log('[STAR-CITIZEN] API ready (embedded mode, no listener)');
+    if (this.server) {
+      const host = this._httpListenHost();
+      const displayHost = (host === '0.0.0.0' || host === '::') ? 'localhost' : host;
+      console.log(`[STAR-CITIZEN] listening on http://${displayHost}:${this.settings.port}/services/star-citizen (bind ${host})`);
+    } else {
+      console.log('[STAR-CITIZEN] API ready (embedded mode, no listener)');
+    }
     return this;
   }
 
@@ -2054,7 +7649,14 @@ class StarCitizenService extends EventEmitter {
     this.state.status = 'STOPPING';
     this._stopping = true;
     if (this._pollTimer) { clearTimeout(this._pollTimer); this._pollTimer = null; }
+    if (this._historyFlushTimer) { clearTimeout(this._historyFlushTimer); this._historyFlushTimer = null; }
+    this._flushHistory();
     if (this.snapshotManager) this.snapshotManager.stop();
+    if (this.discordBot) {
+      try { await this.discordBot.stop(); } catch (_) { /* ignore */ }
+      this.discordBot = null;
+      this._discordBotReady = false;
+    }
     // Let any in-flight fabric transition settle before tearing down.
     if (this._fabricTransition) { try { await this._fabricTransition; } catch (_) { /* logged */ } }
     await this._stopFabric();

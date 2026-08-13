@@ -5,9 +5,10 @@
  *
  * Flow surfaced here (backed by MissionManager + PayoutManager):
  *   create (reward sats, optional group authorities + escrow)
- *     → apply → accept → SUBMIT COMPLETION (claim)
- *     → APPROVE COMPLETION (k-of-n Schnorr over the acceptance message)
- *     → escrow flips payable → payout PSBT for the authorities to sign.
+ *     → apply / broadcast join (many participants)
+ *     → SUBMIT COMPLETION (individual or completion-group payee)
+ *     → APPROVE ONE claim (k-of-n Schnorr) → other pending claims superseded
+ *     → escrow flips payable → payout PSBT (claimant address or group wallet)
  *
  * Approval signatures come from the desktop identity (BIP340 via
  * `identity.signMessage`); the coins unlock only when the mission's
@@ -15,11 +16,12 @@
  */
 
 const React = require('react');
+const MissionOutcomesChart = require('./MissionOutcomesChart');
 
 const BASE = '/services/star-citizen';
 
 const CSS = `
-  .mi-wrap{max-width:980px;margin:0 auto;padding:18px;display:grid;gap:14px}
+  .mi-wrap{width:100%;max-width:none;margin:0;padding:12px 14px;display:grid;gap:14px;box-sizing:border-box}
   .mi-panel{background:var(--panel);border:1px solid var(--line);border-radius:12px;overflow:hidden}
   .mi-panel h2{font-size:13px;margin:0;padding:12px 16px;border-bottom:1px solid var(--line);font-weight:600;display:flex;gap:8px;align-items:center}
   .mi-panel h2 .sub{color:var(--muted);font-weight:400;font-size:12px;flex:1}
@@ -37,7 +39,8 @@ const CSS = `
   .mi-m{border-bottom:1px solid #20262f;padding:12px 16px;display:grid;gap:8px}
   .mi-m:last-child{border-bottom:none}
   .mi-mh{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
-  .mi-title{font-weight:600;font-size:14px;flex:1;min-width:140px}
+  .mi-title{font-weight:600;font-size:14px;flex:1;min-width:140px;cursor:pointer;color:var(--text);text-decoration:none;background:none;border:none;padding:0;font:inherit;text-align:left}
+  .mi-title:hover{color:var(--accent)}
   .mi-tag{font-size:10.5px;font-weight:700;padding:2px 8px;border-radius:5px}
   .mi-tag.open{background:rgba(59,130,246,.18);color:var(--accent)}
   .mi-tag.assigned{background:rgba(210,153,34,.18);color:var(--warn)}
@@ -79,7 +82,11 @@ class Missions extends React.Component {
       // payout inputs keyed by mission id
       payoutAddr: {},
       signedTx: {},
-      psbt: {}
+      psbt: {},
+      // claim form keyed by mission id
+      claimGroup: {},
+      claimNote: {},
+      claimOpen: {}
     };
     this._timer = null;
   }
@@ -179,7 +186,13 @@ class Missions extends React.Component {
     return this.act(async () => {
       const b = bridge();
       if (!b || !b.signMessage) throw new Error('Approval needs the desktop app (identity signing)');
-      const message = JSON.stringify({ action: 'mission.accept', missionId: mission.id, claimId: claim.id, claimantId: claim.claimantId });
+      const message = JSON.stringify({
+        action: 'mission.accept',
+        missionId: mission.id,
+        claimId: claim.id,
+        claimantId: claim.claimantId,
+        completionGroupId: claim.completionGroupId || null
+      });
       const signed = await b.signMessage(message);
       if (signed.error) throw new Error(signed.error);
       await this.post(`/claims/${claim.id}/validate`, {
@@ -190,18 +203,46 @@ class Missions extends React.Component {
     }, 'Completion approved — reward unlocked.');
   }
 
+  submitCompletion (mission) {
+    const me = this.state.pubkey;
+    return this.act(async () => {
+      const completionGroupId = (this.state.claimGroup[mission.id] || '').trim() || undefined;
+      const note = (this.state.claimNote[mission.id] || '').trim();
+      await this.post(`/missions/${mission.id}/claim`, {
+        claimantId: me,
+        note: note || undefined,
+        completionGroupId
+      });
+      this.setState({
+        claimOpen: Object.assign({}, this.state.claimOpen, { [mission.id]: false }),
+        claimGroup: Object.assign({}, this.state.claimGroup, { [mission.id]: '' }),
+        claimNote: Object.assign({}, this.state.claimNote, { [mission.id]: '' })
+      });
+    }, 'Completion submitted — awaiting authority approval.');
+  }
+
   async buildPayout (mission) {
     return this.act(async () => {
-      const toAddress = (this.state.payoutAddr[mission.id] || '').trim() || undefined;
+      const e = mission.escrow || {};
+      const toAddress = e.payeeKind === 'group'
+        ? (e.payeeAddress || undefined)
+        : ((this.state.payoutAddr[mission.id] || '').trim() || e.payeeAddress || undefined);
       const built = await this.post(`/missions/${mission.id}/payout`, { toAddress });
       this.setState({ psbt: Object.assign({}, this.state.psbt, { [mission.id]: built.psbt }) });
     }, 'Payout PSBT built — authorities sign it with their own wallets.');
   }
 
+  myGroups () {
+    const me = this.state.pubkey;
+    if (!me) return [];
+    return (this.state.groups || []).filter((g) => Array.isArray(g.members) && g.members.includes(me));
+  }
+
   renderEscrow (m) {
     const e = m.escrow;
     if (!e) return null;
-    const claim = this.state.claims.find((c) => c.missionId === m.id && c.status === 'accepted');
+    const claim = this.state.claims.find((c) => c.missionId === m.id && (c.status === 'validated' || c.id === e.claimId));
+    const groupPayee = e.payeeKind === 'group';
     return React.createElement('div', { className: 'mi-esc' },
       React.createElement('div', { className: 'mi-row' },
         React.createElement('span', { className: 'mi-tag btc' }, '₿ escrow ' + e.status),
@@ -211,17 +252,36 @@ class Missions extends React.Component {
       e.address
         ? React.createElement('div', null, 'fund: ', React.createElement('code', null, e.address))
         : React.createElement('div', { style: { color: 'var(--muted)' } }, 'ledger obligation — settles out-of-band (connect bitcoind for on-chain escrow)'),
+      e.status === 'payable' && groupPayee
+        ? React.createElement('div', null,
+          'payee: group wallet',
+          e.payeeAddress
+            ? React.createElement('code', null, ' ' + e.payeeAddress)
+            : React.createElement('span', { style: { color: 'var(--muted)' } }, ' (deriving…)'),
+          e.completionGroupId
+            ? React.createElement('span', { style: { color: 'var(--muted)' } }, ` · ${e.completionGroupId.slice(0, 12)}…`)
+            : null
+        )
+        : null,
       e.status === 'payable' && e.mode === 'bitcoin'
         ? React.createElement(React.Fragment, null,
-          React.createElement('div', { className: 'mi-row' },
-            React.createElement('input', {
-              style: { flex: 1, background: 'var(--bg)', border: '1px solid var(--line)', color: 'var(--text)', borderRadius: 7, padding: '7px 9px', fontSize: 12 },
-              placeholder: claim ? `payout address for ${claim.claimantId.slice(0, 10)}…` : 'payout address',
-              value: this.state.payoutAddr[m.id] || '',
-              onChange: (ev) => this.setState({ payoutAddr: Object.assign({}, this.state.payoutAddr, { [m.id]: ev.target.value }) })
-            }),
-            React.createElement('button', { className: 'mi-btn good', disabled: this.state.busy, onClick: () => this.buildPayout(m) }, 'Build payout PSBT')
-          ),
+          groupPayee
+            ? React.createElement('div', { className: 'mi-row' },
+              React.createElement('button', {
+                className: 'mi-btn good',
+                disabled: this.state.busy || !e.payeeAddress,
+                onClick: () => this.buildPayout(m)
+              }, 'Build payout PSBT (group wallet)')
+            )
+            : React.createElement('div', { className: 'mi-row' },
+              React.createElement('input', {
+                style: { flex: 1, background: 'var(--bg)', border: '1px solid var(--line)', color: 'var(--text)', borderRadius: 7, padding: '7px 9px', fontSize: 12 },
+                placeholder: claim ? `payout address for ${String(claim.claimantId).slice(0, 10)}…` : 'payout address',
+                value: this.state.payoutAddr[m.id] || '',
+                onChange: (ev) => this.setState({ payoutAddr: Object.assign({}, this.state.payoutAddr, { [m.id]: ev.target.value }) })
+              }),
+              React.createElement('button', { className: 'mi-btn good', disabled: this.state.busy, onClick: () => this.buildPayout(m) }, 'Build payout PSBT')
+            ),
           this.state.psbt[m.id]
             ? React.createElement('textarea', { className: 'mi-psbt', readOnly: true, value: this.state.psbt[m.id] })
             : null
@@ -231,26 +291,81 @@ class Missions extends React.Component {
     );
   }
 
+  renderClaimForm (m) {
+    if (!this.state.claimOpen[m.id]) return null;
+    const myGroups = this.myGroups();
+    return React.createElement('div', { className: 'mi-esc', style: { marginTop: 4 } },
+      React.createElement('div', { className: 'mi-field' },
+        React.createElement('label', null, 'Note (optional)'),
+        React.createElement('input', {
+          value: this.state.claimNote[m.id] || '',
+          placeholder: 'Done — evidence in session…',
+          onChange: (e) => this.setState({ claimNote: Object.assign({}, this.state.claimNote, { [m.id]: e.target.value }) })
+        })
+      ),
+      React.createElement('div', { className: 'mi-field' },
+        React.createElement('label', null, 'Completion group (optional — payout to group wallet)'),
+        React.createElement('select', {
+          value: this.state.claimGroup[m.id] || '',
+          onChange: (e) => this.setState({ claimGroup: Object.assign({}, this.state.claimGroup, { [m.id]: e.target.value }) })
+        },
+          React.createElement('option', { value: '' }, 'Individual — pay me'),
+          myGroups.map((g) => React.createElement('option', { key: g.id, value: g.id },
+            `${g.name || g.id} (${g.threshold || 1}-of-${(g.members || []).length})`))
+        )
+      ),
+      React.createElement('div', { className: 'mi-row' },
+        React.createElement('button', {
+          className: 'mi-btn',
+          disabled: this.state.busy,
+          onClick: () => this.submitCompletion(m)
+        }, 'Submit completion'),
+        React.createElement('button', {
+          className: 'mi-btn ghost',
+          onClick: () => this.setState({ claimOpen: Object.assign({}, this.state.claimOpen, { [m.id]: false }) })
+        }, 'Cancel')
+      )
+    );
+  }
+
   renderMission (m) {
     const me = this.state.pubkey;
     const apps = this.state.applications.filter((a) => a.missionId === m.id && a.status === 'pending');
-    const claim = this.state.claims.find((c) => c.missionId === m.id && c.status === 'pending');
+    const pendingClaims = this.state.claims.filter((c) => c.missionId === m.id && c.status === 'pending');
+    const participants = Array.isArray(m.participantIds) && m.participantIds.length
+      ? m.participantIds
+      : (m.assigneeId ? [m.assigneeId] : []);
     const isCreator = me && m.createdBy === me;
-    const isAssignee = me && m.assigneeId === me;
+    const isParticipant = me && participants.includes(me);
     const isAuthority = me && m.authorities && (m.authorities.keys || []).includes(me);
     const applied = this.state.applications.some((a) => a.missionId === m.id && a.applicantId === me && a.status === 'pending');
+    const joinable = m.status === 'open' || m.status === 'assigned' || m.status === 'in_progress';
+    const myPendingClaim = pendingClaims.find((c) => c.claimantId === me);
 
     return React.createElement('div', { className: 'mi-m', key: m.id },
       React.createElement('div', { className: 'mi-mh' },
         React.createElement('span', { className: 'mi-tag ' + (m.status || 'open') }, m.status),
-        React.createElement('span', { className: 'mi-title' }, m.title),
+        React.createElement('button', {
+          type: 'button',
+          className: 'mi-title',
+          title: 'Open mission page',
+          onClick: () => { window.location.href = `/missions/${encodeURIComponent(m.id)}`; }
+        }, m.title),
         m.reward ? React.createElement('span', { className: 'mi-tag btc' }, '₿ ' + SATS(m.reward)) : null,
         m.groupId ? React.createElement('span', { className: 'mi-tag open' }, 'group') : null,
+        participants.length
+          ? React.createElement('span', { style: { color: 'var(--muted)', fontSize: 11 } }, `${participants.length} in`)
+          : null,
         m.authorities ? React.createElement('span', { style: { color: 'var(--muted)', fontSize: 11 } }, `${m.authorities.threshold}-of-${m.authorities.keys.length} authorities`) : null
       ),
-      React.createElement('div', { className: 'mi-meta' }, m.id + (m.assigneeId ? ` · assignee ${m.assigneeId.slice(0, 12)}…` : '')),
+      React.createElement('div', {
+        className: 'mi-meta',
+        style: { cursor: 'pointer' },
+        title: 'Open mission page',
+        onClick: () => { window.location.href = `/missions/${encodeURIComponent(m.id)}`; }
+      }, m.id + (isParticipant ? ' · you’re in' : '')),
       React.createElement('div', { className: 'mi-row' },
-        m.status === 'open' && isCreator
+        joinable && isCreator
           ? React.createElement(React.Fragment, { key: 'bcast' },
             React.createElement('button', {
               className: 'mi-btn ghost',
@@ -258,42 +373,61 @@ class Missions extends React.Component {
               title: 'Notify all connected Fabric peers that this mission is open',
               onClick: () => this.act(
                 () => this.post(`/missions/${m.id}/broadcast`, { scope: 'global' }),
-                'Broadcast sent to the network.'
+                'Shared to the network.'
               )
-            }, 'Broadcast to network'),
+            }, 'Share to network'),
             m.groupId
               ? React.createElement('button', {
                 className: 'mi-btn ghost',
                 disabled: this.state.busy,
-                title: 'Notify members of this mission\'s group and its subgroups (hub still relays; non-members filter on receive)',
+                title: 'Notify members of this mission\'s group and its subgroups',
                 onClick: () => this.act(
                   () => this.post(`/missions/${m.id}/broadcast`, { scope: 'group', groupId: m.groupId }),
-                  'Broadcast sent to the group.'
+                  'Shared to the group.'
                 )
-              }, 'Broadcast to group')
+              }, 'Share to group')
               : null
           )
           : null,
-        m.status === 'open' && me && !isCreator && !applied
-          ? React.createElement('button', { className: 'mi-btn ghost', disabled: this.state.busy, onClick: () => this.act(() => this.post(`/missions/${m.id}/apply`, { applicantId: me }), 'Applied.') }, 'Apply')
+        joinable && me && !isCreator && !applied && !isParticipant
+          ? React.createElement('button', {
+            className: 'mi-btn ghost',
+            disabled: this.state.busy,
+            onClick: () => this.act(() => this.post(`/missions/${m.id}/apply`, { applicantId: me }), 'Applied.')
+          }, 'Apply')
           : null,
         applied ? React.createElement('span', { style: { color: 'var(--muted)', fontSize: 12 } }, 'application pending') : null,
+        isParticipant && joinable
+          ? React.createElement('span', { style: { color: 'var(--good)', fontSize: 12 } }, 'You’re in')
+          : null,
         ...apps.map((a) => (isCreator || isAuthority)
           ? React.createElement('button', {
             className: 'mi-btn', key: a.id, disabled: this.state.busy,
-            onClick: () => this.act(() => this.post(`/applications/${a.id}/decision`, { decision: 'accept', officerId: me }), 'Assigned.')
+            onClick: () => this.act(() => this.post(`/applications/${a.id}/decision`, { decision: 'accept', officerId: me }), 'Participant accepted.')
           }, `Accept ${a.applicantId.slice(0, 10)}…`)
           : null),
-        m.status === 'assigned' && isAssignee && !claim
-          ? React.createElement('button', { className: 'mi-btn', disabled: this.state.busy, onClick: () => this.act(() => this.post(`/missions/${m.id}/claim`, { claimantId: me }), 'Completion submitted — awaiting approval.') }, '✔ Submit completion')
+        joinable && isParticipant && !myPendingClaim && m.status !== 'completed'
+          ? React.createElement('button', {
+            className: 'mi-btn',
+            disabled: this.state.busy,
+            onClick: () => this.setState({ claimOpen: Object.assign({}, this.state.claimOpen, { [m.id]: true }) })
+          }, '✔ Submit completion')
           : null,
-        claim && isAuthority
-          ? React.createElement('button', { className: 'mi-btn good', disabled: this.state.busy, onClick: () => this.approve(m, claim) }, '✓ Approve completion (sign)')
-          : null,
-        claim && !isAuthority
-          ? React.createElement('span', { style: { color: 'var(--muted)', fontSize: 12 } }, 'completion submitted — awaiting authority signatures')
+        ...pendingClaims.map((c) => (isAuthority
+          ? React.createElement('button', {
+            className: 'mi-btn good',
+            key: c.id,
+            disabled: this.state.busy,
+            title: c.completionGroupId ? `group payee ${c.completionGroupId}` : 'individual payee',
+            onClick: () => this.approve(m, c)
+          }, `✓ Approve ${String(c.claimantId).slice(0, 10)}…${c.completionGroupId ? ' (group)' : ''}`)
+          : null)),
+        pendingClaims.length && !isAuthority
+          ? React.createElement('span', { style: { color: 'var(--muted)', fontSize: 12 } },
+            `${pendingClaims.length} completion(s) awaiting authority signatures`)
           : null
       ),
+      this.renderClaimForm(m),
       this.renderEscrow(m)
     );
   }
@@ -334,6 +468,16 @@ class Missions extends React.Component {
   render () {
     return React.createElement('div', { className: 'mi-wrap' },
       React.createElement('div', { className: 'mi-panel' },
+        React.createElement('h2', null, '🎯 Game.log outcomes ',
+          React.createElement('span', { className: 'sub' }, '— cumulative from Home → Missions stats')),
+        React.createElement('div', { className: 'mi-body' },
+          React.createElement(MissionOutcomesChart, {
+            analytics: this.props.analytics || null,
+            subtitle: 'Parsed in-game mission ends (not the officer register below).'
+          })
+        )
+      ),
+      React.createElement('div', { className: 'mi-panel' },
         React.createElement('h2', null, '⭐ Mission register',
           React.createElement('span', { className: 'sub' }, '— post work, attach a Bitcoin reward, and unlock it with authority signatures on completion'),
           React.createElement('button', { className: 'mi-btn', onClick: () => this.setState({ showCreate: !this.state.showCreate }) },
@@ -351,6 +495,6 @@ class Missions extends React.Component {
   }
 }
 
-Missions.CSS = CSS;
+Missions.CSS = CSS + (MissionOutcomesChart.CSS || '');
 
 module.exports = Missions;

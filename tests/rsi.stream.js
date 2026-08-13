@@ -4,6 +4,9 @@ const assert = require('assert');
 const StarCitizen = require('../services/StarCitizen');
 
 describe('@fabric/star-citizen-live', function () {
+  // StarCitizen extends @fabric/hub — construction pulls Hub deps (~2–4s).
+  this.timeout(15000);
+
   let service = null;
 
   beforeEach(function () {

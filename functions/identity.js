@@ -8,6 +8,7 @@
 
 const crypto = require('crypto');
 const Key = require('@fabric/core/types/key');
+const fabricPubkey = require('@fabric/http/functions/fabricPubkey');
 
 const ENCRYPTION_VERSION = 1;
 const SCRYPT_PARAMS = { N: 16384, r: 8, p: 1 };
@@ -198,34 +199,33 @@ function verifyEnvelope (envelope) {
  * @returns {string|null}
  */
 function pubkeyXOnly (hex) {
-  const s = String(hex || '').toLowerCase().replace(/^0x/, '');
-  if (/^0[23][0-9a-f]{64}$/.test(s)) return s.slice(2);
-  if (/^[0-9a-f]{64}$/.test(s)) return s;
-  return null;
+  return fabricPubkey.pubkeyXOnly(hex);
 }
 
 /**
- * True when two pubkey hex strings refer to the same key (compressed or x-only).
  * @param {*} a
  * @param {*} b
  * @returns {boolean}
  */
 function pubkeysMatch (a, b) {
-  const xa = pubkeyXOnly(a);
-  const xb = pubkeyXOnly(b);
-  return !!(xa && xb && xa === xb);
+  return fabricPubkey.pubkeysMatch(a, b);
 }
 
 /**
- * Prefer a compressed actor pubkey when it matches the wire signer (x-only).
- * @param {string|null} signerHex Wire signer from Message verification
- * @param {Object|null} actor Message actor { publicKey|pubkey|id }
+ * @param {*} signerHex
+ * @param {*} actor
  * @returns {string|null}
  */
 function resolveSignerPubkey (signerHex, actor) {
-  const candidate = actor && (actor.publicKey || actor.pubkey || actor.id);
-  if (candidate && (!signerHex || pubkeysMatch(candidate, signerHex))) return String(candidate);
-  return signerHex ? String(signerHex) : (candidate ? String(candidate) : null);
+  return fabricPubkey.resolveSignerPubkey(signerHex, actor);
+}
+
+/**
+ * @param {*} hex
+ * @returns {string}
+ */
+function canonicalChatAuthor (hex) {
+  return fabricPubkey.canonicalChatAuthor(hex);
 }
 
 module.exports = {
@@ -240,5 +240,6 @@ module.exports = {
   verifyEnvelope,
   pubkeyXOnly,
   pubkeysMatch,
-  resolveSignerPubkey
+  resolveSignerPubkey,
+  canonicalChatAuthor
 };

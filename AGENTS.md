@@ -5,7 +5,12 @@
 > project context **here** so the two never drift. (`PROJECT_CONTEXT.md` is a
 > legacy pointer to this file as well.)
 >
-> **Last reviewed against source:** branch `feature/fabric-free-m1` · 2026-07-20 (D-010 Fabric P2P).
+> **Last reviewed against source:** branch `feature/fabric-free-m1` · 2026-07-24
+> (D-018 Chain of Blocks / consensus modes; D-017 opt-in log share / Peers UI;
+> D-019 GroupOffer opaque `fabric:<hex>` shares + group Statechain journal;
+> D-016 contract-namespace sidechains / Hub ADR-001; D-015 sidechain/Beacon seal;
+> D-014 cumulative history; D-013 device-link; D-012 application namespaces;
+> D-011 site login; D-010 Fabric P2P).
 > If you change architecture, commands, or state, update **this file** and the
 > reality it describes — not a copy.
 
@@ -23,16 +28,21 @@ mutation is recorded in a **hash-chained, tamper-evident audit log**.
 
 The relay also powers an **activity-analytics dashboard** (missions, outcomes,
 deaths, sessions and an activity heatmap, sliced by pilot / mission type / month &
-year) and lets players **backload their saved logs** (`npm run backfill` over the
-game's `logbackups`) so the org can see real history, not just the live session.
+year). On every desktop/local start it **cursor-syncs** the live `Game.log` plus
+locatable channel `logbackups` (including sibling `LIVE/logbackups` next to the
+resolved Game.log, even for custom `SC_LOGFILE` installs) into durable cumulative
+history (`stores/gooncitizen/history.json` — under Electron `userData` on
+desktop). The header stats and Analyze tab default to **all-time cumulative**
+counts (D-014); `npm run backfill` is an optional CLI into the same store.
 
 **One-line summary:** turn the live game log into a Discord/dashboard/API feed,
-analyse activity (incl. backloaded history), and run an officer-validated mission
-register with an auditable trail on top.
+accumulate verified play history across restarts, and run an officer-validated
+mission register with an auditable trail on top.
 
-**Core goals (do not regress — see `DECISIONS.md` D-005, D-007):** (1) the officer-
-validated mission register with an auditable trail; (2) the activity-analytics
-dashboard; (3) player log backload into shared history. New work must protect these.
+**Core goals (do not regress — see `DECISIONS.md` D-005, D-007, D-014):** (1) the
+officer-validated mission register with an auditable trail; (2) the
+activity-analytics dashboard; (3) cumulative durable log history (startup sync +
+live tail). New work must protect these.
 
 **Product context for non-technical readers:** `SOLUTION-BRIEF.md`.
 
@@ -58,19 +68,20 @@ dashboard; (3) player log backload into shared history. New work must protect th
 - **This fork's direction:** D-002 removed the heavyweight Fabric *transport* from
   the local relay; D-009 brings **Fabric conventions + Network integration** back
   in: `types/` for code, `stores/gooncitizen/` for data (like Hub `stores/hub`),
-  peer management, and Schnorr-signed Fabric Peer uplink to org hubs
-  (relay.goon.vc:7777) over the Fabric Protocol (D-010).
+  peer management, and Schnorr-signed Fabric Peer uplink to network hubs
+  (hub.fabric.pub:7777, relay.goon.vc:7777) over the Fabric Protocol (D-010).
 
 ---
 
 ## 3. Build / run / test commands
 
-Requires **Node.js LTS** (uses the built-in test runner + global `fetch`, so
-Node 18+). **No `npm install` step is needed** — the running service has **zero
-runtime dependencies** (only Node built-ins: `http`, `crypto`, `events`, `fs`,
-`readline`).
+Requires **Node.js 24.15.0** (see `.nvmrc` / `package.json` `engines`). Desktop /
+Fabric mesh paths need **`npm i`** (pins `@fabric/core`, `@fabric/http`,
+`@fabric/hub` from Git). **`.npmrc` sets `allow-git=all`** — npm 12+
+`allow-git=root` still fails during nested git-dep preparation of commit SHAs.
 
 ```bash
+npm i                     # Fabric git deps + Electron (dev); needs allow-git=all
 npm start                 # LiveRelay → http://localhost:3041/  (dashboard home)
 npm run desktop           # Electron shell (Fabric-style; alias: start:desktop)
 npm test                  # node --test tests/relay/*.test.js
@@ -81,28 +92,51 @@ npm run build:installers  # Windows x64 + Debian x64 + macOS
 
 - `npm start` → `scripts/node.js` → `services/LiveRelay.js`. Auto-detects the SC
   install across drives/channels and tails the freshest `Game.log` (read-only).
-- Store root: **`stores/gooncitizen/`** — same shape as Hub `stores/hub`. All
-  internal storage (missions, groups, operator settings) lives in the
-  **`register/` Fabric Store** (LevelDB); no JSON files are written by the app.
-  Type code: `types/Store.js`.
-- Dashboard home lists features along the top: Live, Analyze, Missions,
-  Wallet, Library, Chat, Groups, Peers. Chat uses Hub message types
-  (`ChatMessage` records, carried as Fabric `P2P_CHAT_MESSAGE`): a `global`
-  channel plus a `group:<id>` channel per group (members-only in hosted mode).
-  Local posts publish over the Fabric Peer; remotes arrive via Peer ingest
-  (`services/ChatManager.js` + `services/FabricNetwork.js`). The dedicated Chat
-  tab remains; **global chat is also always available** via a floating dock on
-  other tabs (`components/GlobalChatDock.js`). Operators set an optional
-  **nickname** (Settings / Identity; Fabric Store key `nickname`) for chat
-  display; the compressed pubkey remains the actor id and is always shown
-  beside the nickname.   Mission creators can **Broadcast** an open mission
+- Store root: **`stores/gooncitizen/`** — same shape as Hub `stores/hub`. Missions,
+  groups, and operator settings live in the **`register/` Fabric Store** (LevelDB).
+  GoonCitizen `types/Store.js` **composes** `@fabric/core` Store and persists
+  collections at `/collections/<name>` (`store.fabric`). Cumulative gameplay
+  history is **`history.json`** + **`log-cursors.json`** beside
+  it (D-014). Type code: `types/Store.js`, `functions/cumulativeHistory.js`,
+  `functions/logCorpus.js` (discover all own logs; `GET …/corpus`). Auto-detect
+  covers Windows install drives and Linux/macOS Wine/Proton `drive_c` prefixes
+  (`functions/locate.js`).   Feed **Import logs** browses folders and/or hand-picks individual `*.log`
+  files (`GET …/fs`, `POST …/corpus/import`) persisted as settings
+  `corpusDirs` + `corpusFiles` (`functions/fsBrowser.js`); desktop uses
+  native folder/file pickers. Cumulative history also folds QT hops, incap,
+  and CrimeStat. Analyze builds a Fabric Merkle **Activity Tree**
+  (`GET …/activity-tree`) and can publish `GroupActivityTree` into a Group
+  Contract Statechain (`POST …/activity-tree/publish`).
+- Dashboard home lists features along the top: Live (Feed), Missions,
+  Wallet, Files (advanced / opt-in), Library, Chat, Groups, Peers. **Feed** is a chat-style stream
+  (`GET …/monitor` → `feed` / `GET …/feed`) merging parsed Game.log events,
+  peer `SCEventBatch` collections, global/group chat, and mission broadcasts;
+  type/from chips default to All with optional keyword filter. Chat uses Hub message types
+  (`ChatMessage` records): **`global`** is Fabric `P2P_CHAT_MESSAGE` with a
+  raw UTF-8 text body (no JSON / handle on the wire); each **`group:<id>`**
+  channel is `GroupChat` under that Group's Federation `CONTRACT_MESSAGE`
+  (`contracts/gooncitizenGroup.js`). Nicknames broadcast separately as
+  **`P2P_PEER_ALIAS`** (UTF-8). Local posts publish over the Fabric Peer;
+  remotes arrive via Peer ingest (`services/ChatManager.js` +
+  `services/FabricNetwork.js`). The dedicated Chat tab remains; **global chat
+  is also always available** via a floating dock on other tabs
+  (`components/GlobalChatDock.js`). Operators set an optional **local profile**
+  (Identity; Store keys `nickname` + `profile` `{ bio, scHandle }`) — nickname
+  is `P2P_PEER_ALIAS`, richer fields publish as GoonCitizen `PeerProfile`;
+  Peers → **Inspect** shows `GET /peers/:id` (alias/profile/pubkey). The
+  compressed pubkey remains the actor id. Mission creators can **Broadcast** an open mission
   (`POST …/missions/:id/broadcast` with `{ scope, groupId }` — network-wide
-  to Fabric peers, or to a group tree including subgroups); receivers get a
-  pending offer with desktop + in-app **Accept** (apply) / **Ignore**, gated
-  by `notifyMissionBroadcasts` (group scope is membership-filtered on receive
-  via `isInGroupTree`). Many orgs install the app; **Groups** (optional
-  `parentId` subgroups) are the sharing boundary across the mesh — not a
-  single hard-coded org. A header **notification bell** opens the
+  GoonCitizen `MissionBroadcast`, or group-scoped `GroupShare` on the Group
+  Federation contract); receivers get a pending offer with desktop + in-app
+  **Accept** (apply) / **Ignore**, gated by `notifyMissionBroadcasts` (group
+  scope is membership-filtered on receive via `isInGroupTree`). Many orgs
+  install the app; **Groups** are Hub-aligned **Federation contracts**
+  (optional `parentId` subgroups) with `contractId`, `GroupChange`, and
+  Hub-shaped `FederationContractInvite` — the sharing boundary across the
+  mesh, not a single hard-coded org. **Share** copies an opaque
+  `fabric:<hex>` `GroupShare`/`GroupOffer` Message (D-019); each group’s
+  local Statechain journals applications / decisions / `GroupChange` and
+  folds deterministic `GoonCitizenGroupState` (D-016). A header **notification bell** opens the
   dedicated Notifications history page (`#notifications`). Desktop
   notifications for chat are controlled in Settings (`notifyDesktop`,
   `notifyChatGlobal`, `notifyChatGroups`, `notifyWhenFocused`) and shown via
@@ -113,13 +147,55 @@ npm run build:installers  # Windows x64 + Debian x64 + macOS
   authorities' multisig, submit-completion (claim) → approve-completion
   (BIP340 Schnorr over the acceptance message) → escrow `payable` → payout
   PSBT. Ledger mode by default; `settings.payouts.rpc` connects bitcoind
-  (regtest/signet; mainnet refused per D-008).
-- **Peers (D-010):** each node runs a Fabric Peer on **port 7777**
-  (`fabric.port`); default seed is `relay.goon.vc:7777` (removable; a saved
-  empty list is respected). Peering is AMP/`Message` over TCP/NOISE — not
-  HTTPS uplink. `shareLogsGlobal` (default on) gates pushing parsed log events
-  (`SCEventBatch`) only; chat and mission broadcasts always publish when the
-  peer is up.
+  (regtest/signet; mainnet refused per D-008). Personal Hub Bitcoin
+  (`settings.bitcoin.enable`) proxies `/services/star-citizen/bitcoin/*` to
+  Hub HTTP — the app’s Hub-shaped API. Operator admin token for Hub-wallet
+  send is resolved server-side only (`FABRIC_HUB_ADMIN_TOKEN`,
+  `bitcoin.adminToken`, `bitcoin.adminTokenFile`, or playnet mesh discover);
+  the UI never holds it.
+- **Document Exchange / Files (opt-in):** Hub UI `/documents` + Fabric TUI
+  `documents` / `documents-market` packs, gated by **`settings.documents.enable`**
+  in `settings/local.js` (off by default in `settings/example.js`). The dashboard
+  **Files** tab (renamed from Documents) is **Advanced mode only**. Chat (and the
+  global dock) expose an **📎 attach** control for all users when documents are
+  enabled: picking a file creates + publishes on the Hub at
+  `documents.defaultPriceSats` (default **25**, Hub DocumentView default) then
+  posts a ChatMessage with a `fabric-doc:` wire line (`functions/chatAttachment.js`).
+  LiveRelay `/services/star-citizen/documents/*` proxies Hub JSON-RPC; chat POST
+  may include `{ file: { contentBase64, name, mime }, purchasePriceSats }`.
+  Slash-command pop-out (`/file`, `/price`, `/help`) is extensible via
+  `SLASH_COMMANDS`.
+- **Discord bot (`@fabric/discord`):** Settings / env configure app id, token,
+  channel. Inbound Discord traffic publishes GoonCitizen `CONTRACT_MESSAGE`
+  bodies **DiscordRequest → DiscordClaim (first-wins) → DiscordResponse** so
+  multiple operators of the same Discord application do not double-reply.
+  Auditors seed the sequence from the Fabric message log (**View tree** on any
+  Discord frame, or `GET …/fabric/messages/tree?requestId=`). Helpers:
+  `functions/discordContract.js`.
+- **Peers (D-010 / D-017):** each node runs a Fabric Peer on **port 7777**
+  (`fabric.port`); default seeds are `hub.fabric.pub:7777` and
+  `relay.goon.vc:7777` (removable; a saved empty list is respected). Peering is
+  AMP/`Message` over TCP/NOISE — not HTTPS uplink. Both hubs selectively relay
+  relevant Fabric messages. Desktop listens for `P2P_PEERING_OFFER` /
+  `P2P_PEER_GOSSIP`, fills open slots (`Peer._fillPeerSlots`), and may
+  auto-roster discovered non-hub peers (`discovered: true`, logs off). Optional
+  `fabricAdvertiseHost` publishes offers so others can dial you. Peers UI also
+  **observes** Hub HTTP `GET /services/peering` on both hubs (TCP + WebRTC
+  registration counts — browser mesh is not dialed from desktop). Parsed log
+  events (`SCEventBatch` / `GameStateSnapshot`) are **opt-in**: default
+  `shareLogsGlobal` off, or per-peer `shareLogs` on the Peers tab. Chat and
+  mission broadcasts always publish when the peer is up.
+- **Site login (D-011):** LiveRelay hosts Hub-compatible **`/sessions`**
+  (`functions/fabricSiteLogin.js`) so `relay.goon.vc` (or any
+  `SC_MODE=server` deploy) can sign players in without a separate Hub HTTP
+  front. Desktop registers **`fabric:`** and completes client-signed sessions
+  (`fabric://login?sessionId&hub`) with the unlocked player key —
+  interchangeable with Fabric Passport (`components/FabricLoginModal.js`).
+  Browser monitor (non-Electron) uses `components/SiteLogin.js`. Successful
+  completion issues a Bearer `delegationToken` for hosted API auth.
+- **Device link (D-013):** mutual Schnorr attestation with separate seeds —
+  `fabric://link?sessionId&hub` opens an in-app approve modal; peer Fabric id
+  is stored under settings `linkedDevices` (see `DECISIONS.md` D-013).
 
 ### Environment variables (config; secrets via env only)
 | Var | Purpose |
@@ -127,10 +203,17 @@ npm run build:installers  # Windows x64 + Debian x64 + macOS
 | `SC_LOGFILE` | Force an exact `Game.log` path (highest priority). |
 | `SC_CHANNEL` | Force a channel, e.g. `HOTFIX` (when auto-detect ties). |
 | `SC_SEED` | Pre-fill the monitor from a different log on start. |
-| `DISCORD_WEBHOOK_URL` | Enable Discord posting (optional). |
+| `DISCORD_WEBHOOK_URL` | Optional webhook mirror (fallback if no bot). |
+| `DISCORD_BOT_TOKEN` | Local `@fabric/discord` bot token. |
+| `DISCORD_APP_ID` / `DISCORD_APP_SECRET` | Discord application id / OAuth client secret. |
+| `DISCORD_CHANNEL_ID` | Default announce channel snowflake for bot embeds. When set, inbound Fabric DiscordRequest coordination is limited to that channel. |
 | `SC_OFFICERS` | Comma-separated officer allowlist for the mission register. |
 | `SC_REGISTER_DIR` | Fabric Store (LevelDB) for ALL internal storage — missions, groups, operator settings. Default: `stores/gooncitizen/register` (CLI) / `<userData>/stores/gooncitizen/register` (desktop). |
 | `SC_SETTINGS_DIR` | Named Fabric store root. Default: `stores/gooncitizen`. |
+| `FABRIC_PORT` | Fabric Peer listen port (default 7777). |
+| `FABRIC_INTERFACE` / `FABRIC_PEER_INTERFACE` | Fabric Peer bind address (default `0.0.0.0`). Dedicated `relay.goon.vc` NIC: `65.21.231.149`. |
+| `FABRIC_PUBLIC_HOST` / `FABRIC_ADVERTISE_HOST` | Hostname for peering offers / self-dial filter (`relay.goon.vc` on that host). Legacy alias: `SC_FABRIC_PUBLIC_HOST` (mapped at boot). |
+| `FABRIC_HUB_INTERFACE` / `INTERFACE` / `FABRIC_HTTP_INTERFACE` | HTTP dashboard bind (default loopback unless shared mode / server). Legacy aliases: `SC_HTTP_HOST` / `SC_HTTP_INTERFACE` (mapped at boot via `functions/goonCitizenEnvAliases.js`). |
 
 Snapshot settings (Settings ⚙ → Snapshots; stored in the Fabric Store, applied
 live): `snapshotsEnabled` (opt-in, default off), `snapshotIntervalSeconds`
@@ -202,10 +285,24 @@ Kept during migration; safe to ignore unless explicitly working on migration.
   dormant on the current game (only ≤4.3.0 logged them — §1).
 - **Activity-analytics dashboard** (Analyze tab): KPI strip, activity heatmap,
   outcome donut, mission-type bars, pilot leaderboard, pilot comparison; **month/
-  year add-remove slicer**; served by `GET …/analytics`.
-- **Player log backload:** `npm run backfill` (`scripts/backfill.js`) ingests saved
-  logs into a compact, gitignored `stores/history.json` (per-pilot, attributed by
-  login handle); merged with the live session in the analytics view.
+  year add-remove slicer**; served by `GET …/analytics` from **cumulative**
+  history (plus in-flight active missions). Header counts are all-time by default;
+  `counts.session` on `/monitor` is this-process only.
+- **Cumulative log history (D-014):** `functions/cumulativeHistory.js` + startup
+  `_syncCumulativeHistory()` — byte cursors in `log-cursors.json`, compact records
+  in `history.json` under the store root. Live tail and peer `SCEventBatch`
+  deaths/mission ends fold into the same store. Optional CLI: `npm run backfill`.
+- **Hub sidechain / Beacon seal (D-015 / D-016 / D-018):** clients publish
+  `GameStateSnapshot`; `relay.goon.vc` aggregates into `/services/rsi` **and**
+  `/namespaces/<gooncitizenContractId>` on Hub `sidechain/STATE` so each Beacon
+  epoch seals a public `stateDigest` + `sidechain/SNAPSHOTS` (Fabric sidechain document;
+  Hub ADR-001). Gossip event firehose uses `@fabric/core` **Chain** of **Blocks**
+  (`consensus: 'gossip'`) via `functions/eventChain.js` for append/merge/split/replay;
+  Beacon epochs use `consensus: 'federation'` (Elements-style signed blocks) on the
+  same Chain type. Groups persist Statechain STATE+JOURNAL in the Fabric Store
+  collection `groupsidechains` via `functions/groupStatechain.js` (no direct `fs`).
+  Helpers: `functions/gooncitizenGameState.js`; hub sync in
+  `goon.vc/functions/gooncitizenSidechainSync.js`.
 - Kill / vehicle-destruction parsing — **format-verified on real ≤4.3.0 logs**,
   wired to the dashboard 💀 panel + Discord, but dormant on the current game (§1).
 - Live dashboard + REST API + optional Discord webhook embeds.

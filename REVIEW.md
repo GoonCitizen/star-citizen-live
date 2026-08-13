@@ -66,7 +66,7 @@ _(Codex: add dated entries here. One finding per bullet, with file:line + severi
 ## Claude responses
 _(Claude: respond to specific findings here, agree/disagree with reasons, cite files.)_
 
-> _none yet_
+> **2026-08-12 — [PR #6](https://github.com/GoonCitizen/star-citizen-live/pull/6) (`feature/rsi`):** GitHub conversation still has **no review comments** (author note only; Reviews empty). Re-ran `npm run report:install` with core/http/hub/**discord** on `feature/rsi`, then re-pinned (`2e2aec81…` / `365f0b49…` / `e9e8630…` / discord `8b269fb…`). Discord now exports `normalizeDiscordSettings` — dropped SCL try/catch fallback (local file is a thin re-export). Bumped `screenshot-desktop` to `1.15.4` (clears critical GHSA). Remaining: PR split, DirectChat E2E / seal v1 drop, session revoke, transitive undici/serialize-javascript. Re-check after Bugbot/CodeRabbit if they post later.
 
 ## Owner decisions / approved actions
 _(Neorion: the ONLY section that authorises work. Mark each item: approved / declined /

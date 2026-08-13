@@ -3,19 +3,18 @@
 /**
  * Store — keyed-collection persistence for the mission register + groups.
  *
- * Follows the Fabric convention: the *type* lives in `types/`, the *data*
- * lives under the named store root `stores/gooncitizen/` (like the Hub's
- * `stores/hub`). The register LevelDB is `stores/gooncitizen/register`.
+ * Composes `@fabric/core` {@link Store} (`this.fabric`). Named collections are
+ * stored at Fabric paths `/collections/<name>` via `fabric.set` / `fabric.get`
+ * (not raw Level key blobs). The sync façade (`get` / `put` / `all` / `count` /
+ * `del`) keeps MissionManager / GroupManager simple.
  *
- * Surface (sync): get / all / count / put — same as the original M5 seam so
- * MissionManager and GroupManager stay simple.
- *
- * Persistence: when `path` (or legacy `dir`) is set, collections are kept in an
- * {@link https://github.com/FabricLabs/fabric/blob/master/types/store.js
- * @fabric/core Store} (LevelDB). Memory-only when path is null (tests).
+ * Data lives under the named store root `stores/gooncitizen/` (Hub-style);
+ * the register LevelDB is `stores/gooncitizen/register`.
  *
  * Call `await store.start()` before reads that must see prior sessions, and
  * `await store.stop()` on shutdown so pending writes flush.
+ *
+ * Memory-only when `path` is null (tests) — no Fabric Store is constructed.
  */
 
 const fs = require('fs');
@@ -24,11 +23,23 @@ const path = require('path');
 const COLLECTIONS = [
   'missions', 'applications', 'claims', 'validations', 'audit',
   'groups', 'groupapplications', 'groupaudit',
+  'groupsidechains', // per-group Statechain STATE + JOURNAL (functions/groupStatechain.js)
+  'groupinvites', // FederationContractInvite rows (survive restart)
+  'groupchanges', // applied GroupChange dedupe / history
+  'groupchangeproposals', // pending GroupChangeProposal + votes (k-of-n adopt)
+  'contractmessages', // ARC multi-origin GroupChat/GroupChange fold (@fabric/core contractMessageAccumulate)
+  'contractmessagecommits', // ARC 2PC sidecar (received/receipt; does not alter tip digest)
   'settings', // operator settings records { id: key, value } (functions/settingsStore.js)
   'snapshots', // screenshot metadata { id, ts, file, bytes, width, height } (services/SnapshotManager.js)
   'chatmessages', // Hub-style ChatMessage records (services/ChatManager.js)
-  'missionbroadcasts' // peer mission offers (Broadcast → Accept / Ignore)
+  'missionbroadcasts', // peer mission offers (Broadcast → Accept / Ignore)
+  'inbox', // unified browseable register / gossip inbox (functions/registerInbox.js)
+  'fleets' // Starjump / FleetViewer personal fleets (functions/starjumpFleet.js)
 ];
+
+function collectionPath (name) {
+  return `/collections/${name}`;
+}
 
 class Store {
   /**
@@ -39,12 +50,16 @@ class Store {
   constructor ({ path: storePath = null, dir = null } = {}) {
     this.path = storePath || dir || null;
     this.data = {}; // { collectionName: { id: record } }
+    /** @type {Object|null} */
     this._fabric = null;
     this._started = false;
     this._writeChain = Promise.resolve();
   }
 
   get persistent () { return !!this.path; }
+
+  /** Underlying `@fabric/core` Store (null in memory-only mode or before start). */
+  get fabric () { return this._fabric; }
 
   /**
    * Open the Fabric Store (if configured) and load collections into memory.
@@ -53,12 +68,9 @@ class Store {
   async start () {
     if (!this.path || this._started) return this;
 
-    fs.mkdirSync(this.path, { recursive: true });
-
-    // Import legacy per-collection JSON files (pre–Fabric Store) once.
+    // One-shot transitional imports (pre–Fabric Store files). Steady-state IO
+    // goes through this.fabric set/get only.
     this._migrateLegacyJson();
-    // Pick up a legacy operator settings.json from the store root (merged
-    // key-by-key after Level loads, so existing Store values win).
     const legacySettings = this._takeLegacySettingsJson();
 
     const FabricStore = require('@fabric/core/types/store');
@@ -100,12 +112,16 @@ class Store {
     return this;
   }
 
-  /** Flush pending Level writes (also called from stop). */
+  /** Flush pending Fabric writes (also called from stop). */
   async flush () {
     await this._writeChain.catch(() => {});
     return this;
   }
 
+  /**
+   * Transitional: import legacy per-collection JSON beside the register dir once.
+   * Not used for steady-state persistence.
+   */
   _migrateLegacyJson () {
     if (!this.path) return;
     const hasLevel = fs.existsSync(path.join(this.path, 'CURRENT'));
@@ -125,10 +141,7 @@ class Store {
   }
 
   /**
-   * One-time pickup of the pre-Fabric-Store operator `settings.json` that
-   * lived next to the register dir (e.g. `stores/gooncitizen/settings.json`).
-   * Returns the raw object (or null) and retires the file; the caller merges
-   * keys into the `settings` collection after Level has loaded.
+   * One-time pickup of the pre-Fabric-Store operator `settings.json`.
    * @returns {Object|null}
    */
   _takeLegacySettingsJson () {
@@ -144,24 +157,42 @@ class Store {
       }
       return null;
     } catch (_) {
-      return null; // leave the file for a later attempt
+      return null;
     }
   }
 
+  /**
+   * Load one collection map from Fabric path `/collections/<name>`.
+   * Migrates legacy bare Level keys (`missions`, …) once onto that path.
+   */
   async _loadCollection (name) {
     if (this.data[name] && Object.keys(this.data[name]).length) {
-      // Already seeded from legacy JSON migration — persist into Level.
-      await this._fabric.db.put(name, JSON.stringify(this.data[name]));
+      await this._fabric.set(collectionPath(name), this.data[name]);
       return this.data[name];
     }
+
+    const p = collectionPath(name);
     try {
-      const raw = await this._fabric.db.get(name);
-      const text = Buffer.isBuffer(raw) ? raw.toString('utf8') : String(raw);
-      const parsed = JSON.parse(text);
-      return (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) ? parsed : {};
-    } catch (_) {
-      return {};
+      const value = await this._fabric.get(p);
+      if (value && typeof value === 'object' && !Array.isArray(value)) {
+        return value;
+      }
+    } catch (_) { /* miss */ }
+
+    // Legacy: whole-collection blob under bare Level key (pre–path integration).
+    if (this._fabric.db) {
+      try {
+        const raw = await this._fabric.db.get(name);
+        const text = Buffer.isBuffer(raw) ? raw.toString('utf8') : String(raw);
+        const parsed = JSON.parse(text);
+        if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+          await this._fabric.set(p, parsed);
+          return parsed;
+        }
+      } catch (_) { /* no legacy key */ }
     }
+
+    return {};
   }
 
   _col (name) {
@@ -170,11 +201,13 @@ class Store {
   }
 
   _persist (name) {
-    if (!this._fabric || !this._fabric.db) return;
-    const snapshot = JSON.stringify(this._col(name));
+    if (!this._fabric) return;
+    // Clone so later sync puts do not mutate the queued payload.
+    const snapshot = JSON.parse(JSON.stringify(this._col(name)));
+    const p = collectionPath(name);
     this._writeChain = this._writeChain.then(async () => {
-      if (!this._fabric || !this._fabric.db) return;
-      await this._fabric.db.put(name, snapshot);
+      if (!this._fabric) return;
+      await this._fabric.set(p, snapshot);
     }).catch((err) => {
       console.error('[STORE] persist failed:', name, err && err.message ? err.message : err);
     });
@@ -200,4 +233,4 @@ class Store {
   }
 }
 
-module.exports = { Store, COLLECTIONS };
+module.exports = { Store, COLLECTIONS, collectionPath };

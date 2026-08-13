@@ -12,6 +12,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   getServiceStatus: () => ipcRenderer.invoke('get-service-status'),
   restartService: () => ipcRenderer.invoke('restart-service'),
   setOpenAtLogin: (enabled) => ipcRenderer.invoke('set-open-at-login', enabled),
+  setGroupOverlay: (enabled) => ipcRenderer.invoke('set-group-overlay', enabled),
+  getGroupOverlay: () => ipcRenderer.invoke('get-group-overlay'),
   identity: {
     get: () => ipcRenderer.invoke('identity:get'),
     create: (password) => ipcRenderer.invoke('identity:create', { password }),
@@ -31,6 +33,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
       return () => ipcRenderer.removeListener('identity:changed', listener);
     }
   },
+  /** Fabric mesh publish helpers (prefer over HTTP when available). */
+  fabric: {
+    deliveryReceipt: (opts) => ipcRenderer.invoke('fabric:delivery-receipt', opts || {})
+  },
   notify: (payload) => ipcRenderer.invoke('notify:show', payload || {}),
   onNotifyAction: (handler) => {
     const listener = (_e, data) => handler(data);
@@ -41,6 +47,33 @@ contextBridge.exposeInMainWorld('electronAPI', {
     const listener = (_e, data) => handler(data);
     ipcRenderer.on('notify:click', listener);
     return () => ipcRenderer.removeListener('notify:click', listener);
+  },
+  /** Client-signed Fabric site login (`fabric://login`) — approve/reject in the renderer. */
+  fabricLogin: {
+    onPrompt: (handler) => {
+      const listener = (_e, payload) => handler(payload);
+      ipcRenderer.on('fabric-login-prompt', listener);
+      return () => ipcRenderer.removeListener('fabric-login-prompt', listener);
+    },
+    pullPending: () => ipcRenderer.invoke('fabric-login:pull-pending'),
+    resolve: (opts) => ipcRenderer.invoke('fabric-login:resolve', opts || {})
+  },
+  /** Opaque fabric:<hex> GroupOffer / FederationContractInvite. */
+  groupShare: {
+    onPrompt: (handler) => {
+      const listener = (_e, payload) => handler(payload);
+      ipcRenderer.on('fabric-group-share-prompt', listener);
+      return () => ipcRenderer.removeListener('fabric-group-share-prompt', listener);
+    },
+    pullPending: () => ipcRenderer.invoke('fabric-group-share:pull-pending'),
+    resolve: (opts) => ipcRenderer.invoke('fabric-group-share:resolve', opts || {})
+  },
+  /** Native OS pickers for importing log folders/files / selecting Game.log. */
+  dialog: {
+    openDirectory: () => ipcRenderer.invoke('dialog:openDirectory'),
+    openLogFiles: () => ipcRenderer.invoke('dialog:openLogFiles'),
+    openLogFile: () => ipcRenderer.invoke('dialog:openLogFile'),
+    openFleetJson: () => ipcRenderer.invoke('dialog:openFleetJson')
   },
   platform: process.platform,
   versions: {

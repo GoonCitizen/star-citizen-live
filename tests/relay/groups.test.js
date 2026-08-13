@@ -40,6 +40,10 @@ test('Group validates member keys, creator membership and threshold', () => {
   const good = new Group({ id: 'g1', name: 'Squad', creator: a.pubkey, members: [a.pubkey, b.pubkey], threshold: 2 });
   assert.ok(good.validate());
   assert.ok(good.commitment().match(/^[0-9a-f]{64}$/));
+  // AMP / chat authors may be x-only — membership must still match.
+  const { pubkeyXOnly } = require('../../functions/identity');
+  assert.ok(good.includes(pubkeyXOnly(a.pubkey)));
+  assert.ok(good.isSigner(pubkeyXOnly(a.pubkey)));
 
   assert.throws(() => new Group({ id: 'g2', creator: a.pubkey, members: [a.pubkey], threshold: 3 }).validate(), /threshold/);
   assert.throws(() => new Group({ id: 'g3', creator: a.pubkey, members: ['not-a-key'] }).validate(), /invalid member/);
@@ -122,7 +126,11 @@ test('GroupManager subgroups: parentId, tree membership, depth guard', async () 
 
 test('hosted mode: login session, group CRUD, and membership-scoped missions', async () => {
   const alice = createIdentity(); const bob = createIdentity(); const eve = createIdentity();
-  const svc = new LiveRelay({ port: 0, mode: 'server', missions: { enable: true } });
+  const svc = new LiveRelay({
+    port: 0,
+    mode: 'server',
+    missions: { enable: true, officers: [alice.pubkey] }
+  });
   await svc.start();
   const port = svc.server.address().port;
   try {
@@ -179,7 +187,11 @@ test('hosted mode: login session, group CRUD, and membership-scoped missions', a
 
 test('group page: public/private, custom slug, apply to join, SPA shell', async () => {
   const alice = createIdentity(); const bob = createIdentity(); const eve = createIdentity();
-  const svc = new LiveRelay({ port: 0, mode: 'server', missions: { enable: true } });
+  const svc = new LiveRelay({
+    port: 0,
+    mode: 'server',
+    missions: { enable: true, officers: [alice.pubkey] }
+  });
   await svc.start();
   const port = svc.server.address().port;
   try {
@@ -279,6 +291,41 @@ test('group page: public/private, custom slug, apply to join, SPA shell', async 
   } finally { await svc.stop(); }
 });
 
+test('GET /groups/:id/statechain returns journal + activityTree tip for members', async () => {
+  const alice = createIdentity();
+  const eve = createIdentity();
+  const svc = new LiveRelay({
+    port: 0,
+    mode: 'server',
+    missions: { enable: true, officers: [alice.pubkey] }
+  });
+  await svc.start();
+  const port = svc.server.address().port;
+  try {
+    const aliceToken = await login(port, alice);
+    const eveToken = await login(port, eve);
+    const created = await request(port, 'POST', `${BASE}/groups`, {
+      name: 'Chain Wing', members: [], threshold: 1, visibility: 'private'
+    }, aliceToken);
+    assert.strictEqual(created.status, 200, JSON.stringify(created.body));
+    const groupId = created.body.data.id;
+    assert.ok(created.body.data.contractId, 'group should have a Federation contractId');
+
+    const memberChain = await request(port, 'GET', `${BASE}/groups/${groupId}/statechain`, null, aliceToken);
+    assert.strictEqual(memberChain.status, 200, JSON.stringify(memberChain.body));
+    assert.strictEqual(memberChain.body.type, 'GroupStatechain');
+    assert.strictEqual(memberChain.body.data.groupId, groupId);
+    assert.strictEqual(memberChain.body.data.contractId, created.body.data.contractId);
+    assert.ok(memberChain.body.data.journal);
+    assert.ok(Array.isArray(memberChain.body.data.journal.entries));
+
+    const outsider = await request(port, 'GET', `${BASE}/groups/${groupId}/statechain`, null, eveToken);
+    assert.strictEqual(outsider.status, 403);
+  } finally {
+    await svc.stop();
+  }
+});
+
 test('GroupManager: slug uniqueness and private apply blocked', async () => {
   const a = createIdentity(); const b = createIdentity();
   const gm = new GroupManager({});
@@ -313,7 +360,7 @@ test('groups persist across sessions via Fabric Store', async () => {
       port: 0,
       mode: 'server',
       settingsDir: dir,
-      missions: { enable: true, dir: registerDir }
+      missions: { enable: true, dir: registerDir, officers: [alice.pubkey] }
     });
     await svc.start();
     return svc;

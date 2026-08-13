@@ -7,9 +7,14 @@
 
 const React = require('react');
 const { showDesktopNotification } = require('../functions/desktopNotify');
+const {
+  shouldDesktopToast,
+  desktopNotifyMeta
+} = require('../functions/desktopInboxKinds');
 
 const BASE = '/services/star-citizen';
 const LS_SEEN = 'gc.missionBroadcast.seen';
+const LS_INBOX_SEEN = 'gc.inboxNotify.seen';
 
 const CSS = `
   .mbb-stack{position:fixed;left:16px;bottom:16px;z-index:32;display:flex;flex-direction:column;gap:10px;
@@ -40,6 +45,18 @@ function saveSeen (set) {
   try { localStorage.setItem(LS_SEEN, JSON.stringify(Array.from(set).slice(-100))); } catch (_) { /* ignore */ }
 }
 
+function loadInboxSeen () {
+  try {
+    return new Set(JSON.parse(localStorage.getItem(LS_INBOX_SEEN) || '[]'));
+  } catch (_) {
+    return new Set();
+  }
+}
+
+function saveInboxSeen (set) {
+  try { localStorage.setItem(LS_INBOX_SEEN, JSON.stringify(Array.from(set).slice(-200))); } catch (_) { /* ignore */ }
+}
+
 function shortKey (pk) {
   return pk ? pk.slice(0, 8) + '…' : '?';
 }
@@ -54,6 +71,7 @@ class MissionBroadcastBanner extends React.Component {
     this.state = { pending: [], busyId: null, error: null, token: null };
     this._timer = null;
     this._seen = loadSeen();
+    this._inboxSeen = loadInboxSeen();
     this._bootstrapped = false;
     this._unsubAction = null;
   }
@@ -63,14 +81,21 @@ class MissionBroadcastBanner extends React.Component {
     this._timer = setInterval(() => this.tick(), 4000);
     if (window.electronAPI && typeof window.electronAPI.onNotifyAction === 'function') {
       this._unsubAction = window.electronAPI.onNotifyAction((data) => {
-        if (!data || data.kind !== 'missionbroadcast') return;
-        if (data.action === 'accept' || data.index === 0) this.accept(data.id);
-        else if (data.action === 'ignore' || data.index === 1) this.ignore(data.id);
+        if (!data) return;
+        if (data.kind === 'missionbroadcast') {
+          if (data.action === 'accept' || data.index === 0) this.accept(data.id);
+          else if (data.action === 'ignore' || data.index === 1) this.ignore(data.id);
+          return;
+        }
+        if (data.kind === 'federationinvite' || data.kind === 'groupoffer') {
+          if (typeof window !== 'undefined') window.location.hash = 'notifications';
+        }
       });
     }
     if (window.electronAPI && typeof window.electronAPI.onNotifyClick === 'function') {
       this._unsubClick = window.electronAPI.onNotifyClick((data) => {
-        if (data && data.kind === 'missionbroadcast' && typeof window !== 'undefined') {
+        if (!data || typeof window === 'undefined') return;
+        if (data.kind === 'missionbroadcast' || data.kind === 'federationinvite' || data.kind === 'groupoffer') {
           window.location.hash = 'notifications';
         }
       });
@@ -114,46 +139,117 @@ class MissionBroadcastBanner extends React.Component {
 
   async tick () {
     try {
-      const res = await fetch(`${BASE}/missionbroadcasts?pending=1`).then((r) => r.json());
+      const [res, inboxRes, settingsRes] = await Promise.all([
+        fetch(`${BASE}/missionbroadcasts?pending=1`).then((r) => r.json()),
+        fetch(`${BASE}/inbox?scope=notifications&pending=1`).then((r) => r.json()).catch(() => null),
+        fetch('/settings').then((r) => (r.ok ? r.json() : null)).catch(() => null)
+      ]);
       const pending = res.data || [];
-      const notifyEnabled = res.notify !== false;
+      // Mission broadcasts keep their dedicated toggle; group invites/offers
+      // only need desktop notifications enabled (spoke invites are easy to miss).
+      const missionNotify = res.notify !== false;
+      const settings = (settingsRes && settingsRes.settings) || settingsRes || {};
+      const desktopNotify = settings.notifyDesktop !== false;
+      const inboxItems = (inboxRes && inboxRes.data) || [];
       this.setState({ pending });
-      this.reportPending(pending.length);
+      // Bell badge uses the full register inbox (broadcasts + apps + invites).
+      const inboxPending = typeof (inboxRes && inboxRes.pending) === 'number'
+        ? inboxRes.pending
+        : inboxItems.filter((i) => i.actionable).length || pending.length;
+      this.reportPending(inboxPending);
+
+      const freshCutoff = Date.now() - (5 * 60 * 1000);
+      const isFreshInbox = (row) => {
+        const t = Date.parse(row && row.ts);
+        return Number.isFinite(t) && t >= freshCutoff;
+      };
 
       if (!this._bootstrapped) {
         for (const b of pending) this._seen.add(b.id);
+        // Still toast brand-new invites that arrived while the app was starting
+        // (bootstrap would otherwise swallow them forever).
+        for (const row of inboxItems) {
+          if (shouldDesktopToast(row) && isFreshInbox(row)) {
+            continue; // leave unseen for the notify loop below
+          }
+          this._inboxSeen.add(row.id);
+        }
         saveSeen(this._seen);
+        saveInboxSeen(this._inboxSeen);
         this._bootstrapped = true;
-        return;
+        // Fall through so fresh invites can notify on first tick.
       }
 
-      if (!notifyEnabled) {
+      if (missionNotify) {
+        for (const b of pending) {
+          if (this._seen.has(b.id)) continue;
+          this._seen.add(b.id);
+          const m = b.mission || {};
+          const who = b.handle || shortKey(b.source);
+          const reward = m.reward ? ` · ${Number(m.reward).toLocaleString()} sats` : '';
+          await showDesktopNotification({
+            id: b.id,
+            kind: 'missionbroadcast',
+            title: 'Mission broadcast',
+            body: `${who}: ${m.title || 'Untitled'}${reward}`,
+            actions: [
+              { id: 'accept', text: 'Join' },
+              { id: 'ignore', text: 'Ignore' }
+            ],
+            onClick: () => {
+              if (typeof window !== 'undefined') window.location.hash = 'notifications';
+            }
+          });
+        }
+        saveSeen(this._seen);
+      } else {
         for (const b of pending) this._seen.add(b.id);
         saveSeen(this._seen);
+      }
+
+      if (!desktopNotify) {
+        for (const row of inboxItems) this._inboxSeen.add(row.id);
+        saveInboxSeen(this._inboxSeen);
         return;
       }
 
-      for (const b of pending) {
-        if (this._seen.has(b.id)) continue;
-        this._seen.add(b.id);
-        const m = b.mission || {};
-        const who = b.handle || shortKey(b.source);
-        const reward = m.reward ? ` · ${Number(m.reward).toLocaleString()} sats` : '';
+      for (const row of inboxItems) {
+        if (!shouldDesktopToast(row)) continue;
+        if (this._inboxSeen.has(row.id)) continue;
+        this._inboxSeen.add(row.id);
+        const who = row.handle || shortKey(row.source);
+        const meta = desktopNotifyMeta(row.kind);
+        const isClaim = row.kind === 'MissionClaim' || row.kind === 'MissionClaimDecision';
+        const isWallet = String(row.kind || '').indexOf('Wallet') === 0;
         await showDesktopNotification({
-          id: b.id,
-          kind: 'missionbroadcast',
-          title: 'Mission broadcast',
-          body: `${who}: ${m.title || 'Untitled'}${reward}`,
+          id: row.id,
+          kind: meta.notifyKind,
+          title: meta.title,
+          body: `${who}: ${row.title || meta.title}`,
           actions: [
-            { id: 'accept', text: 'Accept' },
-            { id: 'ignore', text: 'Ignore' }
+            { id: 'open', text: 'Open' }
           ],
           onClick: () => {
-            if (typeof window !== 'undefined') window.location.hash = 'notifications';
+            if (typeof window === 'undefined') return;
+            if (isClaim && row.refs && row.refs.missionId) {
+              window.location.href = `/missions/${encodeURIComponent(row.refs.missionId)}`;
+            } else if (isWallet && row.refs && row.refs.missionId) {
+              window.location.hash = 'wallet';
+            } else if ((row.kind === 'GroupChangeProposal' || row.kind === 'MultisigWalletInvite' ||
+                row.kind === 'FederationInvite' || row.kind === 'FederationInviteDecision' ||
+                row.kind === 'GroupApplication' || row.kind === 'GroupApplicationDecision' ||
+                row.kind === 'WalletWithdrawal') &&
+                row.refs && row.refs.groupId) {
+              window.location.href = `/groups/${encodeURIComponent(row.refs.groupId)}`;
+            } else if (isWallet) {
+              window.location.hash = 'wallet';
+            } else {
+              window.location.hash = 'notifications';
+            }
           }
         });
       }
-      saveSeen(this._seen);
+      saveInboxSeen(this._inboxSeen);
     } catch (_) { /* offline */ }
   }
 
@@ -225,7 +321,7 @@ class MissionBroadcastBanner extends React.Component {
               className: 'mbb-btn good',
               disabled: this.state.busyId === b.id,
               onClick: () => this.accept(b.id)
-            }, this.state.busyId === b.id ? '…' : 'Accept'),
+            }, this.state.busyId === b.id ? '…' : 'Join mission'),
             React.createElement('button', {
               className: 'mbb-btn ghost',
               disabled: this.state.busyId === b.id,
@@ -233,7 +329,10 @@ class MissionBroadcastBanner extends React.Component {
             }, 'Ignore'),
             React.createElement('button', {
               className: 'mbb-btn ghost',
-              onClick: () => { window.location.hash = 'missions'; }
+              onClick: () => {
+                if (m.id) window.location.href = `/missions/${encodeURIComponent(m.id)}`;
+                else window.location.hash = 'missions';
+              }
             }, 'View')
           )
         );

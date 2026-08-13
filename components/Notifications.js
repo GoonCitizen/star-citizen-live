@@ -1,8 +1,9 @@
 'use strict';
 
 /**
- * Notification history — dedicated page for peer mission broadcasts and
- * other inbox items. Opened from the header bell (hash `#notifications`).
+ * Notifications — inbound offers, invites (group + multisig wallet), join
+ * decisions (including rejections), and wallet escrow/payout/withdrawal events.
+ * Opened from the header bell (`#notifications`).
  */
 
 const React = require('react');
@@ -10,7 +11,7 @@ const React = require('react');
 const BASE = '/services/star-citizen';
 
 const CSS = `
-  .nt-wrap{max-width:860px;margin:0 auto;padding:18px;display:grid;gap:14px}
+  .nt-wrap{width:100%;max-width:none;margin:0;padding:12px 14px;display:grid;gap:14px;box-sizing:border-box}
   .nt-panel{background:var(--panel);border:1px solid var(--line);border-radius:12px;overflow:hidden}
   .nt-panel h2{font-size:13px;margin:0;padding:12px 16px;border-bottom:1px solid var(--line);font-weight:600;
     display:flex;gap:8px;align-items:center}
@@ -23,13 +24,18 @@ const CSS = `
   .nt-item:last-child{border-bottom:none}
   .nt-item.pending{background:rgba(59,130,246,.06)}
   .nt-head{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
-  .nt-title{font-weight:600;font-size:13.5px;flex:1;min-width:140px}
+  .nt-title{font-weight:600;font-size:13.5px;flex:1;min-width:140px;cursor:pointer;background:none;border:none;
+    padding:0;font:inherit;text-align:left;color:var(--text)}
+  .nt-title:hover{color:var(--accent)}
   .nt-tag{font-size:10.5px;font-weight:700;padding:2px 8px;border-radius:5px}
   .nt-tag.pending{background:rgba(59,130,246,.18);color:var(--accent)}
   .nt-tag.accepted{background:rgba(63,185,80,.15);color:var(--good)}
-  .nt-tag.ignored{background:rgba(110,118,129,.18);color:var(--muted)}
-  .nt-tag.self{background:rgba(210,153,34,.15);color:var(--warn)}
-  .nt-tag.mission{background:rgba(247,147,26,.14);color:#f7931a}
+  .nt-tag.ignored,.nt-tag.info{background:rgba(110,118,129,.18);color:var(--muted)}
+  .nt-tag.rejected{background:rgba(248,81,73,.15);color:var(--kill)}
+  .nt-tag.MissionBroadcast,.nt-tag.MissionApplication{background:rgba(247,147,26,.14);color:#f7931a}
+  .nt-tag.GroupApplication,.nt-tag.GroupOffer,.nt-tag.FederationInvite,.nt-tag.MultisigWalletInvite{background:rgba(56,139,253,.14);color:var(--accent)}
+  .nt-tag.GroupApplicationDecision,.nt-tag.FederationInviteDecision{background:rgba(110,118,129,.18);color:var(--muted)}
+  .nt-tag.WalletEscrow,.nt-tag.WalletPayout,.nt-tag.WalletWithdrawal{background:rgba(247,147,26,.14);color:#f7931a}
   .nt-meta{color:var(--muted);font-size:11.5px;font-family:'Cascadia Code',Consolas,monospace;word-break:break-all}
   .nt-body{font-size:13px;line-height:1.45;color:var(--text)}
   .nt-row{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:4px}
@@ -63,16 +69,59 @@ function fmtTime (ts) {
   }
 }
 
+function kindLabel (kind) {
+  const map = {
+    MissionBroadcast: 'mission offer',
+    MissionApplication: 'mission apply',
+    MissionClaim: 'completion',
+    MissionClaimDecision: 'completion decision',
+    GroupApplication: 'group apply',
+    GroupApplicationDecision: 'group decision',
+    GroupOffer: 'group offer',
+    FederationInvite: 'group invite',
+    FederationInviteDecision: 'invite response',
+    MultisigWalletInvite: 'multisig invite',
+    GroupChangeProposal: 'proposal',
+    WalletEscrow: 'escrow',
+    WalletPayout: 'payout',
+    WalletWithdrawal: 'withdrawal'
+  };
+  return map[kind] || (kind || 'notice');
+}
+
+function openTarget (item) {
+  const refs = item.refs || {};
+  if (refs.missionId && String(item.kind || '').indexOf('Wallet') !== 0) {
+    window.location.href = `/missions/${encodeURIComponent(refs.missionId)}`;
+    return;
+  }
+  if (refs.groupId) {
+    window.location.href = `/groups/${encodeURIComponent(refs.groupId)}`;
+    return;
+  }
+  if (item.kind && String(item.kind).indexOf('Wallet') === 0) {
+    window.location.hash = 'wallet';
+    return;
+  }
+  if (item.kind && (item.kind.indexOf('Group') === 0 || item.kind === 'FederationInvite' ||
+      item.kind === 'FederationInviteDecision' || item.kind === 'MultisigWalletInvite')) {
+    window.location.hash = 'groups';
+    return;
+  }
+  window.location.hash = 'missions';
+}
+
 class Notifications extends React.Component {
   constructor (props) {
     super(props);
     this.state = {
       items: [],
-      filter: 'all', // all | pending | resolved
+      filter: 'pending', // pending | all | resolved
       loading: true,
       busyId: null,
       error: null,
-      token: null
+      token: null,
+      pending: 0
     };
     this._timer = null;
   }
@@ -113,38 +162,27 @@ class Notifications extends React.Component {
 
   async refresh () {
     try {
-      const res = await fetch(`${BASE}/missionbroadcasts?pending=0`).then((r) => r.json());
-      const items = (res.data || [])
-        .filter((b) => b.status !== 'self')
-        .map((b) => ({
-          id: b.id,
-          kind: 'mission',
-          status: b.status || 'pending',
-          title: (b.mission && b.mission.title) || 'Mission offer',
-          body: (b.mission && b.mission.description) || null,
-          reward: b.mission && b.mission.reward,
-          source: b.source,
-          handle: b.handle,
-          ts: b.broadcastAt || b.receivedAt,
-          resolvedAt: b.resolvedAt || null,
-          missionId: b.missionId,
-          raw: b
-        }))
+      const res = await fetch(`${BASE}/inbox?scope=notifications`).then((r) => r.json());
+      const items = (res.data || []).slice()
         .sort((a, b) => String(b.ts || '').localeCompare(String(a.ts || '')));
-      this.setState({ items, loading: false, error: null });
-      const pending = items.filter((i) => i.status === 'pending').length;
+      const pending = typeof res.pending === 'number'
+        ? res.pending
+        : items.filter((i) => i.actionable && i.status === 'pending').length;
+      this.setState({ items, pending, loading: false, error: null });
       if (typeof this.props.onPendingCount === 'function') this.props.onPendingCount(pending);
     } catch (e) {
       this.setState({ loading: false, error: e.message });
     }
   }
 
-  async act (id, action) {
+  async actBroadcast (item, action) {
+    const broadcastId = item.refs && item.refs.broadcastId;
+    if (!broadcastId) return;
     if (this.state.busyId) return;
-    this.setState({ busyId: id, error: null });
+    this.setState({ busyId: item.id, error: null });
     try {
       if (!this.state.token) await this.ensureSession();
-      const res = await fetch(`${BASE}/missionbroadcasts/${encodeURIComponent(id)}/${action}`, {
+      const res = await fetch(`${BASE}/missionbroadcasts/${encodeURIComponent(broadcastId)}/${action}`, {
         method: 'POST',
         headers: this.headers(),
         body: '{}'
@@ -153,7 +191,29 @@ class Notifications extends React.Component {
       if (!res.ok) throw new Error(json.error || `HTTP ${res.status}`);
       this.setState({ busyId: null });
       await this.refresh();
-      if (action === 'accept' && typeof window !== 'undefined') window.location.hash = 'missions';
+      if (action === 'accept' && typeof window !== 'undefined') {
+        const mid = (item.refs && item.refs.missionId) || null;
+        if (mid) window.location.href = `/missions/${encodeURIComponent(mid)}`;
+        else window.location.hash = 'missions';
+      }
+    } catch (e) {
+      this.setState({ busyId: null, error: e.message });
+    }
+  }
+
+  async dismiss (item) {
+    if (this.state.busyId) return;
+    this.setState({ busyId: item.id, error: null });
+    try {
+      const res = await fetch(`${BASE}/inbox/${encodeURIComponent(item.id)}/dismiss`, {
+        method: 'POST',
+        headers: this.headers(),
+        body: '{}'
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error || `HTTP ${res.status}`);
+      this.setState({ busyId: null });
+      await this.refresh();
     } catch (e) {
       this.setState({ busyId: null, error: e.message });
     }
@@ -166,17 +226,109 @@ class Notifications extends React.Component {
     return this.state.items;
   }
 
+  async actFederationInvite (item, accept) {
+    if (this.state.busyId) return;
+    const refs = item.refs || {};
+    const inviteId = refs.inviteId;
+    const groupId = refs.groupId;
+    if (!inviteId || !groupId) {
+      this.setState({ error: 'Invite is missing group or invite id' });
+      return;
+    }
+    this.setState({ busyId: item.id, error: null });
+    try {
+      if (!this.state.token) await this.ensureSession();
+      const res = await fetch(
+        `${BASE}/groups/${encodeURIComponent(groupId)}/invites/${encodeURIComponent(inviteId)}/${accept ? 'accept' : 'reject'}`,
+        { method: 'POST', headers: this.headers(), body: '{}' }
+      );
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error || `HTTP ${res.status}`);
+      this.setState({ busyId: null });
+      await this.refresh();
+      if (accept && typeof window !== 'undefined') {
+        window.location.href = `/groups/${encodeURIComponent(groupId)}`;
+      }
+    } catch (e) {
+      this.setState({ busyId: null, error: e.message });
+    }
+  }
+
+  renderActions (item) {
+    if (item.kind === 'MissionBroadcast' && item.status === 'pending') {
+      return React.createElement('div', { className: 'nt-row' },
+        React.createElement('button', {
+          className: 'nt-btn good',
+          disabled: this.state.busyId === item.id,
+          onClick: () => this.actBroadcast(item, 'accept')
+        }, this.state.busyId === item.id ? '…' : 'Join mission'),
+        React.createElement('button', {
+          className: 'nt-btn ghost',
+          disabled: this.state.busyId === item.id,
+          onClick: () => this.actBroadcast(item, 'ignore')
+        }, 'Ignore'),
+        React.createElement('button', {
+          className: 'nt-btn ghost',
+          onClick: () => openTarget(item)
+        }, 'Open')
+      );
+    }
+    if ((item.kind === 'FederationInvite' || item.kind === 'MultisigWalletInvite') && item.status === 'pending') {
+      return React.createElement('div', { className: 'nt-row' },
+        React.createElement('button', {
+          className: 'nt-btn good',
+          disabled: this.state.busyId === item.id || !(item.refs && item.refs.inviteId && item.refs.groupId),
+          onClick: () => this.actFederationInvite(item, true)
+        }, this.state.busyId === item.id ? '…' : (item.kind === 'MultisigWalletInvite' ? 'Join wallet' : 'Accept')),
+        React.createElement('button', {
+          className: 'nt-btn ghost',
+          disabled: this.state.busyId === item.id || !(item.refs && item.refs.inviteId && item.refs.groupId),
+          onClick: () => this.actFederationInvite(item, false)
+        }, 'Decline'),
+        React.createElement('button', {
+          className: 'nt-btn ghost',
+          onClick: () => openTarget(item)
+        }, 'Open')
+      );
+    }
+    const buttons = [
+      React.createElement('button', {
+        key: 'open',
+        className: 'nt-btn ghost',
+        onClick: () => openTarget(item)
+      }, item.refs && item.refs.missionId
+        ? 'Open mission'
+        : item.refs && item.refs.groupId
+          ? 'Open group'
+          : 'Open')
+    ];
+    if (item.status === 'pending') {
+      buttons.push(React.createElement('button', {
+        key: 'dismiss',
+        className: 'nt-btn ghost',
+        disabled: this.state.busyId === item.id,
+        onClick: () => this.dismiss(item)
+      }, 'Dismiss'));
+    }
+    return React.createElement('div', { className: 'nt-row' }, buttons);
+  }
+
   renderItem (item) {
     return React.createElement('div', {
       className: 'nt-item' + (item.status === 'pending' ? ' pending' : ''),
       key: item.id
     },
     React.createElement('div', { className: 'nt-head' },
-      React.createElement('span', { className: 'nt-tag mission' }, 'mission'),
-      React.createElement('span', { className: 'nt-tag ' + item.status }, item.status),
-      React.createElement('span', { className: 'nt-title' }, item.title),
+      React.createElement('span', { className: 'nt-tag ' + (item.kind || 'info') }, kindLabel(item.kind)),
+      React.createElement('span', { className: 'nt-tag ' + (item.status || 'info') }, item.status || 'info'),
+      React.createElement('button', {
+        type: 'button',
+        className: 'nt-title',
+        title: 'Open related page',
+        onClick: () => openTarget(item)
+      }, item.title),
       item.reward
-        ? React.createElement('span', { className: 'nt-tag mission' }, '₿ ' + Number(item.reward).toLocaleString())
+        ? React.createElement('span', { className: 'nt-tag MissionBroadcast' }, '₿ ' + Number(item.reward).toLocaleString())
         : null
     ),
     item.body
@@ -184,50 +336,28 @@ class Notifications extends React.Component {
       : null,
     React.createElement('div', { className: 'nt-meta' },
       fmtTime(item.ts) +
-      ' · ' + (item.handle || shortKey(item.source)) +
-      ' · ' + shortKey(item.source) +
+      (item.handle || item.source ? ' · ' + (item.handle || shortKey(item.source)) : '') +
+      (item.source && item.handle ? ' · ' + shortKey(item.source) : '') +
       (item.resolvedAt ? ' · resolved ' + fmtTime(item.resolvedAt) : '')
     ),
-    item.status === 'pending'
-      ? React.createElement('div', { className: 'nt-row' },
-        React.createElement('button', {
-          className: 'nt-btn good',
-          disabled: this.state.busyId === item.id,
-          onClick: () => this.act(item.id, 'accept')
-        }, this.state.busyId === item.id ? '…' : 'Accept'),
-        React.createElement('button', {
-          className: 'nt-btn ghost',
-          disabled: this.state.busyId === item.id,
-          onClick: () => this.act(item.id, 'ignore')
-        }, 'Ignore'),
-        React.createElement('button', {
-          className: 'nt-btn ghost',
-          onClick: () => { window.location.hash = 'missions'; }
-        }, 'Open Missions')
-      )
-      : React.createElement('div', { className: 'nt-row' },
-        React.createElement('button', {
-          className: 'nt-btn ghost',
-          onClick: () => { window.location.hash = 'missions'; }
-        }, 'Open Missions')
-      )
+    this.renderActions(item)
     );
   }
 
   render () {
     const rows = this.filtered();
-    const pending = this.state.items.filter((i) => i.status === 'pending').length;
+    const pending = this.state.pending;
 
     return React.createElement('div', { className: 'nt-wrap' },
       React.createElement('div', { className: 'nt-panel' },
         React.createElement('h2', null, '🔔 Notifications',
           React.createElement('span', { className: 'sub' },
             pending
-              ? `${pending} pending · mission broadcasts from peers (network-wide or your groups)`
-              : 'history of mission broadcasts (network / group) and inbox actions')
+              ? `${pending} pending · invites, join requests, wallet events`
+              : 'Invites, join decisions, multisig wallet offers, and wallet events')
         ),
         React.createElement('div', { className: 'nt-filters' },
-          [['all', 'All'], ['pending', 'Pending'], ['resolved', 'Resolved']].map(([key, label]) =>
+          [['pending', 'Pending'], ['all', 'All'], ['resolved', 'Resolved']].map(([key, label]) =>
             React.createElement('button', {
               key,
               type: 'button',
@@ -244,7 +374,7 @@ class Notifications extends React.Component {
             : React.createElement('div', { className: 'nt-empty' },
               this.state.filter === 'pending'
                 ? 'No pending notifications.'
-                : 'No notifications yet — when a peer broadcasts a mission, it will show up here.')
+                : 'No notifications yet — group/multisig invites, join decisions, and wallet events show up here.')
       )
     );
   }

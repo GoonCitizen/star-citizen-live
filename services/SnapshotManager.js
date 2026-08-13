@@ -32,7 +32,7 @@ const MIN_INTERVAL_MS = 2000;
 class SnapshotManager extends EventEmitter {
   /**
    * @param {Object} opts
-   * @param {import('../types/Store').Store} opts.store Shared Fabric Store.
+   * @param {Object} opts.store Shared Fabric Store.
    * @param {String|null} opts.dir Directory for image files (null = disabled).
    * @param {Function} [opts.capture] async () => { buffer, width, height }.
    */

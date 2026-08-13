@@ -8,6 +8,7 @@ const { resolveLogFile, candidateLogs, channelFromPath } = require('../../functi
 test('channelFromPath pulls the channel folder from a log path', () => {
   assert.strictEqual(channelFromPath('E:\\Roberts Space Industries\\StarCitizen\\HOTFIX\\Game.log'), 'HOTFIX');
   assert.strictEqual(channelFromPath('C:/Program Files/Roberts Space Industries/StarCitizen/LIVE/Game.log'), 'LIVE');
+  assert.strictEqual(channelFromPath('C:/RSI/StarCitizen/LIVE/logbackups/rotated.log'), 'LIVE');
   assert.strictEqual(channelFromPath(null), null);
 });
 
@@ -46,7 +47,7 @@ test('forced channel restricts the search', () => {
 
 test('falls back to the default RSI install location when nothing is found', () => {
   const statSync = () => { throw new Error('ENOENT'); };
-  const r = resolveLogFile({ bases: ['E:\\SC'], statSync });
+  const r = resolveLogFile({ bases: ['E:\\SC'], statSync, platform: 'win32', existsSync: () => false });
   assert.strictEqual(r.source, 'default');
   assert.strictEqual(r.file, 'C:\\Program Files\\Roberts Space Industries\\StarCitizen\\LIVE\\Game.log');
   assert.strictEqual(r.channel, 'LIVE');

@@ -110,6 +110,13 @@ const RULES = [
     fields: (m) => ({ text: m[1] })
   },
   {
+    // CrimeStat HUD — VERIFIED samples/ (firon121 Jul 2026): ~409 lines.
+    // Must precede general hud:notification.
+    kind: 'player:crimestat', tag: 'SHUDEvent_OnNotification',
+    test: /Added notification "(CrimeStat Rating (?:Increased|Decreased):\s*)"\s*\[(\d+)\]/,
+    fields: (m) => ({ text: (m[1] || '').trim(), delta: m[1].includes('Increased') ? 1 : -1, rating: m[2] })
+  },
+  {
     // Local-player DEATH on current builds (4.7+). SC stopped logging kills after
     // 4.3.0; instead, when you die your corpse is created and the game enumerates
     // your gear for recovery. The FIRST line of that ~30-line burst is ALWAYS the
@@ -128,6 +135,59 @@ const RULES = [
     kind: 'hud:notification', tag: 'SHUDEvent_OnNotification',
     test: /Added notification "([^"]*)/,
     fields: (m) => ({ text: m[1] })
+  },
+  // --- Quantum travel (VERIFIED samples/ Jul 2026 LIVE backups; firon121) ---
+  // Specific <tag> shapes — not the noisy bare word "Quantum" (~15k false positives).
+  {
+    kind: 'quantum:select', tag: 'Player Selected Quantum Target - Local',
+    test: /([A-Z]{3,5}_[A-Za-z0-9_]+\[\d+\])\|CSCItemNavigation::OnPlayerSelectedQuantumTarget\|Player has selected point ([^\s]+) as their destination/,
+    fields: (m) => ({ vehicle: m[1], destination: m[2] })
+  },
+  {
+    kind: 'quantum:arrive', tag: 'Quantum Drive Arrived - Arrived at Final Destination',
+    test: /([A-Z]{3,5}_[A-Za-z0-9_]+\[\d+\])\|CSCItemNavigation::OnQuantumDriveArrived\|/,
+    fields: (m) => ({ vehicle: m[1] })
+  },
+  {
+    kind: 'quantum:route', tag: 'Calculate Route',
+    test: /([A-Z]{3,5}_[A-Za-z0-9_]+\[\d+\])\|CSCItemNavigation::CalculateRoute\|Projected Start Location is (.+?) for route to destination ([^\s\[]+)/,
+    fields: (m) => ({ vehicle: m[1], origin: m[2].trim(), destination: m[3] })
+  },
+  {
+    // Session / channel teardown. Prefer GameClient hostType (Replicant twin is a duplicate).
+    kind: 'session:disconnect', tag: 'Channel Disconnected',
+    test: /cause=(\d+)\s+reason="([^"]*)".*hostType="([^"]+)".*nickname="([^"]*)".*playerGEID=(\d+)/,
+    fields: (m) => ({ cause: m[1], reason: m[2], hostType: m[3], nickname: m[4], playerGeid: m[5] })
+  },
+  {
+    // Mission objective marker bank — VERIFIED samples/ (~4.7k AddToPlayerDataBank).
+    kind: 'mission:objective:marker', tag: 'CObjectiveMarkerComponent::AddToPlayerDataBank',
+    test: /Player:\s*([^\[]+)\[(\d+)\].*missionId\[([0-9a-fA-F-]+)\],\s*objectiveId\[([0-9a-fA-F-]+)\]/,
+    fields: (m) => ({ action: 'add', player: m[1].trim(), playerId: m[2], missionId: m[3], objectiveId: m[4] })
+  },
+  {
+    kind: 'mission:objective:marker', tag: 'CObjectiveMarkerComponent::RemoveFromPlayerDataBank',
+    test: /Player:\s*([^\[]+)\[(\d+)\].*missionId\[([0-9a-fA-F-]+)\],\s*objectiveId\[([0-9a-fA-F-]+)\]/,
+    fields: (m) => ({ action: 'remove', player: m[1].trim(), playerId: m[2], missionId: m[3], objectiveId: m[4] })
+  },
+  {
+    // Local client releasing vehicle control — VERIFIED samples/ (Jul 2026 LIVE).
+    kind: 'vehicle:control', tag: 'Vehicle Control Flow',
+    verified: true,
+    test: /CVehicleMovementBase::ClearDriver: Local client node \[\d+\] releasing control token for '([^']+)' \[(\d+)\]/,
+    fields: (m) => ({ action: 'clear', vehicle: m[1], vehicleId: m[2] })
+  },
+  {
+    // ATC hangar stow when leaving a landing area — VERIFIED samples/ (~740).
+    kind: 'vehicle:stow', tag: 'LandingArea_UnregisterFromExternalSystems_StowingVehicle',
+    test: /Attempting to stow current vehicle \[(\d+)\]/,
+    fields: (m) => ({ vehicleId: m[1] })
+  },
+  {
+    // Party proximity marker stream — VERIFIED samples/ (~2.3k); not roster join/leave.
+    kind: 'party:marker', tag: 'CPartyMarkerComponent RWES',
+    test: /Streamed (in|out) party marker id (\d+)\.?\s*TrackedEntityId:\s*(\d+)/i,
+    fields: (m) => ({ action: m[1].toLowerCase(), markerId: m[2], entityId: m[3] })
   },
   {
     // Mission objective lifecycle from push updates (4.9.0 LIVE observed).
@@ -309,9 +369,6 @@ const RULES = [
       attacker: m[14], cause: m[14], attackerId: m[15], damageType: m[16]
     })
   }
-  // TODO (UNVERIFIED): quantum:travel removed - 'Quantum' appears in ~15k lines
-  // (component names), so a naive pattern produced false positives. Re-add only
-  // with a confirmed <Quantum Travel> line format from a real log.
 ];
 
 function parseLine (raw) {
@@ -334,7 +391,11 @@ function parseLine (raw) {
 // --- Ship-name extraction [VERIFIED: 1166 hits in real 4.8.0 log] ---
 // IDs look like MANUFACTURER_ShipName_<bigid>, e.g. RSI_Aurora_Mk2_480167582679,
 // AEGS_Avenger_Titan_487288078845, ARGO_MPUV_1T_490286587822.
-const SHIP_PREFIXES = ['ORIG', 'AEGS', 'ANVL', 'CRUS', 'MISC', 'RSI', 'DRAK', 'ARGO', 'ESPR', 'KLWE', 'GRIN', 'XNAA', 'XIAN', 'BANU', 'GAMA', 'TMBL', 'VNCL', 'CNOU'];
+const SHIP_PREFIXES = [
+  'ORIG', 'AEGS', 'ANVL', 'CRUS', 'MISC', 'RSI', 'DRAK', 'ARGO', 'ESPR', 'KLWE',
+  'GRIN', 'XNAA', 'XIAN', 'BANU', 'GAMA', 'TMBL', 'VNCL', 'CNOU', 'MRAI', 'KRIG',
+  'GAMA', 'MIRAI', 'AOPOA', 'UBEE'
+];
 const SHIP_ID = new RegExp(`(?:${SHIP_PREFIXES.join('|')})_([A-Za-z0-9_]+?)_\\d{6,}`);
 
 function shipName (id) {

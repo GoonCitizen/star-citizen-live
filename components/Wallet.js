@@ -1,18 +1,20 @@
 'use strict';
 
 /**
- * Wallet — Bitcoin components brought forward from the Hub, group-multisig
- * aware. Shows the payout backend (ledger vs bitcoind, network), each
- * group's deterministic k-of-n P2WSH address (same address on every
- * member's relay — sorted keys), and all mission escrows with status.
+ * Wallet — Bitcoin components brought forward from the Hub, group-aware.
+ * Shows the payout backend (ledger vs bitcoind, network), each group's
+ * deterministic Taproot (P2TR) spend-ladder address (same on every member's
+ * relay — sorted keys; legacy P2WSH kept under legacyP2wsh), and mission
+ * escrows with status.
  */
 
 const React = require('react');
+const BitcoinWalletPanel = require('./BitcoinWalletPanel');
 
 const BASE = '/services/star-citizen';
 
 const CSS = `
-  .wa-wrap{max-width:980px;margin:0 auto;padding:18px;display:grid;gap:14px}
+  .wa-wrap{width:100%;max-width:none;margin:0;padding:12px 14px;display:grid;gap:14px;box-sizing:border-box}
   .wa-panel{background:var(--panel);border:1px solid var(--line);border-radius:12px;overflow:hidden}
   .wa-panel h2{font-size:13px;margin:0;padding:12px 16px;border-bottom:1px solid var(--line);font-weight:600;display:flex;gap:8px;align-items:center}
   .wa-panel h2 .sub{color:var(--muted);font-weight:400;font-size:12px;flex:1}
@@ -31,7 +33,7 @@ const CSS = `
   .wa-btn{background:var(--panel2);border:1px solid var(--line);color:var(--text);border-radius:7px;padding:4px 11px;font-size:11.5px;cursor:pointer}
   .wa-btn:hover{border-color:var(--accent)}
   .wa-note{color:var(--muted);font-size:12px;padding:12px 16px;line-height:1.6}
-`;
+` + (BitcoinWalletPanel.CSS || '');
 
 const SATS = (n) => Number(n || 0).toLocaleString() + ' sats';
 
@@ -77,11 +79,40 @@ class Wallet extends React.Component {
     try { navigator.clipboard.writeText(text); this.setState({ notice: 'Copied.' }); } catch (_) { /* no clipboard */ }
   }
 
+  async proposeWithdraw (groupId) {
+    try {
+      const res = await fetch(`${BASE}/groups/${encodeURIComponent(groupId)}/withdrawals`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'spend', utxoAgeBlocks: 0 })
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error || res.statusText);
+      const pref = json.data && json.data.prepared && json.data.prepared.preferredTierId;
+      const tiers = (json.data && json.data.prepared && json.data.prepared.activeTiers) || [];
+      const tip = tiers.length
+        ? `Active tier: ${tiers[0].id} (${tiers[0].threshold}-of-n). Address ready — fund UTXO then POST fundedTxHex + destinationAddress.`
+        : 'Withdrawal proposed.';
+      this.setState({ notice: tip + (pref ? ` Preferred: ${pref}` : '') });
+    } catch (e) {
+      this.setState({ notice: e.message || String(e) });
+    }
+  }
+
   render () {
     const w = this.state.wallet;
+    const bitcoinEnable = this.props.bitcoinEnable !== false &&
+      !(w && w.bitcoin && w.bitcoin.enable === false);
     return React.createElement('div', { className: 'wa-wrap' },
+      React.createElement(BitcoinWalletPanel, {
+        bitcoinEnable,
+        identityPubkey: this.props.identityPubkey || this.props.pubkey || null,
+        identityLocked: !!this.props.identityLocked,
+        network: (w && w.bitcoin && w.bitcoin.network) || (w && w.network) || 'regtest'
+      }),
+
       React.createElement('div', { className: 'wa-panel' },
-        React.createElement('h2', null, '₿ Wallet ',
+        React.createElement('h2', null, '₿ Escrow backend ',
           React.createElement('span', { className: 'sub' }, '— mission escrow backend and group multisig'),
           React.createElement('button', { className: 'wa-btn', onClick: () => this.load() }, 'Refresh')
         ),
@@ -102,19 +133,40 @@ class Wallet extends React.Component {
       ),
 
       React.createElement('div', { className: 'wa-panel' },
-        React.createElement('h2', null, '👥 Group multisig ',
-          React.createElement('span', { className: 'sub' }, '— deterministic k-of-n P2WSH per group (sorted member keys: every member derives the same address)')
+        React.createElement('h2', null, '👥 Group Taproot ',
+          React.createElement('span', { className: 'sub' }, '— failover ladder P2TR from signer keys (readers do not change the address)')
         ),
         this.state.groups.length
           ? this.state.groups.map((g) => {
             const gw = this.state.groupWallets[g.id];
+            const nSigners = (g.validators || g.members || []).length;
+            const isCreator = this.props.pubkey && g.creator === this.props.pubkey;
             return React.createElement('div', { className: 'wa-row', key: g.id },
               React.createElement('span', { className: 'wa-name' }, g.name),
-              React.createElement('span', { className: 'wa-tag btc' }, `${g.threshold}-of-${g.members.length}`),
+              React.createElement('span', { className: 'wa-tag btc' }, `${g.threshold}-of-${nSigners}`),
+              gw && gw.mode ? React.createElement('span', { className: 'wa-tag ok' }, gw.mode) : null,
               gw && gw.address
                 ? React.createElement(React.Fragment, null,
                   React.createElement('span', { className: 'wa-addr' }, gw.address),
-                  React.createElement('button', { className: 'wa-btn', onClick: () => this.copy(gw.address) }, 'Copy')
+                  React.createElement('button', { className: 'wa-btn', onClick: () => this.copy(gw.address) }, 'Copy'),
+                  isCreator ? React.createElement('button', {
+                    className: 'wa-btn',
+                    title: 'Propose publisher withdrawal (active non-expired tier)',
+                    onClick: () => this.proposeWithdraw(g.id)
+                  }, 'Withdraw') : null,
+                  Array.isArray(gw.leaves) && gw.leaves.length
+                    ? React.createElement('div', {
+                      style: {
+                        width: '100%',
+                        marginTop: 6,
+                        fontSize: 11,
+                        color: 'var(--muted)',
+                        lineHeight: 1.5
+                      }
+                    },
+                    'Leaves: ',
+                    gw.leaves.map((l) => `${l.id}(${l.kind})`).join(' · '))
+                    : null
                 )
                 : React.createElement('span', { className: 'wa-addr', style: { color: 'var(--muted)' } },
                   gw ? (gw.error || gw.note || '…') : 'deriving…')

@@ -50,3 +50,7 @@ temp/
 # (node_modules is already ignored above)
 reports/brief/*.png
 reports/brief/*.svg
+
+# Local Fabric operator identity (never commit)
+local/fabric-operator-identity.json
+local/cursor-agent-fabric-identity.json

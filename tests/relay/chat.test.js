@@ -11,7 +11,7 @@ const LiveRelay = require('../../services/LiveRelay');
 const ChatManager = require('../../services/ChatManager');
 const GroupManager = require('../../services/GroupManager');
 const { Store } = require('../../types/Store');
-const { createIdentity, signEnvelope } = require('../../functions/identity');
+const { createIdentity, signEnvelope, pubkeyXOnly, pubkeysMatch } = require('../../functions/identity');
 
 const BASE = '/services/star-citizen';
 
@@ -68,6 +68,31 @@ test('ChatManager: global + per-group channels with membership access', async ()
   assert.throws(() => cm.post({ channel: 'group:nope', body: 'x', author: a.pubkey }), /unknown channel/);
 });
 
+test('ChatManager: DM channels are participant-only and publishable', async () => {
+  const a = createIdentity(); const b = createIdentity(); const eve = createIdentity();
+  const store = new Store({});
+  const cm = new ChatManager({ store });
+
+  const key = ChatManager.dmChannelKey(a.pubkey, b.pubkey);
+  assert.ok(key && key.startsWith('dm:'));
+  assert.strictEqual(ChatManager.dmChannelKey(b.pubkey, a.pubkey), key);
+  assert.strictEqual(cm.canAccess(key, a.pubkey, { enforceMembership: true }), true);
+  assert.strictEqual(cm.canAccess(key, b.pubkey, { enforceMembership: true }), true);
+  assert.strictEqual(cm.canAccess(key, eve.pubkey, { enforceMembership: true }), false);
+
+  const msg = cm.post({ channel: key, body: 'ping', author: a.pubkey, handle: 'Alice' });
+  assert.strictEqual(msg.channel, key);
+  assert.throws(() => cm.post({ channel: key, body: 'nope', author: eve.pubkey }), /participant/);
+
+  const chans = cm.channelsFor(b.pubkey, { enforceMembership: true });
+  assert.ok(chans.some((c) => c.kind === 'dm' && c.key === key));
+  assert.ok(!cm.channelsFor(eve.pubkey, { enforceMembership: true }).some((c) => c.key === key));
+
+  const opened = cm.openDm(a.pubkey, b.pubkey);
+  assert.strictEqual(opened.key, key);
+  assert.strictEqual(opened.peerPubkey, b.pubkey);
+});
+
 test('ChatManager.ingest rejects impersonation (author must be the batch signer)', async () => {
   const a = createIdentity(); const b = createIdentity();
   const store = new Store({});
@@ -104,7 +129,8 @@ test('hosted chat: signed envelope required, group channels members-only', async
     const env = signEnvelope(alice, { channel: 'global', body: 'network o7', ts: new Date().toISOString() });
     const posted = await request(port, 'POST', `${BASE}/chat/messages`, env);
     assert.strictEqual(posted.status, 200, JSON.stringify(posted.body));
-    assert.strictEqual(posted.body.data.author, alice.pubkey);
+    assert.strictEqual(posted.body.data.author, pubkeyXOnly(alice.pubkey));
+    assert.ok(pubkeysMatch(posted.body.data.author, alice.pubkey));
     const anonRead = await request(port, 'GET', `${BASE}/chat/messages?channel=global`);
     assert.strictEqual(anonRead.body.data.length, 1);
 
@@ -129,7 +155,7 @@ test('hosted chat: signed envelope required, group channels members-only', async
   } finally { await svc.stop(); }
 });
 
-// ---- Two-relay sync over Fabric Peer (P2P_CHAT_MESSAGE) ----
+// ---- Two-relay sync: global = P2P_CHAT_MESSAGE; group = GroupChat CONTRACT_MESSAGE ----
 
 function sleep (ms) { return new Promise((r) => setTimeout(r, ms)); }
 async function waitFor (fn, { timeoutMs = 15000, intervalMs = 100 } = {}) {
@@ -171,11 +197,6 @@ test('chat converges between two Fabric peers (bidirectional)', async () => {
   await local.start();
   const localPort = local.server.address().port;
   try {
-    const groupData = { id: 'group-shared-1', name: 'Shared Wing', members: [alice.pubkey, bob.pubkey], threshold: 1 };
-    await hub.groupManager.createGroup(groupData, alice.pubkey);
-    await local.groupManager.createGroup(groupData, alice.pubkey);
-    const groupChannel = 'group:group-shared-1';
-
     local.setIdentity(alice);
     await waitFor(() => local.fabricNetwork && local.fabricNetwork.ready);
     await waitFor(() => (
@@ -183,16 +204,29 @@ test('chat converges between two Fabric peers (bidirectional)', async () => {
       hub.fabricNetwork.status().fabricConnected >= 1
     ));
 
+    // Alice creates the Federation group; hub ingests CONTRACT_PUBLISH.
+    const created = await request(localPort, 'POST', `${BASE}/groups`, {
+      id: 'group-shared-1',
+      name: 'Shared Wing',
+      members: [alice.pubkey, bob.pubkey],
+      threshold: 1,
+      creator: alice.pubkey
+    });
+    assert.strictEqual(created.status, 200, JSON.stringify(created.body));
+    assert.ok(created.body.data.contractId, 'group must have a Federation contractId');
+    await waitFor(() => hub.groupManager.getGroup('group-shared-1'));
+    const groupChannel = 'group:group-shared-1';
+
     const g1 = await request(localPort, 'POST', `${BASE}/chat/messages`, { channel: 'global', body: 'hello from the relay' });
     assert.strictEqual(g1.status, 200);
-    assert.strictEqual(g1.body.data.author, alice.pubkey);
+    assert.strictEqual(g1.body.data.author, pubkeyXOnly(alice.pubkey));
+    assert.ok(pubkeysMatch(g1.body.data.author, alice.pubkey));
     await request(localPort, 'POST', `${BASE}/chat/messages`, { channel: groupChannel, body: 'wing check-in' });
 
     await waitFor(() => hub.chatManager.list('global').some((m) => m.body === 'hello from the relay'));
     await waitFor(() => hub.chatManager.list(groupChannel).some((m) => m.body === 'wing check-in'));
 
     // Bob posts on the hub; Alice's peer receives over Fabric.
-    // Hub must know Alice's listen address to dial back (star is one-way until then).
     await request(hubPort, 'POST', '/peers', { address: `127.0.0.1:${portA}` });
     await waitFor(() => hub.fabricNetwork.status().fabricConnected >= 1);
 
@@ -239,12 +273,147 @@ test('local chat posts use the operator nickname; author remains the pubkey', as
     const posted = await request(port, 'POST', `${BASE}/chat/messages`, { channel: 'global', body: 'o7 citizens' });
     assert.strictEqual(posted.status, 200, JSON.stringify(posted.body));
     assert.strictEqual(posted.body.data.handle, 'Neorion');
-    assert.strictEqual(posted.body.data.author, alice.pubkey);
+    assert.strictEqual(posted.body.data.author, pubkeyXOnly(alice.pubkey));
+    assert.ok(pubkeysMatch(posted.body.data.author, alice.pubkey));
 
     await request(port, 'PUT', '/settings/nickname', { value: null });
     const cleared = await request(port, 'POST', `${BASE}/chat/messages`, { channel: 'global', body: 'anon style' });
     assert.strictEqual(cleared.body.data.handle, null);
-    assert.strictEqual(cleared.body.data.author, alice.pubkey);
+    assert.strictEqual(cleared.body.data.author, pubkeyXOnly(alice.pubkey));
+    assert.ok(pubkeysMatch(cleared.body.data.author, alice.pubkey));
+  } finally {
+    await svc.stop();
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('group chat receipt API marks local 2PC receipt when wireHash is present', async () => {
+  const alice = createIdentity();
+  const bob = createIdentity();
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'sc-receipt-'));
+  const fabricPort = 22000 + Math.floor(Math.random() * 4000);
+  const svc = new LiveRelay({
+    port: 0,
+    missions: { enable: false },
+    settingsDir: dir,
+    peers: [],
+    // Explicitly enable Fabric under NODE_ENV=test (disabled by default).
+    fabric: { enable: true, listen: true, port: fabricPort, peers: [], peersDb: null }
+  });
+  await svc.start();
+  const port = svc.server.address().port;
+  try {
+    svc.setIdentity(alice);
+    await waitFor(() => svc.fabricNetwork && svc.fabricNetwork.ready, { timeoutMs: 8000 });
+    const created = await request(port, 'POST', `${BASE}/groups`, {
+      id: 'wing-rx',
+      name: 'Wing RX',
+      members: [alice.pubkey, bob.pubkey],
+      threshold: 1,
+      creator: alice.pubkey
+    });
+    assert.strictEqual(created.status, 200, JSON.stringify(created.body));
+    const channel = 'group:wing-rx';
+    const posted = await request(port, 'POST', `${BASE}/chat/messages`, {
+      channel,
+      body: 'check receipts'
+    });
+    assert.strictEqual(posted.status, 200, JSON.stringify(posted.body));
+    const msgId = posted.body.data.id;
+    // Prefer AMP wireHash from local GroupChat publish; inject only if peer offline.
+    let row = null;
+    try {
+      await waitFor(() => {
+        row = svc.registerStore.get('chatmessages', msgId);
+        return row && row.wireHash;
+      }, { timeoutMs: 3000 });
+    } catch (_) {
+      row = svc.registerStore.get('chatmessages', msgId);
+      assert.ok(row);
+      row.wireHash = 'ab'.repeat(32);
+      row.contractId = created.body.data.contractId;
+      svc.registerStore.put('chatmessages', msgId, row);
+    }
+
+    const receipt = await request(port, 'POST', `${BASE}/chat/messages/${encodeURIComponent(msgId)}/receipt`, {});
+    assert.strictEqual(receipt.status, 200, JSON.stringify(receipt.body));
+    assert.ok(receipt.body.data.delivery);
+    assert.equal(receipt.body.data.delivery.local.receipt, true);
+    assert.ok(receipt.body.data.messageHex, 'receipt returns AMP hex for Fabric storage/relay');
+
+    // Unified wireHash path is equivalent (already receipted locally → still 200 with same flags).
+    const byHash = await request(port, 'POST', `${BASE}/delivery/${encodeURIComponent(row.wireHash)}/receipt`, {
+      chatMessageId: msgId,
+      contractId: created.body.data.contractId
+    });
+    assert.strictEqual(byHash.status, 200, JSON.stringify(byHash.body));
+    assert.equal(byHash.body.data.delivery.local.receipt, true);
+    assert.ok(byHash.body.data.messageHex);
+
+    const status = await request(port, 'GET', `${BASE}/delivery/${encodeURIComponent(row.wireHash)}`);
+    assert.strictEqual(status.status, 200);
+    assert.equal(status.body.type, 'DeliverySync');
+    assert.ok(status.body.data.delivery);
+    assert.equal(status.body.data.delivery.local.receipt, true);
+
+    // Receipt frame is stored in contractmessages (like GroupChat) without bumping tip clock alone.
+    const contractId = created.body.data.contractId;
+    const doc = svc.registerStore.get('contractmessages', String(contractId).toLowerCase());
+    assert.ok(doc && Array.isArray(doc.entries));
+    assert.ok(doc.entries.some((e) => e && e.type === 'MessageReceipt' && e.hex));
+
+    const listed = await request(port, 'GET', `${BASE}/chat/messages?channel=${encodeURIComponent(channel)}`);
+    assert.strictEqual(listed.status, 200);
+    const enriched = listed.body.data.find((m) => m.id === msgId);
+    assert.ok(enriched);
+    assert.ok(enriched.delivery);
+    assert.equal(enriched.delivery.local.receipt, true);
+  } finally {
+    await svc.stop();
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('group chat receipt signs locally when fabric peer is disabled (NODE_ENV=test default)', async () => {
+  const alice = createIdentity();
+  const bob = createIdentity();
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'sc-receipt-nofabric-'));
+  const svc = new LiveRelay({
+    port: 0,
+    missions: { enable: false },
+    settingsDir: dir,
+    peers: [],
+    fabric: { enable: false }
+  });
+  await svc.start();
+  const port = svc.server.address().port;
+  try {
+    svc.setIdentity(alice);
+    const created = await request(port, 'POST', `${BASE}/groups`, {
+      id: 'wing-rx-local',
+      name: 'Wing RX Local',
+      members: [alice.pubkey, bob.pubkey],
+      threshold: 1,
+      creator: alice.pubkey
+    });
+    assert.strictEqual(created.status, 200, JSON.stringify(created.body));
+    const posted = await request(port, 'POST', `${BASE}/chat/messages`, {
+      channel: 'group:wing-rx-local',
+      body: 'local receipt only'
+    });
+    assert.strictEqual(posted.status, 200, JSON.stringify(posted.body));
+    const msgId = posted.body.data.id;
+    const row = svc.registerStore.get('chatmessages', msgId);
+    assert.ok(row);
+    row.wireHash = 'cd'.repeat(32);
+    row.contractId = created.body.data.contractId;
+    svc.registerStore.put('chatmessages', msgId, row);
+
+    const receipt = await request(port, 'POST', `${BASE}/chat/messages/${encodeURIComponent(msgId)}/receipt`, {});
+    assert.strictEqual(receipt.status, 200, JSON.stringify(receipt.body));
+    assert.equal(receipt.body.data.delivery.local.receipt, true);
+    assert.ok(receipt.body.data.messageHex);
+    assert.equal(svc.settings.fabric.enable, false);
   } finally {
     await svc.stop();
     fs.rmSync(dir, { recursive: true, force: true });

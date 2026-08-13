@@ -23,11 +23,21 @@ const MissionBroadcastBanner = require('../components/MissionBroadcastBanner');
 const Notifications = require('../components/Notifications');
 const Groups = require('../components/Groups');
 const GroupPage = require('../components/GroupPage');
+const ProfilePage = require('../components/ProfilePage');
 const Library = require('../components/Library');
 const Missions = require('../components/Missions');
+const MissionPage = require('../components/MissionPage');
 const Peers = require('../components/Peers');
+const FabricMessages = require('../components/FabricMessages');
+const GroupFabricInspector = require('../components/GroupFabricInspector');
+const ActivityHeatmap = require('../components/ActivityHeatmap');
+const MissionOutcomesChart = require('../components/MissionOutcomesChart');
+const ShipPicker = require('../components/ShipPicker');
+const Fleet = require('../components/Fleet');
 const Settings = require('../components/Settings');
 const Wallet = require('../components/Wallet');
+const FabricLoginModal = require('../components/FabricLoginModal');
+const GroupOfferModal = require('../components/GroupOfferModal');
 
 async function main () {
   const result = await esbuild.build({
@@ -55,15 +65,25 @@ async function main () {
 ${Dashboard.CSS}
 ${Onboarding.CSS}
 ${Identity.CSS}
+${FabricLoginModal.CSS || ''}
+${GroupOfferModal.CSS || ''}
 ${Chat.CSS}
 ${GlobalChatDock.CSS}
 ${MissionBroadcastBanner.CSS}
 ${Notifications.CSS}
 ${Groups.CSS}
 ${GroupPage.CSS}
+${ProfilePage.CSS}
 ${Library.CSS}
 ${Missions.CSS}
+${MissionPage.CSS}
 ${Peers.CSS}
+${FabricMessages.CSS}
+${GroupFabricInspector.CSS}
+${ActivityHeatmap.CSS}
+${MissionOutcomesChart.CSS}
+${ShipPicker.CSS}
+${Fleet.CSS}
 ${Settings.CSS}
 ${Wallet.CSS}
 </style>

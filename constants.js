@@ -8,7 +8,11 @@ const BRAND_NAME = 'G00N CITIZEN';
  * card, and routed view). Off by default here; flip to `true` to enable.
  */
 const FEATURES = {
-  wallet: false,
+  // Wallet tab; runtime settings.bitcoin.enable can still hide it when false.
+  wallet: true,
+  // Files tab (advanced UI); runtime settings.documents.enable + Advanced mode.
+  // Chat 📎 attach uses the same documents.enable flag for all users.
+  documents: true,
   library: false
 };
 
