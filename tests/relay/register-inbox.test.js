@@ -112,6 +112,8 @@ test('registerInbox maps audits and broadcasts', () => {
   });
   assert.strictEqual(rejectDecision.kind, 'GroupApplicationDecision');
   assert.strictEqual(rejectDecision.status, 'rejected');
+  assert.strictEqual(rejectDecision.refs.applicationId, 'app-9');
+  assert.strictEqual(rejectDecision.id, 'inbox-gad-app-9');
   assert.ok(registerInbox.isNotification(rejectDecision));
 
   const wallet = registerInbox.entryFromWalletEvent({

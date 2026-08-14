@@ -11,12 +11,20 @@ const fs = require('fs');
 const path = require('path');
 const esbuild = require('esbuild');
 
+let polyfillNode = null;
+try {
+  ({ polyfillNode } = require('esbuild-plugin-polyfill-node'));
+} catch (_) {
+  polyfillNode = null;
+}
+
 const root = path.join(__dirname, '..');
 const entry = path.join(__dirname, 'dashboard-entry.js');
 const dest = path.join(root, 'assets', 'index.html');
 const Dashboard = require('../components/Dashboard');
 const Onboarding = require('../components/Onboarding');
 const Identity = require('../components/Identity');
+const Account = require('../components/Account');
 const Chat = require('../components/Chat');
 const GlobalChatDock = require('../components/GlobalChatDock');
 const MissionBroadcastBanner = require('../components/MissionBroadcastBanner');
@@ -27,6 +35,8 @@ const ProfilePage = require('../components/ProfilePage');
 const Library = require('../components/Library');
 const Missions = require('../components/Missions');
 const MissionPage = require('../components/MissionPage');
+const CollectionRecord = require('../components/CollectionRecord');
+const FilePage = require('../components/FilePage');
 const Peers = require('../components/Peers');
 const FabricMessages = require('../components/FabricMessages');
 const GroupFabricInspector = require('../components/GroupFabricInspector');
@@ -36,6 +46,7 @@ const ShipPicker = require('../components/ShipPicker');
 const Fleet = require('../components/Fleet');
 const Settings = require('../components/Settings');
 const Wallet = require('../components/Wallet');
+const WalletConstruct = require('../components/WalletConstruct');
 const FabricLoginModal = require('../components/FabricLoginModal');
 const GroupOfferModal = require('../components/GroupOfferModal');
 
@@ -49,8 +60,30 @@ async function main () {
     target: ['chrome100'],
     minify: true,
     define: {
-      'process.env.NODE_ENV': '"production"'
+      'process.env.NODE_ENV': '"production"',
+      'process.env.NODE_DEBUG': 'false',
+      global: 'globalThis'
     },
+    plugins: [
+      {
+        name: 'events-constructor',
+        setup (build) {
+          const shim = path.join(root, 'functions', 'browserEvents.js');
+          build.onResolve({ filter: /^events$/ }, () => ({ path: shim }));
+        }
+      },
+      {
+        // polyfill-node leaves crypto as {} unless polyfills.crypto is true
+        name: 'browser-crypto',
+        setup (build) {
+          const shim = path.join(root, 'functions', 'browserCrypto.js');
+          build.onResolve({ filter: /^(node:)?crypto$/ }, () => ({ path: shim }));
+        }
+      },
+      ...(polyfillNode ? [polyfillNode({
+        globals: { Buffer: true, process: true }
+      })] : [])
+    ],
     logLevel: 'warning'
   });
 
@@ -59,12 +92,13 @@ async function main () {
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>${Dashboard.TITLE}</title>
 <style>
 ${Dashboard.CSS}
 ${Onboarding.CSS}
 ${Identity.CSS}
+${Account.CSS || ''}
 ${FabricLoginModal.CSS || ''}
 ${GroupOfferModal.CSS || ''}
 ${Chat.CSS}
@@ -77,6 +111,8 @@ ${ProfilePage.CSS}
 ${Library.CSS}
 ${Missions.CSS}
 ${MissionPage.CSS}
+${CollectionRecord.CSS}
+${FilePage.CSS || ''}
 ${Peers.CSS}
 ${FabricMessages.CSS}
 ${GroupFabricInspector.CSS}
@@ -86,6 +122,7 @@ ${ShipPicker.CSS}
 ${Fleet.CSS}
 ${Settings.CSS}
 ${Wallet.CSS}
+${WalletConstruct.CSS || ''}
 </style>
 </head>
 <body>

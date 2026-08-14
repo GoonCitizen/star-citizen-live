@@ -1,0 +1,25 @@
+{
+  "appId": "vc.goon.android",
+  "appName": "GoonCitizen",
+  "webDir": "android-www",
+  "server": {
+    "androidScheme": "https",
+    "allowNavigation": [
+      "http://127.0.0.1:*",
+      "http://localhost:*"
+    ]
+  },
+  "android": {
+    "allowMixedContent": true,
+    "webContentsDebuggingEnabled": true
+  },
+  "plugins": {
+    "CapacitorHttp": {
+      "enabled": true
+    },
+    "CapacitorNodeJS": {
+      "nodeDir": "nodejs",
+      "startMode": "auto"
+    }
+  }
+}

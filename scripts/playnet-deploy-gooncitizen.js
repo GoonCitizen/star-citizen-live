@@ -7,7 +7,7 @@
  * that shells here — prefer running from this tree.
  *
  * Usage:
- *   npm run playnet:deploy-gooncitizen -- [--accept] [--hub <url>] [peer…]
+ *   npm run playnet:deploy-gooncitizen -- [--accept] [--production] [--hub <url>] [peer…]
  *   npm run publish:gooncitizen -- …   (alias)
  *
  * Env:
@@ -16,6 +16,7 @@
  *   FABRIC_HUB_RPC_URL          default http://127.0.0.1:8080
  *   FABRIC_HUB_ADMIN_TOKEN      required for --accept
  *   FABRIC_PLAYNET_PEERS
+ *   FABRIC_PLAYNET_PRODUCTION=1   same as --production (hub.fabric.pub + relay.goon.vc)
  */
 
 const path = require('path');
@@ -29,6 +30,7 @@ const {
   loadPeerKeySettings,
   loadAdminToken,
   hubRpcBase,
+  productionPlaynetTarget,
   hubRpc,
   playnetPeers,
   waitForPeerConnections
@@ -36,14 +38,16 @@ const {
 
 function printHelp () {
   console.log(`Usage:
-  npm run playnet:deploy-gooncitizen -- [--accept] [--hub <url>] [--hold-ms <n>] [peer…]
+  npm run playnet:deploy-gooncitizen -- [--accept] [--hub <url>] [--production] [--hold-ms <n>] [peer…]
 
   --accept           Call AcceptTrackedApplicationContract after publish
   --hub <url>        Hub HTTP base (default FABRIC_HUB_RPC_URL / http://127.0.0.1:8080)
+  --production       Target https://hub.fabric.pub and hub.fabric.pub:7777,relay.goon.vc:7777
   --hold-ms <n>      Keep peer up after publish (default 4000)
   --check-only       Skip publish; only print contract id + ListTracked status
 
-Env: FABRIC_XPRV (preferred), FABRIC_SEED / FABRIC_MNEMONIC, FABRIC_HUB_ADMIN_TOKEN, FABRIC_PLAYNET_PEERS
+Env: FABRIC_XPRV (preferred), FABRIC_SEED / FABRIC_MNEMONIC, FABRIC_HUB_ADMIN_TOKEN,
+     FABRIC_PLAYNET_PEERS, FABRIC_PLAYNET_PRODUCTION=1
 `);
 }
 
@@ -88,6 +92,8 @@ async function main () {
 
   let doAccept = false;
   let checkOnly = false;
+  let production = process.env.FABRIC_PLAYNET_PRODUCTION === '1' ||
+    process.env.FABRIC_PLAYNET_PRODUCTION === 'true';
   let hubUrl = hubRpcBase();
   let holdMs = Number(process.env.FABRIC_DEPLOY_HOLD_MS || 4000);
   const positional = [];
@@ -96,6 +102,7 @@ async function main () {
     const a = argv[i];
     if (a === '--accept') doAccept = true;
     else if (a === '--check-only') checkOnly = true;
+    else if (a === '--production') production = true;
     else if (a === '--hub') hubUrl = String(argv[++i] || '').replace(/\/$/, '');
     else if (a === '--hold-ms') holdMs = Number(argv[++i] || holdMs);
     else if (!a.startsWith('-')) positional.push(a);
@@ -103,6 +110,18 @@ async function main () {
       console.error('Unknown flag:', a);
       printHelp();
       process.exit(1);
+    }
+  }
+
+  if (production) {
+    const prod = productionPlaynetTarget();
+    if (!process.env.FABRIC_HUB_RPC_URL && !process.env.FABRIC_HUB_URL &&
+        hubUrl === hubRpcBase()) {
+      hubUrl = prod.hubUrl;
+    }
+    if (!positional.length && !process.env.FABRIC_PLAYNET_PEERS &&
+        !process.env.FABRIC_FLUSH_PEERS) {
+      positional.push(...prod.peers);
     }
   }
 

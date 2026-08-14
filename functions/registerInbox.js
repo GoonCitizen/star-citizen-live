@@ -36,7 +36,8 @@ const NOTIFICATION_KINDS = new Set([
   'GroupChangeProposal',
   'WalletEscrow',
   'WalletPayout',
-  'WalletWithdrawal'
+  'WalletWithdrawal',
+  'NoteShare'
 ]);
 
 /** Actions from MissionManager / GroupManager audit that become inbox rows. */
@@ -212,15 +213,15 @@ function entryFromGroupAudit (audit) {
     kind = 'GroupApplication';
     status = 'pending';
     actionable = true;
-    title = 'Group join application';
+    title = 'Join request';
   } else if (action === 'group.application.accept') {
     kind = 'GroupApplicationDecision';
     status = 'accepted';
-    title = 'Group join accepted';
+    title = 'Join accepted';
   } else if (action === 'group.application.reject') {
     kind = 'GroupApplicationDecision';
     status = 'rejected';
-    title = 'Group join rejected';
+    title = 'Join declined';
   } else if (action === 'group.ingest' || action === 'group.invite-shell') {
     kind = 'GroupIngest';
     title = `Group received: ${audit.summary || ''}`;
@@ -247,8 +248,16 @@ function entryFromGroupAudit (audit) {
       title = `Proposal: ${sub}` + (audit.summary ? ` (${audit.summary})` : '');
     }
   }
+  const applicationId = action.indexOf('group.application') === 0
+    ? String(audit.summary || '').trim() || null
+    : null;
+  const stableId = (kind === 'GroupApplication' && applicationId)
+    ? `inbox-gapp-${applicationId}`
+    : ((kind === 'GroupApplicationDecision' && applicationId)
+      ? `inbox-gad-${applicationId}`
+      : `inbox-${audit.id}`);
   return normalizeEntry({
-    id: `inbox-${audit.id}`,
+    id: stableId,
     kind,
     status,
     actionable,
@@ -259,7 +268,8 @@ function entryFromGroupAudit (audit) {
     refs: {
       auditId: audit.id,
       groupId: audit.entityId,
-      applicationId: action.indexOf('group.application') === 0 ? audit.summary : null,
+      applicationId,
+      applicantId: action === 'group.application.submit' ? audit.actor : null,
       proposalId: action.indexOf('group.proposal.') === 0 ? audit.summary : null,
       action
     },
@@ -306,12 +316,14 @@ function entryFromGroupOffer (payload) {
     status: 'pending',
     actionable: true,
     ts: new Date().toISOString(),
-    title: (group && group.name) || offer.name || 'Group offer',
+    title: (group && group.name) || offer.name || (offer.meta && offer.meta.name) || 'Group share',
     body: offer.note || (contractId ? `contract ${String(contractId).slice(0, 16)}…` : null),
     source: payload.source,
     refs: {
       groupId,
       contractId,
+      visibility: (group && group.visibility) || (offer.meta && offer.meta.visibility) || null,
+      groupName: (group && group.name) || (offer.meta && offer.meta.name) || null,
       offer
     },
     dedupeKey: seed
@@ -450,6 +462,86 @@ function entryFromWalletEvent (opts = {}) {
   });
 }
 
+/**
+ * Local tag create / member add / remove / delete.
+ * @param {object} group
+ * @param {string} action `create` | `add` | `remove` | `delete` | `rename`
+ * @param {object} [member]
+ * @param {string} [actor]
+ * @returns {object|null}
+ */
+function entryFromLocalGroup (group, action, member, actor) {
+  if (!group || !group.id) return null;
+  let kind = 'LocalGroupCreate';
+  let title = `Local tag: ${group.name}`;
+  if (action === 'add') {
+    kind = 'LocalGroupMemberAdd';
+    title = `Added to ${group.name}`;
+  } else if (action === 'remove') {
+    kind = 'LocalGroupMemberRemove';
+    title = `Removed from ${group.name}`;
+  } else if (action === 'delete') {
+    kind = 'LocalGroupDelete';
+    title = `Deleted tag ${group.name}`;
+  } else if (action === 'rename') {
+    kind = 'LocalGroupRename';
+    title = `Renamed tag ${group.name}`;
+  }
+  const who = member && (member.handle || member.actor);
+  return normalizeEntry({
+    kind,
+    status: 'info',
+    title,
+    body: who || group.name,
+    source: actor || null,
+    handle: member && member.handle ? String(member.handle) : null,
+    refs: {
+      localGroupId: group.id,
+      actor: member && member.actor ? member.actor : null
+    },
+    dedupeKey: `${kind}:${group.id}:${member && member.actor || ''}:${action}:${Date.now()}`
+  });
+}
+
+/**
+ * Local note create / update, or a share event.
+ * @param {object} note
+ * @param {string} action `create` | `update` | `share`
+ * @param {string} [actor]
+ * @returns {object|null}
+ */
+function entryFromIdentityNote (note, action, actor) {
+  if (!note || !note.id) return null;
+  let kind = 'IdentityNote';
+  let title = `Note on ${note.subjectHandle || note.subject}`;
+  if (action === 'update') {
+    kind = 'IdentityNoteUpdate';
+    title = `Updated note on ${note.subjectHandle || note.subject}`;
+  } else if (action === 'share') {
+    kind = 'NoteShare';
+    const dest = note.visibility === 'group'
+      ? (`group ${note.shareGroupId || ''}`)
+      : (`peer ${String(note.sharePeerPubkey || '').slice(0, 8)}`);
+    title = `Shared note (${dest})`;
+  }
+  return normalizeEntry({
+    kind,
+    status: 'info',
+    actionable: action === 'share' && note.inbound === true,
+    title,
+    body: note.body,
+    source: actor || note.author || null,
+    handle: note.subjectHandle || null,
+    refs: {
+      noteId: note.id,
+      subject: note.subject,
+      scope: note.visibility,
+      groupId: note.shareGroupId || null
+    },
+    dedupeKey: `${kind}:${note.id}:${action}:${note.revision || 1}:${note.updatedAt || ''}`
+  });
+}
+
 function isNotification (row) {
   return !!(row && NOTIFICATION_KINDS.has(row.kind) && row.status !== 'self');
 }
@@ -471,11 +563,35 @@ function enrichRefs (store, entry) {
     const claim = store.get('claims', refs.claimId);
     if (claim && claim.missionId) refs.missionId = claim.missionId;
   }
-  if (!refs.groupId && refs.applicationId && store && String(refs.applicationId).indexOf('gapp') === 0) {
+  if (store && refs.applicationId && String(refs.applicationId).indexOf('gapp') === 0) {
     const gapp = store.get('groupapplications', refs.applicationId);
-    if (gapp && gapp.groupId) refs.groupId = gapp.groupId;
+    if (gapp) {
+      if (!refs.groupId && gapp.groupId) refs.groupId = gapp.groupId;
+      if (!refs.applicantId && gapp.applicantId) refs.applicantId = gapp.applicantId;
+    }
+  }
+  if (store && refs.groupId) {
+    const group = store.get('groups', refs.groupId);
+    if (group) {
+      if (!refs.groupName && group.name) refs.groupName = group.name;
+      if (!refs.visibility && group.visibility) refs.visibility = group.visibility;
+    }
   }
   entry.refs = refs;
+  if (refs.groupName) {
+    if (entry.kind === 'GroupApplication' &&
+        (entry.title === 'Join request' || entry.title === 'Group join application')) {
+      entry.title = `Join request · ${refs.groupName}`;
+    } else if (entry.kind === 'GroupApplicationDecision') {
+      if (entry.status === 'accepted' &&
+          /^(Join accepted|Group join accepted)$/.test(entry.title || '')) {
+        entry.title = `You're in · ${refs.groupName}`;
+      } else if (entry.status === 'rejected' &&
+          /^(Join declined|Group join rejected)$/.test(entry.title || '')) {
+        entry.title = `Join declined · ${refs.groupName}`;
+      }
+    }
+  }
   return entry;
 }
 
@@ -515,7 +631,9 @@ function list (store, opts = {}) {
   if (opts.pendingOnly) {
     rows = rows.filter((r) => r.status === 'pending');
   }
-  return rows.slice().sort((a, b) => String(b.ts || '').localeCompare(String(a.ts || '')));
+  return rows.slice()
+    .map((r) => enrichRefs(store, Object.assign({}, r, { refs: Object.assign({}, r.refs || {}) })))
+    .sort((a, b) => String(b.ts || '').localeCompare(String(a.ts || '')));
 }
 
 /**
@@ -581,5 +699,7 @@ module.exports = {
   entryFromGroupChangeProposal,
   entryFromFederationInvite,
   entryFromFederationInviteDecision,
-  entryFromWalletEvent
+  entryFromWalletEvent,
+  entryFromLocalGroup,
+  entryFromIdentityNote
 };

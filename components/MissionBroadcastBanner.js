@@ -100,12 +100,24 @@ class MissionBroadcastBanner extends React.Component {
         }
       });
     }
+    if (typeof window !== 'undefined') {
+      window.addEventListener('gooncitizen:inbox', this._onInbox);
+      window.addEventListener('gooncitizen:group-imported', this._onInbox);
+    }
   }
+
+  _onInbox = () => {
+    this.tick();
+  };
 
   componentWillUnmount () {
     if (this._timer) clearInterval(this._timer);
     if (this._unsubAction) this._unsubAction();
     if (this._unsubClick) this._unsubClick();
+    if (typeof window !== 'undefined') {
+      window.removeEventListener('gooncitizen:inbox', this._onInbox);
+      window.removeEventListener('gooncitizen:group-imported', this._onInbox);
+    }
   }
 
   headers () {

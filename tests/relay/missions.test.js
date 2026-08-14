@@ -99,6 +99,19 @@ test('rejecting a claim leaves the mission assigned for a re-claim', async () =>
   assert.strictEqual(claim2.status, 'pending');
 });
 
+test('creator can submit completion without applying', async () => {
+  const mm = fresh();
+  const m = await mm.createMission({ title: 'Solo salvage', createdBy: 'officer1' });
+  const claim = await mm.submitClaim({
+    missionId: m.id,
+    claimantId: 'officer1',
+    note: 'cargo delivered'
+  });
+  assert.strictEqual(claim.status, 'pending');
+  assert.strictEqual(claim.note, 'cargo delivered');
+  assert.ok(mm.getMission(m.id).participantIds.includes('officer1'));
+});
+
 test('rejects bad transitions', async () => {
   const mm = fresh();
   const m = await mm.createMission({ title: 'X', createdBy: 'o' });

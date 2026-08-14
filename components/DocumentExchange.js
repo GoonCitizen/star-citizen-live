@@ -1,13 +1,19 @@
 'use strict';
 
 /**
- * Document Exchange — Hub-backed catalog brought forward from Hub UI / Fabric TUI.
- * Gated by settings.documents.enable (see settings/local.js). Proxies Hub
- * ListDocuments / CreateDocument / PublishDocument / CreatePurchaseInvoice /
- * ClaimPurchase via LiveRelay `/services/star-citizen/documents/*`.
+ * Document Exchange — this node's file catalog plus peer inventories.
+ * Gated by settings.documents.enable (see settings/local.js). Chat 📎 attach
+ * writes the local catalog. LiveRelay `/services/star-citizen/documents/*`.
  */
 
 const React = require('react');
+const {
+  DOCUMENT_TYPE_FILTERS,
+  DOCUMENT_STATUS_FILTERS,
+  filterDocuments,
+  documentTypeCounts,
+  documentTypeKey
+} = require('../functions/documentSearch');
 
 const BASE = '/services/star-citizen/documents';
 
@@ -25,6 +31,7 @@ const CSS = `
   .dx-btn{background:var(--panel2);border:1px solid var(--line);color:var(--text);border-radius:7px;padding:6px 12px;font-size:12px;cursor:pointer}
   .dx-btn:hover{border-color:var(--accent)}
   .dx-btn.primary{background:var(--accent);border-color:var(--accent);color:#fff}
+  .dx-btn.pin-on{border-color:#f7931a;background:rgba(247,147,26,.12)}
   .dx-btn:disabled{opacity:.5;cursor:not-allowed}
   .dx-table{width:100%;border-collapse:collapse;font-size:12px}
   .dx-table th,.dx-table td{text-align:left;padding:8px 10px;border-bottom:1px solid #20262f;vertical-align:top}
@@ -38,6 +45,33 @@ const CSS = `
   .dx-tag.price{background:rgba(247,147,26,.16);color:#f7931a}
   .dx-tag.mut{background:rgba(110,118,129,.18);color:var(--muted)}
   .dx-detail{display:grid;gap:8px;padding:10px 12px;background:var(--panel2);border:1px solid var(--line);border-radius:8px}
+  .dx-search{display:grid;gap:10px;padding:12px 16px;border-bottom:1px solid var(--line);background:var(--panel)}
+  .dx-search-row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+  .dx-search input[type="search"]{flex:1;min-width:160px;background:var(--bg);border:1px solid var(--line);color:var(--text);
+    border-radius:7px;padding:8px 10px;font-size:13px}
+  .dx-search input[type="search"]:focus{outline:none;border-color:var(--accent)}
+  .dx-search-clear{background:var(--panel2);border:1px solid var(--line);color:var(--muted);border-radius:7px;
+    width:32px;height:32px;cursor:pointer;font-size:15px;line-height:1}
+  .dx-search-clear:hover{color:var(--text);border-color:var(--accent)}
+  .dx-chips{display:flex;flex-wrap:wrap;gap:6px;align-items:center}
+  .dx-chip{font-size:11.5px;padding:4px 10px;border-radius:999px;border:1px solid var(--line);background:transparent;
+    color:var(--muted);cursor:pointer}
+  .dx-chip.on{background:rgba(59,130,246,.15);color:var(--accent);border-color:var(--accent)}
+  .dx-chip .n{opacity:.75;margin-left:4px;font-variant-numeric:tabular-nums}
+  .dx-type{font-size:10px;font-weight:700;padding:1px 6px;border-radius:4px;margin-left:6px;
+    background:rgba(110,118,129,.18);color:var(--muted);text-transform:uppercase;letter-spacing:.3px}
+  .dx-panel h2 .dx-head-actions{margin-left:auto;display:flex;gap:6px;align-items:center;flex:none}
+  .dx-create{padding:12px 16px;border-bottom:1px solid var(--line);background:var(--panel2)}
+  .dx-offers{display:grid;gap:6px;margin-top:4px}
+  .dx-offers h3{margin:0;font-size:12px;font-weight:650;color:var(--muted);text-transform:uppercase;letter-spacing:.3px}
+  .dx-offers table{width:100%;border-collapse:collapse;font-size:12px}
+  .dx-offers th,.dx-offers td{text-align:left;padding:6px 8px;border-bottom:1px solid #20262f}
+  .dx-offers th{color:var(--muted);font-weight:600}
+  .dx-tag.peer{background:rgba(56,139,253,.14);color:var(--accent)}
+  .dx-type.bitcoin-block,.dx-type.bitcoin-tx{background:rgba(247,147,26,.16);color:#f7931a}
+  .dx-type.text{background:rgba(63,185,80,.12);color:var(--good)}
+  .dx-type.image{background:rgba(56,139,253,.14);color:var(--accent)}
+  .dx-type.json{background:rgba(163,113,247,.14);color:#a371f7}
 `;
 
 function shortId (id) {
@@ -78,6 +112,25 @@ function pickDocuments (payload) {
   return [];
 }
 
+function sourceLabel (doc) {
+  if (!doc) return 'this node';
+  if (doc.local === false || doc.source === 'peer') {
+    const n = Number(doc.peerCount || 0);
+    const who = doc.peerAlias || (doc.peerPubkey ? shortId(doc.peerPubkey) : 'peer');
+    if (n > 1) return `${n} peers · from ${who}`;
+    return who;
+  }
+  const extra = Number(doc.peerCount || 0);
+  if (extra > 0) return `this node + ${extra} peer${extra === 1 ? '' : 's'}`;
+  return 'this node';
+}
+
+function priceLabel (doc) {
+  const n = Number(doc && (doc.bestPriceSats != null ? doc.bestPriceSats : doc.purchasePriceSats) || 0);
+  if (!Number.isFinite(n) || n <= 0) return 'free';
+  return `${n.toLocaleString()} sats`;
+}
+
 class DocumentExchange extends React.Component {
   constructor (props) {
     super(props);
@@ -86,6 +139,7 @@ class DocumentExchange extends React.Component {
       busy: false,
       documents: [],
       hub: null,
+      local: true,
       error: null,
       notice: null,
       selectedId: null,
@@ -97,12 +151,22 @@ class DocumentExchange extends React.Component {
       claimTxid: '',
       invoice: null,
       claimResult: null,
-      inventoryPeerId: ''
+      inventoryBusy: false,
+      createOpen: false,
+      searchQuery: '',
+      searchType: 'all',
+      searchStatus: 'all'
     };
+    this._inventoryTimer = null;
+    this._inventoryPolls = 0;
   }
 
   componentDidMount () {
     this.refresh();
+  }
+
+  componentWillUnmount () {
+    if (this._inventoryTimer) clearTimeout(this._inventoryTimer);
   }
 
   componentDidUpdate (prev) {
@@ -123,7 +187,8 @@ class DocumentExchange extends React.Component {
       const docs = pickDocuments(res.j.data || res.j);
       this.setState({
         documents: docs,
-        hub: (res.j && res.j.hub) || null,
+        hub: null,
+        local: !!(res.j && res.j.local !== false),
         loading: false
       });
     } catch (e) {
@@ -173,6 +238,7 @@ class DocumentExchange extends React.Component {
       const id = doc && (doc.id || doc.sha256);
       this.setState({
         busy: false,
+        createOpen: false,
         notice: id ? `Created ${shortId(id)}` : 'Created',
         createText: '',
         createName: ''
@@ -181,6 +247,45 @@ class DocumentExchange extends React.Component {
       if (id) await this.selectDoc(id);
     } catch (e) {
       this.setState({ busy: false, error: e && e.message ? e.message : String(e) });
+    }
+  }
+
+  async queryPeers () {
+    this.setState({ inventoryBusy: true, error: null, notice: null });
+    try {
+      const res = await fetch(`${BASE}/inventory`, { method: 'POST' })
+        .then((r) => r.json().then((j) => ({ ok: r.ok, j })));
+      if (!res.ok) throw new Error((res.j && res.j.error) || 'Inventory query failed');
+      const data = (res.j && res.j.data) || res.j || {};
+      const requested = Number(data.requested) || 0;
+      this.setState({
+        inventoryBusy: false,
+        notice: requested
+          ? `Asked ${requested} peer${requested === 1 ? '' : 's'} for inventories…`
+          : (data.ready === false
+            ? 'Fabric peer is not up — showing cached offers'
+            : 'No connected peers — showing cached offers')
+      });
+      await this.refresh();
+      if (requested > 0) {
+        this._inventoryPolls = 0;
+        if (this._inventoryTimer) clearTimeout(this._inventoryTimer);
+        this._inventoryTimer = setTimeout(() => this.pollInventory(), 800);
+      }
+    } catch (e) {
+      this.setState({
+        inventoryBusy: false,
+        error: e && e.message ? e.message : String(e)
+      });
+    }
+  }
+
+  async pollInventory () {
+    await this.refresh();
+    if (this.state.selectedId) await this.selectDoc(this.state.selectedId);
+    this._inventoryPolls += 1;
+    if (this._inventoryPolls < 4) {
+      this._inventoryTimer = setTimeout(() => this.pollInventory(), 1000);
     }
   }
 
@@ -209,71 +314,21 @@ class DocumentExchange extends React.Component {
     }
   }
 
-  async buyInvoice () {
-    const id = this.state.selectedId;
+  async pinDoc (id, pinned) {
     if (!id) return;
-    this.setState({ busy: true, error: null, notice: null, invoice: null });
-    try {
-      const res = await fetch(`${BASE}/${encodeURIComponent(id)}/purchase`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({})
-      }).then((r) => r.json().then((j) => ({ ok: r.ok, j })));
-      if (!res.ok) throw new Error((res.j && res.j.error) || 'Purchase invoice failed');
-      this.setState({
-        busy: false,
-        invoice: res.j.data || res.j,
-        notice: 'Invoice created — pay the address, then claim with txid.'
-      });
-    } catch (e) {
-      this.setState({ busy: false, error: e && e.message ? e.message : String(e) });
-    }
-  }
-
-  async claimPurchase () {
-    const id = this.state.selectedId;
-    const txid = String(this.state.claimTxid || '').trim();
-    if (!id || !txid) {
-      this.setState({ error: 'Select a document and enter the payment txid' });
-      return;
-    }
     this.setState({ busy: true, error: null, notice: null });
     try {
-      const res = await fetch(`${BASE}/${encodeURIComponent(id)}/claim`, {
+      const res = await fetch(`/services/star-citizen/files/${encodeURIComponent(id)}/pin`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ txid })
+        body: JSON.stringify({ pinned: pinned === true })
       }).then((r) => r.json().then((j) => ({ ok: r.ok, j })));
-      if (!res.ok) throw new Error((res.j && res.j.error) || 'Claim failed');
+      if (!res.ok) throw new Error((res.j && res.j.error) || 'Pin failed');
       this.setState({
         busy: false,
-        claimResult: res.j.data || res.j,
-        notice: 'Purchase claimed — content unlocked when Hub verified payment.'
+        notice: pinned ? 'Pinned to your profile' : 'Unpinned from your profile'
       });
-      await this.selectDoc(id);
-    } catch (e) {
-      this.setState({ busy: false, error: e && e.message ? e.message : String(e) });
-    }
-  }
-
-  async requestInventory () {
-    const peerId = String(this.state.inventoryPeerId || '').trim();
-    if (!peerId) {
-      this.setState({ error: 'Fabric peer id required for inventory request' });
-      return;
-    }
-    this.setState({ busy: true, error: null, notice: null });
-    try {
-      const res = await fetch(`${BASE}/inventory`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ peerId })
-      }).then((r) => r.json().then((j) => ({ ok: r.ok, j })));
-      if (!res.ok) throw new Error((res.j && res.j.error) || 'Inventory request failed');
-      this.setState({
-        busy: false,
-        notice: 'Inventory request sent via Hub — watch peers / Hub activity for offers.'
-      });
+      await this.refresh();
     } catch (e) {
       this.setState({ busy: false, error: e && e.message ? e.message : String(e) });
     }
@@ -286,11 +341,83 @@ class DocumentExchange extends React.Component {
         React.createElement('h2', null, '📁 Files'),
         React.createElement('div', { className: 'dx-body' },
           React.createElement('p', { className: 'dx-note' },
-            'Set documents.enable: true in settings/local.js (and enable Advanced mode) to use Hub-backed Files ',
-            '(list / create / publish / purchase — same surface as Hub UI and Fabric TUI documents packs).')
+            'Set documents.enable: true in settings/local.js (and enable Advanced mode) to browse this node\'s file catalog. Chat 📎 attach still writes files here when the tab is hidden.')
         )
       )
     );
+  }
+
+  clearSearch () {
+    this.setState({ searchQuery: '', searchType: 'all', searchStatus: 'all' });
+  }
+
+  visibleDocuments () {
+    return filterDocuments(this.state.documents, {
+      query: this.state.searchQuery,
+      type: this.state.searchType,
+      status: this.state.searchStatus
+    });
+  }
+
+  renderSearchControls (docs) {
+    const counts = documentTypeCounts(docs);
+    const q = this.state.searchQuery || '';
+    const type = this.state.searchType || 'all';
+    const status = this.state.searchStatus || 'all';
+    const filtered = this.visibleDocuments();
+    const active = !!(q.trim() || type !== 'all' || status !== 'all');
+    return React.createElement('div', { className: 'dx-search' },
+      React.createElement('div', { className: 'dx-search-row' },
+        React.createElement('input', {
+          type: 'search',
+          value: q,
+          placeholder: 'Search name, id, MIME, sha…',
+          'aria-label': 'Search documents',
+          autoComplete: 'off',
+          spellCheck: false,
+          onChange: (e) => this.setState({ searchQuery: e.target.value })
+        }),
+        active
+          ? React.createElement('button', {
+            type: 'button',
+            className: 'dx-search-clear',
+            title: 'Clear search',
+            'aria-label': 'Clear document search',
+            onClick: () => this.clearSearch()
+          }, '×')
+          : null,
+        React.createElement('span', { className: 'dx-note' },
+          `${filtered.length} shown` + (filtered.length !== docs.length ? ` / ${docs.length}` : ''))
+      ),
+      React.createElement('div', { className: 'dx-chips', role: 'group', 'aria-label': 'Document type' },
+        DOCUMENT_TYPE_FILTERS.map(([key, label]) => {
+          const n = counts[key] || 0;
+          if (key !== 'all' && n === 0 && type !== key) return null;
+          return React.createElement('button', {
+            key: key,
+            type: 'button',
+            className: 'dx-chip' + (type === key ? ' on' : ''),
+            onClick: () => this.setState({ searchType: key })
+          },
+          label,
+          React.createElement('span', { className: 'n' }, n)
+          );
+        })
+      ),
+      React.createElement('div', { className: 'dx-chips', role: 'group', 'aria-label': 'Document status' },
+        DOCUMENT_STATUS_FILTERS.map(([key, label]) => React.createElement('button', {
+          key: key,
+          type: 'button',
+          className: 'dx-chip' + (status === key ? ' on' : ''),
+          onClick: () => this.setState({ searchStatus: key })
+        }, label))
+      )
+    );
+  }
+
+  typeLabel (key) {
+    const row = DOCUMENT_TYPE_FILTERS.find(([k]) => k === key);
+    return (row && row[1]) || key;
   }
 
   renderDetail () {
@@ -303,12 +430,7 @@ class DocumentExchange extends React.Component {
     const price = Number(doc.purchasePriceSats || 0);
     const contentB64 = doc.contentBase64 || null;
     const preview = contentB64 ? base64ToUtf8(contentB64) : null;
-    const inv = this.state.invoice;
-    const claim = this.state.claimResult;
-    const claimDoc = claim && (claim.document || claim);
-    const claimPreview = claimDoc && claimDoc.contentBase64
-      ? base64ToUtf8(claimDoc.contentBase64)
-      : null;
+    const isLocal = doc.local !== false && detail.local !== false;
 
     return React.createElement('div', { className: 'dx-detail' },
       React.createElement('div', null,
@@ -333,66 +455,137 @@ class DocumentExchange extends React.Component {
           style: { whiteSpace: 'pre-wrap', margin: 0, maxHeight: 180, overflow: 'auto' }
         }, preview.slice(0, 4000))
         : (contentB64
-          ? React.createElement('p', { className: 'dx-note' }, 'Binary / sealed content (base64 present).')
+          ? React.createElement('p', { className: 'dx-note' }, 'Binary content (base64 present).')
           : React.createElement('p', { className: 'dx-note' },
-            'Metadata only — GetDocument may omit content until purchase / unlock.')),
-      React.createElement('div', { className: 'dx-form' },
-        React.createElement('label', null, 'Publish price (sats, 0 = free)',
-          React.createElement('input', {
-            type: 'number',
-            min: 0,
-            value: this.state.publishPrice,
-            onChange: (e) => this.setState({ publishPrice: e.target.value })
-          })
-        ),
-        React.createElement('div', { className: 'dx-actions' },
-          React.createElement('button', {
+            isLocal ? 'No content on this node.' : 'Content lives on the offering peer — this listing is metadata only.')),
+      this.renderOffers(detail.offers || [], id),
+      React.createElement('div', { className: 'dx-actions' },
+        React.createElement('a', {
+          className: 'dx-btn',
+          href: '/files/' + encodeURIComponent(id)
+        }, 'Open page'),
+        isLocal
+          ? React.createElement('button', {
             type: 'button',
-            className: 'dx-btn primary',
+            className: 'dx-btn' + (doc.profilePinned ? ' primary' : ''),
             disabled: this.state.busy,
-            onClick: () => this.publishSelected()
-          }, 'Publish'),
-          React.createElement('button', {
-            type: 'button',
-            className: 'dx-btn',
-            disabled: this.state.busy || !(published && price > 0),
-            onClick: () => this.buyInvoice()
-          }, 'Purchase invoice'),
+            title: doc.profilePinned ? 'Unpin from profile' : 'Pin to profile',
+            onClick: () => this.pinDoc(id, !doc.profilePinned)
+          }, '📌 ' + (doc.profilePinned ? 'Unpin' : 'Pin to profile'))
+          : null
+      ),
+      isLocal
+        ? React.createElement('div', { className: 'dx-form' },
+          React.createElement('label', null, 'Publish price (sats, 0 = free)',
+            React.createElement('input', {
+              type: 'number',
+              min: 0,
+              value: this.state.publishPrice,
+              onChange: (e) => this.setState({ publishPrice: e.target.value })
+            })
+          ),
+          React.createElement('div', { className: 'dx-actions' },
+            React.createElement('button', {
+              type: 'button',
+              className: 'dx-btn primary',
+              disabled: this.state.busy,
+              onClick: () => this.publishSelected()
+            }, 'Publish'),
+            React.createElement('button', {
+              type: 'button',
+              className: 'dx-btn',
+              disabled: this.state.busy,
+              onClick: () => this.selectDoc(id)
+            }, 'Reload')
+          )
+        )
+        : React.createElement('div', { className: 'dx-actions' },
           React.createElement('button', {
             type: 'button',
             className: 'dx-btn',
             disabled: this.state.busy,
             onClick: () => this.selectDoc(id)
           }, 'Reload')
-        ),
-        inv
-          ? React.createElement('div', { className: 'dx-note' },
-            React.createElement('div', null, 'Pay ',
-              React.createElement('b', null, `${Number(inv.amountSats || 0).toLocaleString()} sats`),
-              ' to'),
-            React.createElement('div', { className: 'dx-mono' }, inv.address || '—'))
-          : null,
-        React.createElement('label', null, 'Claim txid (after payment)',
+        )
+    );
+  }
+
+  renderOffers (offers) {
+    const rows = Array.isArray(offers) ? offers : [];
+    return React.createElement('div', { className: 'dx-offers' },
+      React.createElement('h3', null, 'Offers'),
+      rows.length
+        ? React.createElement('table', null,
+          React.createElement('thead', null,
+            React.createElement('tr', null,
+              React.createElement('th', null, 'Peer'),
+              React.createElement('th', null, 'Price'),
+              React.createElement('th', null, '')
+            )
+          ),
+          React.createElement('tbody', null,
+            rows.map((o, i) => React.createElement('tr', { key: o.id || ((o.peerPubkey || 'p') + ':' + i) },
+              React.createElement('td', null,
+                o.local
+                  ? React.createElement('span', { className: 'dx-tag mut' }, 'this node')
+                  : React.createElement('span', { className: 'dx-tag peer' },
+                    o.peerAlias || shortId(o.peerPubkey || o.peerAddress || 'peer'))
+              ),
+              React.createElement('td', { className: i === 0 ? 'dx-ok' : null },
+                priceLabel(o)),
+              React.createElement('td', { className: 'dx-note' },
+                o.published === false ? 'unpublished' : (i === 0 ? 'lowest' : ''))
+            ))
+          )
+        )
+        : React.createElement('p', { className: 'dx-note' },
+          'No other peer listings for this file yet — Query peers to refresh inventories.')
+    );
+  }
+
+  renderCreateForm () {
+    if (!this.state.createOpen) return null;
+    return React.createElement('div', { className: 'dx-create' },
+      React.createElement('div', { className: 'dx-form' },
+        React.createElement('label', null, 'Name',
           React.createElement('input', {
-            value: this.state.claimTxid,
-            onChange: (e) => this.setState({ claimTxid: e.target.value }),
-            placeholder: 'txid…'
+            value: this.state.createName,
+            onChange: (e) => this.setState({ createName: e.target.value }),
+            placeholder: 'note.txt'
+          })
+        ),
+        React.createElement('label', null, 'MIME',
+          React.createElement('select', {
+            value: this.state.createMime,
+            onChange: (e) => this.setState({ createMime: e.target.value })
+          },
+          React.createElement('option', { value: 'text/plain' }, 'text/plain'),
+          React.createElement('option', { value: 'text/markdown' }, 'text/markdown'),
+          React.createElement('option', { value: 'application/json' }, 'application/json'),
+          React.createElement('option', { value: 'text/html' }, 'text/html'),
+          React.createElement('option', { value: 'application/octet-stream' }, 'application/octet-stream')
+          )
+        ),
+        React.createElement('label', null, 'Content (UTF-8 text)',
+          React.createElement('textarea', {
+            value: this.state.createText,
+            onChange: (e) => this.setState({ createText: e.target.value }),
+            placeholder: 'Paste text to publish…'
           })
         ),
         React.createElement('div', { className: 'dx-actions' },
           React.createElement('button', {
             type: 'button',
+            className: 'dx-btn primary',
+            disabled: this.state.busy || !this.state.createText,
+            onClick: () => this.createDoc()
+          }, 'Create on this node'),
+          React.createElement('button', {
+            type: 'button',
             className: 'dx-btn',
-            disabled: this.state.busy || !this.state.claimTxid.trim(),
-            onClick: () => this.claimPurchase()
-          }, 'Claim purchase')
-        ),
-        claimPreview != null
-          ? React.createElement('pre', {
-            className: 'dx-mono',
-            style: { whiteSpace: 'pre-wrap', margin: 0, maxHeight: 160, overflow: 'auto' }
-          }, claimPreview.slice(0, 4000))
-          : null
+            onClick: () => this.setState({ createOpen: false })
+          }, 'Cancel')
+        )
       )
     );
   }
@@ -401,147 +594,111 @@ class DocumentExchange extends React.Component {
     if (this.props.documentsEnable === false) return this.renderDisabled();
 
     const docs = this.state.documents || [];
+    const visible = this.visibleDocuments();
     return React.createElement('div', { className: 'dx-wrap' },
       React.createElement('style', null, CSS),
       React.createElement('section', { className: 'dx-panel' },
         React.createElement('h2', null, '📁 Files ',
           React.createElement('span', { className: 'sub' },
-            this.state.hub
-              ? `Hub ${this.state.hub}`
-              : 'Hub-backed L1 publish / purchase')),
-        React.createElement('div', { className: 'dx-body' },
-          React.createElement('p', { className: 'dx-note' },
-            'Same Document Exchange surface as Hub ',
-            React.createElement('code', null, '/documents'),
-            ' and Fabric TUI ',
-            React.createElement('code', null, 'documents'),
-            ' / ',
-            React.createElement('code', null, 'documents-market'),
-            ' packs. Create locally on the Hub, publish free or priced, then purchase + claim.'),
-          this.state.error
-            ? React.createElement('div', { className: 'dx-err' }, this.state.error)
-            : null,
-          this.state.notice
-            ? React.createElement('div', { className: 'dx-ok' }, this.state.notice)
-            : null,
-          React.createElement('div', { className: 'dx-actions' },
+            `${docs.length} listing${docs.length === 1 ? '' : 's'}`),
+          React.createElement('div', { className: 'dx-head-actions' },
             React.createElement('button', {
               type: 'button',
               className: 'dx-btn',
               disabled: this.state.loading || this.state.busy,
               onClick: () => this.refresh()
-            }, this.state.loading ? 'Loading…' : 'Refresh catalog')
+            }, this.state.loading ? 'Loading…' : 'Refresh'),
+            React.createElement('button', {
+              type: 'button',
+              className: 'dx-btn',
+              disabled: this.state.inventoryBusy || this.state.busy,
+              onClick: () => this.queryPeers()
+            }, this.state.inventoryBusy ? 'Querying…' : 'Query peers'),
+            React.createElement('button', {
+              type: 'button',
+              className: 'dx-btn' + (this.state.createOpen ? ' primary' : ''),
+              'aria-pressed': !!this.state.createOpen,
+              onClick: () => this.setState({ createOpen: !this.state.createOpen })
+            }, this.state.createOpen ? 'Close' : 'New file')
           )
-        )
-      ),
-      React.createElement('section', { className: 'dx-panel' },
-        React.createElement('h2', null, 'Create'),
-        React.createElement('div', { className: 'dx-body' },
-          React.createElement('div', { className: 'dx-form' },
-            React.createElement('label', null, 'Name',
-              React.createElement('input', {
-                value: this.state.createName,
-                onChange: (e) => this.setState({ createName: e.target.value }),
-                placeholder: 'note.txt'
-              })
-            ),
-            React.createElement('label', null, 'MIME',
-              React.createElement('input', {
-                value: this.state.createMime,
-                onChange: (e) => this.setState({ createMime: e.target.value })
-              })
-            ),
-            React.createElement('label', null, 'Content (UTF-8 text)',
-              React.createElement('textarea', {
-                value: this.state.createText,
-                onChange: (e) => this.setState({ createText: e.target.value }),
-                placeholder: 'Paste text to publish…'
-              })
-            ),
-            React.createElement('div', { className: 'dx-actions' },
-              React.createElement('button', {
-                type: 'button',
-                className: 'dx-btn primary',
-                disabled: this.state.busy || !this.state.createText,
-                onClick: () => this.createDoc()
-              }, 'Create on Hub')
-            )
-          )
-        )
-      ),
-      React.createElement('section', { className: 'dx-panel' },
-        React.createElement('h2', null, 'Catalog ',
-          React.createElement('span', { className: 'sub' }, `${docs.length} document${docs.length === 1 ? '' : 's'}`)),
+        ),
+        React.createElement('div', { className: 'dx-body', style: { paddingBottom: 0 } },
+          React.createElement('p', { className: 'dx-note' },
+            'This node\'s catalog plus published listings from connected Fabric peers. Publish marks a local file listed (optional sats on the ',
+            React.createElement('code', null, 'fabric-doc:'),
+            ' chat wire). Pin a file to your profile with 📌 on its page so Federation groups see the listing (metadata only).'),
+          this.state.error
+            ? React.createElement('div', { className: 'dx-err' }, this.state.error)
+            : null,
+          this.state.notice
+            ? React.createElement('div', { className: 'dx-ok' }, this.state.notice)
+            : null
+        ),
+        this.renderCreateForm(),
+        docs.length || this.state.searchQuery || this.state.searchType !== 'all' || this.state.searchStatus !== 'all'
+          ? this.renderSearchControls(docs)
+          : null,
         React.createElement('div', { className: 'dx-body' },
           docs.length === 0
             ? React.createElement('p', { className: 'dx-note' },
-              this.state.loading ? 'Loading…' : 'No documents on this Hub yet.')
-            : React.createElement('table', { className: 'dx-table' },
-              React.createElement('thead', null,
-                React.createElement('tr', null,
-                  React.createElement('th', null, 'Name'),
-                  React.createElement('th', null, 'Id'),
-                  React.createElement('th', null, 'Price'),
-                  React.createElement('th', null, '')
+              this.state.loading ? 'Loading…' : 'No files yet — New file, or Query peers for listings on the mesh.')
+            : (visible.length === 0
+              ? React.createElement('p', { className: 'dx-note' },
+                'No documents match these search criteria — clear filters or try another type.')
+              : React.createElement('table', { className: 'dx-table' },
+                React.createElement('thead', null,
+                  React.createElement('tr', null,
+                    React.createElement('th', null, 'Name'),
+                    React.createElement('th', null, 'Type'),
+                    React.createElement('th', null, 'From'),
+                    React.createElement('th', null, 'Price'),
+                    React.createElement('th', null, '')
+                  )
+                ),
+                React.createElement('tbody', null,
+                  visible.map((d) => {
+                    const id = d.id || d.sha256 || d.document;
+                    const pub = !!(d.published);
+                    const typeKey = documentTypeKey(d);
+                    const isPeer = d.local === false || d.source === 'peer';
+                    return React.createElement('tr', { key: id },
+                      React.createElement('td', null,
+                        d.name || '—',
+                        ' ',
+                        isPeer
+                          ? React.createElement('span', { className: 'dx-tag peer' }, 'peer')
+                          : (pub
+                            ? React.createElement('span', { className: 'dx-tag pub' }, 'pub')
+                            : React.createElement('span', { className: 'dx-tag mut' }, 'local'))
+                      ),
+                      React.createElement('td', null,
+                        React.createElement('span', {
+                          className: 'dx-type ' + typeKey,
+                          title: d.mime || 'application/octet-stream'
+                        }, this.typeLabel(typeKey))
+                      ),
+                      React.createElement('td', null, sourceLabel(d)),
+                      React.createElement('td', null, priceLabel(d)),
+                      React.createElement('td', null,
+                        React.createElement('a', {
+                          className: 'dx-btn',
+                          href: '/files/' + encodeURIComponent(id)
+                        }, 'Open'),
+                        !isPeer
+                          ? React.createElement('button', {
+                            type: 'button',
+                            className: 'dx-btn' + (d.profilePinned ? ' pin-on' : ''),
+                            disabled: this.state.busy,
+                            title: d.profilePinned ? 'Unpin from profile' : 'Pin to profile',
+                            onClick: () => this.pinDoc(id, !d.profilePinned)
+                          }, '📌')
+                          : null
+                      )
+                    );
+                  })
                 )
-              ),
-              React.createElement('tbody', null,
-                docs.map((d) => {
-                  const id = d.id || d.sha256 || d.document;
-                  const price = Number(d.purchasePriceSats || 0);
-                  const pub = !!(d.published);
-                  return React.createElement('tr', { key: id },
-                    React.createElement('td', null,
-                      d.name || '—',
-                      ' ',
-                      pub
-                        ? React.createElement('span', { className: 'dx-tag pub' }, 'pub')
-                        : React.createElement('span', { className: 'dx-tag mut' }, 'local')
-                    ),
-                    React.createElement('td', { className: 'dx-mono' }, shortId(id)),
-                    React.createElement('td', null,
-                      price > 0 ? `${price.toLocaleString()} sats` : '—'),
-                    React.createElement('td', null,
-                      React.createElement('button', {
-                        type: 'button',
-                        className: 'dx-btn',
-                        disabled: this.state.busy,
-                        onClick: () => this.selectDoc(id)
-                      }, 'Open')
-                    )
-                  );
-                })
-              )
-            ),
+              )),
           this.renderDetail()
-        )
-      ),
-      React.createElement('section', { className: 'dx-panel' },
-        React.createElement('h2', null, 'Peer inventory'),
-        React.createElement('div', { className: 'dx-body' },
-          React.createElement('p', { className: 'dx-note' },
-            'Optional: ask Hub to ',
-            React.createElement('code', null, 'RequestPeerInventory'),
-            ' from a Fabric peer (same as Hub peer inventory / TUI ',
-            React.createElement('code', null, '/request'),
-            ').'),
-          React.createElement('div', { className: 'dx-form' },
-            React.createElement('label', null, 'Peer Fabric id (hex)',
-              React.createElement('input', {
-                value: this.state.inventoryPeerId,
-                onChange: (e) => this.setState({ inventoryPeerId: e.target.value }),
-                placeholder: 'compressed pubkey…'
-              })
-            ),
-            React.createElement('div', { className: 'dx-actions' },
-              React.createElement('button', {
-                type: 'button',
-                className: 'dx-btn',
-                disabled: this.state.busy || !this.state.inventoryPeerId.trim(),
-                onClick: () => this.requestInventory()
-              }, 'Request inventory')
-            )
-          )
         )
       )
     );

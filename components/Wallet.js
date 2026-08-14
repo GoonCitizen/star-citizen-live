@@ -10,6 +10,7 @@
 
 const React = require('react');
 const BitcoinWalletPanel = require('./BitcoinWalletPanel');
+const GroupBitcoinPanel = require('./GroupBitcoinPanel');
 
 const BASE = '/services/star-citizen';
 
@@ -33,7 +34,8 @@ const CSS = `
   .wa-btn{background:var(--panel2);border:1px solid var(--line);color:var(--text);border-radius:7px;padding:4px 11px;font-size:11.5px;cursor:pointer}
   .wa-btn:hover{border-color:var(--accent)}
   .wa-note{color:var(--muted);font-size:12px;padding:12px 16px;line-height:1.6}
-` + (BitcoinWalletPanel.CSS || '');
+  .wa-group-btc{width:100%;margin-top:8px;padding-top:8px;border-top:1px dashed #20262f}
+` + (BitcoinWalletPanel.CSS || '') + '\n' + (GroupBitcoinPanel.CSS || '');
 
 const SATS = (n) => Number(n || 0).toLocaleString() + ' sats';
 
@@ -145,31 +147,22 @@ class Wallet extends React.Component {
               React.createElement('span', { className: 'wa-name' }, g.name),
               React.createElement('span', { className: 'wa-tag btc' }, `${g.threshold}-of-${nSigners}`),
               gw && gw.mode ? React.createElement('span', { className: 'wa-tag ok' }, gw.mode) : null,
-              gw && gw.address
-                ? React.createElement(React.Fragment, null,
-                  React.createElement('span', { className: 'wa-addr' }, gw.address),
-                  React.createElement('button', { className: 'wa-btn', onClick: () => this.copy(gw.address) }, 'Copy'),
-                  isCreator ? React.createElement('button', {
-                    className: 'wa-btn',
-                    title: 'Propose publisher withdrawal (active non-expired tier)',
-                    onClick: () => this.proposeWithdraw(g.id)
-                  }, 'Withdraw') : null,
-                  Array.isArray(gw.leaves) && gw.leaves.length
-                    ? React.createElement('div', {
-                      style: {
-                        width: '100%',
-                        marginTop: 6,
-                        fontSize: 11,
-                        color: 'var(--muted)',
-                        lineHeight: 1.5
-                      }
-                    },
-                    'Leaves: ',
-                    gw.leaves.map((l) => `${l.id}(${l.kind})`).join(' · '))
-                    : null
-                )
-                : React.createElement('span', { className: 'wa-addr', style: { color: 'var(--muted)' } },
-                  gw ? (gw.error || gw.note || '…') : 'deriving…')
+              bitcoinEnable && gw && gw.balanceSats != null
+                ? React.createElement('span', { className: 'wa-tag btc' }, SATS(gw.balanceSats))
+                : null,
+              React.createElement('div', { className: 'wa-group-btc' },
+                gw
+                  ? React.createElement(GroupBitcoinPanel, {
+                    wallet: gw,
+                    bitcoinEnable,
+                    isCreator,
+                    showLeaves: true,
+                    onCopy: (addr) => this.copy(addr),
+                    onProposeWithdraw: () => this.proposeWithdraw(g.id),
+                    onRefresh: () => this.load()
+                  })
+                  : React.createElement('span', { className: 'wa-addr', style: { color: 'var(--muted)' } }, 'deriving…')
+              )
             );
           })
           : React.createElement('div', { className: 'wa-note' }, 'No groups yet — group wallets appear here once you create or join one.')

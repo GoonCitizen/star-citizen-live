@@ -160,7 +160,13 @@ class MissionManager extends EventEmitter {
       if (this.settings.requireOfficers) return false;
       return true; // local bootstrap
     }
-    return this.officers.has(String(actor));
+    if (this.officers.has(String(actor))) return true;
+    if (typeof this.settings.sameActor === 'function') {
+      for (const officer of this.officers) {
+        if (this.settings.sameActor(officer, actor)) return true;
+      }
+    }
+    return false;
   }
   _requireOfficer (actor) { if (!this.isOfficer(actor)) { const e = new Error('forbidden: not an officer'); e.code = 'FORBIDDEN'; throw e; } }
 
@@ -293,6 +299,135 @@ class MissionManager extends EventEmitter {
     return { mission, created: true };
   }
 
+  /**
+   * Upsert a Game.log / cumulative-history mission into the register.
+   * Does not require an officer — the log is provenance (D-005: evidence only;
+   * reward stays 0; no escrow). Never clobbers a user/peer-posted mission that
+   * already occupies the same id with a non-gamelog source.
+   * @param {Object} data Snapshot from functions/gameLogMissionRegister
+   * @returns {{ mission: Object|null, created: Boolean, updated: Boolean, skipped: Boolean }}
+   */
+  upsertFromGameLog (data = {}) {
+    if (!data || !data.id) {
+      return { mission: null, created: false, updated: false, skipped: true };
+    }
+    const id = String(data.id);
+    const existing = this.getMission(id);
+    // Posted / remote register rows win — never overwrite with a log snapshot.
+    if (existing && existing.source !== 'gamelog') {
+      if (!existing.scMissionId && data.scMissionId) {
+        existing.scMissionId = data.scMissionId;
+        this.store.put('missions', id, existing);
+        return { mission: existing, created: false, updated: true, skipped: false };
+      }
+      return { mission: existing, created: false, updated: false, skipped: true };
+    }
+
+    const player = data.player ? String(data.player) : null;
+    const participants = Array.isArray(data.participantIds)
+      ? data.participantIds.map(String)
+      : (player ? [player] : []);
+
+    if (!existing) {
+      const mission = {
+        id,
+        title: data.title || 'In-game mission',
+        type: data.type || 'bounty',
+        description: data.description || '',
+        reward: 0,
+        requirements: null,
+        location: null,
+        deadline: null,
+        outOfGame: false,
+        groupId: null,
+        authorities: null,
+        escrow: null,
+        createdBy: null,
+        createdAt: data.createdAt || data.startedAt || new Date().toISOString(),
+        status: data.status || 'in_progress',
+        assigneeId: player,
+        participantIds: participants,
+        openSignup: false,
+        contract: { type: 'single' },
+        source: 'gamelog',
+        scMissionId: data.scMissionId || null,
+        outcome: data.outcome || null,
+        reason: data.reason || null,
+        generator: data.generator || null,
+        faction: data.faction || null,
+        contractId: data.contractId || null,
+        startedAt: data.startedAt || null,
+        endedAt: data.endedAt || null
+      };
+      this.store.put('missions', id, mission);
+      this._audit('gamelog', 'mission.gamelog', 'mission', id, mission.title);
+      this.emit('mission:ingested', mission);
+      return { mission, created: true, updated: false, skipped: false };
+    }
+
+    // Update titles/lifecycle; do not reopen a completed/cancelled log row to
+    // in_progress unless we never had an outcome.
+    let updated = false;
+    if (data.title && data.title !== existing.title) {
+      // Prefer richer notification text over generator-only titles.
+      if (!existing.title || existing.title === 'In-game mission' ||
+          (data.title.length > existing.title.length && existing.generator)) {
+        existing.title = data.title;
+        updated = true;
+      }
+    }
+    if (data.generator && !existing.generator) {
+      existing.generator = data.generator;
+      updated = true;
+    }
+    if (data.faction && !existing.faction) {
+      existing.faction = data.faction;
+      updated = true;
+    }
+    if (data.contractId && !existing.contractId) {
+      existing.contractId = data.contractId;
+      updated = true;
+    }
+    if (data.startedAt && !existing.startedAt) {
+      existing.startedAt = data.startedAt;
+      updated = true;
+    }
+    if (data.outcome) {
+      existing.outcome = data.outcome;
+      existing.reason = data.reason || existing.reason;
+      existing.endedAt = data.endedAt || existing.endedAt || new Date().toISOString();
+      const nextStatus = data.status || existing.status;
+      if (nextStatus && nextStatus !== existing.status) {
+        existing.status = nextStatus;
+        updated = true;
+      } else if (existing.outcome !== data.outcome) {
+        updated = true;
+      }
+    } else if (data.status === 'in_progress' &&
+        existing.status !== 'completed' && existing.status !== 'cancelled') {
+      if (existing.status !== 'in_progress') {
+        existing.status = 'in_progress';
+        updated = true;
+      }
+    }
+    if (player) {
+      this._ensureParticipants(existing);
+      if (!existing.participantIds.includes(player)) {
+        existing.participantIds.push(player);
+        updated = true;
+      }
+      if (!existing.assigneeId) {
+        existing.assigneeId = player;
+        updated = true;
+      }
+    }
+    if (updated) {
+      this.store.put('missions', id, existing);
+      this.emit('mission:updated', existing);
+    }
+    return { mission: existing, created: false, updated, skipped: false };
+  }
+
   // ---- remote lifecycle ingest (peer-to-peer register convergence) ----
   // These apply register mutations that arrived over Fabric. Authorization is
   // verified by the transport layer (LiveRelay: signed envelope + role checks)
@@ -369,6 +504,10 @@ class MissionManager extends EventEmitter {
       claimedAt: claim.claimedAt || new Date().toISOString(),
       source: 'remote'
     };
+    if (!this._isParticipant(m, rec.claimantId)) {
+      this._addParticipant(m, rec.claimantId);
+      this.store.put('missions', m.id, m);
+    }
     this.store.put('claims', rec.id, rec);
     this._audit(rec.claimantId, 'claim.submit', 'claim', rec.id, m.title);
     this.emit('claim:submitted', rec);
@@ -614,7 +753,13 @@ class MissionManager extends EventEmitter {
     }
     const claimantId = String(data.claimantId || '');
     if (!this._isParticipant(m, claimantId)) {
-      throw new Error('only an accepted participant can claim completion');
+      // Creator may submit their own completion without a separate apply/accept.
+      if (m.createdBy && String(m.createdBy) === claimantId) {
+        this._addParticipant(m, claimantId);
+        this.store.put('missions', m.id, m);
+      } else {
+        throw new Error('only an accepted participant can claim completion');
+      }
     }
     let completionGroupId = data.completionGroupId != null && data.completionGroupId !== ''
       ? String(data.completionGroupId)
@@ -699,6 +844,14 @@ class MissionManager extends EventEmitter {
         throw e;
       }
       authorization = { message: this.acceptanceMessage(m, claim), signatures: data.signatures };
+    } else if (hasAuthorities && data.decision === 'reject') {
+      const officer = String(data.officerId || '');
+      const keys = m.authorities.keys.map(String);
+      if (!keys.includes(officer) && !this.isOfficer(officer)) {
+        const e = new Error('forbidden: only a mission authority can reject this claim');
+        e.code = 'FORBIDDEN';
+        throw e;
+      }
     } else {
       this._requireOfficer(data.officerId);
     }

@@ -337,6 +337,25 @@ function mergeRemotePresence (prev, patch = {}) {
   return base;
 }
 
+/**
+ * Ensure ship objects carry catalog type / size / manufacturer when missing.
+ * @param {object|null} ship
+ * @returns {object|null}
+ */
+function enrichShipMeta (ship) {
+  if (!ship || typeof ship !== 'object') return null;
+  const out = Object.assign({}, ship);
+  if (out.type && out.size != null && out.manufacturer) return out;
+  const known = shipCatalog.resolveShip(out.slug || out.classId || out.name);
+  if (!known) return out;
+  if (!out.name && known.name) out.name = known.name;
+  if (!out.slug && known.slug) out.slug = known.slug;
+  if (!out.type && known.type) out.type = known.type;
+  if (out.size == null && known.size != null) out.size = known.size;
+  if (!out.manufacturer && known.manufacturer) out.manufacturer = known.manufacturer;
+  return out;
+}
+
 module.exports = {
   ONLINE_WINDOW_MS,
   PRESENCE_TYPE,
@@ -359,5 +378,6 @@ module.exports = {
   buildShipOverride,
   buildPresenceDocument,
   buildPresenceShareObject,
-  mergeRemotePresence
+  mergeRemotePresence,
+  enrichShipMeta
 };

@@ -68,6 +68,69 @@ test('ChatManager: global + per-group channels with membership access', async ()
   assert.throws(() => cm.post({ channel: 'group:nope', body: 'x', author: a.pubkey }), /unknown channel/);
 });
 
+test('ChatManager.setPinned toggles the stored flag', async () => {
+  const a = createIdentity();
+  const store = new Store({});
+  const cm = new ChatManager({ store });
+  const msg = cm.post({ channel: 'global', body: 'pin me', author: a.pubkey });
+  const pinned = cm.setPinned(msg.id, { pinned: true, actor: a.pubkey });
+  assert.strictEqual(pinned.pinned, true);
+  assert.ok(pinned.pinnedAt);
+  assert.strictEqual(pinned.pinnedBy, a.pubkey);
+  const off = cm.setPinned(msg.id, { pinned: false });
+  assert.strictEqual(off.pinned, false);
+  assert.strictEqual(off.pinnedAt, null);
+  assert.throws(() => cm.setPinned('missingmsg'), /not found/);
+});
+
+test('ChatManager: discord channels accept Discord or Fabric authors and skip mesh ingest', async () => {
+  const a = createIdentity();
+  const store = new Store({});
+  const cm = new ChatManager({ store });
+
+  assert.strictEqual(cm.canAccess('discord:c1', null, { enforceMembership: false }), true);
+  assert.strictEqual(cm.canAccess('discord:c1', null, { enforceMembership: true }), false);
+  assert.strictEqual(cm.canAccess('discord:c1', a.pubkey, { enforceMembership: true }), true);
+
+  const fromDiscord = cm.post({
+    channel: 'discord:c1',
+    body: 'o7 from Discord',
+    author: 'discord:u1',
+    handle: 'alice',
+    kind: 'discord',
+    discordMessageId: 'm1',
+    discordUserId: 'u1'
+  });
+  assert.strictEqual(fromDiscord.author, 'discord:u1');
+  assert.strictEqual(fromDiscord.discordMessageId, 'm1');
+  const dup = cm.post({
+    channel: 'discord:c1',
+    body: 'different text same discord id',
+    author: 'discord:u1',
+    kind: 'discord',
+    discordMessageId: 'm1'
+  });
+  assert.strictEqual(dup.id, fromDiscord.id);
+
+  const fromLocal = cm.post({
+    channel: 'discord:c1',
+    body: 'hello guild',
+    author: a.pubkey,
+    handle: 'Neorion',
+    kind: 'discord',
+    discordMessageId: 'posted-1'
+  });
+  assert.ok(fromLocal.author);
+  assert.notStrictEqual(fromLocal.author, 'discord:u1');
+
+  assert.throws(() => cm.ingest(a.pubkey, {
+    channel: 'discord:c1',
+    body: 'nope',
+    author: a.pubkey,
+    ts: new Date().toISOString()
+  }), /not mesh-ingested/);
+});
+
 test('ChatManager: DM channels are participant-only and publishable', async () => {
   const a = createIdentity(); const b = createIdentity(); const eve = createIdentity();
   const store = new Store({});

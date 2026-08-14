@@ -4,10 +4,11 @@
  * Opaque Fabric Message encode/decode for GoonCitizen Group shares.
  *
  * Clipboard forms:
- * - `fabric:<hex>` — signed AMP Message (Message.toBuffer) as hex (default)
- * - `fabric:base64,<b64>` / `fabric:b64,<b64>` — same bytes as base64
+ * - `fabric:<payload>` — signed AMP Message bytes as base64 (default) or hex
+ * - Legacy `fabric:base64,<b64>` / `fabric:b64,<b64>` is still accepted on decode
  *
- * Raw hex or base64 (without the fabric: prefix) is also accepted on decode.
+ * The parser sniffs hex vs base64 from the body. Raw hex or base64 (no fabric:
+ * prefix) is also accepted on decode.
  * Primary body: CONTRACT_MESSAGE / GroupShare / kind GroupOffer (embeds genesis).
  * Also classifies FederationContractInvite and group CONTRACT_PUBLISH.
  */
@@ -24,7 +25,16 @@ const {
 } = require('./federationContractInvite');
 
 const GROUP_SHARE_KIND_OFFER = 'GroupOffer';
-const BASE64_PREFIX_RE = /^fabric:(?:base64|b64)[,:](.+)$/i;
+const DISTINCTIVE_BASE64_RE = /[+/=_-]|[G-Zg-z]/;
+
+/**
+ * Share encoding for opaque `fabric:` URLs. Anything other than `'hex'` is base64.
+ * @param {*} value
+ * @returns {'hex'|'base64'}
+ */
+function normalizeOpaqueShareEncoding (value) {
+  return String(value == null ? '' : value).trim().toLowerCase() === 'hex' ? 'hex' : 'base64';
+}
 
 function normalizeHex (s) {
   if (typeof s !== 'string') return '';
@@ -53,16 +63,95 @@ function bufferFromMessage (messageOrBuffer) {
 /**
  * @param {Buffer|import('@fabric/core/types/message')} messageOrBuffer
  * @param {Object} [opts]
- * @param {string} [opts.encoding] `'hex'` (default) or `'base64'`
+ * @param {string} [opts.encoding] `'base64'` (default) or `'hex'`
  * @returns {string}
  */
 function buildOpaqueFabricUrl (messageOrBuffer, opts = {}) {
   const buf = bufferFromMessage(messageOrBuffer);
-  const encoding = opts.encoding === 'base64' ? 'base64' : 'hex';
+  const encoding = normalizeOpaqueShareEncoding(opts.encoding);
   if (encoding === 'base64') {
-    return 'fabric:base64,' + buf.toString('base64');
+    return 'fabric:' + buf.toString('base64');
   }
   return 'fabric:' + buf.toString('hex');
+}
+
+/**
+ * Opaque `fabric:<body>` (no host). Structured `fabric://…` URLs are not opaque.
+ * @param {string} raw
+ * @returns {{ ok: true, payload: string } | { ok: false, error: string }}
+ */
+function extractOpaqueFabricPayload (raw) {
+  const t = String(raw || '').trim();
+  if (!t) return { ok: false, error: 'empty url' };
+  if (!/^fabric:/i.test(t)) return { ok: false, error: 'not a fabric: url' };
+  if (/^fabric:\/\//i.test(t)) return { ok: false, error: 'opaque fabric message has no host' };
+  return { ok: true, payload: t.slice(t.indexOf(':') + 1) };
+}
+
+/**
+ * @param {string} payload
+ * @returns {{ body: string, hint: ('hex'|'base64'|null) }}
+ */
+function stripLegacyEncodingPrefix (payload) {
+  const s = String(payload || '');
+  const m = s.match(/^(base64|b64|hex)[,:](.*)$/i);
+  if (!m) return { body: s, hint: null };
+  return {
+    body: m[2],
+    hint: m[1].toLowerCase() === 'hex' ? 'hex' : 'base64'
+  };
+}
+
+/**
+ * @param {string} raw
+ * @returns {{ ok: true, buffer: Buffer, encoding: string, hex: string } | { ok: false, error: string }}
+ */
+function tryDecodeHexPayload (raw) {
+  const hex = normalizeHex(raw);
+  if (!hex || hex.length % 2 !== 0 || !/^[0-9a-fA-F]+$/.test(hex)) {
+    return { ok: false, error: 'invalid opaque hex' };
+  }
+  try {
+    const buffer = Buffer.from(hex, 'hex');
+    if (buffer.length < 32) return { ok: false, error: 'buffer too short for Fabric message' };
+    return { ok: true, buffer, encoding: 'hex', hex };
+  } catch (_) {
+    return { ok: false, error: 'hex decode failed' };
+  }
+}
+
+/**
+ * Ordered decode candidates for an opaque body (hex vs base64 sniff).
+ * @param {string} payload
+ * @returns {Array<{ ok: true, buffer: Buffer, encoding: string, hex?: string }>}
+ */
+function opaquePayloadCandidates (payload) {
+  const stripped = stripLegacyEncodingPrefix(payload);
+  const body = stripped.body;
+  const hint = stripped.hint;
+  const asHex = tryDecodeHexPayload(body);
+  const asB64 = tryDecodeBase64Payload(body);
+  const out = [];
+  const push = (item) => {
+    if (item && item.ok) out.push(item);
+  };
+  if (hint === 'hex') {
+    push(asHex);
+    return out;
+  }
+  if (hint === 'base64') {
+    push(asB64);
+    return out;
+  }
+  const distinctiveB64 = DISTINCTIVE_BASE64_RE.test(body);
+  if (distinctiveB64) {
+    push(asB64);
+    push(asHex);
+    return out;
+  }
+  push(asHex);
+  push(asB64);
+  return out;
 }
 
 /**
@@ -89,58 +178,17 @@ function tryDecodeBase64Payload (raw) {
  * @returns {{ ok: true, hex: string, buffer?: Buffer, encoding: string } | { ok: false, error: string }}
  */
 function parseOpaqueFabricUrl (urlStr) {
-  if (typeof urlStr !== 'string' || !urlStr.trim()) {
-    return { ok: false, error: 'empty url' };
-  }
-  const raw = urlStr.trim();
-
-  const b64Prefixed = raw.match(BASE64_PREFIX_RE);
-  if (b64Prefixed) {
-    const decoded = tryDecodeBase64Payload(b64Prefixed[1]);
-    if (!decoded.ok) return decoded;
-    return {
-      ok: true,
-      hex: decoded.buffer.toString('hex'),
-      buffer: decoded.buffer,
-      encoding: 'base64'
-    };
-  }
-
-  // Fast path: fabric:<hex> without //
-  if (/^fabric:[0-9a-fA-F]+$/i.test(raw) && !raw.includes('//')) {
-    const hex = normalizeHex(raw.slice('fabric:'.length));
-    if (!hex || hex.length % 2 !== 0) return { ok: false, error: 'invalid opaque hex' };
-    return { ok: true, hex, encoding: 'hex' };
-  }
-
-  try {
-    const url = new URL(raw);
-    if (url.protocol !== 'fabric:') return { ok: false, error: 'not a fabric: url' };
-    if (url.hostname) return { ok: false, error: 'opaque fabric message has no host' };
-    const pathPart = url.pathname ? String(url.pathname).replace(/^\//, '') : '';
-    const search = url.search ? url.search.slice(1) : '';
-    const payload = pathPart || search;
-
-    const nestedB64 = payload.match(/^(?:base64|b64)[,:](.+)$/i);
-    if (nestedB64) {
-      const decoded = tryDecodeBase64Payload(nestedB64[1]);
-      if (!decoded.ok) return decoded;
-      return {
-        ok: true,
-        hex: decoded.buffer.toString('hex'),
-        buffer: decoded.buffer,
-        encoding: 'base64'
-      };
-    }
-
-    const hex = normalizeHex(payload);
-    if (!hex || hex.length % 2 !== 0 || !/^[0-9a-fA-F]+$/.test(hex)) {
-      return { ok: false, error: 'invalid opaque hex' };
-    }
-    return { ok: true, hex, encoding: 'hex' };
-  } catch (_) {
-    return { ok: false, error: 'invalid fabric: url' };
-  }
+  const extracted = extractOpaqueFabricPayload(urlStr);
+  if (!extracted.ok) return extracted;
+  const candidates = opaquePayloadCandidates(extracted.payload);
+  if (!candidates.length) return { ok: false, error: 'invalid fabric message encoding' };
+  const first = candidates[0];
+  return {
+    ok: true,
+    hex: first.hex || first.buffer.toString('hex'),
+    buffer: first.buffer,
+    encoding: first.encoding
+  };
 }
 
 /**
@@ -176,29 +224,21 @@ function parseOpaqueFabricMessage (hexOrUrlOrBase64) {
     return { ok: false, error: 'empty message' };
   }
   const raw = hexOrUrlOrBase64.trim();
-
-  const asUrl = parseOpaqueFabricUrl(raw);
-  if (asUrl.ok) {
-    const buffer = asUrl.buffer || Buffer.from(asUrl.hex, 'hex');
-    return messageFromBuffer(buffer, asUrl.encoding || 'hex');
+  let payload = raw;
+  if (/^fabric:/i.test(raw)) {
+    const extracted = extractOpaqueFabricPayload(raw);
+    if (!extracted.ok) return extracted;
+    payload = extracted.payload;
   }
 
-  const norm = normalizeHex(raw);
-  if (norm && norm.length % 2 === 0 && /^[0-9a-fA-F]+$/.test(norm)) {
-    try {
-      return messageFromBuffer(Buffer.from(norm, 'hex'), 'hex');
-    } catch (_) {
-      return { ok: false, error: 'hex decode failed' };
-    }
-  }
-
-  const asB64 = tryDecodeBase64Payload(raw);
-  if (asB64.ok) {
-    const parsed = messageFromBuffer(asB64.buffer, 'base64');
+  const candidates = opaquePayloadCandidates(payload);
+  let lastError = 'invalid fabric message encoding';
+  for (const candidate of candidates) {
+    const parsed = messageFromBuffer(candidate.buffer, candidate.encoding);
     if (parsed.ok) return parsed;
+    lastError = parsed.error || lastError;
   }
-
-  return { ok: false, error: asUrl.error || 'invalid fabric message encoding' };
+  return { ok: false, error: lastError };
 }
 
 /**
@@ -344,6 +384,7 @@ module.exports = {
   GROUP_SHARE_KIND_OFFER,
   normalizeHex,
   normalizeBase64,
+  normalizeOpaqueShareEncoding,
   buildOpaqueFabricUrl,
   parseOpaqueFabricUrl,
   parseOpaqueFabricMessage,

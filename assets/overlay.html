@@ -13,6 +13,7 @@
       --good: #3fb950;
       --offline: #6e7681;
       --accent: #3b82f6;
+      --warn: #d29922;
     }
     * { box-sizing: border-box; }
     html, body {
@@ -74,13 +75,15 @@
     .dot.on { background: var(--good); box-shadow: 0 0 0 2px rgba(63, 185, 80, 0.18); }
     .name { font-weight: 600; font-size: 12.5px; }
     .ship { color: var(--muted); font-size: 11px; margin-top: 1px; }
-    .empty, .err {
+    .ship .type { color: var(--accent); }
+    .empty, .err, .warn {
       color: var(--muted);
       font-size: 12px;
       padding: 8px 2px;
       line-height: 1.45;
     }
     .err { color: #f85149; }
+    .warn { color: var(--warn); padding-top: 0; padding-bottom: 4px; font-size: 11px; }
   </style>
 </head>
 <body>
@@ -107,8 +110,12 @@
 
     function shipLabel (m) {
       if (!m.online) return 'offline';
-      const ship = m.ship && (m.ship.name || m.ship.slug);
-      if (ship) return ship;
+      const ship = m.ship;
+      const name = ship && (ship.name || ship.slug);
+      const type = (ship && ship.type) || m.shipType || null;
+      if (name && type) return name + ' · ' + type;
+      if (name) return name;
+      if (type) return type;
       if (m.statusText) return m.statusText;
       return 'online';
     }
@@ -120,7 +127,7 @@
         listEl.innerHTML = '<div class="empty">Pick a primary group in the Groups tab. Enable the overlay in Settings.</div>';
         return;
       }
-      if (data.error) {
+      if (data.error && !Array.isArray(data.members)) {
         titleEl.textContent = data.name || 'Primary group';
         metaEl.textContent = '';
         listEl.innerHTML = '<div class="err">' + String(data.error) + '</div>';
@@ -130,21 +137,46 @@
       const online = members.filter((m) => m.online).length;
       titleEl.textContent = data.name || 'Primary group';
       metaEl.textContent = online + '/' + members.length + ' online';
+
+      let html = '';
+      if (data.warning) {
+        html += '<div class="warn"></div>';
+      }
       if (!members.length) {
-        listEl.innerHTML = '<div class="empty">No members yet.</div>';
+        html += '<div class="empty">No members yet.</div>';
+        listEl.innerHTML = html;
+        if (data.warning) listEl.querySelector('.warn').textContent = String(data.warning);
         return;
       }
-      listEl.innerHTML = members.map((m) => {
-        const on = m.online ? 'on' : '';
-        return '<div class="row"><span class="dot ' + on + '"></span><div>' +
+      html += members.map(() => {
+        return '<div class="row"><span class="dot"></span><div>' +
           '<div class="name"></div><div class="ship"></div></div></div>';
       }).join('');
+      listEl.innerHTML = html;
+      if (data.warning) {
+        listEl.querySelector('.warn').textContent = String(data.warning);
+      }
       const rows = listEl.querySelectorAll('.row');
       members.forEach((m, i) => {
         const row = rows[i];
         if (!row) return;
+        const dot = row.querySelector('.dot');
+        if (m.online) dot.classList.add('on');
         row.querySelector('.name').textContent = shortName(m);
-        row.querySelector('.ship').textContent = shipLabel(m);
+        const shipEl = row.querySelector('.ship');
+        const label = shipLabel(m);
+        const type = (m.ship && m.ship.type) || m.shipType;
+        const name = m.ship && (m.ship.name || m.ship.slug);
+        if (m.online && name && type) {
+          shipEl.textContent = '';
+          shipEl.appendChild(document.createTextNode(name + ' · '));
+          const span = document.createElement('span');
+          span.className = 'type';
+          span.textContent = type;
+          shipEl.appendChild(span);
+        } else {
+          shipEl.textContent = label;
+        }
       });
     }
 
@@ -159,7 +191,7 @@
     }
 
     tick();
-    setInterval(tick, 4000);
+    setInterval(tick, 2500);
   </script>
 </body>
 </html>

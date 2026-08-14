@@ -6,6 +6,7 @@
 
 const React = require('react');
 const activityHeat = require('../functions/activityHeat');
+const { androidSurface } = require('../functions/androidSurface');
 
 const CSS = `
   .ah-wrap{margin-top:10px}
@@ -15,39 +16,21 @@ const CSS = `
   .ah-wrap .empty{padding:14px;text-align:center;color:var(--muted);font-size:12.5px}
 `;
 
-const PROFILE_ACTIVITY_KEY = 'gooncitizen.showProfileActivity';
-
-function readShowProfileActivity () {
-  try {
-    if (typeof localStorage === 'undefined') return true;
-    const v = localStorage.getItem(PROFILE_ACTIVITY_KEY);
-    if (v === null || v === undefined) return true;
-    return v === '1';
-  } catch (_) {
-    return true;
-  }
-}
-
-function writeShowProfileActivity (on) {
-  try {
-    if (typeof localStorage === 'undefined') return;
-    if (on) localStorage.setItem(PROFILE_ACTIVITY_KEY, '1');
-    else localStorage.setItem(PROFILE_ACTIVITY_KEY, '0');
-  } catch (_) { /* ignore */ }
-}
-
 class ActivityHeatmap extends React.Component {
   constructor (props) {
     super(props);
+    const skipLocal = !props.analytics && !props.heatcells && !androidSurface('heatmap');
     this.state = {
-      loading: !props.analytics && !props.heatcells,
+      loading: !props.analytics && !props.heatcells && !skipLocal,
       error: null,
       analytics: props.analytics || null
     };
   }
 
   componentDidMount () {
-    if (!this.props.analytics && !this.props.heatcells) this.fetchAnalytics();
+    if (this.props.analytics || this.props.heatcells) return;
+    if (!androidSurface('heatmap')) return;
+    this.fetchAnalytics();
   }
 
   componentDidUpdate (prev) {
@@ -69,6 +52,9 @@ class ActivityHeatmap extends React.Component {
   }
 
   render () {
+    if (!androidSurface('heatmap') && !this.props.analytics && !this.props.heatcells) {
+      return null;
+    }
     const title = this.props.title || 'When you fly';
     const subtitle = this.props.subtitle || 'Day & hour (local); darker = busier';
     const analytics = this.props.analytics || this.state.analytics;
@@ -94,8 +80,5 @@ class ActivityHeatmap extends React.Component {
 }
 
 ActivityHeatmap.CSS = CSS;
-ActivityHeatmap.PROFILE_ACTIVITY_KEY = PROFILE_ACTIVITY_KEY;
-ActivityHeatmap.readShowProfileActivity = readShowProfileActivity;
-ActivityHeatmap.writeShowProfileActivity = writeShowProfileActivity;
 
 module.exports = ActivityHeatmap;

@@ -13,6 +13,8 @@
 const { sanitizeCorpusDirs, sanitizeCorpusFiles } = require('./fsBrowser');
 const { sanitizeProfile } = require('./peerProfile');
 const { sanitizePresenceShare } = require('./presence');
+const { sanitizeLinks } = require('./discordIdentityLink');
+const { normalizeDirections } = require('./discordChatDirection');
 
 // Operator-editable keys (mirrors the Hub's allowlisted-settings approach).
 const ALLOWED_KEYS = [
@@ -44,13 +46,17 @@ const ALLOWED_KEYS = [
   'notifyMissionBroadcasts', // desktop notify when a peer broadcasts a mission (default true)
   'linkedDevices',           // mutual device-link attestations [{ peerFabricId, label, … }]
   'sharePresence',           // publish PeerPresence on Fabric (default false)
+  'shareDiscordCatalog',     // gossip chat catalog/message packs (Discord first) to Federation groups (default true)
+  'sharePlaytimes',          // gossip profile.playtimes pack to Federation groups (default false)
+  'shareFiles',              // legacy bulk pin/unpin; gossip uses per-file profilePinned
   'presenceVisibility',      // private|peers|groups|public
   'presenceGroupIds',        // group ids when visibility is groups/public
   'shipOverrideSlug',        // manual current ship slug; null = autodetect from log
   'presenceAvailability',    // auto|online|offline (force online/offline vs Game.log)
   'presenceStatusText',      // short custom status line (max 64)
-  'primaryGroupId',          // preferred group for overlay / defaults (must be a membership)
+  'primaryGroupId',          // preferred group for overlay / defaults (local HUD; membership soft-checked)
   'groupOverlay',            // desktop: show primary-group member/ship overlay (Windows)
+  'fabricShareEncoding',     // opaque Share clipboard: 'base64' (default) or 'hex'
   // Discord bot (non-secrets). Token / app secret / webhook → discord.secrets.json or env.
   'discordBotEnable',
   'discordAppId',
@@ -60,7 +66,9 @@ const ALLOWED_KEYS = [
   'discordAnnounceActivities',
   'discordAnnounceMissions',
   'discordAnnounceCombat',
-  'discordAnnounceIncaps'
+  'discordAnnounceIncaps',
+  'discordIdentityLinks',    // [{ discordUserId, pubkey, username, linkedAt, verified }]
+  'discordChatDirections'    // { [channelId]: 'listen' | 'bidirectional' } — missing → bidirectional
 ];
 
 const NICKNAME_MAX = 32;
@@ -75,6 +83,19 @@ function sanitizePrimaryGroupId (value) {
   if (value === undefined || value === null || value === '') return null;
   const s = String(value).trim();
   return PRIMARY_GROUP_ID_RE.test(s) ? s : null;
+}
+
+/**
+ * Opaque Fabric share clipboard encoding. Unset → default base64 at runtime.
+ * @param {*} value
+ * @returns {'hex'|'base64'|null}
+ */
+function sanitizeFabricShareEncoding (value) {
+  if (value === undefined || value === null || value === '') return null;
+  const s = String(value).trim().toLowerCase();
+  if (s === 'hex') return 'hex';
+  if (s === 'base64' || s === 'b64') return 'base64';
+  return null;
 }
 
 /**
@@ -154,6 +175,9 @@ function putSetting (store, key, value) {
   if (key === 'broadcastPeering') next = next === true;
   if (key === 'httpSharedMode') next = next === true;
   if (key === 'shareLogsGlobal') next = next === true;
+  if (key === 'shareDiscordCatalog') next = next === true;
+  if (key === 'sharePlaytimes') next = next === true;
+  if (key === 'shareFiles') next = next === true;
   if (key === 'groupChatSeal') next = next === true;
   if (key === 'requireSealedGroupChat') next = next === true;
   if (key === 'sharePresence') next = next === true;
@@ -173,6 +197,7 @@ function putSetting (store, key, value) {
   }
   if (key === 'primaryGroupId') next = sanitizePrimaryGroupId(next);
   if (key === 'groupOverlay') next = next === true;
+  if (key === 'fabricShareEncoding') next = sanitizeFabricShareEncoding(next);
   if (key === 'discordBotEnable' ||
       key === 'discordAnnounceKills' ||
       key === 'discordAnnouncePlayerJoins' ||
@@ -186,6 +211,13 @@ function putSetting (store, key, value) {
     if (next === undefined || next === null || next === '') next = null;
     else next = String(next).trim() || null;
   }
+  if (key === 'discordIdentityLinks') {
+    next = sanitizeLinks(next);
+    if (!next.length) next = null;
+  }
+  if (key === 'discordChatDirections') {
+    next = normalizeDirections(next);
+  }
   store.put('settings', key, { id: key, value: next });
   return loadSettings(store);
 }
@@ -196,6 +228,7 @@ module.exports = {
   PRIMARY_GROUP_ID_RE,
   sanitizeNickname,
   sanitizePrimaryGroupId,
+  sanitizeFabricShareEncoding,
   sanitizeCorpusDirs,
   sanitizeCorpusFiles,
   loadSettings,

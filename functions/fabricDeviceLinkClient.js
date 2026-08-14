@@ -6,7 +6,7 @@
  */
 
 const { keyFromIdentity } = require('./identity');
-const { fabricLoginRequestHeaders } = require('./fabricProtocolLogin');
+const { deviceLinkHeaders } = require('@fabric/http/functions/fabricDeviceLinkClient');
 const {
   buildFabricIdentitySignedPayload
 } = require('@fabric/http/functions/fabricSiteLoginVerify');
@@ -19,7 +19,7 @@ async function fetchPendingDeviceLink (hubBase, sessionId, opts = {}) {
   const fetchImpl = opts.fetchImpl || globalThis.fetch;
   const base = String(hubBase || '').replace(/\/$/, '');
   const res = await fetchImpl(`${base}/device-links/${encodeURIComponent(sessionId)}`, {
-    headers: fabricLoginRequestHeaders(base),
+    headers: deviceLinkHeaders(base),
     cache: 'no-store'
   });
   const data = await res.json().catch(() => ({}));
@@ -70,7 +70,7 @@ async function completeDeviceLinkAsResponder (identity, hubBase, session, opts =
   const base = String(hubBase || '').replace(/\/$/, '');
   const res = await fetchImpl(`${base}/device-links/${encodeURIComponent(session.sessionId)}/signatures`, {
     method: 'POST',
-    headers: fabricLoginRequestHeaders(base),
+    headers: deviceLinkHeaders(base),
     body: JSON.stringify({
       role: 'responder',
       signature: body.signature,
@@ -88,6 +88,7 @@ async function completeDeviceLinkAsResponder (identity, hubBase, session, opts =
     ...data,
     peerFabricId: session.initiator.id,
     peerXpub: session.initiator.xpub,
+    peerPubkeyHex: (session.initiator && session.initiator.pubkeyHex) || null,
     label: session.label
   };
 }
@@ -97,5 +98,6 @@ module.exports = {
   completeDeviceLinkAsResponder,
   buildLinkMessage: buildDeviceLinkMessage,
   buildDeviceLinkMessage,
-  DEVICE_LINK_PREFIX
+  DEVICE_LINK_PREFIX,
+  deviceLinkHeaders
 };

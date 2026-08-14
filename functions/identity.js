@@ -4,15 +4,44 @@
 // password-encrypted storage (scrypt + AES-256-GCM, Node built-ins only),
 // and Schnorr-signed event envelopes for the goon.vc uplink.
 //
-// The player's actor id is the compressed secp256k1 public key (hex).
+// Actor id is the Fabric-protocol compressed pubkey (Identity#pubkey /
+// m/44'/7777|7778'/…), matching @fabric/core Peer signing — not the HD master.
 
 const crypto = require('crypto');
 const Key = require('@fabric/core/types/key');
+const Identity = require('@fabric/core/types/identity');
 const fabricPubkey = require('@fabric/http/functions/fabricPubkey');
 
 const ENCRYPTION_VERSION = 1;
 const SCRYPT_PARAMS = { N: 16384, r: 8, p: 1 };
 const KEY_LENGTH = 32;
+
+/**
+ * Bitcoin network label for Fabric coin-type selection (7777 mainnet / 7778 else).
+ * @param {object} [opts]
+ * @returns {string}
+ */
+function fabricIdentityNetwork (opts = {}) {
+  const raw = opts.network
+    || process.env.FABRIC_BITCOIN_NETWORK
+    || process.env.BITCOIN_NETWORK
+    || 'regtest';
+  return String(raw).trim().toLowerCase() || 'regtest';
+}
+
+/**
+ * @param {object} [opts]
+ * @param {string} [opts.mnemonic]
+ * @param {string} [opts.xprv]
+ * @param {string} [opts.network]
+ * @returns {InstanceType<typeof Identity>}
+ */
+function fabricIdentityFrom (opts = {}) {
+  const settings = { network: fabricIdentityNetwork(opts) };
+  if (opts.xprv) settings.xprv = opts.xprv;
+  if (opts.mnemonic) settings.seed = opts.mnemonic;
+  return new Identity(settings);
+}
 
 /**
  * Deterministic JSON stringify (recursively sorted object keys) so that
@@ -37,24 +66,28 @@ function payloadDigest (payload) {
 }
 
 /**
- * Create a brand-new identity (BIP39 mnemonic + secp256k1 keypair).
- * @returns {{ mnemonic: String, xprv: String, xpub: String, pubkey: String, id: String }}
+ * Create a brand-new identity (BIP39 mnemonic + Fabric-protocol keypair).
+ * @param {Object} [opts]
+ * @param {String} [opts.network] Bitcoin network for Fabric coin type (default regtest)
+ * @returns {{ mnemonic: String, xprv: String, xpub: String, pubkey: String, id: String, network: String }}
  */
-function createIdentity () {
-  const key = new Key();
+function createIdentity (opts = {}) {
+  const identity = fabricIdentityFrom(opts);
+  const master = identity.key;
   return {
-    mnemonic: key.mnemonic,
-    xprv: key.xprv,
-    xpub: key.xpub,
-    pubkey: key.pubkey,
-    id: key.pubkey
+    mnemonic: master.mnemonic,
+    xprv: master.xprv,
+    xpub: master.xpub,
+    pubkey: identity.pubkey,
+    id: identity.pubkey,
+    network: fabricIdentityNetwork(opts)
   };
 }
 
 /**
  * Restore an identity from a BIP39 mnemonic (or an xprv).
- * @param {Object|String} input Mnemonic string, or `{ mnemonic }` / `{ xprv }`.
- * @returns {{ mnemonic: String|null, xprv: String, xpub: String, pubkey: String, id: String }}
+ * @param {Object|String} input Mnemonic string, or `{ mnemonic }` / `{ xprv }` / `{ network }`.
+ * @returns {{ mnemonic: String|null, xprv: String, xpub: String, pubkey: String, id: String, network: String }}
  */
 function restoreIdentity (input) {
   let opts = input;
@@ -64,26 +97,50 @@ function restoreIdentity (input) {
   if (!opts || (!opts.mnemonic && !opts.xprv)) {
     throw new Error('restoreIdentity requires a mnemonic or xprv');
   }
-  const key = new Key(opts);
+  const identity = fabricIdentityFrom(opts);
+  const master = identity.key;
   return {
-    mnemonic: opts.mnemonic || key.mnemonic || null,
-    xprv: key.xprv,
-    xpub: key.xpub,
-    pubkey: key.pubkey,
-    id: key.pubkey
+    mnemonic: opts.mnemonic || master.mnemonic || null,
+    xprv: master.xprv,
+    xpub: master.xpub,
+    pubkey: identity.pubkey,
+    id: identity.pubkey,
+    network: fabricIdentityNetwork(opts)
   };
 }
 
 /**
- * Load a signing {@link Key} from a decrypted identity object.
+ * Load the Fabric-protocol signing {@link Key} (matches Peer / actor pubkey).
  * @param {Object} identity Identity with `xprv` (or `mnemonic`).
- * @returns {Key} Fabric key capable of Schnorr signing.
+ * @returns {Key} Protocol key capable of Schnorr signing.
  */
 function keyFromIdentity (identity) {
+  return protocolKeyFromIdentity(identity);
+}
+
+/**
+ * HD master {@link Key} for Peer construction (Peer derives the Fabric path).
+ * @param {Object} identity
+ * @returns {Key}
+ */
+function masterKeyFromIdentity (identity) {
   if (!identity) throw new Error('identity required');
   if (identity.xprv) return new Key({ xprv: identity.xprv });
   if (identity.mnemonic) return new Key({ mnemonic: identity.mnemonic });
   throw new Error('identity has no private material (xprv or mnemonic)');
+}
+
+/**
+ * Fabric-protocol signing key (matches Peer / Identity#pubkey / CONTRACT_MESSAGE author).
+ * @param {Object} identity
+ * @returns {Key}
+ */
+function protocolKeyFromIdentity (identity) {
+  if (!identity) throw new Error('identity required');
+  if (!identity.xprv && !identity.mnemonic) {
+    throw new Error('identity has no private material (xprv or mnemonic)');
+  }
+  return fabricIdentityFrom(identity).fabricKey;
 }
 
 /**
@@ -146,13 +203,18 @@ function decryptIdentity (blob, password) {
     throw new Error('Could not decrypt identity (wrong password or corrupted file)');
   }
 
-  const key = new Key({ xprv: secret.xprv });
+  const identity = fabricIdentityFrom({
+    xprv: secret.xprv,
+    mnemonic: secret.mnemonic || undefined,
+    network: blob.network
+  });
   return {
     mnemonic: secret.mnemonic || null,
     xprv: secret.xprv,
-    xpub: key.xpub,
-    pubkey: key.pubkey,
-    id: key.pubkey
+    xpub: identity.key.xpub,
+    pubkey: identity.pubkey,
+    id: identity.pubkey,
+    network: fabricIdentityNetwork({ network: blob.network })
   };
 }
 
@@ -163,7 +225,7 @@ function decryptIdentity (blob, password) {
  * @returns {{ pubkey: String, payload: Object, signature: String, digest: String }}
  */
 function signEnvelope (identity, payload) {
-  const key = (identity instanceof Key) ? identity : keyFromIdentity(identity);
+  const key = (identity instanceof Key) ? identity : protocolKeyFromIdentity(identity);
   const digest = payloadDigest(payload);
   const signature = key.signSchnorr(digest);
   return {
@@ -234,6 +296,9 @@ module.exports = {
   createIdentity,
   restoreIdentity,
   keyFromIdentity,
+  protocolKeyFromIdentity,
+  masterKeyFromIdentity,
+  fabricIdentityNetwork,
   encryptIdentity,
   decryptIdentity,
   signEnvelope,

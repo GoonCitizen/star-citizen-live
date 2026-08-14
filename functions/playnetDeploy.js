@@ -56,6 +56,26 @@ function hubRpcBase () {
     .replace(/\/$/, '');
 }
 
+const PRODUCTION_HUB_HTTP = 'https://hub.fabric.pub';
+const PRODUCTION_PLAYNET_PEERS = 'hub.fabric.pub:7777,relay.goon.vc:7777';
+
+/**
+ * Public playnet targets (`--production` / `FABRIC_PLAYNET_PRODUCTION=1`).
+ * Env still wins when already set.
+ * @returns {{ hubUrl: string, peers: string[] }}
+ */
+function productionPlaynetTarget () {
+  const hubUrl = String(
+    process.env.FABRIC_HUB_RPC_URL || process.env.FABRIC_HUB_URL || PRODUCTION_HUB_HTTP
+  ).trim().replace(/\/$/, '');
+  const peers = String(process.env.FABRIC_PLAYNET_PEERS || process.env.FABRIC_FLUSH_PEERS ||
+    PRODUCTION_PLAYNET_PEERS)
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean);
+  return { hubUrl, peers };
+}
+
 function playnetPeers (extraArgv = []) {
   if (Array.isArray(extraArgv) && extraArgv.length) {
     return extraArgv.map((s) => String(s).trim()).filter(Boolean);
@@ -131,6 +151,9 @@ module.exports = {
   loadPeerKeySettings,
   loadAdminToken,
   hubRpcBase,
+  productionPlaynetTarget,
+  PRODUCTION_HUB_HTTP,
+  PRODUCTION_PLAYNET_PEERS,
   playnetPeers,
   hubRpc,
   waitForPeerConnections

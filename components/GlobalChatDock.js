@@ -280,9 +280,6 @@ class GlobalChatDock extends React.Component {
         body: body || (pending ? `📎 ${pending.name}` : '')
       };
       if (pending) {
-        if (this.props.documentsEnable === false) {
-          throw new Error('File attach requires settings.documents.enable');
-        }
         payload.file = {
           name: pending.name,
           mime: pending.mime,
@@ -307,10 +304,6 @@ class GlobalChatDock extends React.Component {
   }
 
   openFilePicker () {
-    if (this.props.documentsEnable === false) {
-      this.setState({ error: 'Enable settings.documents.enable to attach files' });
-      return;
-    }
     const el = this._fileRef.current;
     if (el) el.click();
   }
@@ -378,9 +371,16 @@ class GlobalChatDock extends React.Component {
           this.state.messages.length
             ? this.state.messages.map((m) => React.createElement('div', { className: 'gcdock-msg', key: m.id },
               React.createElement('div', { className: 'm' },
-                React.createElement('span', { className: 'who' + (me && m.author === me ? ' me' : '') },
-                  m.handle || shortKey(m.author)),
-                React.createElement('span', { className: 'key', title: m.author }, shortKey(m.author)),
+                React.createElement('span', {
+                  className: 'who' + (me && m.author === me ? ' me' : ''),
+                  title: m.author || undefined
+                },
+                m.handle || shortKey(m.author)),
+                // Only show the muted key chip when a nickname is present —
+                // otherwise who already is the short pubkey.
+                (m.handle && String(m.handle).trim())
+                  ? React.createElement('span', { className: 'key', title: m.author }, shortKey(m.author))
+                  : null,
                 React.createElement('span', { className: 't' }, shortTime(m.ts))
               ),
               React.createElement('div', { className: 'b' }, displayCaption(m)),
@@ -425,7 +425,7 @@ class GlobalChatDock extends React.Component {
             value: this.state.draft,
             placeholder: me
               ? ('Message as ' + (this.props.nickname || shortKey(me)) + '…')
-              : 'Unlock identity to chat…',
+              : 'Unlock identity (Desktop / Passport) to chat…',
             onChange: (e) => this.setState({ draft: e.target.value }),
             onKeyDown: (e) => { if (e.key === 'Enter') this.send(); }
           }),

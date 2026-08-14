@@ -13,6 +13,8 @@
  *   - `global`            — network chat on this node (all local viewers)
  *   - `group:<groupId>`   — dedicated channel per group / subgroup, members
  *                           only in hosted mode (the local relay shows your groups)
+ *   - `discord:<id>`      — bridged Discord guild thread (local bot; not Fabric mesh)
+ *   - `discord:dm:<uid>`  — Discord user DM (bot↔user; local bot loopback allowed)
  *
  * Ids are content-derived (channel + author + body + ts), so merging the
  * same message from multiple paths (local post, peer push, peer pull) is
@@ -23,6 +25,12 @@ const crypto = require('crypto');
 const EventEmitter = require('events');
 const { OUTER } = require('../contracts/applicationMessageTypes');
 const { pubkeysMatch, canonicalChatAuthor } = require('../functions/identity');
+const {
+  parseDiscordChatChannel,
+  parseDiscordDmChannel,
+  isDiscordChatKey
+} = require('../functions/discordGuildCatalog');
+const { canonicalChatActor } = require('../functions/discordIdentityLink');
 const {
   encodeWireBody,
   decodeWireBody,
@@ -82,10 +90,11 @@ class ChatManager extends EventEmitter {
    * @param {Object} opts.store Shared Fabric Store.
    * @param {Object} [opts.groupManager] For channel membership.
    */
-  constructor ({ store, groupManager = null } = {}) {
+  constructor ({ store, groupManager = null, sameActor = null } = {}) {
     super();
     this.store = store;
     this.groupManager = groupManager;
+    this.sameActor = typeof sameActor === 'function' ? sameActor : pubkeysMatch;
   }
 
   static get GLOBAL_CHANNEL () { return GLOBAL_CHANNEL; }
@@ -105,6 +114,7 @@ class ChatManager extends EventEmitter {
   _validChannel (channel) {
     if (channel === GLOBAL_CHANNEL) return true;
     if (parseDmChannel(channel)) return true;
+    if (isDiscordChatKey(channel)) return true;
     const groupId = ChatManager.groupIdOf(channel);
     return !!(groupId && this.groupManager && this.groupManager.getGroup(groupId));
   }
@@ -114,13 +124,18 @@ class ChatManager extends EventEmitter {
    * members only when enforcing (hosted mode); locally the relay is the
    * player's own node, so their groups are already the visible set.
    * DM channels: only the two participant pubkeys.
+   * Discord `discord:<channelId>` / `discord:dm:<userId>` threads: local node
+   * always; hosted requires an authenticated viewer.
    */
   canAccess (channel, viewer, { enforceMembership = false } = {}) {
     if (channel === GLOBAL_CHANNEL) return true;
+    if (isDiscordChatKey(channel)) {
+      return enforceMembership ? !!viewer : true;
+    }
     const dm = parseDmChannel(channel);
     if (dm) {
       if (!viewer) return !enforceMembership;
-      return pubkeysMatch(viewer, dm.a) || pubkeysMatch(viewer, dm.b);
+      return this.sameActor(viewer, dm.a) || this.sameActor(viewer, dm.b);
     }
     const groupId = ChatManager.groupIdOf(channel);
     if (!groupId || !this.groupManager || !this.groupManager.getGroup(groupId)) return false;
@@ -134,8 +149,8 @@ class ChatManager extends EventEmitter {
   dmPeerOf (channel, viewer) {
     const dm = parseDmChannel(channel);
     if (!dm || !viewer) return null;
-    if (pubkeysMatch(viewer, dm.a)) return dm.b;
-    if (pubkeysMatch(viewer, dm.b)) return dm.a;
+    if (this.sameActor(viewer, dm.a)) return dm.b;
+    if (this.sameActor(viewer, dm.b)) return dm.a;
     return null;
   }
 
@@ -167,6 +182,21 @@ class ChatManager extends EventEmitter {
         label: peer ? ('DM ' + peer.slice(0, 8) + '…') : 'Direct message',
         kind: 'dm',
         peerPubkey: peer
+      });
+    }
+    const discordDmKeys = new Set();
+    for (const m of all) {
+      if (!m || !m.channel || !parseDiscordDmChannel(m.channel)) continue;
+      if (!this.canAccess(m.channel, viewer, { enforceMembership })) continue;
+      discordDmKeys.add(m.channel);
+    }
+    for (const key of discordDmKeys) {
+      const peerId = parseDiscordDmChannel(key);
+      channels.push({
+        key,
+        label: peerId ? ('DM ' + peerId) : 'Discord DM',
+        kind: 'discord-dm',
+        discordUserId: peerId
       });
     }
     for (const ch of channels) {
@@ -213,18 +243,22 @@ class ChatManager extends EventEmitter {
     body = body.slice(0, MAX_BODY);
     if (!body) throw new Error('message body required');
     if (!data.author) throw new Error('author (pubkey) required');
-    const author = canonicalChatAuthor(data.author);
+    const author = canonicalChatActor(data.author);
     const dm = parseDmChannel(channel);
     if (dm && !this.canAccess(channel, author, { enforceMembership: true })) {
       throw new Error('author is not a participant in this DM');
     }
     const ts = data.ts || new Date().toISOString();
+    const discordMessageId = data.discordMessageId ? String(data.discordMessageId) : '';
 
     // Global mesh chat is UTF-8 text only on the wire (no ts) — id from author+body
-    // so multi-path ingest converges. Group / local channels keep ts in the id.
-    const idBasis = channel === GLOBAL_CHANNEL
-      ? { channel, author, body }
-      : { channel, author, body, ts };
+    // so multi-path ingest converges. Discord rows key on the Discord message id.
+    // Group / local channels keep ts in the id.
+    const idBasis = discordMessageId
+      ? { channel, discordMessageId }
+      : (channel === GLOBAL_CHANNEL
+        ? { channel, author, body }
+        : { channel, author, body, ts });
     const record = {
       '@type': TYPE,
       id: sha256(canonical(idBasis)).slice(0, 32),
@@ -236,14 +270,23 @@ class ChatManager extends EventEmitter {
     };
     if (attachment) record.attachment = attachment;
     if (data.source) record.source = data.source;
+    if (data.kind) record.kind = String(data.kind).slice(0, 32);
+    if (discordMessageId) record.discordMessageId = discordMessageId;
+    if (data.discordUserId) record.discordUserId = String(data.discordUserId);
 
     const existing = this.store.get('chatmessages', record.id);
     if (existing) {
       // Prefer filling attachment on an earlier text-only merge of the same id.
+      let changed = false;
       if (attachment && !existing.attachment) {
         existing.attachment = attachment;
-        this.store.put('chatmessages', existing.id, existing);
+        changed = true;
       }
+      if (discordMessageId && !existing.discordMessageId) {
+        existing.discordMessageId = discordMessageId;
+        changed = true;
+      }
+      if (changed) this.store.put('chatmessages', existing.id, existing);
       return existing;
     }
     this.store.put('chatmessages', record.id, record);
@@ -259,6 +302,9 @@ class ChatManager extends EventEmitter {
   ingest (source, data = {}) {
     if (!data || !data.body || !data.author || !data.ts) {
       throw Object.assign(new Error('chat event requires author, body and ts'), { code: 'BAD_EVENT' });
+    }
+    if (parseDiscordChatChannel(data.channel)) {
+      throw Object.assign(new Error('discord channels are not mesh-ingested'), { code: 'FORBIDDEN' });
     }
     // Fabric wire authors are often x-only; identities use compressed pubkeys.
     if (!pubkeysMatch(data.author, source)) {
@@ -287,11 +333,48 @@ class ChatManager extends EventEmitter {
   static idOf (data) {
     const body = String(data.body || '').trim().slice(0, MAX_BODY);
     const channel = String(data.channel || GLOBAL_CHANNEL);
-    const author = canonicalChatAuthor(data.author);
-    const basis = channel === GLOBAL_CHANNEL
-      ? { channel, author, body }
-      : { channel, author, body, ts: data.ts };
+    const author = canonicalChatActor(data.author);
+    const discordMessageId = data.discordMessageId ? String(data.discordMessageId) : '';
+    const basis = discordMessageId
+      ? { channel, discordMessageId }
+      : (channel === GLOBAL_CHANNEL
+        ? { channel, author, body }
+        : { channel, author, body, ts: data.ts });
     return sha256(canonical(basis)).slice(0, 32);
+  }
+
+  /**
+   * Stored ChatMessage by id, or null.
+   * @param {string} id
+   * @returns {object|null}
+   */
+  get (id) {
+    if (!id) return null;
+    return this.store.get('chatmessages', String(id)) || null;
+  }
+
+  /**
+   * Toggle this node's pin flag on a stored message.
+   * @param {string} id
+   * @param {Object} [opts]
+   * @param {boolean} [opts.pinned]
+   * @param {string} [opts.actor]
+   * @returns {object}
+   */
+  setPinned (id, { pinned = true, actor = null } = {}) {
+    const rec = this.get(id);
+    if (!rec) {
+      const e = new Error('message not found');
+      e.code = 'NOT_FOUND';
+      throw e;
+    }
+    const next = pinned !== false && pinned !== 0 && String(pinned) !== 'false';
+    rec.pinned = next;
+    rec.pinnedAt = next ? new Date().toISOString() : null;
+    rec.pinnedBy = next && actor ? String(actor) : null;
+    this.store.put('chatmessages', rec.id, rec);
+    this.emit('message', rec);
+    return rec;
   }
 
   /**
@@ -309,3 +392,4 @@ class ChatManager extends EventEmitter {
 
 module.exports = ChatManager;
 module.exports.canonicalChatAuthor = canonicalChatAuthor;
+module.exports.canonicalChatActor = canonicalChatActor;

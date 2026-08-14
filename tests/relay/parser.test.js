@@ -332,3 +332,12 @@ test('parses CrimeStat, disconnect, objective markers, stow, party marker', () =
   assert.strictEqual(party.kind, 'party:marker');
   assert.strictEqual(party.action, 'in');
 });
+
+test('parseLine treats empty and unmatched lines as log:raw / log:notice', () => {
+  const empty = parseLine('');
+  assert.strictEqual(empty.kind, 'log:raw');
+  assert.strictEqual(empty.timestamp, null);
+  const notice = parseLine('<2026-08-12T12:00:00.000Z> [Notice] <UnknownTag> leftover chatter');
+  assert.strictEqual(notice.kind, 'log:notice');
+  assert.strictEqual(notice.tag, 'UnknownTag');
+});

@@ -105,8 +105,12 @@ class FabricLoginModal extends React.Component {
           React.createElement('div', { className: 'fl-body' },
             React.createElement('p', null,
               isLink
-                ? 'Another Fabric app wants a mutual identity link (separate seeds, dual Schnorr). Approve only if you started this on the other device.'
-                : 'A site is asking GoonCitizen to prove your Fabric identity. Approve only if you started this login.'),
+                ? 'Another Fabric app wants a mutual identity link (separate seeds, dual Schnorr). After both sides approve, each device publishes IdentityCrossSign so the mesh treats them as one person. Approve only if you started this on the other device.'
+                : 'A site is asking GoonCitizen to prove your Fabric identity (site login). Approve only if you started this login.'),
+            React.createElement('p', { className: 'muted' },
+              isLink
+                ? ('Purpose: device link · Hub: ' + (origin || 'unknown'))
+                : ('Purpose: site login · Hub: ' + (origin || 'unknown'))),
             locked
               ? React.createElement('div', { className: 'fl-warn' },
                 'Your identity is locked. Unlock it in Settings / Identity, then approve again (or reopen the link).')

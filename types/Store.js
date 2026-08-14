@@ -34,7 +34,13 @@ const COLLECTIONS = [
   'chatmessages', // Hub-style ChatMessage records (services/ChatManager.js)
   'missionbroadcasts', // peer mission offers (Broadcast → Accept / Ignore)
   'inbox', // unified browseable register / gossip inbox (functions/registerInbox.js)
-  'fleets' // Starjump / FleetViewer personal fleets (functions/starjumpFleet.js)
+  'fleets', // Starjump / FleetViewer personal fleets (functions/starjumpFleet.js)
+  'localgroups', // operator-local identity tags (functions/localGroups.js)
+  'identitynotes', // notes on Discord / Fabric identities (functions/identityNotes.js)
+  'discordcatalog', // accumulated Discord guild/channel/member/message packs (functions/discordCatalogAccumulate.js)
+  'datasync', // Federation GroupDataShare folds (profile.playtimes, profile.files, …)
+  'documents', // this node's file catalog (functions/localDocuments.js) — not hub.fabric.pub
+  'documentoffers' // remote Fabric inventory listings (functions/documentOffers.js)
 ];
 
 function collectionPath (name) {
@@ -46,12 +52,15 @@ class Store {
    * @param {Object} [opts]
    * @param {String|null} [opts.path] LevelDB path for `@fabric/core` Store.
    * @param {String|null} [opts.dir] Alias for `path` (legacy register API).
+   * @param {boolean} [opts.json] Persist collections as JSON files (Android /
+   *   Node-mobile — skip native Level).
    */
-  constructor ({ path: storePath = null, dir = null } = {}) {
+  constructor ({ path: storePath = null, dir = null, json = false } = {}) {
     this.path = storePath || dir || null;
     this.data = {}; // { collectionName: { id: record } }
     /** @type {Object|null} */
     this._fabric = null;
+    this._json = !!json;
     this._started = false;
     this._writeChain = Promise.resolve();
   }
@@ -73,29 +82,50 @@ class Store {
     this._migrateLegacyJson();
     const legacySettings = this._takeLegacySettingsJson();
 
-    const FabricStore = require('@fabric/core/types/store');
+    if (this._json) {
+      this._loadJsonCollections();
+      this._started = true;
+      if (legacySettings) this._applyLegacySettings(legacySettings);
+      await this.flush();
+      return this;
+    }
+
+    let FabricStore = null;
+    try {
+      FabricStore = require('@fabric/core/types/store');
+    } catch (e) {
+      console.warn('[STORE] Fabric Store unavailable — JSON files:', e && e.message);
+      this._json = true;
+      this._loadJsonCollections();
+      this._started = true;
+      if (legacySettings) this._applyLegacySettings(legacySettings);
+      await this.flush();
+      return this;
+    }
     this._fabric = new FabricStore({
       name: '@gooncitizen/register',
       path: this.path,
       persistent: true,
       verbosity: 0
     });
-    await this._fabric.start();
+    try {
+      await this._fabric.start();
+    } catch (e) {
+      console.warn('[STORE] Fabric Store failed to open — JSON files:', e && e.message);
+      this._fabric = null;
+      this._json = true;
+      this._loadJsonCollections();
+      this._started = true;
+      if (legacySettings) this._applyLegacySettings(legacySettings);
+      await this.flush();
+      return this;
+    }
 
     for (const name of COLLECTIONS) {
       this.data[name] = await this._loadCollection(name);
     }
 
-    if (legacySettings) {
-      let changed = false;
-      for (const [key, value] of Object.entries(legacySettings)) {
-        if (this.data.settings[key] === undefined) {
-          this.data.settings[key] = { id: key, value };
-          changed = true;
-        }
-      }
-      if (changed) this._persist('settings');
-    }
+    if (legacySettings) this._applyLegacySettings(legacySettings);
 
     this._started = true;
     await this.flush();
@@ -200,10 +230,53 @@ class Store {
     return this.data[name];
   }
 
+  _jsonFile (name) {
+    return path.join(this.path, `${name}.json`);
+  }
+
+  _loadJsonCollections () {
+    if (!this.path) return;
+    try { fs.mkdirSync(this.path, { recursive: true }); } catch (_) { /* exists */ }
+    for (const name of COLLECTIONS) {
+      if (this.data[name] && Object.keys(this.data[name]).length) continue;
+      const file = this._jsonFile(name);
+      if (!fs.existsSync(file)) {
+        this.data[name] = this.data[name] || {};
+        continue;
+      }
+      try {
+        const obj = JSON.parse(fs.readFileSync(file, 'utf8'));
+        this.data[name] = (obj && typeof obj === 'object' && !Array.isArray(obj)) ? obj : {};
+      } catch (_) {
+        this.data[name] = {};
+      }
+    }
+  }
+
+  _applyLegacySettings (legacySettings) {
+    if (!legacySettings) return;
+    let changed = false;
+    for (const [key, value] of Object.entries(legacySettings)) {
+      if (this.data.settings[key] === undefined) {
+        this.data.settings[key] = { id: key, value };
+        changed = true;
+      }
+    }
+    if (changed) this._persist('settings');
+  }
+
   _persist (name) {
-    if (!this._fabric) return;
-    // Clone so later sync puts do not mutate the queued payload.
+    if (!this.path) return;
     const snapshot = JSON.parse(JSON.stringify(this._col(name)));
+    if (this._json || !this._fabric) {
+      this._writeChain = this._writeChain.then(async () => {
+        try { fs.mkdirSync(this.path, { recursive: true }); } catch (_) { /* exists */ }
+        fs.writeFileSync(this._jsonFile(name), JSON.stringify(snapshot));
+      }).catch((err) => {
+        console.error('[STORE] persist failed:', name, err && err.message ? err.message : err);
+      });
+      return;
+    }
     const p = collectionPath(name);
     this._writeChain = this._writeChain.then(async () => {
       if (!this._fabric) return;

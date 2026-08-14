@@ -12,6 +12,8 @@
 
 const React = require('react');
 const { showDesktopNotification, ensureNotifyPermission } = require('../functions/desktopNotify');
+const { isAndroidCompanion } = require('../functions/isAndroidCompanion');
+const { postIdentityCrossSign, fetchIdentityCluster } = require('../functions/identityCrossSignClient');
 
 const CSS = `
   .st-overlay{position:fixed;inset:0;z-index:40;background:rgba(8,10,14,.7);
@@ -82,6 +84,7 @@ class Settings extends React.Component {
       notifyWhenFocused: false,
       notifyMissionBroadcasts: true,
       groupOverlay: false,
+      fabricShareEncoding: 'base64',
       primaryGroupId: null,
       primaryGroupColor: null,
       defaultGroupMessageId: null,
@@ -93,6 +96,7 @@ class Settings extends React.Component {
       sharePresence: false,
       presenceVisibility: 'private',
       linkedDevices: [],
+      identityCluster: null,
       fabricReady: false,
       fabricConnected: 0,
       discordBotEnable: false,
@@ -107,6 +111,7 @@ class Settings extends React.Component {
       discordAnnounceMissions: false,
       discordAnnounceCombat: false,
       discordAnnounceIncaps: false,
+      shareDiscordCatalog: true,
       discordRuntime: null,
       busy: false
     };
@@ -145,6 +150,10 @@ class Settings extends React.Component {
         notifyWhenFocused: !!s.notifyWhenFocused,
         notifyMissionBroadcasts: s.notifyMissionBroadcasts !== false,
         groupOverlay: s.groupOverlay === true || (settingsRes.runtime && settingsRes.runtime.groupOverlay === true),
+        fabricShareEncoding: (s.fabricShareEncoding === 'hex' ||
+          (settingsRes.runtime && settingsRes.runtime.fabricShareEncoding === 'hex'))
+          ? 'hex'
+          : 'base64',
         primaryGroupId: s.primaryGroupId || (settingsRes.runtime && settingsRes.runtime.primaryGroupId) || null,
         primaryGroupColor: (settingsRes.runtime && settingsRes.runtime.primaryGroupColor) || null,
         defaultGroupMessageId: (settingsRes.runtime && settingsRes.runtime.defaultGroupMessageId) || null,
@@ -156,6 +165,7 @@ class Settings extends React.Component {
         presenceVisibility: s.presenceVisibility ||
           (settingsRes.runtime && settingsRes.runtime.presenceVisibility) || 'private',
         linkedDevices: Array.isArray(s.linkedDevices) ? s.linkedDevices : [],
+        identityCluster: null,
         fabricReady: !!(settingsRes.runtime && settingsRes.runtime.fabricReady),
         fabricConnected: Number(settingsRes.runtime && settingsRes.runtime.fabricConnected) || 0,
         discordBotEnable: s.discordBotEnable === true,
@@ -167,11 +177,17 @@ class Settings extends React.Component {
         discordAnnounceMissions: s.discordAnnounceMissions === true,
         discordAnnounceCombat: s.discordAnnounceCombat === true,
         discordAnnounceIncaps: s.discordAnnounceIncaps === true,
+        shareDiscordCatalog: s.shareDiscordCatalog !== false &&
+          !(settingsRes.runtime && settingsRes.runtime.shareDiscordCatalog === false),
         discordRuntime: (settingsRes.runtime && settingsRes.runtime.discord) || null,
         discordToken: '',
         discordAppSecret: '',
         discordWebhook: ''
       });
+      try {
+        const cluster = await fetchIdentityCluster(window.location.origin);
+        if (cluster.ok) this.setState({ identityCluster: cluster.data });
+      } catch (_) { /* optional */ }
     } catch (e) {
       this.setState({ loading: false, error: e.message });
     }
@@ -226,17 +242,46 @@ class Settings extends React.Component {
     }
   }
 
+  async putShareEncoding (value) {
+    const next = value === 'hex' ? 'hex' : 'base64';
+    const prev = this.state.fabricShareEncoding;
+    this.setState({ fabricShareEncoding: next, error: null, busy: true });
+    try {
+      await this.put('fabricShareEncoding', next);
+      this.setState({ busy: false });
+    } catch (err) {
+      this.setState({ busy: false, fabricShareEncoding: prev, error: err.message });
+    }
+  }
+
   async revokeLinkedDevice (peerFabricId) {
     const id = String(peerFabricId || '');
     if (!id) return;
+    const match = (this.state.linkedDevices || []).find((d) => {
+      const pid = d && (d.peerFabricId || d.pubkey || d.id || d.peerPubkey);
+      return String(pid || '') === id;
+    });
     const next = (this.state.linkedDevices || []).filter((d) => {
-      const pid = d && (d.peerFabricId || d.pubkey || d.id);
+      const pid = d && (d.peerFabricId || d.pubkey || d.id || d.peerPubkey);
       return String(pid || '') !== id;
     });
-    this.setState({ linkedDevices: next, busy: true, error: null });
+    this.setState({ busy: true, error: null });
     try {
+      const nonce = match && match.nonce;
+      const peerPubkey = (match && (match.peerPubkey || match.pubkey)) || id;
+      if (!nonce) {
+        throw new Error('No pairing nonce on file — unlock this identity and complete fabric://link again before revoking.');
+      }
+      const posted = await postIdentityCrossSign(window.location.origin, {
+        type: 'IdentityCrossSignRevoke',
+        peerPubkey,
+        nonce
+      });
+      if (!posted.ok) {
+        throw new Error(posted.error || 'Could not publish IdentityCrossSignRevoke. Unlock this identity, then retry.');
+      }
       await this.put('linkedDevices', next);
-      this.setState({ busy: false });
+      this.setState({ linkedDevices: next, busy: false });
       await this.load();
     } catch (err) {
       this.setState({ busy: false, error: err.message });
@@ -258,7 +303,19 @@ class Settings extends React.Component {
     const lanOn = this.state.httpSharedMode === true;
     const announceOn = this.state.broadcastPeering === true;
     const sealOn = this.state.groupChatSeal === true;
-    const devices = this.state.linkedDevices || [];
+    const cluster = this.state.identityCluster;
+    const clusterMembers = (cluster && Array.isArray(cluster.members) && cluster.members.length > 1)
+      ? cluster.members
+      : null;
+    const devices = clusterMembers
+      ? clusterMembers.map((pk) => {
+        const local = (this.state.linkedDevices || []).find((d) => {
+          const pid = d && (d.peerFabricId || d.pubkey || d.peerPubkey || d.id);
+          return String(pid || '') === pk || (d && d.peerPubkey === pk);
+        });
+        return local || { peerFabricId: pk, peerPubkey: pk, label: 'cluster device' };
+      })
+      : (this.state.linkedDevices || []);
 
     return React.createElement('div', { className: 'st-sec', id: 'settings-privacy' },
       React.createElement('h3', null, 'Privacy'),
@@ -273,15 +330,15 @@ class Settings extends React.Component {
             : 'presence private',
           presenceOn
         ),
-        this.privacyChip(logsOn ? 'game logs → all peers' : 'game logs private', logsOn),
-        this.privacyChip(lanOn ? 'dashboard LAN' : 'dashboard local only', lanOn),
+        isAndroidCompanion() ? null : this.privacyChip(logsOn ? 'game logs → all peers' : 'game logs private', logsOn),
+        isAndroidCompanion() ? null : this.privacyChip(lanOn ? 'dashboard LAN' : 'dashboard local only', lanOn),
         this.privacyChip(announceOn ? 'peering announce on' : 'peering announce off', announceOn),
         this.privacyChip(sealOn ? 'group chat sealed' : 'group chat cleartext at relays', sealOn, !sealOn)
       ),
       React.createElement('div', { className: 'd', style: { marginBottom: 12 } },
         'Chat, mission offers, and your profile nickname publish on the Fabric mesh whenever your peer is connected — unlike game logs, which stay private until you authorize sharing.'),
 
-      React.createElement('label', { style: { display: 'flex', gap: 8, alignItems: 'center', fontSize: 13, cursor: 'pointer', marginBottom: 8 } },
+      isAndroidCompanion() ? null : React.createElement('label', { style: { display: 'flex', gap: 8, alignItems: 'center', fontSize: 13, cursor: 'pointer', marginBottom: 8 } },
         React.createElement('input', {
           type: 'checkbox',
           checked: this.state.httpSharedMode,
@@ -290,10 +347,10 @@ class Settings extends React.Component {
         }),
         'Allow LAN access to the dashboard'
       ),
-      React.createElement('div', { className: 'd', style: { marginTop: -4, marginBottom: 10 } },
-        'Also under Relay. Off = 127.0.0.1 only.'),
+      isAndroidCompanion() ? null : React.createElement('div', { className: 'd', style: { marginTop: -4, marginBottom: 10 } },
+        'Also under Relay. Off = 127.0.0.1 only. When on, other machines can open this UI; writes from those hosts need a signed login (same bar as hosted server mode). Loopback on this machine still uses your unlocked identity.'),
 
-      React.createElement('label', { style: { display: 'flex', gap: 8, alignItems: 'center', fontSize: 13, cursor: 'pointer', marginBottom: 8 } },
+      isAndroidCompanion() ? null : React.createElement('label', { style: { display: 'flex', gap: 8, alignItems: 'center', fontSize: 13, cursor: 'pointer', marginBottom: 8 } },
         React.createElement('input', {
           type: 'checkbox',
           checked: this.state.shareLogsGlobal,
@@ -302,7 +359,7 @@ class Settings extends React.Component {
         }),
         'Share game logs with every connected peer'
       ),
-      React.createElement('div', { className: 'd', style: { marginTop: -4, marginBottom: 10 } },
+      isAndroidCompanion() ? null : React.createElement('div', { className: 'd', style: { marginTop: -4, marginBottom: 10 } },
         'Default off. Prefer per-peer “Share logs” on Network → Peers. Also under Fabric Network.'),
       React.createElement('div', { className: 'st-row', style: { marginBottom: 12 } },
         React.createElement('button', {
@@ -384,10 +441,12 @@ class Settings extends React.Component {
           onClick: () => {
             if (typeof this.props.onOpenIdentity === 'function') {
               this.props.onClose();
-              this.props.onOpenIdentity();
+              this.props.onOpenIdentity('privacy');
             }
           }
-        }, 'Open Identity (profile & presence detail)')),
+        }, isAndroidCompanion()
+          ? 'Open Privacy (profile & presence)'
+          : 'Open Identity (profile & presence detail)')),
 
       React.createElement('label', { style: { display: 'flex', gap: 8, alignItems: 'center', fontSize: 13, cursor: 'pointer', marginBottom: 8 } },
         React.createElement('input', {
@@ -457,7 +516,7 @@ class Settings extends React.Component {
 
       React.createElement('h3', { style: { marginTop: 10, fontSize: 12.5 } }, 'Linked devices'),
       React.createElement('div', { className: 'd' },
-        'Devices you approved via fabric://link. Revoking removes the local attestation record.'),
+        'Peer-equivalent identity cluster. Any of Passport, Android, or desktop can create or accept a fabric://link. Revoke publishes an IdentityCrossSignRevoke Fabric Message (BIP340) — a stolen device stays you until another cluster member revokes.'),
       devices.length
         ? React.createElement('div', { className: 'st-devices' },
           devices.map((d, i) => {
@@ -624,6 +683,7 @@ class Settings extends React.Component {
 
   render () {
     const rt = this.state.runtime;
+    const android = isAndroidCompanion();
     return React.createElement('div', { className: 'st-overlay', onClick: (e) => { if (e.target === e.currentTarget) this.props.onClose(); } },
       React.createElement('div', { className: 'st-card' },
         React.createElement('div', { className: 'st-head' },
@@ -638,7 +698,7 @@ class Settings extends React.Component {
 
             this.renderPrivacy(),
 
-            React.createElement('div', { className: 'st-sec' },
+            android ? null : React.createElement('div', { className: 'st-sec' },
               React.createElement('h3', null, 'Relay'),
               React.createElement('div', { className: 'd' }, 'Where the game log comes from. Leave blank to auto-detect the freshest Game.log across drives and channels. To import historical log folders or individual files, use Network → Feed → Import logs.'),
               this.field('Game.log path', 'logfile', 'auto-detect (e.g. C:\\...\\StarCitizen\\LIVE\\Game.log)'),
@@ -679,7 +739,7 @@ class Settings extends React.Component {
                 'Allow LAN access to the dashboard (bind all interfaces)'
               ),
               React.createElement('div', { className: 'd', style: { marginTop: -4, marginBottom: 10 } },
-                'Off by default — the dashboard listens on 127.0.0.1 only. Enable only when you want other machines on your network to open this UI (firewall permitting). Hosted server mode always binds all interfaces. Override with FABRIC_HUB_INTERFACE.'),
+                'Off by default — the dashboard listens on 127.0.0.1 only. Enable only when you want other machines on your network to open this UI (firewall permitting). LAN writes require a Schnorr/Bearer session; loopback still uses the unlocked identity. Hosted server mode always binds all interfaces. Override with FABRIC_HUB_INTERFACE.'),
               React.createElement('div', { className: 'st-row' },
                 React.createElement('button', { className: 'st-btn', disabled: !this.state.editable || this.state.busy, onClick: () => this.save() }, this.state.busy ? 'Saving…' : 'Save'),
                 !this.state.editable ? React.createElement('span', { style: { fontSize: 11.5, color: 'var(--muted)' } }, 'read-only: no settings directory configured') : null
@@ -693,7 +753,7 @@ class Settings extends React.Component {
                 : null
             ),
 
-            React.createElement('div', { className: 'st-sec' },
+            android ? null : React.createElement('div', { className: 'st-sec' },
               React.createElement('h3', null, 'Discord bot'),
               React.createElement('div', { className: 'd' },
                 'Local ',
@@ -719,6 +779,20 @@ class Settings extends React.Component {
                   onChange: (e) => this.putBool('discordBotEnable', e.target.checked)
                 }),
                 'Enable Discord integration'
+              ),
+              React.createElement('label', { style: { display: 'flex', gap: 8, alignItems: 'flex-start', fontSize: 13, cursor: 'pointer', marginBottom: 10 } },
+                React.createElement('input', {
+                  type: 'checkbox',
+                  checked: this.state.shareDiscordCatalog !== false,
+                  disabled: !this.state.editable || this.state.busy,
+                  onChange: (e) => this.putBool('shareDiscordCatalog', e.target.checked),
+                  style: { marginTop: 3 }
+                }),
+                React.createElement('span', null,
+                  'Share group data with Federation groups I belong to',
+                  React.createElement('div', { className: 'd', style: { marginTop: 4 } },
+                    'Chat catalogs and messages are the first packs (`chat.catalog` / `chat.messages`, Discord as the first platform). This node accumulates servers, people, and messages locally so you can browse them if that platform is down, then gossips compact packs on Federation group contracts. Later bots and chat apps use the same envelope. Off = keep chat packs local. “When I play” is a separate opt-in on your profile.')
+                )
               ),
               this.field('Application ID', 'discordAppId', 'Discord application / client id'),
               this.field('Announce channel ID', 'discordChannel', 'snowflake channel id for embeds'),
@@ -821,7 +895,7 @@ class Settings extends React.Component {
               )
             ),
 
-            React.createElement('div', { className: 'st-sec' },
+            android ? null : React.createElement('div', { className: 'st-sec' },
               React.createElement('h3', null, 'Snapshots'),
               React.createElement('div', { className: 'd' },
                 'Opt-in periodic screen captures while you play — stored reduced-size in the Library for later image analysis. Desktop app only; applies live.'),
@@ -870,7 +944,7 @@ class Settings extends React.Component {
                 : null
             ),
 
-            React.createElement('div', { className: 'st-sec' },
+            android ? null : React.createElement('div', { className: 'st-sec' },
               React.createElement('h3', null, 'Primary group overlay'),
               React.createElement('div', { className: 'd' },
                 'Pin your primary group’s members and ships in a small always-on-top panel (top-right). Designed for Windows while Star Citizen is focused — clicks pass through to the game. Pick a primary group on the Groups tab, or paste a Fabric message id below.'),
@@ -889,13 +963,13 @@ class Settings extends React.Component {
                     (this.state.primaryGroupColor ? (' · accent ' + this.state.primaryGroupColor) : ''))
                   : 'No primary group set yet — open Groups → Set as primary, or paste a message id.'),
               React.createElement('div', { className: 'd', style: { marginTop: 4 } },
-                'Paste a Fabric message id (from Groups → Share / Fabric Messages → Copy id), an opaque fabric:<hex> GroupOffer, or a group id. Applies as the Store primary group and shows a settings/local.js snippet.'),
+                'Paste a Fabric message id (from Groups → Share / Fabric Messages → Copy id), an opaque fabric: GroupOffer, or a group id. Applies as the Store primary group and shows a settings/local.js snippet.'),
               React.createElement('div', { className: 'st-row', style: { alignItems: 'stretch' } },
                 React.createElement('input', {
                   type: 'text',
                   value: this.state.defaultGroupPaste,
                   disabled: !this.state.editable || this.state.busy,
-                  placeholder: 'fabric:<hex> · message hash · group id',
+                  placeholder: 'fabric:… · message hash · group id',
                   style: { flex: 1, minWidth: 0, background: 'var(--bg)', border: '1px solid var(--line)', color: 'var(--text)', borderRadius: 7, padding: '8px 10px', fontSize: 12, fontFamily: "Cascadia Code, Consolas, monospace" },
                   onChange: (e) => this.setState({ defaultGroupPaste: e.target.value })
                 }),
@@ -939,10 +1013,10 @@ class Settings extends React.Component {
                   onClick: () => {
                     if (typeof this.props.onOpenIdentity === 'function') {
                       this.props.onClose();
-                      this.props.onOpenIdentity();
+                      this.props.onOpenIdentity('keys');
                     }
                   }
-                }, 'Open Identity')
+                }, isAndroidCompanion() ? 'Open Keys' : 'Open Identity')
               )
             ),
 
@@ -1005,27 +1079,21 @@ class Settings extends React.Component {
             ),
 
             React.createElement('div', { className: 'st-sec' },
-              React.createElement('h3', null, 'Profile activity'),
+              React.createElement('h3', null, 'When you play'),
               React.createElement('div', { className: 'd' },
-                'Show the Home “When you fly” activity heatmap on Identity and peer profiles. Uses the same cumulative analytics as the stats pages. Stored in this browser.'),
-              React.createElement('label', { style: { display: 'flex', gap: 8, alignItems: 'center', fontSize: 13, cursor: 'pointer' } },
-                React.createElement('input', {
-                  type: 'checkbox',
-                  checked: this.props.showProfileActivity !== false,
-                  onChange: (e) => {
-                    if (typeof this.props.onShowProfileActivityChange === 'function') {
-                      this.props.onShowProfileActivityChange(e.target.checked);
-                    }
-                  }
-                }),
-                'Show activity graph on player profiles'
-              )
+                'Common play times are not published unless you opt in on your own profile (Identity or Profile → “Share when I play”). That pack rides Federation GroupDataShare with other group data — it is not a local heatmap of someone else’s handle from this machine’s logs.')
+            ),
+
+            React.createElement('div', { className: 'st-sec' },
+              React.createElement('h3', null, 'Files on your profile'),
+              React.createElement('div', { className: 'd' },
+                'Pin individual files with 📌 (“Pin to profile”) on the file page. Only pinned listings gossip to Federation groups — names, sizes, and prices, not the bytes. A local developer install uses the same pin to share GoonCitizen builds over Fabric.')
             ),
 
             React.createElement('div', { className: 'st-sec' },
               React.createElement('h3', null, 'Advanced mode'),
               React.createElement('div', { className: 'd' },
-                'Reveal advanced Network → Messages (complete AMP wire Message log — Fabric Messages only, not Game.log), Home views (Activity Tree, Parser rules), and the Files tab (Hub Document Exchange). Stored in this browser.'),
+                'Reveal advanced Network → Messages (complete AMP wire Message log — Fabric Messages only, not Game.log), Home views (Activity Tree, Parser rules), and the Files tab (this node\'s document catalog). Stored in this browser.'),
               React.createElement('label', { style: { display: 'flex', gap: 8, alignItems: 'center', fontSize: 13, cursor: 'pointer' } },
                 React.createElement('input', {
                   type: 'checkbox',
@@ -1093,6 +1161,31 @@ class Settings extends React.Component {
               ),
               React.createElement('div', { className: 'd', style: { marginTop: -4, marginBottom: 10 } },
                 'Default is off. Per-peer “Share logs” on Network → Peers is the usual path for authorizing a network hub.'),
+              React.createElement('h3', { style: { margin: '14px 0 4px', fontSize: 13 } }, 'Share encoding'),
+              React.createElement('div', { className: 'd' },
+                'Groups → Share copies an opaque Fabric message as ',
+                React.createElement('code', null, 'fabric:'),
+                ' plus the raw body. Default is base64; hex is still sniffed on Import.'),
+              React.createElement('label', { style: { display: 'flex', gap: 8, alignItems: 'center', fontSize: 13, cursor: 'pointer', marginBottom: 6 } },
+                React.createElement('input', {
+                  type: 'radio',
+                  name: 'fabricShareEncoding',
+                  checked: this.state.fabricShareEncoding !== 'hex',
+                  disabled: !this.state.editable || this.state.busy,
+                  onChange: () => this.putShareEncoding('base64')
+                }),
+                'base64 body (default)'
+              ),
+              React.createElement('label', { style: { display: 'flex', gap: 8, alignItems: 'center', fontSize: 13, cursor: 'pointer', marginBottom: 10 } },
+                React.createElement('input', {
+                  type: 'radio',
+                  name: 'fabricShareEncoding',
+                  checked: this.state.fabricShareEncoding === 'hex',
+                  disabled: !this.state.editable || this.state.busy,
+                  onChange: () => this.putShareEncoding('hex')
+                }),
+                'hex body'
+              ),
               React.createElement('div', { className: 'st-row' },
                 React.createElement('span', { style: { fontSize: 12.5, color: 'var(--muted)' } },
                   this.state.peerCount

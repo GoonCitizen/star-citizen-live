@@ -98,6 +98,8 @@ test('opaque Federation invite ingest materializes group; accept joins local ide
   const { service, port, dir } = await startRelay(bob);
   try {
     const protocolUrl = opaqueInviteUrl(alice, invite, contractId);
+    assert.ok(protocolUrl.startsWith('fabric:'), protocolUrl.slice(0, 24));
+    assert.equal(/^fabric:(?:base64|b64)[,:]/i.test(protocolUrl), false);
     const ingest = await request(port, 'POST', `${BASE}/groups/share/ingest`, { protocolUrl });
     assert.strictEqual(ingest.status, 200, ingest.body && ingest.body.error);
     assert.strictEqual(ingest.body.data.kind, 'FederationContractInvite');
@@ -105,6 +107,15 @@ test('opaque Federation invite ingest materializes group; accept joins local ide
     assert.strictEqual(ingest.body.data.group.contractId, contractId);
     assert.strictEqual(ingest.body.data.group.id, def.groupId, 'shell keeps inviter groupId');
     assert.strictEqual(ingest.body.data.group.name, 'Share Me', 'shell keeps inviter groupName');
+    assert.ok(ingest.body.data.inbox, 'import creates a notification row');
+    assert.strictEqual(ingest.body.data.inbox.status, 'pending');
+    assert.strictEqual(ingest.body.data.pending, true);
+
+    const inbox = await request(port, 'GET', `${BASE}/inbox?scope=notifications&pending=1`);
+    assert.strictEqual(inbox.status, 200);
+    const pendingJoin = (inbox.body.data || []).filter((r) => r.status === 'pending' &&
+      (r.kind === 'FederationInvite' || r.kind === 'MultisigWalletInvite'));
+    assert.ok(pendingJoin.length >= 1, 'pending invite is listed in Notifications');
 
     const groupId = ingest.body.data.group.id;
     const accept = await request(port, 'POST',
@@ -141,17 +152,58 @@ test('opaque public GroupOffer ingest + apply uses local publishing identity', a
   const { service, port, dir } = await startRelay(bob);
   try {
     const protocolUrl = opaqueOfferUrl(alice, offer, contractId);
+    assert.ok(protocolUrl.startsWith('fabric:'), protocolUrl.slice(0, 24));
+    assert.equal(/^fabric:(?:base64|b64)[,:]/i.test(protocolUrl), false);
     const ingest = await request(port, 'POST', `${BASE}/groups/share/ingest`, { protocolUrl });
     assert.strictEqual(ingest.status, 200, ingest.body && ingest.body.error);
     assert.strictEqual(ingest.body.data.kind, 'GroupOffer');
     assert.ok(ingest.body.data.group);
     assert.strictEqual(ingest.body.data.group.visibility, 'public');
+    assert.ok(ingest.body.data.inbox);
+    assert.strictEqual(ingest.body.data.inbox.kind, 'GroupOffer');
+    assert.strictEqual(ingest.body.data.inbox.status, 'pending');
 
     const apply = await request(port, 'POST',
       `${BASE}/groups/${encodeURIComponent(ingest.body.data.group.id)}/applications`,
       { message: 'hi' });
     assert.strictEqual(apply.status, 200, apply.body && apply.body.error);
     assert.strictEqual(apply.body.data.applicantId, bob.pubkey);
+  } finally {
+    await service.stop();
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('opaque hex fabric: url still ingests a GroupOffer', async () => {
+  const alice = createIdentity();
+  const bob = createIdentity();
+  const def = groupContractDefinition({
+    groupId: 'group-hex-offer-1',
+    creator: alice.pubkey,
+    validators: [alice.pubkey],
+    threshold: 1,
+    createdAt: '2026-01-01T00:00:00.000Z',
+    meta: { name: 'Hex Ops', visibility: 'public' }
+  });
+  const contractId = groupContractId(def);
+  const offer = buildGroupOfferBody({
+    group: { id: def.groupId, name: 'Hex Ops', visibility: 'public', contractId },
+    definition: def,
+    actor: alice.pubkey
+  });
+  const { service, port, dir } = await startRelay(bob);
+  try {
+    const net = new FabricNetwork({ enable: false, listen: false, peers: [], peersDb: null });
+    net.setIdentity(alice);
+    const msg = net.signContractMessage(contractId, 'GroupShare', offer, { relay: false });
+    const protocolUrl = net.encodeOpaqueMessage(msg, { encoding: 'hex' }).protocolUrl;
+    assert.ok(protocolUrl.startsWith('fabric:'));
+    assert.ok(!protocolUrl.startsWith('fabric:base64'));
+    const ingest = await request(port, 'POST', `${BASE}/groups/share/ingest`, { protocolUrl });
+    assert.strictEqual(ingest.status, 200, ingest.body && ingest.body.error);
+    assert.strictEqual(ingest.body.data.kind, 'GroupOffer');
+    assert.ok(ingest.body.data.inbox);
+    assert.strictEqual(ingest.body.data.inbox.status, 'pending');
   } finally {
     await service.stop();
     fs.rmSync(dir, { recursive: true, force: true });

@@ -19,6 +19,7 @@ module.exports = {
   // Default bind is loopback (127.0.0.1). Set httpSharedMode / FABRIC_HUB_INTERFACE for LAN.
   // Dedicated public NIC (same host pattern as relay.goon.vc → 65.21.231.149):
   //   FABRIC_HUB_INTERFACE=65.21.231.149
+  // Public seed (SC_MODE=server + Caddy/Nginx): leave this loopback; see docs/PRODUCTION.md.
   http: {
     enable: true,
     port: 3041
@@ -55,16 +56,17 @@ module.exports = {
     adminTokenFile: process.env.FABRIC_HUB_ADMIN_TOKEN_FILE || null
   },
 
-  // Document Exchange tab (Hub UI /documents + Fabric TUI documents packs).
-  // Off by default — set enable: true in settings/local.js to show the tab and
-  // proxy Hub JSON-RPC (ListDocuments / CreateDocument / PublishDocument /
-  // CreatePurchaseInvoice / ClaimPurchase / RequestPeerInventory).
-  // hub defaults to bitcoin.hub when omitted.
-  // defaultPriceSats: chat attach list price (Hub DocumentView default is 25).
+  // Files tab — this node's local document catalog (not hub.fabric.pub).
+  // Off by default; set enable: true in settings/local.js (Advanced mode) to
+  // browse / create / publish. Chat 📎 attach always writes here.
+  // defaultPriceSats: floor for tiny files / chat attach (default 25).
+  // satsPerKiB: list price scales with content size (storage + P2P blob transfer).
+  //   1 sat/KiB → a 100 MiB installer lists at ~102400 sats; chat still floors at
+  //   defaultPriceSats. Set 0 to use a flat defaultPriceSats only.
   documents: {
     enable: false,
-    hub: process.env.SC_DOCUMENTS_HUB || process.env.SC_BITCOIN_HUB || 'http://127.0.0.1:8080',
-    defaultPriceSats: 25
+    defaultPriceSats: 25,
+    satsPerKiB: 1
   },
 
   // Discord — local @fabric/discord bot and/or webhook mirror (off-Fabric).
@@ -97,7 +99,7 @@ module.exports = {
   // (Store keys: primaryGroupId, groupOverlay). Not set here.
 
   // Instance default group — paste a Fabric message id (from Groups → Share /
-  // Fabric Messages → Copy id), an opaque fabric:<hex> GroupOffer, or a group id.
+  // Fabric Messages → Copy id), an opaque fabric: GroupOffer, or a group id.
   // On start, seeds Store primaryGroupId when that setting is still empty.
   // defaultGroupMessageId: '…',
 

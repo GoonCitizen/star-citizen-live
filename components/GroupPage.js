@@ -12,6 +12,20 @@ const React = require('react');
 const Chat = require('./Chat');
 const GroupFabricInspector = require('./GroupFabricInspector');
 const RegisterEventLog = require('./RegisterEventLog');
+const GroupBitcoinPanel = require('./GroupBitcoinPanel');
+const { setAppHash } = require('../functions/appHash');
+const {
+  shareClipboardText,
+  shareNotice
+} = require('../functions/groupJoinFlow');
+const {
+  chatChannelsFromCatalog,
+  parseDiscordChatChannel
+} = require('../functions/discordGuildCatalog');
+const {
+  sanitizePinnedChannels,
+  MAX_PINNED_CHANNELS
+} = require('../functions/groupPinnedChannels');
 
 const BASE = '/services/star-citizen';
 const ADVANCED_MODE_KEY = 'gooncitizen.advancedMode';
@@ -90,8 +104,10 @@ class GroupPage extends React.Component {
       notice: null,
       applyMessage: '',
       applying: false,
+      inviteKey: '',
       slugEdit: '',
       colorEdit: '#3b82f6',
+      discordChannels: [],
       busy: false
     };
   }
@@ -103,6 +119,7 @@ class GroupPage extends React.Component {
 
   componentDidMount () {
     this.boot();
+    this.loadDiscordCatalog();
     window.addEventListener('popstate', this._onPop);
   }
 
@@ -227,31 +244,36 @@ class GroupPage extends React.Component {
     if (!g) return;
     this.setState({ busy: true, error: null, notice: null });
     try {
-      const res = await fetch(`${BASE}/groups/${encodeURIComponent(g.id)}/share`, {
+      const publicShare = g.visibility === 'public';
+      const path = publicShare
+        ? `${BASE}/groups/${encodeURIComponent(g.id)}/share`
+        : `${BASE}/groups/${encodeURIComponent(g.id)}/invites`;
+      const body = publicShare
+        ? { relay: true }
+        : { relay: false, note: `Join ${g.name}` };
+      const res = await fetch(path, {
         method: 'POST',
         headers: this.headers(),
-        body: JSON.stringify({ relay: true })
+        body: JSON.stringify(body)
       });
       const json = await res.json();
       if (!res.ok) throw new Error(json.error || `HTTP ${res.status}`);
-      const data = json.data || {};
-      const url = data.protocolUrl || '';
+      const data = Object.assign({ visibility: g.visibility }, json.data || {});
+      const url = shareClipboardText(data);
       if (!url) throw new Error('no protocolUrl');
-      const mesh = data.relayed
-        ? `Broadcast to network (${data.peers || 0} peer connection(s)). `
-        : (`Mesh broadcast failed` + (data.relayError ? `: ${data.relayError}` : '') + '. ');
+      const page = this.shareUrl();
       try {
         await navigator.clipboard.writeText(url);
         this.setState({
           busy: false,
-          notice: mesh + 'fabric:… offer copied. Page: ' + this.shareUrl(),
-          error: data.relayed ? null : (data.relayError || 'Share copied locally but not broadcast')
+          notice: shareNotice(data, page),
+          error: data.relayed || !publicShare ? null : (data.relayError || null)
         });
       } catch (_) {
         this.setState({
           busy: false,
-          notice: mesh + url,
-          error: data.relayed ? null : (data.relayError || null)
+          notice: shareNotice(data, page) + ' ' + url,
+          error: data.relayed || !publicShare ? null : (data.relayError || null)
         });
       }
     } catch (e) {
@@ -262,6 +284,39 @@ class GroupPage extends React.Component {
       } catch (_) {
         this.setState({ busy: false, error: e.message, notice: url });
       }
+    }
+  }
+
+  async inviteMember () {
+    const g = this.state.group;
+    const pubkey = String(this.state.inviteKey || '').trim();
+    if (!g || this.state.busy || !/^0[23][0-9a-f]{64}$/.test(pubkey)) return;
+    this.setState({ busy: true, error: null, notice: null });
+    try {
+      const res = await fetch(`${BASE}/groups/${encodeURIComponent(g.id)}/invites`, {
+        method: 'POST',
+        headers: this.headers(),
+        body: JSON.stringify({
+          inviteePubkey: pubkey,
+          note: `You're invited to join ${g.name}`
+        })
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error || `HTTP ${res.status}`);
+      const data = json.data || {};
+      const url = shareClipboardText(data);
+      if (url) {
+        try { await navigator.clipboard.writeText(url); } catch (_) { /* ignore */ }
+      }
+      this.setState({
+        busy: false,
+        inviteKey: '',
+        notice: data.relayed
+          ? `Invite sent (${data.peers || 0} peer connection(s)).`
+          : 'Invite copied — they paste it via Import… and Accept.'
+      });
+    } catch (e) {
+      this.setState({ busy: false, error: e.message });
     }
   }
 
@@ -277,10 +332,33 @@ class GroupPage extends React.Component {
       });
       const json = await res.json();
       if (!res.ok) throw new Error(json.error || `HTTP ${res.status}`);
-      this.setState({ applying: false, applyMessage: '', notice: 'Application submitted — wait for the creator to accept.' });
+      this.setState({ applying: false, applyMessage: '', notice: 'Application submitted — you will get a notification when the creator accepts.' });
     } catch (e) {
       this.setState({ applying: false, error: e.message });
     }
+  }
+
+  async loadDiscordCatalog () {
+    try {
+      const res = await fetch(BASE + '/discord/guilds', {
+        headers: { Accept: 'application/json' }
+      });
+      const body = await res.json().catch(() => ({}));
+      const catalog = (body && body.data) || body || {};
+      this.setState({ discordChannels: chatChannelsFromCatalog(catalog) });
+    } catch (_) { /* optional */ }
+  }
+
+  async togglePinnedChannel (channelKey) {
+    const g = this.state.group;
+    if (!g || g.role !== 'creator' || this.state.busy) return;
+    const key = String(channelKey || '');
+    if (!key) return;
+    const current = sanitizePinnedChannels(g.pinnedChannels);
+    const next = current.includes(key)
+      ? current.filter((k) => k !== key)
+      : current.concat([key]).slice(0, MAX_PINNED_CHANNELS);
+    await this.patch({ pinnedChannels: next });
   }
 
   async patch (body) {
@@ -385,40 +463,20 @@ class GroupPage extends React.Component {
     return React.createElement('div', { className: 'gpage-panel' },
       React.createElement('h2', null, 'Wallet'),
       React.createElement('div', { className: 'body' },
-        gw.error
-          ? React.createElement('div', { className: 'gpage-err' }, gw.error)
-          : React.createElement(React.Fragment, null,
-            React.createElement('div', { style: { fontSize: 13, color: 'var(--muted)', marginBottom: 8 } },
-              'Taproot multisig · mode ', React.createElement('b', { style: { color: 'var(--text)' } }, gw.mode || '—'),
-              ` · ${g.threshold}-of-${(g.validators || g.members || []).length}`
-            ),
-            gw.address
-              ? React.createElement(React.Fragment, null,
-                React.createElement('code', {
-                  style: { display: 'block', fontSize: 11, wordBreak: 'break-all', marginBottom: 10 }
-                }, gw.address),
-                React.createElement('div', { className: 'gpage-actions', style: { marginTop: 0 } },
-                  React.createElement('button', {
-                    className: 'gpage-btn ghost',
-                    onClick: () => {
-                      try {
-                        navigator.clipboard.writeText(gw.address);
-                        this.setState({ notice: 'Address copied.' });
-                      } catch (_) { /* ignore */ }
-                    }
-                  }, 'Copy address'),
-                  isCreator
-                    ? React.createElement('button', {
-                      className: 'gpage-btn',
-                      disabled: this.state.busy,
-                      onClick: () => this.proposeWithdraw()
-                    }, this.state.busy ? 'Working…' : 'Propose withdraw')
-                    : null
-                )
-              )
-              : React.createElement('p', { style: { color: 'var(--muted)', fontSize: 13, margin: 0 } },
-                'No Taproot address yet — group needs signer keys.')
-          )
+        React.createElement(GroupBitcoinPanel, {
+          wallet: gw,
+          bitcoinEnable: this.props.bitcoinEnable,
+          isCreator,
+          busy: this.state.busy,
+          onCopy: (addr) => {
+            try {
+              navigator.clipboard.writeText(addr);
+              this.setState({ notice: 'Address copied.' });
+            } catch (_) { /* ignore */ }
+          },
+          onProposeWithdraw: () => this.proposeWithdraw(),
+          onRefresh: () => this.load()
+        })
       )
     );
   }
@@ -432,7 +490,7 @@ class GroupPage extends React.Component {
       React.createElement('div', { className: 'body' },
         !list.length
           ? React.createElement('p', { style: { color: 'var(--muted)', fontSize: 13, margin: 0 } },
-            'No fleets shared to this group yet. Share from Fleets with visibility “groups”.')
+            'No fleets shared to this group yet. Share from Fleets with visibility “groups”, then pick this group.')
           : list.map((f) => React.createElement('div', {
             key: f.fleetId || f.id,
             className: 'gpage-member',
@@ -455,7 +513,7 @@ class GroupPage extends React.Component {
               style: { padding: '4px 10px', fontSize: 12 },
               onClick: () => {
                 const id = f.fleetId || f.id;
-                window.location.href = `/#fleets${id ? `?id=${encodeURIComponent(id)}` : ''}`;
+                setAppHash('fleet', id ? { id } : {});
               }
             }, 'Open')
           ))
@@ -521,7 +579,9 @@ class GroupPage extends React.Component {
             React.createElement('button', {
               className: 'gpage-btn', disabled: this.state.applying,
               onClick: () => this.apply()
-            }, this.state.applying ? 'Submitting…' : 'Apply to join')
+            }, this.state.applying ? 'Submitting…' : 'Apply to join'),
+            React.createElement('p', { style: { color: 'var(--muted)', fontSize: 12, margin: '10px 0 0' } },
+              'The creator reviews join requests in Notifications.')
           )
       )
     );
@@ -585,8 +645,75 @@ class GroupPage extends React.Component {
           ),
           React.createElement('div', { style: { fontSize: 11.5, color: 'var(--muted)', marginTop: 5 } },
             'Members who set this group as primary use this accent to theme their dashboard.')
-        )
+        ),
+        this.renderPinnedChannelsEditor()
       )
+    );
+  }
+
+  renderPinnedChannelsEditor () {
+    const g = this.state.group;
+    if (!g || g.role !== 'creator') return null;
+    const pins = sanitizePinnedChannels(g.pinnedChannels);
+    const pinSet = new Set(pins);
+    const catalog = this.state.discordChannels || [];
+    const groupKey = 'group:' + g.id;
+    return React.createElement('div', { className: 'gpage-field', style: { marginTop: 14 } },
+      React.createElement('label', null, 'Pinned channels'),
+      React.createElement('div', { style: { fontSize: 11.5, color: 'var(--muted)', marginBottom: 8, lineHeight: 1.45 } },
+        'Pin Discord (or this group’s Fabric) channels so members see them at the top of Chat. Up to ' +
+        MAX_PINNED_CHANNELS + '.'),
+      React.createElement('label', {
+        className: 'gpage-toggle',
+        style: { marginBottom: 8 }
+      },
+        React.createElement('input', {
+          type: 'checkbox',
+          checked: pinSet.has(groupKey),
+          disabled: this.state.busy,
+          onChange: () => this.togglePinnedChannel(groupKey)
+        }),
+        React.createElement('span', null, 'Pin this group’s Fabric chat')
+      ),
+      catalog.length
+        ? React.createElement('div', {
+          style: {
+            maxHeight: 220,
+            overflow: 'auto',
+            border: '1px solid var(--line)',
+            borderRadius: 8,
+            padding: '6px 8px'
+          }
+        },
+          catalog.slice(0, 80).map((ch) => React.createElement('label', {
+            key: ch.key,
+            className: 'gpage-toggle',
+            style: { marginBottom: 6, alignItems: 'flex-start' }
+          },
+            React.createElement('input', {
+              type: 'checkbox',
+              checked: pinSet.has(ch.key),
+              disabled: this.state.busy || (!pinSet.has(ch.key) && pins.length >= MAX_PINNED_CHANNELS),
+              onChange: () => this.togglePinnedChannel(ch.key)
+            }),
+            React.createElement('span', null,
+              (ch.guildName ? ch.guildName + ' · ' : '') + String(ch.label || '').replace(/^#/, ''),
+              React.createElement('code', {
+                style: { display: 'block', fontSize: 10, color: 'var(--muted)', marginTop: 2 }
+              }, ch.key)
+            )
+          ))
+        )
+        : React.createElement('div', { style: { fontSize: 12, color: 'var(--muted)' } },
+          'No Discord text channels listed yet — enable the bot under Chat → Bot settings, then refresh.'),
+      pins.length
+        ? React.createElement('div', { style: { fontSize: 11.5, color: 'var(--muted)', marginTop: 8 } },
+          pins.length + ' pinned: ',
+          pins.map((k) => {
+            const id = parseDiscordChatChannel(k);
+            return id ? ('#' + id) : k;
+          }).join(', '))
+        : null
     );
   }
 
@@ -637,7 +764,27 @@ class GroupPage extends React.Component {
             m === g.creator ? React.createElement('span', { className: 'gpage-tag public' }, 'creator') : null,
             m === this.state.pubkey ? React.createElement('span', { className: 'gpage-tag private' }, 'you') : null
           );
-        })
+        }),
+        (g.role === 'creator' || g.role === 'member')
+          ? React.createElement('div', { style: { display: 'flex', gap: 8, marginTop: 12, flexWrap: 'wrap' } },
+            React.createElement('input', {
+              type: 'text',
+              value: this.state.inviteKey,
+              placeholder: 'Invite — paste a compressed pubkey (02…/03…)',
+              style: {
+                flex: 1, minWidth: 180, background: 'var(--bg)', border: '1px solid var(--line)',
+                color: 'var(--text)', borderRadius: 7, padding: '7px 10px', fontSize: 12,
+                fontFamily: "'Cascadia Code',Consolas,monospace"
+              },
+              onChange: (e) => this.setState({ inviteKey: e.target.value })
+            }),
+            React.createElement('button', {
+              className: 'gpage-btn',
+              disabled: this.state.busy || !/^0[23][0-9a-f]{64}$/.test(String(this.state.inviteKey || '').trim()),
+              onClick: () => this.inviteMember()
+            }, 'Send invite')
+          )
+          : null
       )
     );
   }
@@ -668,7 +815,13 @@ class GroupPage extends React.Component {
           g.role === 'member' || g.role === 'creator' ? ` · you are a ${g.role}` : null
         ),
         React.createElement('div', { className: 'gpage-actions' },
-          React.createElement('button', { className: 'gpage-btn', onClick: () => this.share() }, 'Share'),
+          React.createElement('button', {
+            className: 'gpage-btn',
+            title: g.visibility === 'public'
+              ? 'Copy a share others paste via Import… to apply'
+              : 'Copy a join invite — they paste Import… and Accept',
+            onClick: () => this.share()
+          }, 'Share'),
           g.role === 'creator' || g.role === 'member'
             ? React.createElement('button', {
               className: 'gpage-btn ghost',
@@ -742,7 +895,7 @@ class GroupPage extends React.Component {
   }
 }
 
-GroupPage.CSS = CSS;
+GroupPage.CSS = CSS + '\n' + (GroupBitcoinPanel.CSS || '');
 GroupPage.pathKeyFromLocation = function () {
   const m = String((typeof window !== 'undefined' && window.location.pathname) || '').match(/^\/groups\/([^/]+)/);
   return m ? m[1] : null;

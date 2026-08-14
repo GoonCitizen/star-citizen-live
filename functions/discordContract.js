@@ -76,7 +76,11 @@ function requestFromDiscordActivity (activity, opts = {}) {
     requestId,
     discordMessageId: discordMessageId || null,
     channelId,
-    guildId: opts.guildId != null ? String(opts.guildId) : null,
+    guildId: opts.guildId != null
+      ? String(opts.guildId)
+      : (activity.guildId != null
+        ? String(activity.guildId)
+        : (target.guildId != null ? String(target.guildId) : (object.guildId != null ? String(object.guildId) : null))),
     authorId: String(actor.ref || actor.id || '').trim() || null,
     authorUsername: String(actor.username || '').trim() || null,
     content,

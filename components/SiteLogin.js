@@ -16,9 +16,13 @@ const STORAGE_KEY = 'fabric.identity.session';
 const DELEGATION_KEY = 'fabric.delegation';
 
 const CSS = `
-  .sl-wrap{display:inline-flex;align-items:center;gap:6px;flex-wrap:wrap}
+  .sl-wrap{display:inline-flex;align-items:center;gap:6px;flex-wrap:wrap;min-width:0;max-width:100%}
   .sl-btn{background:var(--panel2);border:1px solid var(--line);color:var(--text);
     border-radius:7px;padding:4px 10px;font-size:12px;font-weight:600;cursor:pointer}
+  @media (max-width:720px){
+    .sl-wrap{gap:4px}
+    .sl-btn{padding:5px 8px;font-size:11.5px}
+  }
   .sl-btn:hover{border-color:var(--accent)}
   .sl-btn:disabled{opacity:.45;cursor:default}
   .sl-btn.primary{background:var(--accent);border-color:var(--accent);color:#fff}
@@ -26,6 +30,10 @@ const CSS = `
   .sl-status{font-size:11px;color:var(--muted);max-width:220px}
   .sl-status.err{color:var(--kill)}
   .sl-status.ok{color:var(--good)}
+  .sl-qr{display:flex;flex-direction:column;gap:6px;margin-top:8px;padding:8px;
+    background:var(--panel2);border:1px solid var(--line);border-radius:8px;max-width:240px}
+  .sl-qr img{width:196px;height:196px;image-rendering:pixelated;background:#fff;border-radius:4px}
+  .sl-qr code{font-size:10px;word-break:break-all;color:var(--muted)}
 `;
 
 function readStoredSession () {
@@ -77,7 +85,9 @@ class SiteLogin extends React.Component {
       session: readStoredSession(),
       busy: false,
       status: '',
-      error: false
+      error: false,
+      protocolUrl: null,
+      qrDataUrl: null
     };
     this._pollTimer = null;
     this._passportWait = null;
@@ -162,6 +172,12 @@ class SiteLogin extends React.Component {
       a.click();
       document.body.removeChild(a);
       this._pollSigned(j.sessionId);
+      this.setState({ protocolUrl });
+      try {
+        const { protocolQrDataUrl } = require('../functions/protocolQr');
+        const qr = await protocolQrDataUrl(protocolUrl);
+        if (qr) this.setState({ qrDataUrl: qr });
+      } catch (_) { /* qrcode optional */ }
     } catch (e) {
       this.setState({ busy: false });
       this._setStatus((e && e.message) || String(e), true);
@@ -245,13 +261,32 @@ class SiteLogin extends React.Component {
               className: 'sl-btn primary',
               disabled: busy,
               onClick: () => this._loginDesktop()
-            }, 'Desktop'),
+            }, 'GoonCitizen'),
             React.createElement('button', {
               type: 'button',
               className: 'sl-btn',
               disabled: busy,
               onClick: () => this._loginPassport()
             }, 'Passport')),
+        this.state.protocolUrl && !idLabel
+          ? React.createElement('div', { className: 'sl-qr' },
+            this.state.qrDataUrl
+              ? React.createElement('img', {
+                src: this.state.qrDataUrl,
+                alt: 'Scan with GoonCitizen on another device'
+              })
+              : null,
+            React.createElement('div', { className: 'sl-status' },
+              'Scan or open on another device / desktop'),
+            React.createElement('code', null, this.state.protocolUrl),
+            React.createElement('button', {
+              type: 'button',
+              className: 'sl-btn',
+              onClick: () => {
+                try { navigator.clipboard.writeText(this.state.protocolUrl); } catch (_) {}
+              }
+            }, 'Copy link'))
+          : null,
         status
           ? React.createElement('span', { className: 'sl-status' + (error ? ' err' : status === 'Signed in.' ? ' ok' : '') }, status)
           : null
@@ -259,5 +294,7 @@ class SiteLogin extends React.Component {
     );
   }
 }
+
+SiteLogin.CSS = CSS;
 
 module.exports = SiteLogin;

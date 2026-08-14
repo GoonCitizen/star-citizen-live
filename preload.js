@@ -27,6 +27,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
     importBackup: (backup, password, replace) => ipcRenderer.invoke('identity:import-backup', { backup, password, replace }),
     setAutoLock: (minutes) => ipcRenderer.invoke('identity:set-autolock', { minutes }),
     forget: (confirm) => ipcRenderer.invoke('identity:forget', { confirm: !!confirm }),
+    startDeviceLinkOffer: (opts) => ipcRenderer.invoke('identity:device-link-start', opts || {}),
+    tickDeviceLinkOffer: () => ipcRenderer.invoke('identity:device-link-tick'),
+    cancelDeviceLinkOffer: () => ipcRenderer.invoke('identity:device-link-cancel'),
+    openProtocolUrl: (url) => ipcRenderer.invoke('identity:open-protocol-url', url),
     onChanged: (handler) => {
       const listener = (_e, summary) => handler(summary);
       ipcRenderer.on('identity:changed', listener);

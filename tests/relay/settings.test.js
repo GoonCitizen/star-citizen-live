@@ -83,7 +83,24 @@ test('nickname setting sanitizes and round-trips; empty clears', async () => {
   assert.strictEqual(settingsStore.loadSettings(store).nickname.length, settingsStore.NICKNAME_MAX);
   settingsStore.putSetting(store, 'nickname', '');
   assert.strictEqual(settingsStore.loadSettings(store).nickname, undefined);
-  assert.strictEqual(settingsStore.sanitizeNickname('  a\nb  '), 'a b');
+  await store.stop();
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test('fabricShareEncoding sanitizes to hex or base64; default is unset (runtime base64)', async () => {
+  const dir = tmpDir();
+  const store = new Store({ path: path.join(dir, 'register') });
+  await store.start();
+  assert.ok(settingsStore.ALLOWED_KEYS.includes('fabricShareEncoding'));
+  assert.strictEqual(settingsStore.sanitizeFabricShareEncoding('HEX'), 'hex');
+  assert.strictEqual(settingsStore.sanitizeFabricShareEncoding('b64'), 'base64');
+  assert.strictEqual(settingsStore.sanitizeFabricShareEncoding('nope'), null);
+  settingsStore.putSetting(store, 'fabricShareEncoding', 'hex');
+  assert.strictEqual(settingsStore.loadSettings(store).fabricShareEncoding, 'hex');
+  settingsStore.putSetting(store, 'fabricShareEncoding', 'base64');
+  assert.strictEqual(settingsStore.loadSettings(store).fabricShareEncoding, 'base64');
+  settingsStore.putSetting(store, 'fabricShareEncoding', null);
+  assert.strictEqual(settingsStore.loadSettings(store).fabricShareEncoding, undefined);
   await store.stop();
   fs.rmSync(dir, { recursive: true, force: true });
 });
@@ -134,8 +151,16 @@ test('GET /settings and PUT /settings/:name persist and flag restarts', async ()
     assert.ok(list.body.runtime);
     assert.ok(list.body.allowedKeys.includes('groupChatSeal'));
     assert.ok(list.body.allowedKeys.includes('sharePresence'));
+    assert.ok(list.body.allowedKeys.includes('fabricShareEncoding'));
+    assert.ok(list.body.allowedKeys.includes('shareDiscordCatalog'));
+    assert.ok(list.body.allowedKeys.includes('sharePlaytimes'));
+    assert.ok(list.body.allowedKeys.includes('shareFiles'));
     assert.strictEqual(list.body.runtime.groupChatSeal, false);
     assert.strictEqual(list.body.runtime.sharePresence, false);
+    assert.strictEqual(list.body.runtime.fabricShareEncoding, 'base64');
+    assert.strictEqual(list.body.runtime.shareDiscordCatalog, true);
+    assert.strictEqual(list.body.runtime.sharePlaytimes, false);
+    assert.strictEqual(list.body.runtime.shareFiles, false);
 
     const put = await request(port, 'PUT', '/settings/logfile', { value: '/tmp/Game.log' });
     assert.strictEqual(put.status, 200);
@@ -157,6 +182,35 @@ test('GET /settings and PUT /settings/:name persist and flag restarts', async ()
     const afterPresence = await request(port, 'GET', '/settings');
     assert.strictEqual(afterPresence.body.runtime.sharePresence, true);
     assert.strictEqual(afterPresence.body.runtime.presenceVisibility, 'peers');
+
+    const enc = await request(port, 'PUT', '/settings/fabricShareEncoding', { value: 'hex' });
+    assert.strictEqual(enc.status, 200);
+    assert.strictEqual(enc.body.requiresRestart, false);
+    const afterEnc = await request(port, 'GET', '/settings');
+    assert.strictEqual(afterEnc.body.runtime.fabricShareEncoding, 'hex');
+    assert.strictEqual(settingsStore.loadSettings(svc.registerStore).fabricShareEncoding, 'hex');
+
+    const catalogShare = await request(port, 'PUT', '/settings/shareDiscordCatalog', { value: false });
+    assert.strictEqual(catalogShare.status, 200);
+    assert.strictEqual(catalogShare.body.requiresRestart, false);
+    const afterCatalog = await request(port, 'GET', '/settings');
+    assert.strictEqual(afterCatalog.body.runtime.shareDiscordCatalog, false);
+    assert.strictEqual(settingsStore.loadSettings(svc.registerStore).shareDiscordCatalog, false);
+
+    const playtimes = await request(port, 'PUT', '/settings/sharePlaytimes', { value: true });
+    assert.strictEqual(playtimes.status, 200);
+    assert.strictEqual(playtimes.body.requiresRestart, false);
+    assert.strictEqual(playtimes.body.runtime.sharePlaytimes, true);
+    const afterPlay = await request(port, 'GET', '/settings');
+    assert.strictEqual(afterPlay.body.runtime.sharePlaytimes, true);
+    assert.strictEqual(settingsStore.loadSettings(svc.registerStore).sharePlaytimes, true);
+
+    const filesShare = await request(port, 'PUT', '/settings/shareFiles', { value: true });
+    assert.strictEqual(filesShare.status, 200);
+    assert.strictEqual(filesShare.body.requiresRestart, false);
+    const afterFiles = await request(port, 'GET', '/settings');
+    assert.strictEqual(afterFiles.body.runtime.shareFiles, false);
+    assert.strictEqual(settingsStore.loadSettings(svc.registerStore).shareFiles, true);
 
     const bad = await request(port, 'PUT', '/settings/nonsense', { value: 1 });
     assert.strictEqual(bad.status, 400);

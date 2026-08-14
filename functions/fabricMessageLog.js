@@ -91,6 +91,23 @@ function createFabricMessageLog (opts = {}) {
     return out;
   }
 
+  /**
+   * @param {string|number} id hash, seq id, or stringified seq
+   * @returns {object|null}
+   */
+  function get (id) {
+    if (id == null || id === '') return null;
+    const s = String(id).trim();
+    const lower = s.toLowerCase();
+    for (let i = entries.length - 1; i >= 0; i--) {
+      const e = entries[i];
+      if (!e) continue;
+      if (e.hash && String(e.hash).toLowerCase() === lower) return e;
+      if (String(e.id) === s) return e;
+    }
+    return null;
+  }
+
   function clear () {
     entries.length = 0;
     return { cleared: true, capacity };
@@ -116,6 +133,7 @@ function createFabricMessageLog (opts = {}) {
 
   return {
     append,
+    get,
     list,
     clear,
     pause,

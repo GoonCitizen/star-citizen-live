@@ -89,6 +89,20 @@ test('createFabricMessageLog rings, filters, pause', () => {
   assert.equal(log.status().count, 0);
 });
 
+test('createFabricMessageLog get finds by hash or seq', () => {
+  const log = createFabricMessageLog({ capacity: 8 });
+  const row = log.append({
+    direction: 'out',
+    type: 'CONTRACT_MESSAGE',
+    hash: 'deadbeef',
+    appType: 'GroupChange'
+  });
+  assert.ok(row);
+  assert.equal(log.get('deadbeef').appType, 'GroupChange');
+  assert.equal(log.get(row.id).hash, 'deadbeef');
+  assert.equal(log.get('missing'), null);
+});
+
 test('createFabricMessageLog filters by contract', () => {
   const log = createFabricMessageLog({ capacity: 10 });
   const cid = 'aa'.repeat(32);
@@ -171,6 +185,20 @@ test('GET /fabric/messages exposes only Fabric message log API', async () => {
     assert.equal(filtered.status, 200);
     assert.equal(filtered.body.data.length, 1);
     assert.equal(filtered.body.data[0].appType, 'GroupActivityTree');
+
+    svc._fabricMessageLog.append({
+      direction: 'out',
+      type: 'CONTRACT_MESSAGE',
+      hash: 'cafef00d',
+      appType: 'GroupChange',
+      summary: '→ change'
+    });
+    const byHash = await request(port, 'GET', '/services/star-citizen/fabric/messages/cafef00d');
+    assert.equal(byHash.status, 200);
+    assert.equal(byHash.body.data.hash, 'cafef00d');
+    const missing = await request(port, 'GET', '/services/star-citizen/fabric/messages/nope');
+    assert.equal(missing.status, 200);
+    assert.equal(missing.body.data.missing, true);
   } finally {
     await svc.stop();
     fs.rmSync(dir, { recursive: true, force: true });

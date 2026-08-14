@@ -9,6 +9,93 @@ next. Each milestone closes with a short retro. Newest at the top.
 
 ---
 
+## 🔗 Fabric pins after discord `eac4633` ✅
+**Date:** 2026-08-14 · branch `feature/rsi`
+
+`npm run report:install` against GitHub `feature/rsi`: core `488a87da1`
+([#185](https://github.com/FabricLabs/fabric/pull/185)), http `5161e76`, hub
+`4c1cd14` ([#15](https://github.com/FabricLabs/hub.fabric.pub/pull/15)), discord
+`eac4633` ([#2](https://github.com/FabricLabs/fabric-discord/pull/2): OAuth
+callback 501). Core / http / hub SHAs unchanged. Local IdentityCrossSign copy
+still matches core `_normPubkey`.
+
+## 🔗 Stale hub NIC `:7778` dials (live rsi-error.log) ✅
+**Date:** 2026-08-14 · branch `feature/rsi`
+
+Production RSI err log was mostly `ECONNREFUSED` to `65.21.231.149:7778` /
+`65.21.231.166:7778` (historical port plan), not a pm2 crash loop. Canonicalize
+now maps those dedicated IPs to `relay.goon.vc` / `hub.fabric.pub` on `:7777`
+and still drops self. Live snapshot: [downstream.agents.md](https://relay.goon.vc/downstream.agents.md).
+
+## 🔗 Fabric pins after Hub `4c1cd14` / http `5161e76` / core `488a87da1` ✅
+**Date:** 2026-08-14 · branch `feature/rsi`
+
+`npm run report:install` against GitHub `feature/rsi`: core `488a87da1`
+([#185](https://github.com/FabricLabs/fabric/pull/185)), http `5161e76`, hub
+`4c1cd14` ([#15](https://github.com/FabricLabs/hub.fabric.pub/pull/15)), discord
+`f8708e27`. Local IdentityCrossSign copy matches core `_normPubkey`. Hub cluster
+keys are hex-only.
+
+## 🔗 Fabric pins after Hub `da0d16f` / http `270ebbb` / core #185 ✅
+**Date:** 2026-08-14 · branch `feature/rsi`
+
+`npm run report:install` against GitHub `feature/rsi`: core `ab0acf77b`
+([#185](https://github.com/FabricLabs/fabric/pull/185)), http `270ebbb`, hub
+`da0d16f`, discord `f8708e27`. Dashboard keeps a local browser-safe
+IdentityCrossSign copy (core now ships the same strings). Device-link responder
+fetch uses http `deviceLinkHeaders`. Shared-mode write gate and production
+relay docs unchanged.
+
+## 🔗 Fabric pins after Hub / http / core RSI tips ✅
+**Date:** 2026-08-14 · branch `feature/rsi`
+
+`npm run report:install` against GitHub `feature/rsi`: core `4d7351ee3`, http
+`f88da9c`, hub `3cc43d1`, discord `f8708e27`. IdentityCrossSign stays local
+(core still omits those files). Shared-mode write gate and production relay
+docs unchanged.
+
+## 🔗 Public relay operators + server-mode Fabric Peer ✅
+**Date:** 2026-08-14 · branch `feature/rsi`
+
+`docs/PRODUCTION.md` (nvm 24.15 + pm2 + Caddy or Nginx) for `relay.goon.vc`. `SC_MODE=server`
+now keeps a Fabric Peer unless `SC_FABRIC=0`, seeds hubs minus self
+(`FABRIC_PUBLIC_HOST`), and binds HTTP loopback by default so Caddy/Nginx cannot inherit
+the unlocked-identity write path. Templates: `deploy/env.relay.goon.vc.example`,
+`deploy/ecosystem.config.cjs`, `deploy/Caddyfile.example`, `deploy/nginx-relay.example.conf`.
+
+## 🔗 Fabric pins + shared-mode write gate ✅
+**Date:** 2026-08-14 · branch `feature/rsi`
+
+Re-pin to suite tips Hub is running: core `39bfbcb7b`, http `17abf49`, hub
+`c4efe57`, discord `f8708e27`. Non-loopback `httpSharedMode` writes now require
+a Schnorr/Bearer session (`functions/httpRemoteAuth.js`) so LAN clients cannot
+speak as the unlocked identity. Loopback desktop path unchanged. Unauth GETs on
+a shared bind remain an information leak.
+
+## 🔗 Fabric pins + LiveRelay RSI cut ✅
+**Date:** 2026-08-13 · branch `feature/rsi`
+
+`npm i --allow-git=all` against GitHub `feature/rsi` tips: core `3745041e`, http
+`e167d8e`, hub `5441f838`, discord `f8708e27`. `functions/identityCluster.js`
+re-exports `@fabric/hub`; `identityCrossSign.js` stays local (browser-safe).
+`npm test` green (fabric + unit + relay + integration + ui). Playnet after Hub
+is up: `npm run playnet:deploy-gooncitizen -- --production --accept`.
+
+---
+
+## 📝 AGENTS.md sync — LiveRelay is what runs (docs) ✅
+**Date:** 2026-08-13 · branch `feature/rsi`
+
+Evaluated multi-repo “release posture” AGENTS updates. Highest leverage was local:
+`AGENTS.md` §4/§10 still pointed at a deleted **`app/`** Fabric-free skeleton and
+claimed Fabric was gone, while §3 already described LiveRelay + Fabric Peer.
+Surgical fix: Release posture block, §4 structure → `LiveRelay` / `functions/parser`,
+softened §5 milestones, deps convention, §10 ground truths (D-002 vs D-009/D-010),
+and `REVIEW.md` dated findings. Hub/core AGENTS rewrites deferred. **Owner still
+needs to name the release cut** before AGENTS can list real ship blockers.
+
+---
+
 ## 🔎 Sourced issuer→type fallback — type-"Other" 45% → 14% ✅
 **Date:** 2026-06-19 · branch `feature/faction-dimension`
 

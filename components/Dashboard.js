@@ -24,16 +24,23 @@ const Peers = require('./Peers');
 const FabricMessages = require('./FabricMessages');
 const Fleet = require('./Fleet');
 const Settings = require('./Settings');
+const Account = require('./Account');
 const Wallet = require('./Wallet');
 const DocumentExchange = require('./DocumentExchange');
 const LogBrowser = require('./LogBrowser');
-const ActivityHeatmap = require('./ActivityHeatmap');
+const AppSearch = require('./AppSearch');
 const ShipPicker = require('./ShipPicker');
 const activityHeat = require('../functions/activityHeat');
 const missionCharts = require('../functions/missionCharts');
 
 const { FEATURES } = require('../constants');
 const { FEED_CATEGORIES, FEED_SOURCES, DEFAULT_FEED_SOURCES, filterLiveFeed } = require('../functions/liveFeed');
+const {
+  isAndroidCompanion,
+  androidSurface,
+  androidDashboardTabVisible
+} = require('../functions/androidSurface');
+const { offerPassportDeviceLink } = require('../functions/fabricDeviceLinkOffer');
 const featureEnabled = (key) => FEATURES[key] !== false;
 
 // Top-level features, listed along the top of the dashboard (Hub-style).
@@ -60,17 +67,29 @@ const NETWORK_ADVANCED_VIEWS = [
   ['messages', 'Messages']
 ];
 
-// Advanced-only top-level tabs (Files = Hub Document Exchange inventory UI).
+// Advanced-only top-level tabs (Files = this node's document catalog).
 const ADVANCED_TABS = new Set(['documents']);
 
 // Notifications is opened from the header bell (not a primary feature tab).
 // Legacy #analyze / #live / #peers / #messages hash aliases resolve in resolveHash().
-const TAB_KEYS = TABS.map(([k]) => k).concat(['notifications', 'analyze', 'live', 'peers', 'messages', 'feed']);
+const TAB_KEYS = TABS.map(([k]) => k).concat([
+  'notifications', 'analyze', 'live', 'peers', 'messages', 'feed',
+  'keys', 'security', 'privacy'
+]);
+const ACCOUNT_TABS = new Set(['keys', 'security', 'privacy']);
+
+function preferAccountPages () {
+  return isAndroidCompanion();
+}
 
 /** @returns {{ tab: string, networkView: string|null }} */
 function resolveHash (rawHash, advancedMode) {
-  const h = String(rawHash || '').replace(/^#/, '');
+  // Strip ?query so deep links like #fleet?id=… / #groups?id=…&tab=fleets work.
+  const { readAppHash } = require('../functions/appHash');
+  const { path } = readAppHash(rawHash);
+  let h = path;
   if (!h || h === 'analyze') return { tab: 'home', networkView: null };
+  if (/^device-link=/i.test(h)) return { tab: 'home', networkView: null };
   if (h === 'live' || h === 'feed') return { tab: 'network', networkView: 'feed' };
   if (h === 'peers') return { tab: 'network', networkView: 'peers' };
   if (h === 'messages') {
@@ -85,9 +104,11 @@ function resolveHash (rawHash, advancedMode) {
     return { tab: 'network', networkView: allowed.has(view) ? view : 'feed' };
   }
   if (TAB_KEYS.includes(h) && TABS.some(([k]) => k === h)) {
+    if (!androidDashboardTabVisible(h)) return { tab: 'home', networkView: null };
     return { tab: h, networkView: null };
   }
   if (h === 'notifications') return { tab: 'notifications', networkView: null };
+  if (ACCOUNT_TABS.has(h)) return { tab: h, networkView: null };
   return { tab: 'home', networkView: null };
 }
 
@@ -160,24 +181,31 @@ const CSS = `
   *{box-sizing:border-box}
   html,body,#root{height:100%}
   body{margin:0;background:var(--bg);color:var(--text);
-       font-family:'Segoe UI',system-ui,sans-serif;font-size:14px}
-  header{position:sticky;top:0;z-index:5;background:var(--panel);
-         border-bottom:1px solid var(--line);padding:12px 18px}
+       font-family:'Segoe UI',system-ui,sans-serif;font-size:14px;
+       padding:env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left)}
+  header{position:sticky;top:0;z-index:20;background:var(--panel);
+         border-bottom:1px solid var(--line);padding:12px 18px;max-width:100%}
   /* Fill tabs (Chat, Fleet): window is the canvas — header + fill; scroll inside panes only. */
   body.chat-fill{overflow:hidden}
   body.chat-fill #root{display:flex;flex-direction:column;min-height:0;overflow:hidden}
   body.chat-fill #root > header{flex:0 0 auto;position:relative}
   body.chat-fill #root > .chat-wrap,
+  body.chat-fill .chat-wrap,
   body.chat-fill #root > .fl-wrap{flex:1 1 auto;min-height:0;width:100%}
   /* Full-bleed page shell (Home / Fleet width): no centered max-width column. */
   .page-shell,.mi-wrap,.wa-wrap,.pr-wrap,.lib-wrap,.fm-wrap,.nt-wrap,
-  .gpage,.mpage,.ppage{
-    width:100%;max-width:none;margin:0;padding:12px 14px;box-sizing:border-box;
+  .gpage,.mpage,.ppage,.ac-wrap{
+    width:100%;max-width:none;margin:0;padding:12px 14px 72px;box-sizing:border-box;
     display:grid;gap:14px
   }
   .network-nav{display:flex;flex-wrap:wrap;align-items:center;gap:8px;padding:14px 18px 0}
   .network-nav .hint{color:var(--muted);font-size:12px;margin-left:4px}
   .row{display:flex;flex-wrap:wrap;align-items:center;gap:14px}
+  .row.tabs{flex-wrap:nowrap;overflow-x:auto;-webkit-overflow-scrolling:touch;gap:8px;padding-bottom:4px;
+    scrollbar-width:thin}
+  .row.tabs .tab{flex:none}
+  .header-nav{display:flex;align-items:center;gap:10px;margin-top:10px;min-width:0;width:100%;max-width:100%}
+  .header-nav .row.tabs{flex:1 1 0;min-width:0;margin-top:0;overflow-x:auto;overflow-y:hidden}
   h1{font-size:17px;margin:0;font-weight:650}
   .pill{padding:2px 10px;border-radius:999px;font-size:12px;font-weight:600}
   .pill.on{background:rgba(63,185,80,.15);color:var(--good)}
@@ -215,7 +243,12 @@ const CSS = `
   .counts{display:flex;gap:12px;flex-wrap:wrap;color:var(--muted);font-size:12.5px}
   .counts b{color:var(--text)}
   .counts .k b{color:var(--kill)}
-  .ctrl{margin-left:auto;display:flex;gap:12px;align-items:center;color:var(--muted);font-size:12.5px}
+  .ctrl{margin-left:auto;display:flex;gap:12px;align-items:center;color:var(--muted);font-size:12.5px;
+    flex-wrap:wrap;min-width:0;max-width:100%;justify-content:flex-end}
+  .ctrl .btn,.ctrl .bell,.ctrl .gear,.ctrl .sl-wrap{flex:none}
+  .gear{background:var(--panel2);border:1px solid var(--line);color:var(--text);border-radius:7px;
+    padding:5px 11px;font-size:14px;cursor:pointer;line-height:1;flex:none}
+  .gear:hover{border-color:var(--accent)}
   input[type=text]{background:var(--bg);border:1px solid var(--line);color:var(--text);
        border-radius:6px;padding:6px 9px;font-size:13px;min-width:240px}
   label{display:flex;gap:5px;align-items:center;cursor:pointer;user-select:none}
@@ -253,8 +286,22 @@ const CSS = `
   .empty{color:var(--muted);padding:22px 14px;text-align:center;font-style:italic}
   mark{background:rgba(210,153,34,.35);color:inherit;border-radius:2px}
   @media(max-width:820px){main{grid-template-columns:1fr}}
+  @media(max-width:720px){
+    header{padding:10px 12px}
+    header > .row{gap:8px}
+    .counts{flex:1 1 100%;gap:8px;font-size:11.5px}
+    .ctrl{flex:1 1 100%;margin-left:0;gap:6px;justify-content:flex-end;width:100%}
+    .ctrl .btn{padding:4px 8px;font-size:11.5px}
+    .bell,.gear{padding:5px 8px}
+    .idchip{max-width:min(180px,48vw)}
+    input[type=text]{min-width:0;width:100%}
+    .header-nav{gap:6px;margin-top:8px}
+  }
   .tab{background:var(--panel2);border:1px solid var(--line);color:var(--muted);border-radius:7px;padding:5px 16px;font-size:13px;cursor:pointer}
   .tab.on{color:var(--text);border-color:var(--accent)}
+  @media(max-width:720px){
+    .tab{padding:5px 10px;font-size:12.5px}
+  }
   .slrow{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-bottom:8px}
   .flab{font-size:11px;color:var(--muted);margin-right:3px;min-width:54px}
   .chip{font-size:12px;padding:4px 10px;border-radius:999px;border:1px solid var(--line);background:transparent;color:var(--muted);cursor:pointer}
@@ -361,6 +408,7 @@ const CSS = `
     word-break:break-word;white-space:pre-wrap}
   .b-chat{background:var(--accent-soft-strong, rgba(59,130,246,.18));color:var(--accent)}
   .b-bcast{background:rgba(163,113,247,.18);color:#a371f7}
+  .b-note{background:rgba(210,153,34,.18);color:var(--warn)}
   .b-peer{background:var(--accent-soft, rgba(59,130,246,.12));color:var(--accent)}
 `;
 
@@ -493,8 +541,8 @@ class Dashboard extends React.Component {
       identityPubkey: null,
       identityLocked: false,
       identityExists: false,
-      bitcoinEnable: null, // null until /settings; then runtime.bitcoin.enable
-      documentsEnable: null, // null until /settings; then runtime.documents.enable
+      bitcoinEnable: isAndroidCompanion() ? false : null, // null until /settings; then runtime.bitcoin.enable
+      documentsEnable: isAndroidCompanion() ? false : null, // null until /settings; then runtime.documents.enable
       documentsRuntime: null,
       showSettings: false,
       showIdentity: false,
@@ -507,7 +555,6 @@ class Dashboard extends React.Component {
       shipOverrideSlug: null,
       shipOverride: null,
       detectedShip: null,
-      showProfileActivity: ActivityHeatmap.readShowProfileActivity(),
       presenceAvailability: 'auto',
       presenceStatusText: null,
       statusDraft: '',
@@ -542,19 +589,24 @@ class Dashboard extends React.Component {
 
   componentDidMount () {
     this.poll();
-    this.fetchAnalytics(); // cumulative stats available on every tab by default
-    this.fetchRules();
+    if (androidSurface('heatmap')) {
+      this.fetchAnalytics(); // cumulative stats available on every tab by default
+      this.fetchRules();
+    }
     this.loadNickname();
     this.loadPresenceChip();
     this.syncChatFillClass();
     this._timer = setInterval(() => {
       if (this.state.auto) this.poll();
     }, 2000);
-    this._analyticsTimer = setInterval(() => {
-      if (this.state.auto) this.fetchAnalytics();
-    }, 15000);
+    this._analyticsTimer = androidSurface('heatmap')
+      ? setInterval(() => {
+        if (this.state.auto) this.fetchAnalytics();
+      }, 15000)
+      : null;
     this._presenceTimer = setInterval(() => this.loadPresenceChip(), 15000);
     this._onHash = () => {
+      if (offerPassportDeviceLink()) return;
       const h = String(window.location.hash || '').replace(/^#/, '');
       if (h === 'analyze') {
         try { history.replaceState(null, '', window.location.pathname + window.location.search); } catch (_) { /* ignore */ }
@@ -567,6 +619,7 @@ class Dashboard extends React.Component {
       }
     };
     window.addEventListener('hashchange', this._onHash);
+    offerPassportDeviceLink();
     this._onDocClick = () => {
       if (this.state.showIdFlyout) this.setState({ showIdFlyout: false });
     };
@@ -616,12 +669,14 @@ class Dashboard extends React.Component {
   }
 
   walletVisible () {
+    if (!androidDashboardTabVisible('wallet')) return false;
     if (!featureEnabled('wallet')) return false;
     if (this.state.bitcoinEnable === false) return false;
     return true;
   }
 
   documentsVisible () {
+    if (!androidDashboardTabVisible('documents')) return false;
     if (!featureEnabled('documents')) return false;
     if (!this.state.advancedMode) return false;
     if (this.state.documentsEnable !== true) return false;
@@ -788,7 +843,8 @@ class Dashboard extends React.Component {
           this.putPresenceQuick(patch);
         }
       },
-      React.createElement('option', { value: 'auto' }, 'Auto (Game.log)'),
+      React.createElement('option', { value: 'auto' },
+        androidSurface('corpus') ? 'Auto (Game.log)' : 'Auto'),
       React.createElement('option', { value: 'online' }, 'Online'),
       React.createElement('option', { value: 'offline' }, 'Offline')
       )
@@ -834,14 +890,32 @@ class Dashboard extends React.Component {
         onClick: () => {
           if (!pk) return;
           this.setState({ showIdFlyout: false });
+          if (this.preferAccountPages()) {
+            this.openAccount('privacy');
+            return;
+          }
           window.location.href = '/profiles/' + encodeURIComponent(pk);
         }
-      }, 'My profile'),
+      }, this.preferAccountPages() ? 'Profile & privacy' : 'My profile'),
+      this.preferAccountPages()
+        ? React.createElement('button', {
+          type: 'button',
+          className: 'btn',
+          onClick: () => {
+            this.setState({ showIdFlyout: false });
+            this.openAccount('security');
+          }
+        }, 'Security')
+        : null,
       React.createElement('button', {
         type: 'button',
         className: 'btn primary',
-        onClick: () => this.setState({ showIdFlyout: false, showIdentity: true })
-      }, 'Identity…')
+        onClick: () => {
+          this.setState({ showIdFlyout: false });
+          if (this.preferAccountPages()) this.openAccount('keys');
+          else this.setState({ showIdentity: true });
+        }
+      }, this.preferAccountPages() ? 'Keys' : 'Identity…')
     )
     );
   }
@@ -930,6 +1004,10 @@ class Dashboard extends React.Component {
   }
 
   fetchAnalytics () {
+    if (!androidSurface('heatmap')) {
+      this.setState({ azLoading: false });
+      return;
+    }
     this.setState({ azLoading: true });
     fetch('/services/star-citizen/analytics')
       .then((r) => r.json())
@@ -1021,7 +1099,7 @@ class Dashboard extends React.Component {
   }
 
   renderMyLogsModal () {
-    if (!this.state.showMyLogs) return null;
+    if (!androidSurface('corpus') || !this.state.showMyLogs) return null;
     const corpus = this.state.corpus || (this.state.analytics && this.state.analytics.corpus) || null;
     return React.createElement('div', {
       className: 'gc-modal-backdrop',
@@ -1084,8 +1162,18 @@ class Dashboard extends React.Component {
       }
     }
     this.setState(patch, () => {
-      if (tab === 'home' && !this.state.analytics) this.fetchAnalytics();
+      if (tab === 'home' && !this.state.analytics && androidSurface('heatmap')) this.fetchAnalytics();
     });
+  }
+
+  openAccount (section) {
+    const tab = ACCOUNT_TABS.has(section) ? section : 'keys';
+    this.setState({ showIdentity: false, showSettings: false, showIdFlyout: false });
+    this.showTab(tab);
+  }
+
+  preferAccountPages () {
+    return preferAccountPages();
   }
 
   networkViewList () {
@@ -1096,6 +1184,26 @@ class Dashboard extends React.Component {
 
   setNetworkView (view) {
     this.showTab('network', { networkView: view });
+  }
+
+  openSearchHit (hit, dest) {
+    if (hit && hit.href) {
+      window.location.href = hit.href;
+      return;
+    }
+    const raw = dest || (hit && hit.hash) || '';
+    const hash = !raw
+      ? ''
+      : (String(raw).charAt(0) === '#' ? String(raw) : ('#' + String(raw).replace(/^#/, '')));
+    if (hash) {
+      try {
+        history.replaceState(null, '', window.location.pathname + window.location.search + hash);
+      } catch (_) {
+        try { window.location.hash = hash.slice(1); } catch (__) { /* ignore */ }
+      }
+    }
+    const { tab, networkView } = resolveHash(hash, this.state.advancedMode);
+    this.showTab(tab, { fromHash: true, networkView });
   }
 
   setHomeView (key) {
@@ -1110,6 +1218,7 @@ class Dashboard extends React.Component {
   }
 
   openMyLogs () {
+    if (!androidSurface('corpus')) return;
     this.setState({ showMyLogs: true });
   }
 
@@ -1118,6 +1227,7 @@ class Dashboard extends React.Component {
   }
 
   homeViewList () {
+    if (!androidSurface('heatmap')) return [];
     const views = HOME_VIEWS.slice();
     if (this.state.advancedMode) {
       for (const v of HOME_ADVANCED_VIEWS) views.push(v);
@@ -1151,6 +1261,7 @@ class Dashboard extends React.Component {
   feedBadge (it) {
     if (it.category === 'chat') return ['b-chat', 'chat'];
     if (it.category === 'broadcast') return ['b-bcast', 'broadcast'];
+    if (it.category === 'note') return ['b-note', it.label || 'note'];
     if (it.category === 'combat') {
       if (it.label === 'death' || it.kind === 'player:death') return ['b-kill', it.label || 'death'];
       if (it.label === 'kill') return ['b-kill', 'kill'];
@@ -1983,11 +2094,13 @@ class Dashboard extends React.Component {
     const ms = this.state.missionStats || {};
     const info = this.state.loginfo;
     const fmt = (b) => (b >= 1048576 ? (b / 1048576).toFixed(1) + ' MB' : Math.round(b / 1024) + ' KB');
-    const liveSub = !info
-      ? 'locating Game.log…'
-      : (info.exists
-        ? `${info.channel || 'log'} · ${fmt(info.size)} · ${shortTime(info.mtime)}`
-        : 'Game.log not found — set path in Settings');
+    const liveSub = !androidSurface('corpus')
+      ? 'Fabric feed — chat, missions, and peer shares'
+      : (!info
+        ? 'locating Game.log…'
+        : (info.exists
+          ? `${info.channel || 'log'} · ${fmt(info.size)} · ${shortTime(info.mtime)}`
+          : 'Game.log not found — set path in Settings'));
     const items = this.filteredFeedItems();
     const cats = this.state.feedCategories || FEED_CATEGORIES;
     const sources = this.state.feedSourcesMeta || FEED_SOURCES;
@@ -1999,9 +2112,11 @@ class Dashboard extends React.Component {
     const mstats = `missions ✅${ms.completed || 0} · ⤺${ms.abandoned || 0} · ✖${ms.failed || 0} · ●${ms.active || 0}` +
       (peerCount ? ` · ${peerCount} peer` : '') +
       (groupCount ? ` · ${groupCount} group` : '');
-    const scopeHint = localOnly
-      ? 'Showing your local Game.log by default — enable Peers / Groups (or All) to widen context.'
-      : 'Parsed Game.log, peer shares, group chat & broadcasts — newest first.';
+    const scopeHint = !androidSurface('corpus')
+      ? 'Chat, missions, and peer shares — newest first.'
+      : (localOnly
+        ? 'Showing your local Game.log by default — enable Peers / Groups (or All) to widen context.'
+        : 'Parsed Game.log, peer shares, group chat & broadcasts — newest first.');
 
     return React.createElement('main', null,
       React.createElement('section', { className: 'panel full live-stream' },
@@ -2019,10 +2134,12 @@ class Dashboard extends React.Component {
             className: 'sub',
             title: (info && info.path) || undefined
           }, liveSub),
-          React.createElement('button', {
-            type: 'button', className: 'btn',
-            onClick: () => this.openMyLogs()
-          }, 'My logs…')
+          androidSurface('corpus')
+            ? React.createElement('button', {
+              type: 'button', className: 'btn',
+              onClick: () => this.openMyLogs()
+            }, 'My logs…')
+            : null
         ),
         React.createElement('div', { className: 'live-filters' },
           this.renderChips('type', cats.map(([v, t]) => ({ v, t })), 'feedCats'),
@@ -2246,23 +2363,30 @@ class Dashboard extends React.Component {
     };
 
     const cards = [
-      ['documents', '📁 Files', 'Advanced Document Exchange — Hub inventory create / publish / purchase (same as Hub /documents).',
+      ['documents', '📁 Files', 'This node\'s file catalog — create, publish, and chat attachments. Not hub.fabric.pub.',
         'advanced mode · settings.documents.enable'],
-      ['groups', '👥 Groups', 'Member-created squads with k-of-n Schnorr decisions. Share a public group page; others apply to join.',
-        'pages at /groups/:id (or a custom URL)'],
+      ['groups', '👥 Groups', 'Create a squad, Share a join invite, and accept requests from Notifications. Local tags stay on this node.',
+        'pages at /groups/:id · Import… to join'],
       ['missions', '⭐ Missions', 'Post contracts with Bitcoin rewards — submit completion, authorities approve with Schnorr signatures, coins unlock.',
         'k-of-n approval · escrowed sats'],
       ['fleet', '🚀 Fleets', 'Import Starjump / FleetViewer JSON, browse your ships, share to peers, groups, or public.',
         'personal roster · Fabric FleetShare'],
-      ['chat', '💬 Chat', 'Org chat with Hub message types — a global channel plus a dedicated channel for every group.',
+      ['chat', '💬 Chat', isAndroidCompanion()
+        ? 'Fabric and group channels on this device’s node.'
+        : 'Flattened channels — Fabric, Discord, or both (the bot relays as itself). Attach files from this node\'s catalog.',
         'ChatMessage · signed · synced via your peers'],
       ['wallet', '₿ Wallet', 'Personal Hub-backed balance / receive / send / history, plus group Taproot and mission escrows.',
         'identity xpub watch · Hub faucet send · group multisig'],
-      ['network', '🌐 Network', 'Your live Game.log first — expand the feed to peer shares and group traffic, plus Fabric peer management.',
-        `${sess.missions || 0} missions · ${sess.deaths || 0} deaths this session · Feed + Peers`],
+      ['network', '🌐 Network', isAndroidCompanion()
+        ? 'Feed of chat, missions, and peer shares, plus Fabric peer management.'
+        : 'Your live Game.log first — expand the feed to peer shares and group traffic, plus Fabric peer management.',
+        isAndroidCompanion()
+          ? 'Feed + Peers'
+          : `${sess.missions || 0} missions · ${sess.deaths || 0} deaths this session · Feed + Peers`],
       ['library', '📸 Library', 'Periodic reduced-size snapshots of your play sessions — browsable history, ready for image analysis.',
         'opt-in · configurable interval · auto-purge']
     ].filter(([tab]) => featureEnabled(tab) &&
+      androidDashboardTabVisible(tab) &&
       (tab !== 'wallet' || this.walletVisible()) &&
       (tab !== 'documents' || this.documentsVisible()));
 
@@ -2274,9 +2398,12 @@ class Dashboard extends React.Component {
       React.createElement('section', { className: 'panel full' },
         React.createElement('h2', null, '🛰️ GoonCitizen ',
           React.createElement('span', { className: 'sub' },
-            '— cumulative history from your logs')
+            '— ' + (androidSurface('heatmap')
+              ? 'cumulative history from your logs'
+              : 'this device’s node (groups, chat, missions, peers)'))
         ),
-        React.createElement('div', { className: 'home-tools' },
+        androidSurface('heatmap')
+          ? React.createElement('div', { className: 'home-tools' },
           React.createElement('button', {
             type: 'button',
             className: 'btn' + (this.state.homeFiltersOpen ? ' on' : ''),
@@ -2291,32 +2418,39 @@ class Dashboard extends React.Component {
             m
               ? `${c.missions || 0} missions · ${c.deaths || 0} deaths all-time`
               : (this.state.azLoading ? 'loading activity…' : 'activity loading…'))
-        ),
-        React.createElement('div', { className: 'home-views' },
+        )
+          : null,
+        androidSurface('heatmap')
+          ? React.createElement('div', { className: 'home-views' },
           this.homeViewList().map(([key, label]) => React.createElement('button', {
             key,
             type: 'button',
             className: 'tab ' + (view === key ? 'on' : ''),
             onClick: () => this.setHomeView(key)
           }, label))
-        ),
-        this.state.homeFiltersOpen && m ? this.renderHomeFilters(m) : null,
-        m
-          ? React.createElement('div', { className: 'kpis' },
-            m.kpis.map((k) => React.createElement('div', { className: 'mc', key: k[0] },
-              React.createElement('div', { className: 'l' }, k[0]),
-              React.createElement('div', { className: 'v' }, k[1]),
-              k[2]
-            ))
-          )
-          : React.createElement('div', { className: 'empty' },
-            this.state.azLoading ? 'loading cumulative activity…' : 'no activity history yet — open My logs… to import, or start the game')
+        )
+          : null,
+        androidSurface('heatmap') && this.state.homeFiltersOpen && m ? this.renderHomeFilters(m) : null,
+        androidSurface('heatmap')
+          ? (m
+            ? React.createElement('div', { className: 'kpis' },
+              m.kpis.map((k) => React.createElement('div', { className: 'mc', key: k[0] },
+                React.createElement('div', { className: 'l' }, k[0]),
+                React.createElement('div', { className: 'v' }, k[1]),
+                k[2]
+              ))
+            )
+            : React.createElement('div', { className: 'empty' },
+              this.state.azLoading ? 'loading cumulative activity…' : 'no activity history yet — open My logs… to import, or start the game'))
+          : null
       ),
-      this.renderHomeView(m),
+      androidSurface('heatmap') ? this.renderHomeView(m) : null,
       !view
         ? React.createElement('section', { className: 'panel full' },
           React.createElement('h2', null, 'Features ',
-            React.createElement('span', { className: 'sub' }, '— jump to Documents, Groups, Missions, Fleets, Chat, Wallet, Network')
+            React.createElement('span', { className: 'sub' }, isAndroidCompanion()
+              ? '— Groups, Missions, Fleets, Chat, Network'
+              : '— jump to Documents, Groups, Missions, Fleets, Chat, Wallet, Network')
           ),
           React.createElement('div', { className: 'home-grid' },
             cards.map(([tab, title, desc, stat]) => React.createElement('button', {
@@ -2348,14 +2482,17 @@ class Dashboard extends React.Component {
         }, label)),
         React.createElement('span', { className: 'hint' },
           view === 'feed'
-            ? 'Live Game.log + peer event stream'
+            ? (androidSurface('corpus')
+              ? 'Live Game.log + peer event stream'
+              : 'Chat, missions, and peer event stream')
             : (view === 'peers'
-              ? 'Fabric hubs, connections, and log sharing'
+              ? (androidSurface('hubObserve')
+                ? 'Fabric hubs, connections, and log sharing'
+                : 'Fabric peer connections')
               : 'AMP wire Message log'))
       ),
       view === 'peers'
         ? React.createElement(Peers, {
-          showProfileActivity: this.state.showProfileActivity,
           analytics: this.state.analytics
         })
         : (view === 'messages' && this.state.advancedMode
@@ -2385,14 +2522,18 @@ class Dashboard extends React.Component {
         : this.renderHome();
       case 'documents': return this.documentsVisible()
         ? React.createElement(DocumentExchange, {
-          documentsEnable: this.state.documentsEnable === true,
-          documentsHub: (this.state.documentsRuntime && this.state.documentsRuntime.hub) || null
+          documentsEnable: this.state.documentsEnable === true
         })
         : this.renderHome();
-      case 'library': return featureEnabled('library') ? React.createElement(Library, null) : this.renderHome();
+      case 'library': return androidDashboardTabVisible('library') && featureEnabled('library')
+        ? React.createElement(Library, null)
+        : this.renderHome();
       case 'fleet': return React.createElement(Fleet, {
         identityPubkey: this.state.identityPubkey,
-        onOpenIdentity: () => this.setState({ showIdentity: true })
+        onOpenIdentity: () => {
+          if (this.preferAccountPages()) this.openAccount('keys');
+          else this.setState({ showIdentity: true });
+        }
       });
       case 'chat': return React.createElement(Chat, {
         identityPubkey: this.state.identityPubkey,
@@ -2405,13 +2546,28 @@ class Dashboard extends React.Component {
         identityPubkey: this.state.identityPubkey,
         nickname: this.state.nickname,
         advancedMode: this.state.advancedMode,
-        onPrimaryGroupTheme: (hex) => this.applyPrimaryGroupTheme(hex)
+        bitcoinEnable: this.state.bitcoinEnable === true,
+        onPrimaryGroupTheme: (hex) => this.applyPrimaryGroupTheme(hex),
+        onRequestImport: () => this.setState({ showFabricImport: true })
       });
       case 'notifications': return React.createElement(Notifications, {
         onPendingCount: (n) => {
           if (n !== this.state.notifyPending) this.setState({ notifyPending: n });
         }
       });
+      case 'keys':
+      case 'security':
+      case 'privacy':
+        return React.createElement(Account, {
+          section: this.state.tab,
+          analytics: this.state.analytics,
+          onSection: (s) => this.openAccount(s),
+          onClose: () => this.showTab('home'),
+          onForget: () => this.setState({ identityPubkey: null, identityExists: false, identityLocked: false }),
+          onNicknameChange: (n) => this.setState({ nickname: n || null }),
+          onPresenceChange: (p) => this.applyPresenceChip(p),
+          onOpenSettings: () => this.setState({ showSettings: true })
+        });
       default: return this.renderHome();
     }
   }
@@ -2422,11 +2578,15 @@ class Dashboard extends React.Component {
 
     return React.createElement(React.Fragment, null,
       React.createElement(Onboarding, {
-        onReady: (pubkey) => this.setState({
-          identityPubkey: pubkey || null,
-          identityExists: pubkey ? true : this.state.identityExists,
-          identityLocked: !pubkey
-        }),
+        onReady: (pubkey, meta) => {
+          const firstRun = !!(meta && meta.firstRun);
+          this.setState({
+            identityPubkey: pubkey || null,
+            identityExists: pubkey ? true : this.state.identityExists,
+            identityLocked: !pubkey
+          });
+          if (firstRun && pubkey && this.preferAccountPages()) this.openAccount('keys');
+        },
         onLocked: () => this.setState({
           identityPubkey: null,
           identityLocked: true,
@@ -2436,13 +2596,27 @@ class Dashboard extends React.Component {
       React.createElement(FabricLoginModal, null),
       React.createElement(GroupOfferModal, {
         pasteOpen: this.state.showFabricImport,
-        onPasteClose: () => this.setState({ showFabricImport: false })
+        onPasteClose: () => this.setState({ showFabricImport: false }),
+        onImported: (data) => {
+          this.setState({ showFabricImport: false, tab: 'groups' });
+          const id = (data && data.group && data.group.id) ||
+            (data && data.invite && data.invite.groupId) ||
+            (data && data.groupId);
+          if (id) {
+            const { setAppHash } = require('../functions/appHash');
+            setAppHash('groups', { id });
+          }
+        }
       }),
       this.renderMyLogsModal(),
       this.state.showSettings
         ? React.createElement(Settings, {
           onClose: () => this.setState({ showSettings: false }),
-          onOpenIdentity: () => this.setState({ showSettings: false, showIdentity: true }),
+          onOpenIdentity: (section) => {
+            this.setState({ showSettings: false });
+            if (this.preferAccountPages()) this.openAccount(section || 'keys');
+            else this.setState({ showIdentity: true });
+          },
           onPrimaryGroupTheme: (hex) => this.applyPrimaryGroupTheme(hex),
           advancedMode: this.state.advancedMode,
           onAdvancedModeChange: (on) => {
@@ -2466,15 +2640,10 @@ class Dashboard extends React.Component {
               }
               return next;
             });
-          },
-          showProfileActivity: this.state.showProfileActivity,
-          onShowProfileActivityChange: (on) => {
-            ActivityHeatmap.writeShowProfileActivity(on);
-            this.setState({ showProfileActivity: on });
           }
         })
         : null,
-      this.state.showIdentity
+      this.state.showIdentity && !this.preferAccountPages()
         ? React.createElement(Identity, {
           onClose: () => {
             this.setState({ showIdentity: false });
@@ -2483,7 +2652,6 @@ class Dashboard extends React.Component {
           onForget: () => this.setState({ identityPubkey: null, identityExists: false, identityLocked: false }),
           onNicknameChange: (n) => this.setState({ nickname: n || null }),
           onPresenceChange: (p) => this.applyPresenceChip(p),
-          showProfileActivity: this.state.showProfileActivity,
           analytics: this.state.analytics
         })
         : null,
@@ -2508,7 +2676,7 @@ class Dashboard extends React.Component {
             React.createElement('button', {
               type: 'button',
               className: 'btn',
-              title: 'Paste an encoded fabric:<hex> or fabric:base64,… message (group offer, invite, …)',
+              title: 'Paste a group invite or fabric: share',
               onClick: () => this.setState({ showFabricImport: true })
             }, 'Import…'),
             React.createElement('button', {
@@ -2541,7 +2709,12 @@ class Dashboard extends React.Component {
                   onClick: (e) => {
                     e.stopPropagation();
                     if (!this.state.identityPubkey && this.state.identityExists) {
-                      this.setState({ showIdFlyout: false, showIdentity: true });
+                      if (this.preferAccountPages()) this.openAccount('security');
+                      else this.setState({ showIdFlyout: false, showIdentity: true });
+                      return;
+                    }
+                    if (this.preferAccountPages() && !this.state.identityExists) {
+                      this.openAccount('keys');
                       return;
                     }
                     this.setState((s) => ({ showIdFlyout: !s.showIdFlyout }));
@@ -2574,26 +2747,37 @@ class Dashboard extends React.Component {
             React.createElement('button', {
               type: 'button',
               className: 'gear',
-              title: 'Settings — Privacy, log path, Fabric, runtime',
-              onClick: () => this.setState({ showSettings: true })
+              title: this.preferAccountPages()
+                ? 'Privacy, security, keys'
+                : 'Settings — Privacy, log path, Fabric, runtime',
+              onClick: () => {
+                if (this.preferAccountPages()) this.openAccount('privacy');
+                else this.setState({ showSettings: true });
+              }
             }, '⚙️')
           )
         ),
-        React.createElement('div', { className: 'row', style: { marginTop: 10, gap: 8 } },
-          TABS.filter(([key]) => (this.state.advancedMode || !ADVANCED_TABS.has(key)) &&
-            (key !== 'wallet' || this.walletVisible()) &&
-            (key !== 'documents' || this.documentsVisible())).map(([key, label]) => React.createElement('button', {
-            key,
-            type: 'button',
-            className: 'tab ' + (this.state.tab === key ? 'on' : ''),
-            onClick: () => this.showTab(key)
-          },
-          label,
-          (key === 'chat' && this.state.chatUnread)
-            ? React.createElement('span', { className: 'tab-badge' },
-              this.state.chatUnread > 99 ? '99+' : this.state.chatUnread)
-            : null
-          ))
+        React.createElement('div', { className: 'header-nav' },
+          React.createElement('div', { className: 'row tabs' },
+            TABS.filter(([key]) => (this.state.advancedMode || !ADVANCED_TABS.has(key)) &&
+              (key !== 'wallet' || this.walletVisible()) &&
+              (key !== 'documents' || this.documentsVisible()) &&
+              androidDashboardTabVisible(key)).map(([key, label]) => React.createElement('button', {
+              key,
+              type: 'button',
+              className: 'tab ' + (this.state.tab === key ? 'on' : ''),
+              onClick: () => this.showTab(key)
+            },
+            label,
+            (key === 'chat' && this.state.chatUnread)
+              ? React.createElement('span', { className: 'tab-badge' },
+                this.state.chatUnread > 99 ? '99+' : this.state.chatUnread)
+              : null
+            ))
+          ),
+          React.createElement(AppSearch, {
+            onNavigate: (hit, dest) => this.openSearchHit(hit, dest)
+          })
         ),
       ),
       this.renderTab(),
@@ -2622,6 +2806,9 @@ class Dashboard extends React.Component {
 }
 
 Dashboard.TITLE = TITLE;
-Dashboard.CSS = CSS + '\n' + (LogBrowser.CSS || '');
+Dashboard.CSS = CSS + '\n' + (SiteLogin.CSS || '') + '\n' + (LogBrowser.CSS || '') + '\n' +
+  (AppSearch.CSS || '') + '\n' + (Account.CSS || '');
+Dashboard.resolveHash = resolveHash;
+Dashboard.offerPassportDeviceLink = offerPassportDeviceLink;
 
 module.exports = Dashboard;

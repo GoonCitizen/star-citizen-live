@@ -68,6 +68,61 @@ describe('Fabric expectations: GoonCitizen re-exports @fabric/http', () => {
   });
 });
 
+describe('Fabric expectations: IdentityCrossSign (local, lockstep strings)', () => {
+  it('canonical strings match the Hub/Passport gossip format', () => {
+    const gcSign = require('../../functions/identityCrossSign');
+    assert.equal(gcSign.SIGN_TYPE, 'IdentityCrossSign');
+    assert.equal(gcSign.REVOKE_TYPE, 'IdentityCrossSignRevoke');
+    const nonce = 'ab'.repeat(32);
+    const local = '11'.repeat(32);
+    const peer = '22'.repeat(32);
+    const msg = gcSign.buildCrossSignMessage(nonce, local, peer);
+    assert.equal(msg, `fabric:identity-cross-sign:1:${nonce}:${local}:${peer}`);
+    const parsed = gcSign.parseCrossSignMessage(msg);
+    assert.equal(parsed.nonce, nonce);
+    assert.equal(parsed.localPubkey, local);
+    assert.equal(parsed.peerPubkey, peer);
+    // Core pin `488a87da1` ships these files. Keep the local copy so the
+    // dashboard webpack bundle does not pull `@fabric/core`.
+    const coreSign = require('@fabric/core/functions/identityCrossSign');
+    assert.equal(
+      gcSign.buildCrossSignMessage(nonce, local, peer),
+      coreSign.buildCrossSignMessage(nonce, local, peer)
+    );
+    assert.equal(gcSign.buildCrossSignMessage(nonce, 'aa:bb', peer), null);
+    assert.equal(coreSign.buildCrossSignMessage(nonce, 'aa:bb', peer), null);
+  });
+});
+
+describe('Fabric expectations: @fabric/discord pin', () => {
+  it('OAuth callback is fail-closed (501)', async () => {
+    const Discord = require('@fabric/discord');
+    const discord = new Discord({ autoCommands: false });
+    let status = 200;
+    let body = null;
+    const res = {
+      status (code) {
+        status = code;
+        return this;
+      },
+      json (obj) {
+        body = obj;
+        return this;
+      },
+      send (msg) {
+        body = msg;
+        return this;
+      }
+    };
+    await discord._handleOAuthCallback({}, res);
+    assert.equal(status, 501);
+    assert.equal(body && body.status, 'error');
+    if (discord.client && typeof discord.client.destroy === 'function') {
+      await discord.client.destroy();
+    }
+  });
+});
+
 describe('Fabric expectations: site-login challenge contract', () => {
   it('build/parse/verify round-trip matches Hub Passport wire format', () => {
     const key = new Key();
@@ -126,6 +181,14 @@ describe('Fabric expectations: application namespaces', () => {
     assert.equal(FabricNetwork.isKnownAppRelayType('DirectChat'), true);
     const groupChat = gcNamespaces.CONTRACT_BODY_TYPES.GroupChat || 'GroupChat';
     assert.equal(FabricNetwork.isKnownAppRelayType(groupChat), true);
+    assert.equal(FabricNetwork.isKnownAppRelayType('NoteShare'), true);
+    assert.equal(FabricNetwork.isKnownAppRelayType('NoteUpdate'), true);
+    assert.equal(FabricNetwork.isKnownAppRelayType('DiscordCatalogShare'), true);
+    assert.equal(FabricNetwork.isKnownAppRelayType('GroupDataShare'), true);
+    assert.equal(FabricNetwork.isKnownAppRelayType('IdentityCrossSign'), true);
+    assert.equal(FabricNetwork.isKnownAppRelayType('IdentityCrossSignRevoke'), true);
+    assert.equal(FabricNetwork.isKnownAppRelayType('MissionClaim'), true);
+    assert.equal(FabricNetwork.isKnownAppRelayType('MissionClaimDecision'), true);
     assert.equal(FabricNetwork.isKnownAppRelayType('NotARealType_XYZ'), false);
   });
 });

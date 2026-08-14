@@ -1,16 +1,18 @@
 'use strict';
 
 /**
- * First-run identity onboarding for the GoonCitizen desktop app.
+ * First-run identity onboarding for GoonCitizen (desktop and Android).
  *
- * Shown when the Electron shell reports no stored identity (or a locked
- * one). Creates or restores a BIP39 identity via the main-process IPC
- * bridge (`window.electronAPI.identity`); the mnemonic is displayed
- * exactly once for backup. Pure browser sessions (npm start) have no
- * identity bridge and skip onboarding entirely.
+ * Shown when the identity bridge reports no stored identity (or a locked
+ * one). Creates or restores a BIP39 identity via `window.electronAPI.identity`
+ * (Electron IPC, or the Android Capacitor polyfill). The mnemonic is displayed
+ * exactly once for backup. Pure browser sessions without a local node skip
+ * onboarding entirely.
  */
 
 const React = require('react');
+const { isAndroidCompanion } = require('../functions/isAndroidCompanion');
+const MasterSeedWizard = require('./MasterSeedWizard');
 
 const CSS = `
   .ob-overlay{position:fixed;inset:0;z-index:50;background:rgba(8,10,14,.88);
@@ -41,6 +43,11 @@ const CSS = `
   .ob-check{display:flex;gap:8px;align-items:flex-start;margin-top:14px;font-size:13px;cursor:pointer}
   .ob-pk{font-family:'Cascadia Code',Consolas,monospace;font-size:11.5px;color:var(--muted);
     word-break:break-all;margin-top:10px}
+  .ob-shell{position:fixed;inset:0;z-index:50;background:var(--bg);overflow:auto;
+    padding:max(20px, env(safe-area-inset-top)) 18px max(28px, env(safe-area-inset-bottom))}
+  .ob-btn.danger{background:var(--kill,#c62828);color:#fff}
+  .ob-btn.danger:disabled{opacity:.45;cursor:default}
+  .ob-destroy{margin-top:18px;padding-top:14px;border-top:1px solid var(--line)}
 `;
 
 function identityBridge () {
@@ -51,7 +58,7 @@ class Onboarding extends React.Component {
   constructor (props) {
     super(props);
     this.state = {
-      step: 'loading', // loading | choice | password | backup | restore | import | unlock | done
+      step: 'loading', // loading | choice | password | backup | restore | import | unlock | wizard | done
       busy: false,
       error: null,
       password: '',
@@ -60,7 +67,9 @@ class Onboarding extends React.Component {
       restoreWords: '',
       acked: false,
       pubkey: null,
-      importPassword: ''
+      importPassword: '',
+      confirmForget: false,
+      forgetText: ''
     };
     this._unsub = null;
     this._passwordRef = null;
@@ -147,9 +156,9 @@ class Onboarding extends React.Component {
     }
   }
 
-  finish (pubkey) {
+  finish (pubkey, meta) {
     this.setState({ step: 'done', pubkey, password: '', error: null, busy: false });
-    if (this.props.onReady) this.props.onReady(pubkey);
+    if (this.props.onReady) this.props.onReady(pubkey, meta || null);
   }
 
   passwordsOk () {
@@ -161,7 +170,9 @@ class Onboarding extends React.Component {
     this.setState({ busy: true, error: null });
     const res = await identityBridge().create(this.state.password);
     if (res.error) {
-      this.setState({ busy: false, error: res.error });
+      const next = { busy: false, error: res.error };
+      if (res.exists) next.step = 'unlock';
+      this.setState(next, () => this.refreshPubkey());
       return;
     }
     this.setState({ busy: false, step: 'backup', mnemonic: res.mnemonic, pubkey: res.pubkey, acked: false });
@@ -179,7 +190,7 @@ class Onboarding extends React.Component {
       this.setState({ busy: false, error: res.error });
       return;
     }
-    this.finish(res.pubkey);
+    this.finish(res.pubkey, { firstRun: true });
   }
 
   async unlock () {
@@ -191,6 +202,87 @@ class Onboarding extends React.Component {
       return;
     }
     this.finish(res.pubkey);
+  }
+
+  refreshPubkey () {
+    const bridge = identityBridge();
+    if (!bridge || typeof bridge.get !== 'function') return;
+    bridge.get().then((info) => {
+      if (info && info.pubkey) this.setState({ pubkey: info.pubkey });
+    }).catch(() => {});
+  }
+
+  async forget () {
+    if (this.state.forgetText !== 'forget') return;
+    const bridge = identityBridge();
+    if (!bridge || typeof bridge.forget !== 'function') return;
+    this.setState({ busy: true, error: null });
+    const res = await bridge.forget(true);
+    if (res && res.error) {
+      this.setState({ busy: false, error: res.error });
+      return;
+    }
+    this.setState({
+      busy: false,
+      step: 'choice',
+      confirmForget: false,
+      forgetText: '',
+      password: '',
+      password2: '',
+      pubkey: null,
+      mnemonic: null,
+      error: null
+    });
+  }
+
+  showDestroy () {
+    if (this.state.step === 'unlock') return true;
+    return /already exists/i.test(String(this.state.error || ''));
+  }
+
+  renderDestroy () {
+    if (!this.showDestroy()) return null;
+    const android = isAndroidCompanion();
+    return React.createElement('div', { className: 'ob-destroy', key: 'destroy' },
+      !this.state.confirmForget
+        ? React.createElement('button', {
+          className: 'ob-btn ghost',
+          onClick: () => this.setState({ confirmForget: true, forgetText: '', error: null })
+        }, android ? 'Forget identity on this device…' : 'Forget identity on this machine…')
+        : React.createElement(React.Fragment, null,
+          React.createElement('div', { className: 'ob-warn' },
+            android
+              ? 'This deletes the encrypted key from this device. Restore later with your seed phrase or a backup file — if you have neither, this identity is gone.'
+              : 'This deletes the encrypted key file from this machine. Restore later with your seed phrase or a backup file.'),
+          React.createElement('div', { className: 'ob-actions' },
+            React.createElement('input', {
+              type: 'text',
+              placeholder: 'type "forget" to confirm',
+              value: this.state.forgetText,
+              onChange: (e) => this.setState({ forgetText: e.target.value }),
+              style: {
+                flex: 1,
+                minWidth: '8rem',
+                background: 'var(--bg)',
+                border: '1px solid var(--line)',
+                color: 'var(--text)',
+                borderRadius: 7,
+                padding: '9px 11px',
+                fontSize: 13.5
+              }
+            }),
+            React.createElement('button', {
+              className: 'ob-btn danger',
+              disabled: this.state.forgetText !== 'forget' || this.state.busy,
+              onClick: () => this.forget()
+            }, this.state.busy ? 'Deleting…' : 'Delete identity'),
+            React.createElement('button', {
+              className: 'ob-btn ghost',
+              onClick: () => this.setState({ confirmForget: false, forgetText: '' })
+            }, 'Cancel')
+          )
+        )
+    );
   }
 
   field (label, key, opts = {}) {
@@ -228,11 +320,13 @@ class Onboarding extends React.Component {
   }
 
   renderChoice () {
+    const android = isAndroidCompanion();
     return [
-      React.createElement('h2', { key: 'h' }, 'Welcome, Citizen'),
+      React.createElement('h2', { key: 'h' }, android ? 'Welcome to GoonCitizen' : 'Welcome, Citizen'),
       React.createElement('div', { className: 'sub', key: 's' },
-        'GoonCitizen uses a cryptographic identity to sign what you share with your org. ' +
-        'It never leaves this machine — only signatures do.'),
+        android
+          ? 'This device is its own node. Create a new key, restore a 12/24-word seed or xprv, or load an encrypted backup. Linking to desktop or Passport comes next — each app keeps its own seed.'
+          : 'GoonCitizen uses a cryptographic identity to sign what you share with your org. It never leaves this machine — only signatures do.'),
       React.createElement('div', { className: 'ob-actions', key: 'a' },
         React.createElement('button', {
           className: 'ob-btn',
@@ -241,11 +335,15 @@ class Onboarding extends React.Component {
         React.createElement('button', {
           className: 'ob-btn ghost',
           onClick: () => this.setState({ step: 'restore', error: null })
-        }, 'Restore from seed phrase'),
+        }, 'Restore seed or xprv'),
         React.createElement('button', {
           className: 'ob-btn ghost',
           onClick: () => this.setState({ step: 'import', error: null })
-        }, 'Load from backup file')
+        }, 'Load from backup file'),
+        React.createElement('button', {
+          className: 'ob-btn ghost',
+          onClick: () => this.setState({ step: 'wizard', error: null })
+        }, 'Master seed wizard…')
       )
     ];
   }
@@ -258,8 +356,13 @@ class Onboarding extends React.Component {
       try {
         const backup = JSON.parse(String(reader.result || ''));
         const res = await identityBridge().importBackup(backup, this.state.importPassword, false);
-        if (res.error) return this.setState({ busy: false, error: res.error });
-        this.finish(res.pubkey);
+        if (res.error) {
+          const next = { busy: false, error: res.error };
+          if (res.exists) next.step = 'unlock';
+          this.setState(next, () => this.refreshPubkey());
+          return;
+        }
+        this.finish(res.pubkey, { firstRun: true });
       } catch (e) {
         this.setState({ busy: false, error: 'Could not read backup file: ' + e.message });
       }
@@ -272,7 +375,9 @@ class Onboarding extends React.Component {
     return [
       React.createElement('h2', { key: 'h' }, 'Load from backup'),
       React.createElement('div', { className: 'sub', key: 's' },
-        'Select a GoonCitizen encrypted backup file (.enc.json) and enter the password that sealed it.'),
+        isAndroidCompanion()
+          ? 'Pick a GoonCitizen encrypted backup (.enc.json) from this device and enter the password that sealed it.'
+          : 'Select a GoonCitizen encrypted backup file (.enc.json) and enter the password that sealed it.'),
       this.field('Backup password', 'importPassword'),
       React.createElement('div', { className: 'ob-actions', key: 'a' },
         React.createElement('label', {
@@ -298,7 +403,9 @@ class Onboarding extends React.Component {
     return [
       React.createElement('h2', { key: 'h' }, 'Protect your identity'),
       React.createElement('div', { className: 'sub', key: 's' },
-        'Your key is encrypted on disk with this password. You will need it each time GoonCitizen starts.'),
+        isAndroidCompanion()
+          ? 'Your key is encrypted on this device with this password. You will need it each time GoonCitizen starts.'
+          : 'Your key is encrypted on disk with this password. You will need it each time GoonCitizen starts.'),
       ...this.passwordFields(),
       React.createElement('div', { className: 'ob-actions', key: 'a' },
         React.createElement('button', {
@@ -319,7 +426,9 @@ class Onboarding extends React.Component {
     return [
       React.createElement('h2', { key: 'h' }, 'Back up your seed phrase'),
       React.createElement('div', { className: 'sub', key: 's' },
-        'These words are the only way to recover your identity. Write them down and store them safely.'),
+        isAndroidCompanion()
+          ? 'Write these words down. After this you can link desktop or Passport from Keys → Security → Add a device.'
+          : 'These words are the only way to recover your identity. Write them down and store them safely.'),
       React.createElement('div', { className: 'ob-warn', key: 'w' },
         'This phrase is shown only once. Anyone who has it can impersonate you — never share it, never paste it into chat.'),
       React.createElement('div', { className: 'ob-mnemonic', key: 'm' },
@@ -341,8 +450,8 @@ class Onboarding extends React.Component {
         React.createElement('button', {
           className: 'ob-btn',
           disabled: !this.state.acked,
-          onClick: () => this.finish(this.state.pubkey)
-        }, 'Done — enter GoonCitizen')
+          onClick: () => this.finish(this.state.pubkey, { firstRun: true })
+        }, isAndroidCompanion() ? 'Done — open Keys' : 'Done — enter GoonCitizen')
       )
     ];
   }
@@ -351,12 +460,14 @@ class Onboarding extends React.Component {
     return [
       React.createElement('h2', { key: 'h' }, 'Restore identity'),
       React.createElement('div', { className: 'sub', key: 's' },
-        'Enter your 12/24-word seed phrase (or an xprv), then choose a password for this machine.'),
+        isAndroidCompanion()
+          ? 'Paste your 12/24-word seed phrase, or an xprv, then choose a password for this device.'
+          : 'Enter your 12/24-word seed phrase (or an xprv), then choose a password for this machine.'),
       React.createElement('div', { className: 'ob-field', key: 'f' },
-        React.createElement('label', null, 'Seed phrase'),
+        React.createElement('label', null, 'Seed phrase or xprv'),
         React.createElement('textarea', {
           value: this.state.restoreWords,
-          placeholder: 'word1 word2 word3 …',
+          placeholder: 'word1 word2 …   or   xprv…',
           onChange: (e) => this.setState({ restoreWords: e.target.value })
         })
       ),
@@ -379,7 +490,9 @@ class Onboarding extends React.Component {
     return [
       React.createElement('h2', { key: 'h' }, 'Unlock your identity'),
       React.createElement('div', { className: 'sub', key: 's' },
-        'Enter your password to unlock signing for this session.'),
+        isAndroidCompanion()
+          ? 'Enter the password for this device. If you lost it, forget the identity here and restore from seed or a backup.'
+          : 'Enter your password to unlock signing for this session.'),
       this.state.pubkey
         ? React.createElement('div', { className: 'ob-pk', key: 'p' }, this.state.pubkey)
         : null,
@@ -412,19 +525,27 @@ class Onboarding extends React.Component {
     else if (this.state.step === 'restore') body = this.renderRestore();
     else if (this.state.step === 'import') body = this.renderImport();
     else if (this.state.step === 'unlock') body = this.renderUnlock();
+    else if (this.state.step === 'wizard') {
+      body = React.createElement(MasterSeedWizard, {
+        onBack: () => this.setState({ step: 'choice', error: null }),
+        onInstalled: (pubkey) => this.finish(pubkey, { firstRun: true, vault: true })
+      });
+    }
 
-    return React.createElement('div', { className: 'ob-overlay' },
+    const android = isAndroidCompanion();
+    return React.createElement('div', { className: android ? 'ob-shell' : 'ob-overlay' },
       React.createElement('div', { className: 'ob-card' },
         body,
         this.state.error
           ? React.createElement('div', { className: 'ob-error' }, this.state.error)
-          : null
+          : null,
+        this.renderDestroy()
       )
     );
   }
 }
 
-Onboarding.CSS = CSS;
+Onboarding.CSS = CSS + '\n' + (MasterSeedWizard.CSS || '');
 Onboarding.hasBridge = () => !!identityBridge();
 
 module.exports = Onboarding;
