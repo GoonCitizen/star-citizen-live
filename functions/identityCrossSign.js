@@ -3,7 +3,7 @@
 /**
  * Canonical IdentityCrossSign / IdentityCrossSignRevoke strings.
  * Browser-safe (no Node built-ins). Keep lockstep with `@fabric/core`
- * `functions/identityCrossSign.js` (now in pin `488a87da1`). Do not re-export
+ * `functions/identityCrossSign.js` (now in pin `5557a2bf`). Do not re-export
  * `@fabric/core` into the dashboard webpack bundle.
  */
 

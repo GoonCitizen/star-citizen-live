@@ -82,7 +82,7 @@ describe('Fabric expectations: IdentityCrossSign (local, lockstep strings)', () 
     assert.equal(parsed.nonce, nonce);
     assert.equal(parsed.localPubkey, local);
     assert.equal(parsed.peerPubkey, peer);
-    // Core pin `488a87da1` ships these files. Keep the local copy so the
+    // Core pin `5557a2bf` ships these files. Keep the local copy so the
     // dashboard webpack bundle does not pull `@fabric/core`.
     const coreSign = require('@fabric/core/functions/identityCrossSign');
     assert.equal(

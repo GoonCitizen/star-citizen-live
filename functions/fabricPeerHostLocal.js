@@ -127,6 +127,8 @@ function isLoopbackFabricAddress (address) {
  * @param {string} [opts.advertiseHost]
  * @param {string[]} [opts.ownHosts]
  * @param {boolean} [opts.includeLocalInterfaces=true]
+ * @param {string} [opts.bindHost] Peer listen address (overrides env bind)
+ * @param {Object} [opts.interfaceAddresses] test stand-in for `os.networkInterfaces()`
  * @param {NodeJS.ProcessEnv} [opts.env]
  * @returns {Set<string>}
  */
@@ -148,17 +150,63 @@ function collectOwnFabricHosts (opts = {}) {
     if (env[key]) add(env[key]);
   }
   if (opts.includeLocalInterfaces !== false) {
+    const dedicated = dedicatedPeerBindHost(opts, env);
     try {
-      const os = require('os');
-      const ifaces = os.networkInterfaces();
-      for (const list of Object.values(ifaces || {})) {
-        for (const entry of list || []) {
-          if (entry && entry.address) add(entry.address);
+      const entries = interfaceAddressEntries(opts);
+      for (const entry of entries) {
+        if (!entry || !entry.address) continue;
+        const addr = String(entry.address).toLowerCase();
+        if (entry.internal) {
+          add(addr);
+          continue;
+        }
+        if (dedicated) {
+          if (addr === dedicated) add(addr);
+        } else {
+          add(addr);
         }
       }
     } catch (_) { /* ignore (sandbox / restricted os) */ }
   }
   return hosts;
+}
+
+/**
+ * Unicast Peer bind (`FABRIC_INTERFACE`), or null when listening on all interfaces.
+ * @param {Object} [opts]
+ * @param {NodeJS.ProcessEnv} [env]
+ * @returns {string|null}
+ */
+function dedicatedPeerBindHost (opts = {}, env) {
+  const raw = String(
+    (opts && opts.bindHost) ||
+    (env && (env.FABRIC_INTERFACE || env.FABRIC_PEER_INTERFACE)) ||
+    ''
+  ).trim().toLowerCase();
+  if (!raw || raw === '0.0.0.0' || raw === '::' || raw === '[::]') return null;
+  const { host } = splitFabricHostPort(raw);
+  return host || null;
+}
+
+/**
+ * @param {Object} [opts]
+ * @returns {Array<{ address?: string, internal?: boolean }>}
+ */
+function interfaceAddressEntries (opts = {}) {
+  if (opts.interfaceAddresses && typeof opts.interfaceAddresses === 'object') {
+    const out = [];
+    for (const list of Object.values(opts.interfaceAddresses)) {
+      for (const entry of list || []) out.push(entry);
+    }
+    return out;
+  }
+  const os = require('os');
+  const ifaces = os.networkInterfaces();
+  const out = [];
+  for (const list of Object.values(ifaces || {})) {
+    for (const entry of list || []) out.push(entry);
+  }
+  return out;
 }
 
 /**

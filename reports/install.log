@@ -14,7 +14,7 @@ npm warn deprecated glob@10.5.0: Old versions of glob are not supported, and con
 npm warn deprecated discord.js@14.18.0: This version is deprecated. Please use a newer version
 npm warn gitignore-fallback No .npmignore file found, using .gitignore for file exclusion. Consider creating a .npmignore file to explicitly control published files.
 
-added 1250 packages, and audited 1251 packages in 3m
+added 1250 packages, and audited 1251 packages in 2m
 
 167 packages are looking for funding
   run `npm fund` for details
