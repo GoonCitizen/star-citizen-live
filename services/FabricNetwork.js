@@ -680,6 +680,7 @@ class FabricNetwork extends EventEmitter {
       }
     });
     this._wrapPeeringCandidateEnqueue(peer);
+    this._wrapPeerConnect(peer);
 
     peer.on('error', (e) => this.emit('error', e));
     peer.on('warning', (m) => this.emit('warning', m));
@@ -889,6 +890,25 @@ class FabricNetwork extends EventEmitter {
   }
 
   /**
+   * Core `Peer.start` / `_fillPeerSlots` call `_connect` with registry keys.
+   * Canonicalize so `65.21.231.149:7778` cannot TCP-dial a closed port.
+   * @param {object} peer
+   * @returns {void}
+   */
+  _wrapPeerConnect (peer) {
+    if (!peer || typeof peer._connect !== 'function') return;
+    if (peer._fabricCanonicalConnect) return;
+    const orig = peer._connect.bind(peer);
+    const self = this;
+    peer._connect = function (target) {
+      const next = self._canonicalizeDial(target);
+      if (!next) return;
+      return orig(next);
+    };
+    peer._fabricCanonicalConnect = true;
+  }
+
+  /**
    * Core Peer enqueues gossip itself; wrap so stale `:7778` hubs and self IPs never queue.
    * @param {object} peer
    * @returns {void}
@@ -978,10 +998,11 @@ class FabricNetwork extends EventEmitter {
       return true;
     });
     for (const addr of addrs) {
-      const [host, port] = String(addr).split(':');
+      const parts = splitFabricHostPort(addr);
+      if (!parts.host || parts.port == null) continue;
       if (this._peer && typeof this._peer._enqueuePeeringCandidate === 'function') {
         try {
-          this._peer._enqueuePeeringCandidate(host, Number(port), { pubkey: offerPubkey });
+          this._peer._enqueuePeeringCandidate(parts.host, parts.port, { pubkey: offerPubkey });
         } catch (_) { /* ignore */ }
       }
     }

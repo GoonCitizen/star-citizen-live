@@ -63,4 +63,28 @@ describe('localDocuments', () => {
     const store = new Store({});
     assert.throws(() => localDocuments.create(store, {}), /contentBase64/);
   });
+
+  it('rejects OpenSSF / GHSA bulk security-advisory payloads', () => {
+    const store = new Store({});
+    const body = JSON.stringify({
+      security_advisory: { ghsa_id: 'GHSA-aaaa-bbbb-cccc', type: 'malware' }
+    });
+    assert.throws(
+      () => localDocuments.create(store, {
+        name: 'advisory.json',
+        mime: 'application/json',
+        contentBase64: Buffer.from(body, 'utf8').toString('base64')
+      }),
+      /bulk security advisory/
+    );
+    assert.throws(
+      () => localDocuments.create(store, {
+        name: '@zalastax/nolb-abcdef',
+        mime: 'application/json',
+        contentBase64: Buffer.from('{"ok":true}', 'utf8').toString('base64')
+      }),
+      /bulk security advisory/
+    );
+    assert.strictEqual(localDocuments.list(store).length, 0);
+  });
 });

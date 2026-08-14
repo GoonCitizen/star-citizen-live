@@ -11,6 +11,7 @@ const crypto = require('crypto');
 const Key = require('@fabric/core/types/key');
 const Identity = require('@fabric/core/types/identity');
 const fabricPubkey = require('@fabric/http/functions/fabricPubkey');
+const { fromSeed: bip32FromSeed } = require('@fabric/core/functions/bip32');
 
 const ENCRYPTION_VERSION = 1;
 const SCRYPT_PARAMS = { N: 16384, r: 8, p: 1 };
@@ -39,7 +40,8 @@ function fabricIdentityNetwork (opts = {}) {
 function fabricIdentityFrom (opts = {}) {
   const settings = { network: fabricIdentityNetwork(opts) };
   if (opts.xprv) settings.xprv = opts.xprv;
-  if (opts.mnemonic) settings.seed = opts.mnemonic;
+  if (opts.mnemonic) settings.mnemonic = opts.mnemonic;
+  if (opts.seed) settings.seed = opts.seed;
   return new Identity(settings);
 }
 
@@ -84,23 +86,58 @@ function createIdentity (opts = {}) {
   };
 }
 
+function looksLikeRawSeedHex (value) {
+  if (value == null) return false;
+  const trimmed = String(value).trim();
+  if (!trimmed || /\s/.test(trimmed)) return false;
+  if (!/^(?:0x)?[0-9a-fA-F]+$/i.test(trimmed)) return false;
+  const hex = trimmed.replace(/^0x/i, '');
+  if (hex.length % 2 !== 0) return false;
+  const bytes = hex.length / 2;
+  return bytes >= 16 && bytes <= 64;
+}
+
+function xprvFromRawSeedHex (hex) {
+  const buf = Buffer.from(String(hex).trim().replace(/^0x/i, ''), 'hex');
+  return bip32FromSeed(buf).toBase58();
+}
+
 /**
- * Restore an identity from a BIP39 mnemonic (or an xprv).
- * @param {Object|String} input Mnemonic string, or `{ mnemonic }` / `{ xprv }` / `{ network }`.
- * @returns {{ mnemonic: String|null, xprv: String, xpub: String, pubkey: String, id: String, network: String }}
+ * Restore an identity from a BIP39 mnemonic, raw seed hex, or an xprv.
+ * @param {Object|String} input Mnemonic string, seed hex, or `{ mnemonic }` / `{ seed }` / `{ xprv }` / `{ network }`.
+ * @returns {{ mnemonic: String|null, seed: String|null, xprv: String, xpub: String, pubkey: String, id: String, network: String }}
  */
 function restoreIdentity (input) {
   let opts = input;
   if (typeof input === 'string') {
-    opts = input.trim().startsWith('xprv') ? { xprv: input.trim() } : { mnemonic: input.trim() };
+    const trimmed = input.trim();
+    if (trimmed.startsWith('xprv') || trimmed.startsWith('tprv')) {
+      opts = { xprv: trimmed };
+    } else if (looksLikeRawSeedHex(trimmed)) {
+      opts = { seed: trimmed.replace(/^0x/i, '').toLowerCase() };
+    } else {
+      opts = { mnemonic: trimmed };
+    }
   }
-  if (!opts || (!opts.mnemonic && !opts.xprv)) {
-    throw new Error('restoreIdentity requires a mnemonic or xprv');
+  if (!opts || (!opts.mnemonic && !opts.xprv && !opts.seed)) {
+    throw new Error('restoreIdentity requires a mnemonic, seed hex, or xprv');
   }
-  const identity = fabricIdentityFrom(opts);
+  if (opts.seed && looksLikeRawSeedHex(opts.seed) && !opts.xprv) {
+    opts = Object.assign({}, opts, { xprv: xprvFromRawSeedHex(opts.seed) });
+  }
+  const identity = fabricIdentityFrom({
+    xprv: opts.xprv,
+    mnemonic: opts.mnemonic,
+    seed: (opts.seed && !looksLikeRawSeedHex(opts.seed)) ? opts.seed : undefined,
+    network: opts.network
+  });
   const master = identity.key;
+  const seedHex = opts.seed && looksLikeRawSeedHex(opts.seed)
+    ? String(opts.seed).replace(/^0x/i, '').toLowerCase()
+    : null;
   return {
     mnemonic: opts.mnemonic || master.mnemonic || null,
+    seed: seedHex,
     xprv: master.xprv,
     xpub: master.xpub,
     pubkey: identity.pubkey,
@@ -127,7 +164,8 @@ function masterKeyFromIdentity (identity) {
   if (!identity) throw new Error('identity required');
   if (identity.xprv) return new Key({ xprv: identity.xprv });
   if (identity.mnemonic) return new Key({ mnemonic: identity.mnemonic });
-  throw new Error('identity has no private material (xprv or mnemonic)');
+  if (identity.seed) return new Key({ seed: identity.seed });
+  throw new Error('identity has no private material (xprv, mnemonic, or seed)');
 }
 
 /**

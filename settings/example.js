@@ -28,9 +28,11 @@ module.exports = {
 
   // Fabric P2P peering (AMP/Message over TCP/NOISE). Default seeds are network hubs.
   // Publishing identity (preferred via env, not committed here):
-  //   FABRIC_XPRV=…           # preferred — same key across Fabric suite apps
-  //   FABRIC_SEED='24 words'  # or FABRIC_MNEMONIC — stamps FABRIC_XPRV:
-  //     eval "$(node scripts/fabric-env.js)"
+  //   FABRIC_XPRV=…              # preferred — same key across Fabric suite apps
+  //   FABRIC_SEED=<64-byte hex>  # raw BIP32 seed (or legacy mnemonic / xprv)
+  //   FABRIC_MNEMONIC='24 words'
+  //   ~/.fabric/wallet.json      # fallback; FABRIC_PASSWORD unlocks a sealed wallet
+  //   eval "$(node scripts/fabric-env.js)"
   fabric: {
     listen: true,
     port: 7777,
@@ -44,7 +46,7 @@ module.exports = {
 
   // Personal Wallet tab (Hub-backed L1). When enable is true, LiveRelay proxies
   // /services/star-citizen/bitcoin/* to hub HTTP — the app's Hub-shaped API surface.
-  // Operator admin token stays server-side (env / adminTokenFile / playnet discover);
+  // Operator admin token stays server-side (env / adminTokenFile / ~/.fabric/hub-admin-token);
   // the UI never holds FABRIC_HUB_ADMIN_TOKEN. Identity xpub is watch-only for
   // balance / receive / history; Send spends the Hub bitcoind wallet via that token.
   bitcoin: {
@@ -53,6 +55,7 @@ module.exports = {
     network: process.env.SC_BTC_NETWORK || 'regtest',
     adminToken: process.env.FABRIC_HUB_ADMIN_TOKEN || null,
     // Playnet mesh Hub A: ../hub.fabric.pub/stores/playnet-mesh-runtime/admin-token-a.txt
+    // RC1 home: ~/.fabric/hub-admin-token (FABRIC_HUB_ADMIN_TOKEN_FILE)
     adminTokenFile: process.env.FABRIC_HUB_ADMIN_TOKEN_FILE || null
   },
 

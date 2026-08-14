@@ -3,7 +3,7 @@
 const test = require('node:test');
 const assert = require('node:assert');
 const { createIdentity } = require('../../functions/identity');
-const { loadPeerKeySettings, hubRpcBase, playnetPeers, productionPlaynetTarget } = require('../../functions/playnetDeploy');
+const { loadPeerKeySettings, hubRpcBase, playnetPeers, productionPlaynetTarget, mintOperatorAdminToken, resolveAcceptAdminToken } = require('../../functions/playnetDeploy');
 
 test('playnetDeploy.loadPeerKeySettings prefers FABRIC_XPRV', () => {
   const id = createIdentity();
@@ -36,6 +36,35 @@ test('playnetDeploy.hubRpcBase and playnetPeers', () => {
     else process.env.FABRIC_HUB_RPC_URL = prev;
     if (prevP === undefined) delete process.env.FABRIC_PLAYNET_PEERS;
     else process.env.FABRIC_PLAYNET_PEERS = prevP;
+  }
+});
+
+test('playnetDeploy.mintOperatorAdminToken signs OP_IDENTITY/admin from FABRIC_XPRV', () => {
+  const Key = require('@fabric/core/types/key');
+  const Token = require('@fabric/core/types/token');
+  const master = new Key();
+  const minted = mintOperatorAdminToken({ xprv: master.xprv }, { persist: false });
+  assert.ok(minted.token && minted.token.includes('.'));
+  assert.equal(minted.source, 'operator-master');
+  const payload = Token.verifySigned(minted.token, master);
+  assert.ok(payload);
+  assert.equal(payload.cap, 'OP_IDENTITY');
+  assert.equal(payload.sub, 'admin');
+});
+
+test('playnetDeploy.resolveAcceptAdminToken prefers a minted operator token', () => {
+  const Key = require('@fabric/core/types/key');
+  const master = new Key();
+  const prev = process.env.FABRIC_HUB_ADMIN_TOKEN;
+  try {
+    process.env.FABRIC_HUB_ADMIN_TOKEN = 'stale-file-token';
+    const resolved = resolveAcceptAdminToken({ xprv: master.xprv }, { persist: false });
+    assert.ok(resolved.token);
+    assert.notEqual(resolved.token, 'stale-file-token');
+    assert.equal(resolved.source, 'operator-master');
+  } finally {
+    if (prev === undefined) delete process.env.FABRIC_HUB_ADMIN_TOKEN;
+    else process.env.FABRIC_HUB_ADMIN_TOKEN = prev;
   }
 });
 

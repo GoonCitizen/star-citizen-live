@@ -1,22 +1,35 @@
 'use strict';
 
 /**
- * Local adversarial mesh probe — dials loopback Fabric peers and hammers
- * the desktop HTTP surface. Does not target public hubs with floods.
+ * Adversarial mesh probe — dials Fabric peers and hammers an HTTP surface.
  *
- * Usage: node scripts/adversary-local-probe.js
+ * Default is loopback. Public playnet (crash logs / recovery reports):
+ *   node scripts/adversary-local-probe.js --production
+ *   ADV_HTTP=https://relay.goon.vc ADV_FABRIC=hub.fabric.pub:7777,relay.goon.vc:7777
+ *
+ * Does not ingest or send OpenSSF / GHSA advisory dumps.
+ * `--production` dials Hub/RSI with `@fabric/core` Peer (no local LiveRelay).
+ *
+ * Usage: node scripts/adversary-local-probe.js [--production]
  */
 
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const http = require('http');
+const https = require('https');
 
 const LiveRelay = require('../services/LiveRelay');
 const { createIdentity } = require('../functions/identity');
 
-const TARGET_HTTP = process.env.ADV_HTTP || 'http://127.0.0.1:3041';
-const TARGET_FABRIC = (process.env.ADV_FABRIC || '127.0.0.1:7778,127.0.0.1:7777')
+const PRODUCTION = process.argv.includes('--production') ||
+  process.env.ADV_PRODUCTION === '1' ||
+  process.env.ADV_PRODUCTION === 'true';
+
+const TARGET_HTTP = process.env.ADV_HTTP ||
+  (PRODUCTION ? 'https://relay.goon.vc' : 'http://127.0.0.1:3041');
+const TARGET_FABRIC = (process.env.ADV_FABRIC ||
+  (PRODUCTION ? 'hub.fabric.pub:7777,relay.goon.vc:7777' : '127.0.0.1:7778,127.0.0.1:7777'))
   .split(',')
   .map((s) => s.trim())
   .filter(Boolean);
@@ -35,13 +48,14 @@ function request (baseUrl, method, reqPath, payload) {
     const headers = { 'Content-Type': 'application/json', Accept: 'application/json' };
     const body = payload != null ? JSON.stringify(payload) : null;
     if (body) headers['Content-Length'] = Buffer.byteLength(body);
-    const req = http.request({
+    const lib = u.protocol === 'https:' ? https : http;
+    const req = lib.request({
       host: u.hostname,
-      port: u.port || 80,
+      port: u.port || (u.protocol === 'https:' ? 443 : 80),
       method,
       path: reqPath,
       headers,
-      timeout: 8000
+      timeout: 12000
     }, (res) => {
       let buf = '';
       res.on('data', (c) => { buf += c; });
@@ -140,6 +154,65 @@ function summarizeLeak (p, body) {
   return 'ok';
 }
 
+async function spawnFabricNeighbors (n = 2) {
+  const Peer = require('@fabric/core/types/peer');
+  const Message = require('@fabric/core/types/message');
+  const Key = require('@fabric/core/types/key');
+
+  console.log('\n=== Fabric neighbors dialing', TARGET_FABRIC.join(', '), '===\n');
+  const peers = [];
+  const stormTypes = ['P2P_PING', 'P2P_CHAT_MESSAGE', 'P2P_PEER_GOSSIP', 'P2P_PEERING_OFFER'];
+
+  for (let i = 0; i < n; i++) {
+    const key = new Key();
+    const client = new Peer({
+      listen: false,
+      networking: true,
+      peers: TARGET_FABRIC,
+      key: { xprv: key.xprv },
+      peersDb: null,
+      reconnectToKnownPeers: false
+    });
+    const hard = [];
+    client.on('error', (err) => {
+      const msg = err && (err.message || String(err));
+      if (msg && /Attempted to write to a closed|ECONNRESET|EPIPE/i.test(msg)) return;
+      hard.push(msg);
+    });
+    await client.start();
+    const deadline = Date.now() + 20000;
+    while (Date.now() < deadline && Object.keys(client.connections || {}).length < 1) {
+      await new Promise((r) => setTimeout(r, 250));
+    }
+    const conns = Object.keys(client.connections || {});
+    note(conns.length ? 'info' : 'warn', 'Neighbor ' + i + ' mesh',
+      'pubkey=' + String(key.pubkey || '').slice(0, 16) + '… connected=' + conns.length +
+      (conns[0] ? (' first=' + conns[0]) : ''));
+
+    let writes = 0;
+    for (let k = 0; k < 8 && conns.length; k++) {
+      const t = stormTypes[k % stormTypes.length];
+      const body = t === 'P2P_CHAT_MESSAGE'
+        ? ('adv-neighbor-' + i + '-' + k)
+        : JSON.stringify({ type: t, nonce: 'adv-' + i + '-' + k, created: new Date().toISOString() });
+      try {
+        const msg = Message.fromVector([t, body]).signWithKey(client.key);
+        const conn = client.connections[conns[0]];
+        if (conn && typeof conn._writeFabric === 'function') {
+          conn._writeFabric(msg.toBuffer());
+          writes += 1;
+        }
+      } catch (e) {
+        note('warn', 'Neighbor write failed', e.message || String(e));
+      }
+    }
+    note('info', 'Neighbor ' + i + ' signed writes', String(writes));
+    if (hard.length) note('warn', 'Neighbor ' + i + ' hard errors', hard.slice(0, 3).join('; '));
+    peers.push({ client, key });
+  }
+  return peers;
+}
+
 async function spawnAdversaryPeers (n = 3) {
   console.log('\n=== Fabric adversaries dialing', TARGET_FABRIC.join(', '), '===\n');
   const peers = [];
@@ -227,25 +300,55 @@ async function spawnAdversaryPeers (n = 3) {
 }
 
 async function main () {
-  await probeHttp();
+  try {
+    await probeHttp();
+  } catch (e) {
+    note('warn', 'HTTP probe failed', e.message || String(e));
+  }
+  if (PRODUCTION) {
+    try {
+      const hub = await request('https://hub.fabric.pub', 'GET', '/services/peering');
+      note(hub.status === 200 ? 'info' : 'warn', 'hub.fabric.pub GET /services/peering', String(hub.status));
+      const epoch = await request('https://hub.fabric.pub', 'GET', '/services/distributed/epoch');
+      note(epoch.status === 200 ? 'info' : 'warn', 'hub.fabric.pub GET /services/distributed/epoch',
+        String(epoch.status) + (epoch.body && epoch.body.clock != null ? ' clock=' + epoch.body.clock : ''));
+    } catch (e) {
+      note('warn', 'Hub HTTP probe failed', e.message || String(e));
+    }
+  }
   let peers = [];
   try {
-    peers = await spawnAdversaryPeers(3);
+    if (PRODUCTION) {
+      peers = await spawnFabricNeighbors(Number(process.env.ADV_PEERS) || 2);
+    } else {
+      peers = await spawnAdversaryPeers(Number(process.env.ADV_PEERS) || 3);
+    }
   } catch (e) {
     note('warn', 'Peer spawn failed', e.message || String(e));
   }
 
   const outDir = path.join(__dirname, '..', 'reports');
   try { fs.mkdirSync(outDir, { recursive: true }); } catch (_) { /* ignore */ }
-  const out = path.join(outDir, 'adversary-local-probe.json');
-  fs.writeFileSync(out, JSON.stringify({ findings, targets: { http: TARGET_HTTP, fabric: TARGET_FABRIC } }, null, 2));
+  const reportName = process.env.ADV_REPORT ||
+    (PRODUCTION || /goon\.vc|fabric\.pub/i.test(TARGET_HTTP)
+      ? 'adversary-public-probe.json'
+      : 'adversary-local-probe.json');
+  const out = path.join(outDir, reportName);
+  fs.writeFileSync(out, JSON.stringify({
+    findings,
+    targets: { http: TARGET_HTTP, fabric: TARGET_FABRIC, production: PRODUCTION },
+    at: new Date().toISOString()
+  }, null, 2));
   console.log('\nWrote', out);
 
-  // Keep peers briefly so UI can observe them, then tear down
-  await new Promise((r) => setTimeout(r, 8000));
+  const holdMs = Number(process.env.ADV_HOLD_MS) || (PRODUCTION ? 15000 : 8000);
+  await new Promise((r) => setTimeout(r, holdMs));
   for (const p of peers) {
-    try { await p.svc.stop(); } catch (_) { /* ignore */ }
-    try { fs.rmSync(p.dir, { recursive: true, force: true }); } catch (_) { /* ignore */ }
+    try {
+      if (p.client && typeof p.client.stop === 'function') await p.client.stop();
+      else if (p.svc && typeof p.svc.stop === 'function') await p.svc.stop();
+    } catch (_) { /* ignore */ }
+    try { if (p.dir) fs.rmSync(p.dir, { recursive: true, force: true }); } catch (_) { /* ignore */ }
   }
 
   const blockers = findings.filter((f) => f.severity === 'blocker');

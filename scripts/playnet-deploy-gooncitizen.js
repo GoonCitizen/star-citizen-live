@@ -12,9 +12,10 @@
  *
  * Env:
  *   FABRIC_XPRV                 preferred operator key (same across Fabric suite)
- *   FABRIC_SEED / FABRIC_MNEMONIC  BIP39 alternative (or xprv string in FABRIC_SEED)
+ *   FABRIC_SEED                 raw BIP32 seed hex (legacy: mnemonic or xprv string)
+ *   FABRIC_MNEMONIC             BIP39 phrase
  *   FABRIC_HUB_RPC_URL          default http://127.0.0.1:8080
- *   FABRIC_HUB_ADMIN_TOKEN      required for --accept
+ *   FABRIC_HUB_ADMIN_TOKEN      optional --accept fallback (else mint from operator key / ~/.fabric/hub-admin-token)
  *   FABRIC_PLAYNET_PEERS
  *   FABRIC_PLAYNET_PRODUCTION=1   same as --production (hub.fabric.pub + relay.goon.vc)
  */
@@ -28,13 +29,20 @@ const {
 } = require('../contracts/gooncitizen');
 const {
   loadPeerKeySettings,
-  loadAdminToken,
+  resolveAcceptAdminToken,
   hubRpcBase,
   productionPlaynetTarget,
   hubRpc,
   playnetPeers,
   waitForPeerConnections
 } = require('../functions/playnetDeploy');
+const {
+  loadRepoDotEnv,
+  loadFabricHomeEnv
+} = require('../functions/fabricEnvIdentity');
+
+loadRepoDotEnv();
+loadFabricHomeEnv();
 
 function printHelp () {
   console.log(`Usage:
@@ -46,7 +54,9 @@ function printHelp () {
   --hold-ms <n>      Keep peer up after publish (default 4000)
   --check-only       Skip publish; only print contract id + ListTracked status
 
-Env: FABRIC_XPRV (preferred), FABRIC_SEED / FABRIC_MNEMONIC, FABRIC_HUB_ADMIN_TOKEN,
+Env: FABRIC_XPRV (preferred), FABRIC_SEED / FABRIC_MNEMONIC. --accept mints a Hub
+     admin token from that operator key (local env = production publisher).
+     FABRIC_HUB_ADMIN_TOKEN / ~/.fabric/hub-admin-token is a fallback.
      FABRIC_PLAYNET_PEERS, FABRIC_PLAYNET_PRODUCTION=1
 `);
 }
@@ -184,6 +194,10 @@ async function main () {
   }
   console.log('[playnet:deploy] CONTRACT_PUBLISH sent', { contractId: gc.contractId, peers: conns.length });
 
+  const acceptToken = doAccept
+    ? resolveAcceptAdminToken(peerKey, { derivedKey: peer.key, persist: true })
+    : null;
+
   await new Promise((r) => setTimeout(r, holdMs));
   await peer.stop();
 
@@ -192,15 +206,21 @@ async function main () {
   console.log('[playnet:deploy] tracked after publish', summarizeTracked(mid, gc.contractId));
 
   if (doAccept) {
-    const token = loadAdminToken();
-    if (!token) {
-      throw new Error('--accept requires FABRIC_HUB_ADMIN_TOKEN');
+    if (!acceptToken || !acceptToken.token) {
+      throw new Error('--accept needs FABRIC_XPRV (to mint) or FABRIC_HUB_ADMIN_TOKEN');
     }
+    console.log('[playnet:deploy] accept token', {
+      source: acceptToken.source,
+      pubkey: acceptToken.pubkeyPrefix
+    });
     const accept = await hubRpc('AcceptTrackedApplicationContract', {
       contractId: gc.contractId,
-      adminToken: token
+      adminToken: acceptToken.token
     }, { baseUrl: hubUrl });
     console.log('[playnet:deploy] AcceptTrackedApplicationContract', accept);
+    if (!accept || accept.status === 'error') {
+      throw new Error((accept && accept.message) || 'AcceptTrackedApplicationContract failed');
+    }
 
     try {
       const side = await hubRpc('GetContractSidechainState', { contractId: gc.contractId }, { baseUrl: hubUrl });

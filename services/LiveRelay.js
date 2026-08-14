@@ -8746,12 +8746,13 @@ class StarCitizenService extends EventEmitter {
       onChat: (msg, source) => {
         if (!this.chatManager || !msg) return;
         // First-class P2P_CHAT_MESSAGE: Peer emits `{ text }` + meta.signer.
-        // Legacy JSON envelopes (object.body/content) are no longer accepted on the wire.
-        const text = (msg && msg.text != null)
-          ? String(msg.text)
-          : ((msg.object && (msg.object.body != null ? msg.object.body : msg.object.content)) || null);
-        const author = resolveSignerPubkey(source, msg && msg.actor) || source || null;
-        if (!author || text == null || !String(text).trim()) return;
+        // Shared with Hub UI / Fabric TUI via fabricChatNormalize / fabricChatText.
+        const { chatTextOf, chatActorIdOf } = require('../functions/fabricChatNormalize');
+        const text = chatTextOf(msg);
+        const author = chatActorIdOf(msg, { signer: source, defaultActorId: source })
+          || source
+          || null;
+        if (!author || !String(text).trim()) return;
         const ts = new Date().toISOString();
         const handle = this._peerAliasByPubkey[author] || null;
         try {

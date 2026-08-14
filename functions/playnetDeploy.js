@@ -33,8 +33,9 @@ function loadPeerKeySettings (opts = {}) {
 }
 
 function loadAdminToken () {
-  const fromEnv = String(process.env.FABRIC_HUB_ADMIN_TOKEN || process.env.FABRIC_ADMIN_TOKEN || '').trim();
-  if (fromEnv) return fromEnv;
+  const { resolveHubAdminToken } = require('./hubAdminToken');
+  const resolved = resolveHubAdminToken({}, process.env);
+  if (resolved && resolved.token) return resolved.token;
   const meshTokenPath = path.resolve(
     ROOT,
     '..',
@@ -48,6 +49,83 @@ function loadAdminToken () {
     if (fromMesh) return fromMesh;
   } catch (_) {}
   return '';
+}
+
+/**
+ * Mint a Hub admin token from the local operator key (production publisher).
+ * Prefers HD master (`FABRIC_XPRV`) so Hub `SetupService._rootKey` verifies it;
+ * optionally also mint from a derived Peer key.
+ *
+ * Does not log the token.
+ *
+ * @param {object} keySettings `{ xprv }` / `{ mnemonic }` / `{ seed }`
+ * @param {object} [opts]
+ * @param {object} [opts.derivedKey] Fabric Key (Peer identity) to try second
+ * @param {boolean} [opts.persist=true] Write `~/.fabric/hub-admin-token`
+ * @returns {{ token: string, source: string|null, pubkeyPrefix: string|null }}
+ */
+function mintOperatorAdminToken (keySettings, opts = {}) {
+  if (!keySettings || typeof keySettings !== 'object') {
+    return { token: '', source: null, pubkeyPrefix: null };
+  }
+  const Key = require('@fabric/core/types/key');
+  let mint;
+  let writeToken = null;
+  try {
+    const home = require('@fabric/core/functions/fabricHomeEnv');
+    mint = home.mintHubAdminToken;
+    writeToken = typeof home.writeHubAdminToken === 'function' ? home.writeHubAdminToken : null;
+  } catch (_) {
+    mint = null;
+  }
+  if (typeof mint !== 'function') {
+    const Token = require('@fabric/core/types/token');
+    mint = (issuer) => new Token({
+      capability: 'OP_IDENTITY',
+      issuer,
+      subject: 'admin'
+    }).toSignedString();
+  }
+
+  const persist = opts.persist !== false;
+  const candidates = [];
+  try {
+    candidates.push({ key: new Key(keySettings), source: 'operator-master' });
+  } catch (_) { /* invalid settings */ }
+  if (opts.derivedKey) {
+    candidates.push({ key: opts.derivedKey, source: 'operator-derived' });
+  }
+
+  for (const row of candidates) {
+    if (!row.key) continue;
+    try {
+      const token = String(mint(row.key) || '').trim();
+      if (!token) continue;
+      if (persist && writeToken) {
+        try { writeToken(token); } catch (_) { /* home dir not writable */ }
+      }
+      let pubkeyPrefix = null;
+      try {
+        const hex = row.key.pubkey ? String(row.key.pubkey) : '';
+        pubkeyPrefix = hex ? hex.slice(0, 12) + '…' : null;
+      } catch (_) { /* ignore */ }
+      return { token, source: row.source, pubkeyPrefix };
+    } catch (_) { /* try next candidate */ }
+  }
+  return { token: '', source: null, pubkeyPrefix: null };
+}
+
+/**
+ * Production publisher Accept token: mint from local operator key, else env/file.
+ * @param {object} [keySettings]
+ * @param {object} [opts]
+ * @returns {{ token: string, source: string|null, pubkeyPrefix: string|null }}
+ */
+function resolveAcceptAdminToken (keySettings, opts = {}) {
+  const minted = mintOperatorAdminToken(keySettings, opts);
+  if (minted.token) return minted;
+  const token = loadAdminToken();
+  return { token, source: token ? 'file-or-env' : null, pubkeyPrefix: null };
 }
 
 function hubRpcBase () {
@@ -96,7 +174,9 @@ function hubRpc (method, params = {}, opts = {}) {
     jsonrpc: '2.0',
     id: 1,
     method,
-    params
+    params: (params !== null && typeof params === 'object' && !Array.isArray(params))
+      ? [params]
+      : params
   });
 
   return new Promise((resolve, reject) => {
@@ -150,6 +230,8 @@ module.exports = {
   ROOT,
   loadPeerKeySettings,
   loadAdminToken,
+  mintOperatorAdminToken,
+  resolveAcceptAdminToken,
   hubRpcBase,
   productionPlaynetTarget,
   PRODUCTION_HUB_HTTP,

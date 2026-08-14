@@ -91,6 +91,13 @@ describe('Fabric expectations: fabricPubkey + chat normalize', () => {
     assert.equal(ChatManager.canonicalChatAuthor(key.pubkey), x);
     const n = httpChat.normalizeP2pChatMessage({ text: 'ping' }, { signer: key.pubkey });
     assert.equal(n.actor.id, x);
+    assert.equal(httpChat.chatTextOf({ text: 'mesh' }), 'mesh');
+    assert.equal(httpChat.chatTextOf({ object: { content: 'hub' } }), 'hub');
+    const gcChat = require('../../functions/fabricChatNormalize');
+    assert.equal(gcChat.chatTextOf({ object: { body: 'app' } }), 'app');
+    const coreChat = require('@fabric/core/functions/fabricChatText');
+    assert.equal(httpChat.chatTextOf, coreChat.chatTextOf);
+    assert.equal(gcChat.chatTextOf, httpChat.chatTextOf);
   });
 });
 

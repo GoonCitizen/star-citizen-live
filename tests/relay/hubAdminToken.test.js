@@ -12,6 +12,20 @@ const {
 } = require('../../functions/hubAdminToken');
 const { withResolvedHubAdminToken } = require('../../functions/hubBitcoinProxy');
 
+test('resolveHubAdminToken reads ~/.fabric/hub-admin-token when HOME is set', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'gc-home-token-'));
+  const tokenPath = path.join(dir, '.fabric', 'hub-admin-token');
+  fs.mkdirSync(path.dirname(tokenPath), { recursive: true });
+  fs.writeFileSync(tokenPath, 'home-token-value\n', { encoding: 'utf8', mode: 0o600 });
+  try {
+    const got = resolveHubAdminToken({}, { HOME: dir });
+    assert.equal(got.token, 'home-token-value');
+    assert.equal(got.source, 'home');
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test('resolveHubAdminToken prefers settings then env', () => {
   const a = resolveHubAdminToken({ adminToken: 'from-settings' }, {});
   assert.equal(a.token, 'from-settings');

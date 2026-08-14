@@ -15,6 +15,8 @@ const MAX_BYTES = 8 * 1024 * 1024;
 /** Disk-backed blobs (installers / APKs). In-store base64 still uses MAX_BYTES. */
 const MAX_BLOB_BYTES = 512 * 1024 * 1024;
 
+const { looksLikeBulkSecurityAdvisory } = require('./bulkSecurityAdvisory');
+
 function sha256Hex (buf) {
   return crypto.createHash('sha256').update(buf).digest('hex');
 }
@@ -146,6 +148,15 @@ function createFromBuffer (store, buffer, doc = {}, opts = {}) {
   }
   if (!Buffer.isBuffer(buffer) || !buffer.length) {
     const err = new Error('contentBase64 required');
+    err.status = 400;
+    throw err;
+  }
+  if (
+    looksLikeBulkSecurityAdvisory(buffer) ||
+    looksLikeBulkSecurityAdvisory(doc) ||
+    looksLikeBulkSecurityAdvisory(doc && doc.name)
+  ) {
+    const err = new Error('bulk security advisory documents are not stored');
     err.status = 400;
     throw err;
   }

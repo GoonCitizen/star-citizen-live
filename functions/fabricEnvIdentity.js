@@ -5,16 +5,31 @@
  *
  * Priority (same convention across the Fabric suite):
  *   1. FABRIC_XPRV — extended private key (preferred in public docs / production)
- *   2. FABRIC_SEED or FABRIC_MNEMONIC — BIP39 mnemonic, or an `xprv…` string in FABRIC_SEED
- *   3. Optional local `local/fabric-operator-identity.json` (automation fallback only)
+ *   2. FABRIC_SEED — raw BIP32 seed hex (16–64 bytes), or a legacy mnemonic / `xprv…`
+ *   3. FABRIC_MNEMONIC — BIP39 word phrase
+ *   4. ~/.fabric/wallet.json (`FABRIC_PASSWORD` unlocks a sealed wallet)
+ *   5. Optional local `local/fabric-operator-identity.json` (automation fallback only)
  *
  * Calling {@link applyFabricEnvConfig} stamps FABRIC_XPRV (and public fields) onto `env`
  * so the rest of the stack can treat XPRV as the canonical publishing secret.
  */
 
 const fs = require('fs');
+const os = require('os');
 const path = require('path');
 const { restoreIdentity } = require('./identity');
+
+function tryCore (name) {
+  try {
+    return require(name);
+  } catch (_) {
+    return null;
+  }
+}
+
+const fabricKeyMaterial = tryCore('@fabric/core/functions/fabricKeyMaterial');
+const fabricHomeEnv = tryCore('@fabric/core/functions/fabricHomeEnv');
+const fabricWalletIdentity = tryCore('@fabric/core/functions/fabricWalletIdentity');
 
 /**
  * Load KEY=VALUE lines from a `.env` file into `env` without overriding
@@ -25,6 +40,9 @@ const { restoreIdentity } = require('./identity');
  * @returns {number} Count of keys applied
  */
 function loadDotEnvFile (filePath, env = process.env) {
+  if (fabricHomeEnv && typeof fabricHomeEnv.loadDotEnvFile === 'function') {
+    return fabricHomeEnv.loadDotEnvFile(filePath, env);
+  }
   let text;
   try {
     text = fs.readFileSync(filePath, 'utf8');
@@ -61,6 +79,20 @@ function loadRepoDotEnv (repoRoot = path.join(__dirname, '..'), env = process.en
 }
 
 /**
+ * Fill missing FABRIC_* keys from `~/.fabric/env`.
+ * @param {NodeJS.ProcessEnv} [env]
+ * @param {object} [opts]
+ * @returns {number}
+ */
+function loadFabricHomeEnv (env = process.env, opts = {}) {
+  if (fabricHomeEnv && typeof fabricHomeEnv.loadFabricHomeEnv === 'function') {
+    return fabricHomeEnv.loadFabricHomeEnv(env, opts);
+  }
+  const home = opts.home || env.HOME || os.homedir();
+  return loadDotEnvFile(path.join(home, '.fabric', 'env'), env);
+}
+
+/**
  * Local automation identity file (never preferred over FABRIC_XPRV / FABRIC_SEED).
  * @param {NodeJS.ProcessEnv} [env]
  * @param {string} [repoRoot]
@@ -94,26 +126,58 @@ function loadLocalOperatorIdentityFile (env = process.env, repoRoot = path.join(
   return null;
 }
 
+function restoreFromKeySettings (settings) {
+  if (!settings) return null;
+  if (settings.xprv) return restoreIdentity({ xprv: settings.xprv });
+  if (settings.mnemonic) return restoreIdentity({ mnemonic: settings.mnemonic });
+  if (settings.seed) return restoreIdentity({ seed: settings.seed });
+  return null;
+}
+
 /**
  * @param {NodeJS.ProcessEnv} [env]
  * @param {object} [opts]
  * @param {boolean} [opts.allowLocalIdentityFallback=true]
- * @returns {{ mnemonic: string|null, xprv: string, xpub: string, pubkey: string, id: string }|null}
+ * @param {boolean} [opts.allowWalletFallback]
+ * @returns {{ mnemonic: string|null, seed: string|null, xprv: string, xpub: string, pubkey: string, id: string }|null}
  */
 function loadFabricEnvIdentity (env = process.env, opts = {}) {
   const allowLocal = opts.allowLocalIdentityFallback !== false;
+  const allowWallet = opts.allowWalletFallback != null
+    ? opts.allowWalletFallback
+    : env === process.env;
 
-  const xprv = String(env.FABRIC_XPRV || '').trim();
-  if (xprv.startsWith('xprv') || xprv.startsWith('tprv')) {
-    return restoreIdentity({ xprv });
+  if (fabricKeyMaterial && typeof fabricKeyMaterial.keySettingsFromEnv === 'function') {
+    const fromEnv = restoreFromKeySettings(fabricKeyMaterial.keySettingsFromEnv(env));
+    if (fromEnv) return fromEnv;
+  } else {
+    const xprv = String(env.FABRIC_XPRV || '').trim();
+    if (xprv.startsWith('xprv') || xprv.startsWith('tprv')) {
+      return restoreIdentity({ xprv });
+    }
+    const seed = String(env.FABRIC_SEED || '').trim();
+    if (seed.startsWith('xprv') || seed.startsWith('tprv')) {
+      return restoreIdentity({ xprv: seed });
+    }
+    if (seed) {
+      return restoreIdentity({ seed });
+    }
+    const mnemonic = String(env.FABRIC_MNEMONIC || '').trim();
+    if (mnemonic) return restoreIdentity({ mnemonic });
   }
 
-  const seed = String(env.FABRIC_SEED || env.FABRIC_MNEMONIC || '').trim();
-  if (seed.startsWith('xprv') || seed.startsWith('tprv')) {
-    return restoreIdentity({ xprv: seed });
-  }
-  if (seed) {
-    return restoreIdentity({ mnemonic: seed });
+  if (allowWallet && fabricWalletIdentity && typeof fabricWalletIdentity.loadIdentityFromWalletFile === 'function') {
+    const wallet = fabricWalletIdentity.loadIdentityFromWalletFile({
+      home: env.HOME,
+      password: env.FABRIC_PASSWORD
+    });
+    if (wallet && wallet.xprv) {
+      return restoreIdentity({
+        xprv: wallet.xprv,
+        mnemonic: wallet.mnemonic || undefined,
+        seed: wallet.seed || undefined
+      });
+    }
   }
 
   if (!allowLocal) return null;
@@ -132,6 +196,9 @@ function loadFabricEnvIdentity (env = process.env, opts = {}) {
  * @returns {{ identity: object|null, updated: boolean, source: string|null }}
  */
 function applyFabricEnvConfig (env = process.env) {
+  if (env === process.env) {
+    loadFabricHomeEnv(env);
+  }
   const before = String(env.FABRIC_XPRV || '').trim();
   const identity = loadFabricEnvIdentity(env);
   if (!identity) {
@@ -142,6 +209,9 @@ function applyFabricEnvConfig (env = process.env) {
   if (before.startsWith('xprv') || before.startsWith('tprv')) source = 'FABRIC_XPRV';
   else if (String(env.FABRIC_SEED || '').trim()) source = 'FABRIC_SEED';
   else if (String(env.FABRIC_MNEMONIC || '').trim()) source = 'FABRIC_MNEMONIC';
+  else if (source === 'local-operator-identity' && env === process.env) {
+    source = 'wallet-or-local';
+  }
 
   let updated = false;
   if (!(before.startsWith('xprv') || before.startsWith('tprv'))) {
@@ -172,12 +242,19 @@ function formatFabricEnvExports (identity) {
     `export FABRIC_XPUB=${JSON.stringify(identity.xpub)}`,
     `export FABRIC_PUBKEY=${JSON.stringify(identity.pubkey)}`
   ];
+  if (identity.seed) {
+    lines.push(`export FABRIC_SEED=${JSON.stringify(identity.seed)}`);
+  }
+  if (identity.mnemonic) {
+    lines.push(`export FABRIC_MNEMONIC=${JSON.stringify(identity.mnemonic)}`);
+  }
   return lines.join('\n') + '\n';
 }
 
 module.exports = {
   loadDotEnvFile,
   loadRepoDotEnv,
+  loadFabricHomeEnv,
   loadLocalOperatorIdentityFile,
   loadFabricEnvIdentity,
   applyFabricEnvConfig,

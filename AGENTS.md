@@ -27,8 +27,12 @@
   subclass Hub. Shared login/link/peering helpers re-export `@fabric/http`.
   Suite map: `@fabric/core` `docs/TYPES_AND_SERVICES.md` (local `~/fabric-clean`).
 - **Playnet (hub.fabric.pub + relay.goon.vc):** after Hub is up, Beacon registers
-  native `fabric-beacon`. From this tree, with `FABRIC_XPRV` and
-  `FABRIC_HUB_ADMIN_TOKEN`: `npm run playnet:deploy-gooncitizen -- --production --accept`
+  native `fabric-beacon`. From this tree, with `FABRIC_XPRV` (or `FABRIC_SEED` hex /
+  `FABRIC_MNEMONIC` / `~/.fabric/wallet.json`). The local developer environment
+  is the production publisher: `--accept` mints a Hub admin token from that
+  operator key (HD master, same `FABRIC_XPRV` as Hub `_rootKey`). Optional
+  `FABRIC_HUB_ADMIN_TOKEN` / `~/.fabric/hub-admin-token` remain a fallback.
+  `npm run playnet:deploy-gooncitizen -- --production --accept`
   publishes the GoonCitizen application contract to both peers and Accepts it on Hub.
 - **Public relays:** operators of `relay.goon.vc` (nvm 24.15 + pm2, Caddy or
   Nginx → loopback HTTP, Peer on the dedicated NIC) read **`docs/PRODUCTION.md`**.
@@ -253,7 +257,7 @@ npm run publish:builds    # SPA + dist/ installers + APKs → local Files catalo
   change address, and watch UTXOs (Hub still spends one destination per POST).
   Operator admin token for Hub-wallet send is resolved server-side only
   (`FABRIC_HUB_ADMIN_TOKEN`, `bitcoin.adminToken`, `bitcoin.adminTokenFile`,
-  or playnet mesh discover); the UI never holds it.
+  `~/.fabric/hub-admin-token`, or playnet mesh discover); the UI never holds it.
 - **Files (this node’s catalog):** gated by **`settings.documents.enable`**
   in `settings/local.js` (off by default in `settings/example.js`). The dashboard
   **Files** tab is **Advanced mode only**. Every node keeps its own catalog in the
@@ -399,6 +403,11 @@ npm run publish:builds    # SPA + dist/ installers + APKs → local Files catalo
 | `SC_SETTINGS_DIR` | Named Fabric store root. Default: `stores/gooncitizen`. |
 | `SC_MODE` | `server` = public/hosted API (signed writes, no Game.log). Fabric Peer is **on** unless `SC_FABRIC=0` (seeds such as `relay.goon.vc`). HTTP via `scripts/node.js` defaults to loopback behind Caddy. `android` = mobile node (loopback HTTP, Fabric Peer, no Game.log). Unset = desktop/local relay. |
 | `SC_FABRIC` | `0` disables the Fabric Peer. Unset/`1` = listen (required for a public seed). |
+| `FABRIC_XPRV` | Preferred operator extended private key (suite-wide). Process env wins over `~/.fabric/wallet.json`. |
+| `FABRIC_SEED` | Raw BIP32 seed **hex** (16–64 bytes; BIP39 PBKDF2 output is 64). Legacy: mnemonic or `xprv…` string. |
+| `FABRIC_MNEMONIC` | BIP39 word phrase. |
+| `FABRIC_PASSWORD` | Unlocks a sealed `~/.fabric/wallet.json`. |
+| `FABRIC_HUB_ADMIN_TOKEN` | Hub operator token for `--accept` / wallet spend. Else `FABRIC_HUB_ADMIN_TOKEN_FILE` or `~/.fabric/hub-admin-token`. |
 | `FABRIC_PORT` | Fabric Peer listen port (default 7777). Wins over `settings/local.js` `fabric.port`. On the shared production host, 7777 is Hub + this relay; other apps use 7778+. |
 | `FABRIC_INTERFACE` / `FABRIC_PEER_INTERFACE` | Fabric Peer bind address (default `0.0.0.0`). Dedicated `relay.goon.vc` NIC: `65.21.231.149`. |
 | `FABRIC_PUBLIC_HOST` / `FABRIC_ADVERTISE_HOST` | Hostname for peering offers / self-dial filter (`relay.goon.vc` on that host). Legacy alias: `SC_FABRIC_PUBLIC_HOST` (mapped at boot). |

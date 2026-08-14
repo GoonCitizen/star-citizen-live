@@ -813,6 +813,7 @@ Deterministic id for a message payload (mirror of post()).
         * [._signAndRelay(vectorType, body, [opts])](#FabricNetwork+_signAndRelay)
         * [.signContractMessage(contractId, type, object, [opts])](#FabricNetwork+signContractMessage)
         * [.encodeOpaqueMessage(message, [opts])](#FabricNetwork+encodeOpaqueMessage) ⇒ <code>Object</code>
+        * [._wrapPeerConnect(peer)](#FabricNetwork+_wrapPeerConnect) ⇒ <code>void</code>
         * [._wrapPeeringCandidateEnqueue(peer)](#FabricNetwork+_wrapPeeringCandidateEnqueue) ⇒ <code>void</code>
         * [._sanitizePeerCandidates(peer)](#FabricNetwork+_sanitizePeerCandidates) ⇒ <code>void</code>
         * [._ingestPeeringEvent(ev, kind)](#FabricNetwork+_ingestPeeringEvent)
@@ -963,6 +964,18 @@ Encode a signed Message as opaque fabric:&lt;payload&gt; (base64 body by default
 | message | <code>object</code> |  |
 | [opts] | <code>Object</code> |  |
 | [opts.encoding] | <code>string</code> | `'base64'` (default) or `'hex'` |
+
+<a name="FabricNetwork+_wrapPeerConnect"></a>
+
+### fabricNetwork.\_wrapPeerConnect(peer) ⇒ <code>void</code>
+Core `Peer.start` / `_fillPeerSlots` call `_connect` with registry keys.
+Canonicalize so `65.21.231.149:7778` cannot TCP-dial a closed port.
+
+**Kind**: instance method of [<code>FabricNetwork</code>](#FabricNetwork)  
+
+| Param | Type |
+| --- | --- |
+| peer | <code>object</code> | 
 
 <a name="FabricNetwork+_wrapPeeringCandidateEnqueue"></a>
 
