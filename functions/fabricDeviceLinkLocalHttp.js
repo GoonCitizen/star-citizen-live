@@ -16,8 +16,16 @@ const { mergeLinkedDevice } = require('./linkedDevices');
 const {
   startDeviceLinkOffer,
   tickDeviceLinkOffer,
-  DEFAULT_DEVICE_LINK_HUB
+  abandonDeviceLinkOffer,
+  DEFAULT_DEVICE_LINK_HUB,
+  DEVICE_LINK_TICK_MS,
+  peerPubkeyFromParty,
+  compactPendingOffer
 } = require('./fabricDeviceLinkOffer');
+const {
+  isStaleDeviceLinkError,
+  isDeviceLinkOfferExpired
+} = require('./deviceLinkLifecycle');
 const {
   fetchPendingDeviceLink,
   completeDeviceLinkAsResponder
@@ -48,6 +56,81 @@ async function publishCrossSign (relay, peerPubkey, nonce) {
   }
 }
 
+function stopDeviceLinkTick (relay) {
+  if (!relay) return;
+  if (relay._deviceLinkTickTimer) {
+    clearInterval(relay._deviceLinkTickTimer);
+    relay._deviceLinkTickTimer = null;
+  }
+  relay._deviceLinkTickBusy = false;
+}
+
+function persistPendingOffer (relay, offer) {
+  if (!relay || !relay.registerStore) return;
+  try {
+    settingsStore.putSetting(relay.registerStore, 'pendingDeviceLinkOffer',
+      offer ? compactPendingOffer(offer) : null);
+  } catch (_) { /* allowlist / store not ready */ }
+}
+
+function restorePendingDeviceLinkOffer (relay) {
+  if (!relay || relay._pendingDeviceLinkOffer || !relay.registerStore) return;
+  try {
+    const cur = settingsStore.loadSettings(relay.registerStore);
+    const row = cur.pendingDeviceLinkOffer;
+    if (!row || !row.sessionId) return;
+    if (isDeviceLinkOfferExpired(row)) {
+      persistPendingOffer(relay, null);
+      return;
+    }
+    relay._pendingDeviceLinkOffer = row;
+    armDeviceLinkTick(relay);
+  } catch (_) { /* ignore */ }
+}
+
+function clearPendingOffer (relay) {
+  if (!relay) return;
+  relay._pendingDeviceLinkOffer = null;
+  stopDeviceLinkTick(relay);
+  persistPendingOffer(relay, null);
+}
+
+async function tickPendingOffer (relay) {
+  if (!relay || !relay._identity || !relay._pendingDeviceLinkOffer) return null;
+  if (relay._deviceLinkTickBusy) return null;
+  relay._deviceLinkTickBusy = true;
+  try {
+    const result = await tickDeviceLinkOffer(relay._identity, relay._pendingDeviceLinkOffer);
+    if (!result || !result.ok) {
+      if (result && (result.expired || isStaleDeviceLinkError(result))) {
+        clearPendingOffer(relay);
+      }
+      return result;
+    }
+    if (result.status === 'linked') {
+      persistLinkedDevice(relay, linkedEntryFromOffer(result, 'initiator'));
+      const peerPk = result.peerPubkey || peerPubkeyFromParty(result.responder);
+      await publishCrossSign(relay, peerPk, result.nonce);
+      clearPendingOffer(relay);
+    }
+    return result;
+  } catch (e) {
+    relay.emit && relay.emit('warning', '[LiveRelay] device-link tick: ' +
+      ((e && e.message) ? e.message : e));
+    return { ok: false, error: (e && e.message) ? e.message : String(e) };
+  } finally {
+    relay._deviceLinkTickBusy = false;
+  }
+}
+
+function armDeviceLinkTick (relay) {
+  if (!relay || relay._deviceLinkTickTimer) return;
+  relay._deviceLinkTickTimer = setInterval(() => {
+    void tickPendingOffer(relay);
+  }, DEVICE_LINK_TICK_MS);
+  if (relay._deviceLinkTickTimer.unref) relay._deviceLinkTickTimer.unref();
+}
+
 function linkedEntryFromOffer (res, role) {
   return {
     kind: 'device-link',
@@ -56,6 +139,8 @@ function linkedEntryFromOffer (res, role) {
     peerXpub: res.peerXpub || (res.responder && res.responder.xpub) ||
       (res.initiator && res.initiator.xpub) || null,
     peerPubkey: res.peerPubkey || res.peerPubkeyHex ||
+      peerPubkeyFromParty(res.responder) ||
+      peerPubkeyFromParty(res.initiator) ||
       (res.responder && res.responder.pubkeyHex) ||
       (res.initiator && res.initiator.pubkeyHex) || null,
     nonce: res.nonce || null,
@@ -86,6 +171,10 @@ async function tryHandleDeviceLinkLocal (relay, req, res, pathname, readBody, se
       send(401, { ok: false, error: 'Identity is locked — unlock it, then add a device.' });
       return true;
     }
+    if (relay._pendingDeviceLinkOffer) {
+      await abandonDeviceLinkOffer(relay._pendingDeviceLinkOffer);
+      relay._pendingDeviceLinkOffer = null;
+    }
     const d = await readBody();
     const result = await startDeviceLinkOffer(relay._identity, {
       hubBase: (d && d.hubBase) || DEFAULT_DEVICE_LINK_HUB,
@@ -96,7 +185,22 @@ async function tryHandleDeviceLinkLocal (relay, req, res, pathname, readBody, se
       return true;
     }
     relay._pendingDeviceLinkOffer = result;
+    persistPendingOffer(relay, result);
+    armDeviceLinkTick(relay);
     send(200, result);
+    return true;
+  }
+
+  if (req.method === 'GET' && rest === '/current') {
+    const offer = relay._pendingDeviceLinkOffer;
+    if (!offer) {
+      send(200, { ok: true, pending: false });
+      return true;
+    }
+    send(200, Object.assign({ ok: true, pending: true }, compactPendingOffer(offer), {
+      qrDataUrl: offer.qrDataUrl || null,
+      protocolUrl: offer.protocolUrl || null
+    }));
     return true;
   }
 
@@ -110,23 +214,28 @@ async function tryHandleDeviceLinkLocal (relay, req, res, pathname, readBody, se
       send(400, { ok: false, error: 'no pending device-link offer' });
       return true;
     }
-    const result = await tickDeviceLinkOffer(relay._identity, offer);
-    if (!result.ok) {
-      send(400, result);
+    const result = await tickPendingOffer(relay);
+    if (!result) {
+      send(400, { ok: false, error: 'device-link tick busy' });
       return true;
     }
-    if (result.status === 'linked') {
-      relay._pendingDeviceLinkOffer = null;
-      persistLinkedDevice(relay, linkedEntryFromOffer(result, 'initiator'));
-      await publishCrossSign(relay, result.peerPubkey, result.nonce);
+    if (!result.ok) {
+      if (result.expired || isStaleDeviceLinkError(result)) {
+        send(410, Object.assign({ expired: true }, result));
+        return true;
+      }
+      send(400, result);
+      return true;
     }
     send(200, result);
     return true;
   }
 
   if (req.method === 'POST' && rest === '/cancel') {
-    relay._pendingDeviceLinkOffer = null;
-    send(200, { ok: true });
+    const offer = relay._pendingDeviceLinkOffer;
+    clearPendingOffer(relay);
+    if (offer) await abandonDeviceLinkOffer(offer);
+    send(200, { ok: true, cancelled: true });
     return true;
   }
 
@@ -162,7 +271,9 @@ async function tryHandleDeviceLinkLocal (relay, req, res, pathname, readBody, se
       send(400, result);
       return true;
     }
-    const peerPk = (d && d.initiator && d.initiator.pubkeyHex) || result.peerPubkeyHex;
+    const peerPk = peerPubkeyFromParty(d && d.initiator) ||
+      result.peerPubkeyHex ||
+      peerPubkeyFromParty(result);
     persistLinkedDevice(relay, linkedEntryFromOffer({
       peerFabricId: result.peerFabricId || (d && d.initiator && d.initiator.id),
       peerXpub: result.peerXpub || (d && d.initiator && d.initiator.xpub),
@@ -184,5 +295,9 @@ module.exports = {
   LOCAL_PREFIX,
   tryHandleDeviceLinkLocal,
   persistLinkedDevice,
-  linkedEntryFromOffer
+  linkedEntryFromOffer,
+  armDeviceLinkTick,
+  stopDeviceLinkTick,
+  tickPendingOffer,
+  restorePendingDeviceLinkOffer
 };

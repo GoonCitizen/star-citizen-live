@@ -204,4 +204,38 @@ describe('device-link desktop ↔ Android round-trip', () => {
       true
     );
   });
+
+  it('cancels a pending hub session so tick reports expired', async () => {
+    const offer = await jsonFetch(`${phone.origin}/services/star-citizen/device-links/offer`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+      body: JSON.stringify({ hubBase: hub.origin, label: 'GoonCitizen Android' })
+    });
+    assert.equal(offer.status, 200, offer.j && offer.j.error);
+    const dropped = await jsonFetch(
+      `${hub.origin}/device-links/${encodeURIComponent(offer.j.sessionId)}`,
+      { method: 'DELETE' }
+    );
+    assert.equal(dropped.status, 200, dropped.j && dropped.j.error);
+    assert.equal(dropped.j.ok, true);
+    const again = await jsonFetch(
+      `${hub.origin}/device-links/${encodeURIComponent(offer.j.sessionId)}`,
+      { method: 'DELETE' }
+    );
+    assert.equal(again.status, 200);
+    assert.equal(again.j.existed, false);
+    const tick = await jsonFetch(`${phone.origin}/services/star-citizen/device-links/tick`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+      body: JSON.stringify({})
+    });
+    assert.equal(tick.status, 410, tick.j && tick.j.error);
+    assert.equal(tick.j.expired, true);
+    const cancel = await jsonFetch(`${phone.origin}/services/star-citizen/device-links/cancel`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+      body: JSON.stringify({})
+    });
+    assert.equal(cancel.status, 200);
+  });
 });

@@ -1,18 +1,16 @@
 'use strict';
 
 /**
- * Star Citizen Live - Fabric-free service (M1 skeleton + M3 parser).
+ * Star Citizen Live — LiveRelay (dashboard, register, Fabric Peer ingest).
  *
- * Boots with ZERO external dependencies - only Node.js built-ins (http, crypto,
- * events, fs, readline) plus global fetch (identity/group crypto loads lazily).
- * This file is the SERVICE DEFINITION only — the server entry that boots it
- * from the environment is `scripts/node.js` (`npm start`).
+ * Entry: `scripts/node.js` (`npm start`). Desktop: `main.js`.
+ * Game.log is read-only. Fabric git deps are required (`npm i`).
  *
- * Features: in-memory collections, REST endpoints, live log tailing (read-only,
- * optional) AND offline replay, real Game.log event parsing (functions/parser.js),
- * optional Discord webhook posting, and the mission/contract seam.
+ * Features: collections, REST, live log tail (read-only) and offline replay,
+ * Game.log parsing (`functions/parser.js`), optional Discord, missions/groups/
+ * chat, and a Fabric Peer (D-009 / D-010).
  *
- * It edits NOTHING in the Star Citizen installation - the log is only ever read.
+ * It edits NOTHING in the Star Citizen installation — the log is only ever read.
  */
 
 const http = require('http');
@@ -27,7 +25,11 @@ const { channelFromPath } = require('../functions/locate');
 const settingsStore = require('../functions/settingsStore');
 const { isHttpSharedModeEnabled, resolveHttpListenHost } = require('../functions/httpSharedMode');
 const { shouldEnforceRemoteAuth } = require('../functions/httpRemoteAuth');
+const { httpBindWarning } = require('../functions/httpBindWarning');
 const { applyGoonCitizenEnvAliases } = require('../functions/goonCitizenEnvAliases');
+
+/** Hosted / site-login Bearer session lifetime (ms). */
+const BEARER_TTL_MS = 8 * 60 * 60 * 1000;
 let resolveFabricPeerInterface;
 try {
   ({ resolveFabricPeerInterface } = require('@fabric/core/functions/fabricListenInterface'));
@@ -59,6 +61,7 @@ const discordCatalogAccumulate = require('../functions/discordCatalogAccumulate'
 const groupDataSync = require('../functions/groupDataSync');
 const profilePlaytimes = require('../functions/profilePlaytimes');
 const profileFiles = require('../functions/profileFiles');
+const profileNotes = require('../functions/profileNotes');
 const chatPlatform = require('../functions/chatPlatform');
 const discordIdentityLink = require('../functions/discordIdentityLink');
 const discordChatDirection = require('../functions/discordChatDirection');
@@ -86,12 +89,25 @@ const hubPeeringObserve = require('../functions/hubPeeringObserve');
 const liveFeed = require('../functions/liveFeed');
 const localGroups = require('../functions/localGroups');
 const identityNotes = require('../functions/identityNotes');
+const deviceDataSync = require('../functions/deviceDataSync');
+const clusterSync = require('../functions/clusterSync');
+const clusterMesh = require('../functions/clusterMesh');
+const clusterDevices = require('../functions/clusterDevices');
+const clusterInventory = require('../functions/clusterInventory');
+const { listLinkedDevices } = require('../functions/linkedDevices');
 const {
   createFabricMessageLog,
-  summarizeMessage
+  summarizeMessage,
+  logFabricSync,
+  logFabricWire,
+  logFabricPeer
 } = require('../functions/fabricMessageLog');
 const starjumpFleet = require('../functions/starjumpFleet');
 const shipCatalog = require('../functions/shipCatalog');
+const locationCatalog = require('../functions/locationCatalog');
+const locationReports = require('../functions/locationReports');
+const starmapLayout = require('../functions/starmapLayout');
+const groupPresence = require('../functions/groupPresence');
 const registerInbox = require('../functions/registerInbox');
 
 // Lines worth surfacing in the monitor - combat/death hints AND mission/objective
@@ -278,6 +294,12 @@ class StarCitizenService extends EventEmitter {
     this._presenceVisibility = 'private';
     this._presenceGroupIds = [];
     this._shipOverrideSlug = null;
+    this._detectedLocation = null;
+    this._detectedDestination = null;
+    this._locationOverride = null;
+    this._locationOverrideSlug = null;
+    this._destinationOverride = null;
+    this._destinationOverrideSlug = null;
     this._presenceAvailability = 'auto';
     this._presenceStatusText = null;
     this._lastPresencePublish = 0;
@@ -287,8 +309,8 @@ class StarCitizenService extends EventEmitter {
     this._groupOverlay = false;
     /** Opaque Share clipboard encoding: `'base64'` (default) or `'hex'`. */
     this._fabricShareEncoding = 'base64';
-    /** Gossip Discord/chat catalog packs to Federation groups (default on). */
-    this._shareDiscordCatalog = true;
+    /** Gossip Discord/chat catalog packs to Federation groups (default off). */
+    this._shareDiscordCatalog = false;
     /** Opt-in common play times pack on own profile (default off). */
     this._sharePlaytimes = false;
     /** Opt-in published file listing pack on own profile (default off). */
@@ -306,6 +328,9 @@ class StarCitizenService extends EventEmitter {
     this._hubObserve = null;
     this._hubObserveTimer = null;
     this._hubObserveInflight = null;
+    this._clusterMeshTimer = null;
+    this._clusterMeshInflight = null;
+    this._clusterMesh = { registered: [], discovered: [], errors: [], at: 0 };
     /** Max auto-rostered non-hub peers from gossip/offer. */
     this._maxDiscoveredPeers = 12;
     /** @type {Promise|null} */
@@ -426,6 +451,19 @@ class StarCitizenService extends EventEmitter {
     if (this.groupManager) this.groupManager.sameActor = sameActor;
     if (this.missionManager) this.missionManager.settings.sameActor = sameActor;
     if (this.chatManager) this.chatManager.sameActor = sameActor;
+    if (this.chatManager) {
+      this.chatManager.on('message', (record) => {
+        if (this._applyingDeviceDataShare) return;
+        if (record && record.source === 'cluster-sync') return;
+        const me = this._identity && this._identity.pubkey;
+        if (!me || !this.identityCluster) return;
+        const snap = typeof this.identityCluster.snapshot === 'function'
+          ? this.identityCluster.snapshot(me)
+          : null;
+        if (!snap || !snap.members || snap.members.length < 2) return;
+        this._scheduleAccountDataReplay({ delay: 1500 });
+      });
+    }
 
     // Periodic screen snapshots (opt-in; Electron injects the capture fn via
     // setSnapshotCapture). Images under <store root>/snapshots; metadata in
@@ -673,6 +711,7 @@ class StarCitizenService extends EventEmitter {
         messageStats: stats,
         playtimes: profilePlaytimes.loadAllPlaytimes(this.registerStore),
         files: profileFiles.loadAllFiles(this.registerStore),
+        notes: profileNotes.loadAllNotes(this.registerStore),
         sourceAppId: this._discordSourceAppId(),
         botReady: merged.botReady === true
       });
@@ -790,6 +829,36 @@ class StarCitizenService extends EventEmitter {
   }
 
   /**
+   * Compact pinned-note listing for GroupDataShare / own profile.
+   * @returns {object|null}
+   */
+  _localNotesPayload () {
+    const pubkey = this._identity && this._identity.pubkey;
+    if (!pubkey || !this.registerStore) return null;
+    try {
+      return profileNotes.compactNotesPayload({
+        pubkey,
+        notes: identityNotes.listNotes(this.registerStore, {
+          author: pubkey,
+          includeLocal: true
+        }),
+        pinnedOnly: true
+      });
+    } catch (_) {
+      return null;
+    }
+  }
+
+  _hasPinnedProfileNotes () {
+    if (!this.registerStore) return false;
+    try {
+      return identityNotes.listNotes(this.registerStore, { profilePinned: true }).length > 0;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  /**
    * Force a GroupDataShare pass (bypass the 5-minute throttle).
    */
   _publishGroupDataShareNow () {
@@ -804,11 +873,13 @@ class StarCitizenService extends EventEmitter {
   }
 
   _maybePublishGroupDataShare (catalog) {
-    const shareChat = this._shareDiscordCatalog !== false;
+    const shareChat = this._shareDiscordCatalog === true;
     const sharePlay = this._sharePlaytimes === true;
     const files = this._localFilesPayload();
+    const notes = this._localNotesPayload();
     const shareFiles = !!files;
-    if (!shareChat && !sharePlay && !shareFiles) return;
+    const shareNotes = !!notes;
+    if (!shareChat && !sharePlay && !shareFiles && !shareNotes) return;
     if (!this.fabricNetwork || !this.fabricNetwork.ready || !this._identity) return;
     if (!this.groupManager) return;
     const guilds = catalog && Array.isArray(catalog.guilds) ? catalog.guilds : [];
@@ -817,7 +888,7 @@ class StarCitizenService extends EventEmitter {
       : { channels: [], truncated: false };
     const playtimes = sharePlay ? this._localPlaytimesPayload() : null;
     const hasChat = shareChat && (guilds.length || (messagePack.channels && messagePack.channels.length));
-    if (!hasChat && !playtimes && !files) return;
+    if (!hasChat && !playtimes && !files && !notes) return;
     const now = Date.now();
     if (this._discordCatalogShareAt &&
         (now - this._discordCatalogShareAt) < this._discordCatalogShareMinMs) {
@@ -857,6 +928,12 @@ class StarCitizenService extends EventEmitter {
         packs.push({
           pack: groupDataSync.PACK_PROFILE_FILES,
           payload: files
+        });
+      }
+      if (notes) {
+        packs.push({
+          pack: groupDataSync.PACK_PROFILE_NOTES,
+          payload: notes
         });
       }
       const payload = groupDataSync.buildShare({
@@ -968,6 +1045,28 @@ class StarCitizenService extends EventEmitter {
           if (!pubkeysMatch(claimed, signer) && this.settings.mode !== 'server') continue;
         }
         const row = profileFiles.foldFiles(this.registerStore, pack.payload, {
+          via: 'gossip',
+          pubkey: signer || null,
+          groupId: group.id,
+          observedAt: share.observedAt
+        });
+        if (row) folded.push(row);
+      } else if (name === groupDataSync.PACK_PROFILE_NOTES) {
+        const claimed = pack.payload && pack.payload.pubkey;
+        if (signer && claimed) {
+          const { pubkeysMatch } = identityLib();
+          if (!pubkeysMatch(claimed, signer) && this.settings.mode !== 'server') continue;
+        }
+        const payload = pack.payload && typeof pack.payload === 'object' ? pack.payload : {};
+        const claimedNotes = Array.isArray(payload.notes) ? payload.notes.filter((n) => {
+          if (!n) return false;
+          if (!signer || !n.author) return true;
+          const { pubkeysMatch } = identityLib();
+          return pubkeysMatch(n.author, signer) || this.settings.mode === 'server';
+        }) : [];
+        const row = profileNotes.foldNotes(this.registerStore, Object.assign({}, payload, {
+          notes: claimedNotes
+        }), {
           via: 'gossip',
           pubkey: signer || null,
           groupId: group.id,
@@ -1846,11 +1945,6 @@ class StarCitizenService extends EventEmitter {
       } catch (_) { discordUsers = []; }
     }
 
-    let localTags = [];
-    try {
-      localTags = this._listLocalGroups ? this._listLocalGroups() : [];
-    } catch (_) { localTags = []; }
-
     return chatLookup.queryLocalPublicListings({
       players,
       groups,
@@ -1858,7 +1952,6 @@ class StarCitizenService extends EventEmitter {
       peers,
       discordGuilds,
       discordUsers,
-      localTags,
       query: (request && request.query) || ''
     });
   }
@@ -1984,7 +2077,8 @@ class StarCitizenService extends EventEmitter {
       inbox,
       snapshots,
       playtimes,
-      documents
+      documents,
+      locations: locationCatalog.listLocations()
     };
   }
 
@@ -2416,7 +2510,7 @@ class StarCitizenService extends EventEmitter {
     this._primaryGroupId = settingsStore.sanitizePrimaryGroupId(persisted.primaryGroupId);
     this._groupOverlay = persisted.groupOverlay === true;
     this._fabricShareEncoding = settingsStore.sanitizeFabricShareEncoding(persisted.fabricShareEncoding) || 'base64';
-    this._shareDiscordCatalog = persisted.shareDiscordCatalog !== false;
+    this._shareDiscordCatalog = persisted.shareDiscordCatalog === true;
     this._sharePlaytimes = persisted.sharePlaytimes === true;
     this._shareFiles = persisted.shareFiles === true;
     this._applySnapshotSettings(persisted);
@@ -2530,6 +2624,8 @@ class StarCitizenService extends EventEmitter {
       presenceVisibility: persisted.presenceVisibility,
       presenceGroupIds: persisted.presenceGroupIds,
       shipOverrideSlug: persisted.shipOverrideSlug,
+      locationOverrideSlug: persisted.locationOverrideSlug,
+      destinationOverrideSlug: persisted.destinationOverrideSlug,
       presenceAvailability: persisted.presenceAvailability,
       presenceStatusText: persisted.presenceStatusText
     });
@@ -2537,10 +2633,18 @@ class StarCitizenService extends EventEmitter {
     this._presenceVisibility = share.presenceVisibility;
     this._presenceGroupIds = share.presenceGroupIds.slice();
     this._shipOverrideSlug = share.shipOverrideSlug;
+    this._locationOverrideSlug = share.locationOverrideSlug;
+    this._destinationOverrideSlug = share.destinationOverrideSlug;
     this._presenceAvailability = share.presenceAvailability;
     this._presenceStatusText = share.presenceStatusText;
     this._shipOverride = share.shipOverrideSlug
       ? presence.buildShipOverride(share.shipOverrideSlug)
+      : null;
+    this._locationOverride = share.locationOverrideSlug
+      ? presence.buildPlaceOverride(share.locationOverrideSlug)
+      : null;
+    this._destinationOverride = share.destinationOverrideSlug
+      ? presence.buildPlaceOverride(share.destinationOverrideSlug)
       : null;
   }
 
@@ -2578,6 +2682,12 @@ class StarCitizenService extends EventEmitter {
     });
     const addr = this.server.address();
     if (addr && typeof addr === 'object' && addr.port) this.settings.port = addr.port;
+    const bindWarn = httpBindWarning({
+      host,
+      mode: this.settings.mode,
+      httpSharedMode: this._httpSharedMode === true
+    });
+    if (bindWarn) console.warn(bindWarn);
   }
 
   /**
@@ -3006,6 +3116,55 @@ class StarCitizenService extends EventEmitter {
   }
 
   /**
+   * Public notes pinned onto a profile (local pins + gossiped `profile.notes`).
+   * @param {string} id
+   * @param {boolean} isSelf
+   * @param {string[]} [extraKeys]
+   * @returns {object|null}
+   */
+  _notesForProfile (id, isSelf, extraKeys) {
+    if (!this.registerStore) {
+      return isSelf ? { notes: [], shared: false } : null;
+    }
+    const keys = new Set();
+    const add = (value) => {
+      const actor = localGroups.canonicalActor(value);
+      if (actor) keys.add(actor);
+      const s = value != null ? String(value).trim() : '';
+      if (s) keys.add(s);
+    };
+    add(id);
+    for (const key of extraKeys || []) add(key);
+    const localPinned = identityNotes.listNotes(this.registerStore, { profilePinned: true })
+      .filter((n) => n && keys.has(n.subject));
+    const shared = profileNotes.loadAllNotes(this.registerStore) || [];
+    const notes = profileNotes.notesForSubjects({
+      local: localPinned,
+      shared,
+      subjects: keys
+    });
+    if (!notes.length && !isSelf) return null;
+    return {
+      notes,
+      truncated: false,
+      shared: notes.length > 0
+    };
+  }
+
+  /**
+   * Notes this operator authored (own-profile "My notes").
+   * @returns {object[]}
+   */
+  _listMyNotes () {
+    if (!this.registerStore) return [];
+    const me = this._identity && this._identity.pubkey;
+    return identityNotes.listNotes(this.registerStore, {
+      author: me || 'local',
+      includeLocal: true
+    });
+  }
+
+  /**
    * Profile page payload keyed by Fabric pubkey (chat members, presence roster).
    * Works even when the peer is not in the configured TCP roster.
    * @param {string} pubkey
@@ -3050,7 +3209,10 @@ class StarCitizenService extends EventEmitter {
       sharePlaytimes: isSelf ? this._sharePlaytimes === true : undefined,
       playtimes: this._playtimesForProfile(pk, isSelf),
       shareFiles: isSelf ? this._hasPinnedProfileFiles() : undefined,
-      files: this._filesForProfile(pk, isSelf)
+      files: this._filesForProfile(pk, isSelf),
+      shareNotes: isSelf ? this._hasPinnedProfileNotes() : undefined,
+      notes: this._notesForProfile(pk, isSelf),
+      myNotes: isSelf ? this._listMyNotes() : undefined
     };
   }
 
@@ -3114,12 +3276,25 @@ class StarCitizenService extends EventEmitter {
       self: false,
       peering: { string: '' },
       playtimes: null,
-      files: null
+      files: null,
+      notes: null
     };
+    const extraKeys = [];
+    if (actor) {
+      extraKeys.push(actor.canonical);
+      if (actor.requested && actor.requested.key) extraKeys.push(actor.requested.key);
+      for (const p of actor.platforms || []) {
+        if (p && p.key) extraKeys.push(p.key);
+      }
+    }
+    extraKeys.push(parsed.key);
+    const isSelf = !!(base.self);
     return Object.assign({}, base, {
       actor,
       discord,
-      pubkey: (fabric && fabric.pubkey) || parsed.key
+      pubkey: (fabric && fabric.pubkey) || parsed.key,
+      notes: this._notesForProfile((fabric && fabric.pubkey) || parsed.key, isSelf, extraKeys),
+      myNotes: isSelf ? this._listMyNotes() : undefined
     });
   }
 
@@ -3157,7 +3332,8 @@ class StarCitizenService extends EventEmitter {
       getDocument: (did) => {
         const rec = this._fileRecord(did);
         return rec && rec.record ? rec.record : null;
-      }
+      },
+      getLocation: (id) => locationCatalog.resolveLocation(id)
     });
   }
 
@@ -3219,9 +3395,82 @@ class StarCitizenService extends EventEmitter {
       local: !!localDoc,
       self: !!(localDoc && this._identity),
       profilePinned: !!(localDoc && localDoc.profilePinned),
+      clusterSync: !!(localDoc && localDoc.clusterSync),
+      clusterPending: !!(localDoc && localDoc.clusterPending),
       publisher,
       offers
     };
+  }
+
+  /**
+   * Dedicated location page payload (`GET …/locations/:slug`).
+   * Catalog metadata plus node-local reports and live presence.
+   * @param {string} slug
+   * @returns {object|null}
+   */
+  _locationRecord (slug) {
+    const loc = locationCatalog.resolveLocation(slug);
+    if (!loc) return null;
+    const reports = locationReports.summarize(this.registerStore, loc.slug, { limit: 40 });
+    let roster = {};
+    try { roster = this.getPresenceRoster() || {}; } catch (_) { roster = {}; }
+    return {
+      type: 'LocationRecord',
+      location: loc,
+      href: '/locations/' + encodeURIComponent(loc.slug),
+      mapSystem: loc.system || 'STANTON',
+      reports,
+      online: locationReports.onlineAt(roster, loc.slug)
+    };
+  }
+
+  _localReportActor () {
+    if (this._identity && this._identity.pubkey) return this._identity.pubkey;
+    if (this._sessionHandle) return 'player:' + this._sessionHandle;
+    return null;
+  }
+
+  _foldLocalPlaceReports (ev) {
+    if (!this.registerStore || !ev || !ev.kind) return;
+    const at = ev.timestamp || this._lastLogEventAt || new Date().toISOString();
+    const meta = {
+      actor: this._localReportActor(),
+      nickname: this._nickname,
+      handle: this._sessionHandle || (this._localReportActor() ? null : 'local'),
+      ship: this._detectedShip,
+      at
+    };
+    const kind = String(ev.kind);
+    try {
+      if (kind === 'quantum:select' && this._detectedDestination) {
+        locationReports.recordSighting(this.registerStore, Object.assign({}, meta, {
+          place: this._detectedDestination,
+          kind: 'self',
+          role: 'destination'
+        }));
+      } else if (kind === 'quantum:route') {
+        if (this._detectedLocation) {
+          locationReports.recordSighting(this.registerStore, Object.assign({}, meta, {
+            place: this._detectedLocation,
+            kind: 'self',
+            role: 'location'
+          }));
+        }
+        if (this._detectedDestination) {
+          locationReports.recordSighting(this.registerStore, Object.assign({}, meta, {
+            place: this._detectedDestination,
+            kind: 'self',
+            role: 'destination'
+          }));
+        }
+      } else if (kind === 'quantum:arrive' && this._detectedLocation) {
+        locationReports.recordSighting(this.registerStore, Object.assign({}, meta, {
+          place: this._detectedLocation,
+          kind: 'visit',
+          role: 'location'
+        }));
+      }
+    } catch (_) { /* ignore */ }
   }
 
   _linkedDeviceForPubkey (pubkey) {
@@ -3268,8 +3517,21 @@ class StarCitizenService extends EventEmitter {
   _persistIdentityCrossSignRow (kind, record) {
     if (!this.registerStore || !record) return;
     const IdentityCluster = require('../functions/identityCluster');
-    const ek = IdentityCluster.edgeKey(record.localPubkey, record.peerPubkey) || 'edge';
-    const id = ek + ':' + String(kind || 'sign') + ':' + String(record.nonce || '').slice(0, 16);
+    const nonce16 = String(record.nonce || '').slice(0, 16);
+    let id = 'edge:' + String(kind || 'sign') + ':' + nonce16;
+    try {
+      const a = IdentityCluster.keyOf
+        ? IdentityCluster.keyOf(record.localPubkey)
+        : '';
+      const b = IdentityCluster.keyOf
+        ? IdentityCluster.keyOf(record.peerPubkey)
+        : '';
+      if (a && b) id = a + '->' + b + ':' + String(kind || 'sign') + ':' + nonce16;
+      else {
+        const ek = IdentityCluster.edgeKey(record.localPubkey, record.peerPubkey) || 'edge';
+        id = ek + ':' + String(kind || 'sign') + ':' + nonce16 + ':' + String(record.localPubkey || '').slice(0, 12);
+      }
+    } catch (_) { /* stub IdentityCluster */ }
     this.registerStore.put('identitycrosssigns', id, Object.assign({
       id,
       kind,
@@ -3282,6 +3544,7 @@ class StarCitizenService extends EventEmitter {
     const IdentityCluster = require('../functions/identityCluster');
     const checked = verifyCrossSignObject(object, signer);
     if (!checked.ok) {
+      logFabricSync('IdentityCrossSign rejected', checked.error);
       this.emit('warning', '[LiveRelay] IdentityCrossSign rejected: ' + checked.error);
       return null;
     }
@@ -3289,8 +3552,26 @@ class StarCitizenService extends EventEmitter {
     this._persistIdentityCrossSignRow(checked.kind, Object.assign({}, object, rec));
     if (checked.kind === IdentityCluster.REVOKE_TYPE) {
       this.identityCluster.ingestRevoke(rec);
+      logFabricSync('IdentityCrossSignRevoke',
+        String(rec.localPubkey || '').slice(0, 12) + ' ↔ ' + String(rec.peerPubkey || '').slice(0, 12));
     } else {
-      this.identityCluster.ingestCrossSign(rec);
+      const ingest = this.identityCluster.ingestCrossSign(rec) || {};
+      const me = this._identity && this._identity.pubkey;
+      const mine = !!(me && IdentityCluster.keyOf &&
+        IdentityCluster.keyOf(me) === IdentityCluster.keyOf(rec.localPubkey));
+      logFabricSync(
+        'IdentityCrossSign',
+        (mine ? 'local' : 'peer') +
+          (ingest.linked ? ' linked' : (ingest.pending ? ' pending' : '')) +
+          ' ' + String(rec.localPubkey || '').slice(0, 12) +
+          ' → ' + String(rec.peerPubkey || '').slice(0, 12)
+      );
+      if (me && (
+        this.identityCluster.clusterEquals(me, rec.localPubkey) ||
+        this.identityCluster.clusterEquals(me, rec.peerPubkey)
+      )) {
+        this._scheduleAccountDataReplay();
+      }
     }
     this.emit('identity:cluster', this.identityCluster.snapshot(rec.localPubkey));
     return rec;
@@ -3333,7 +3614,796 @@ class StarCitizenService extends EventEmitter {
     this._ingestIdentityCrossSign(obj, this._identity.pubkey);
     await this._ensureFabric().catch(() => null);
     this._gossipIdentityCrossSign(obj);
+    this._scheduleAccountDataReplay();
     return obj;
+  }
+
+  /**
+   * After a cluster edge lands, replay account data over Fabric (not HTTPS).
+   * @param {Object} [opts]
+   * @param {number} [opts.delay]
+   * @param {boolean} [opts.nudge] replace a pending timer
+   * @param {boolean} [opts.resetTries]
+   */
+  _scheduleAccountDataReplay (opts = {}) {
+    if (opts.resetTries === true) this._accountReplayTries = 0;
+    if (this._accountReplayTimer) {
+      if (opts.nudge !== true && !(Number(opts.delay) > 0)) return;
+      clearTimeout(this._accountReplayTimer);
+      this._accountReplayTimer = null;
+    }
+    const delay = Number(opts.delay) > 0 ? Number(opts.delay) : 800;
+    this._accountReplayTimer = setTimeout(() => {
+      this._accountReplayTimer = null;
+      try {
+        this._replayAccountDataOverFabric();
+      } catch (e) {
+        this.emit('warning', '[LiveRelay] account replay failed:', e && e.message);
+      }
+    }, delay);
+    if (this._accountReplayTimer && typeof this._accountReplayTimer.unref === 'function') {
+      this._accountReplayTimer.unref();
+    }
+  }
+
+  _rescheduleAccountDataReplay () {
+    const n = (this._accountReplayTries || 0) + 1;
+    if (n > 32) return;
+    this._accountReplayTries = n;
+    this._scheduleAccountDataReplay({
+      nudge: true,
+      delay: Math.min(800 * n, 10000)
+    });
+  }
+
+  _localClusterInventory () {
+    const me = this._identity && this._identity.pubkey;
+    const history = clusterInventory.fromHistory(this.history);
+    const notes = this.registerStore
+      ? identityNotes.listNotes(this.registerStore).length
+      : 0;
+    let groups = 0;
+    if (this.groupManager && Array.isArray(this.groupManager.groups)) {
+      for (const row of this.groupManager.groups) {
+        if (!row || !row.id) continue;
+        if (me && !this.groupManager.isMember(row.id, me) && this.settings.mode !== 'server') {
+          continue;
+        }
+        groups += 1;
+      }
+    }
+    const tags = this.registerStore ? localGroups.listGroups(this.registerStore).length : 0;
+    const chat = this.registerStore ? (this.registerStore.all('chatmessages') || []).length : 0;
+    const docs = this.registerStore ? localDocuments.list(this.registerStore) : [];
+    let files = 0;
+    let filesPending = 0;
+    for (const row of docs) {
+      if (row && row.clusterSync === true) files += 1;
+      if (row && row.clusterPending === true) filesPending += 1;
+    }
+    const peers = clusterSync.localDialCandidates({
+      port: Number(this.settings.fabric && this.settings.fabric.port) || 7777,
+      advertiseHost: this._fabricAdvertiseHost || null
+    }).length;
+    const registerMissions = Array.isArray(this.missions) ? this.missions.length : 0;
+    return clusterInventory.sanitizeStats(Object.assign({
+      notes,
+      groups,
+      tags,
+      chat,
+      files,
+      filesPending,
+      peers,
+      registerMissions,
+      generatedAt: new Date().toISOString(),
+      pubkey: me || undefined
+    }, history), { fill: true });
+  }
+
+  _localDeviceDataPacks () {
+    const me = this._identity && this._identity.pubkey;
+    if (!me || !this.registerStore) return [];
+    const packs = [];
+    packs.push({
+      pack: deviceDataSync.PACK_STATS,
+      payload: this._localClusterInventory()
+    });
+    const profile = deviceDataSync.compactProfile({
+      pubkey: me,
+      nickname: this._nickname,
+      bio: this._profile && this._profile.bio,
+      scHandle: this._profile && this._profile.scHandle,
+      profile: this._profile
+    });
+    if (profile) packs.push({ pack: deviceDataSync.PACK_PROFILE, payload: profile });
+
+    if (this.groupManager) {
+      const groups = [];
+      for (const row of this.groupManager.groups || []) {
+        if (!row || !row.id) continue;
+        if (!this.groupManager.isMember(row.id, me) && this.settings.mode !== 'server') continue;
+        let definition = null;
+        try {
+          definition = this.groupManager._groupDefinition(row);
+        } catch (_) { definition = row._contractDefinition || null; }
+        groups.push(Object.assign({}, row, { _contractDefinition: definition }));
+      }
+      if (groups.length) {
+        packs.push({ pack: deviceDataSync.PACK_GROUPS, payload: { groups } });
+      }
+    }
+
+    const notes = identityNotes.listNotes(this.registerStore, {
+      author: me,
+      includeLocal: true
+    });
+    if (notes.length) packs.push({ pack: deviceDataSync.PACK_NOTES, payload: { notes } });
+
+    const tags = localGroups.listGroups(this.registerStore);
+    if (tags.length) packs.push({ pack: deviceDataSync.PACK_LOCAL_TAGS, payload: { tags } });
+
+    const peersPack = clusterSync.localPeersPack({
+      pubkey: me,
+      port: Number(this.settings.fabric && this.settings.fabric.port) || 7777,
+      advertiseHost: this._fabricAdvertiseHost || null,
+      webrtcHubs: this._clusterWebrtcHubs()
+    });
+    if (peersPack) packs.push(peersPack);
+
+    const clusterFiles = localDocuments.list(this.registerStore)
+      .filter((d) => d && d.clusterSync === true);
+    if (clusterFiles.length) {
+      packs.push({
+        pack: deviceDataSync.PACK_FILES,
+        payload: { files: clusterFiles.slice(0, deviceDataSync.MAX_FILES) }
+      });
+    }
+
+    const chatPick = deviceDataSync.selectChatForShare(this.registerStore.all('chatmessages') || []);
+    if (chatPick.messages.length) {
+      packs.push({
+        pack: deviceDataSync.PACK_CHAT,
+        truncated: chatPick.truncated,
+        payload: { messages: chatPick.messages }
+      });
+    }
+    return packs;
+  }
+
+  /**
+   * Publish DeviceDataShare + re-gossip group genesis over Fabric so a newly
+   * linked device can catch up without HTTPS.
+   */
+  _replayAccountDataOverFabric () {
+    if (!this._identity) return null;
+    if (!this.fabricNetwork || !this.fabricNetwork.ready) {
+      this._rescheduleAccountDataReplay();
+      return null;
+    }
+    const me = this._identity.pubkey;
+    const cluster = this.identityCluster && (
+      typeof this.identityCluster.snapshot === 'function'
+        ? this.identityCluster.snapshot(me)
+        : (typeof this.identityCluster.clusterFor === 'function'
+          ? this.identityCluster.clusterFor(me)
+          : null)
+    );
+    if (!cluster || !cluster.members || cluster.members.length < 2) return null;
+
+    if (this.groupManager) {
+      for (const row of this.groupManager.groups || []) {
+        if (!row || !row.id) continue;
+        if (!this.groupManager.isMember(row.id, me) && this.settings.mode !== 'server') continue;
+        this._publishGroupContractFor(row).catch((e) => this.emit('error', e));
+      }
+    }
+    if (this.missionManager) {
+      for (const mission of (this.missionManager.missions || []).slice(0, 48)) {
+        if (!mission || !mission.id) continue;
+        this.publishMissionCreated(mission).catch((e) => this.emit('error', e));
+      }
+    }
+    try { this._publishGroupDataShareNow(); } catch (_) { /* optional */ }
+    try { this._publishLocalProfile(); } catch (_) { /* optional */ }
+    try { this._maybeSendPeerAlias(); } catch (_) { /* optional */ }
+
+    const packs = this._localDeviceDataPacks();
+    const shares = deviceDataSync.chunkShares({ fromPubkey: me, packs });
+    if (!shares.length) return null;
+    const messages = [];
+    try {
+      for (const payload of shares) {
+        const msg = this.fabricNetwork.publishDeviceDataShare(payload);
+        if (msg) messages.push(msg);
+      }
+      this._storeOutboundClusterCollection(messages);
+      this._storeOutboundClusterInventory(shares[0]);
+      this._dialStoredClusterPeers();
+      this._pushClusterFiles();
+      this._accountReplayTries = 0;
+      const chatPacks = packs.filter((p) => p && p.pack === deviceDataSync.PACK_CHAT);
+      const chatN = chatPacks.reduce((n, p) => {
+        return n + ((p.payload && Array.isArray(p.payload.messages)) ? p.payload.messages.length : 0);
+      }, 0);
+      logFabricSync(
+        'publish DeviceDataShare',
+        'frames=' + messages.length +
+          ' packs=' + packs.map((p) => p.pack).join(',') +
+          (chatN ? (' chat=' + chatN) : '')
+      );
+      this.emit('identity:account-replay', {
+        fromPubkey: me,
+        packs: packs.map((p) => p.pack),
+        frames: messages.length,
+        chat: chatN
+      });
+      return shares[shares.length - 1];
+    } catch (e) {
+      this.emit('warning', '[LiveRelay] DeviceDataShare publish: ' + (e && e.message));
+      this._rescheduleAccountDataReplay();
+      return null;
+    }
+  }
+
+  /**
+   * Apply a cluster-gated DeviceDataShare. Signer must be this actor's cluster.
+   * @param {object} object
+   * @param {string} signer
+   * @returns {object|null}
+   */
+  _ingestDeviceDataShare (object, signer) {
+    if (!object || !this.registerStore || !this._identity) return null;
+    const share = deviceDataSync.sanitizeShare(object);
+    if (!share) return null;
+    const me = this._identity.pubkey;
+    const from = share.fromPubkey;
+    if (!this.identityCluster || !this.identityCluster.clusterEquals(me, from)) return null;
+    if (signer && !this.identityCluster.clusterEquals(me, signer) && this.settings.mode !== 'server') {
+      return null;
+    }
+    const applied = [];
+    this._applyingDeviceDataShare = true;
+    try {
+    for (const pack of share.packs || []) {
+      const name = pack.pack;
+      const payload = pack.payload || {};
+      try {
+        if (name === deviceDataSync.PACK_PROFILE) {
+          if (!this._nickname && payload.nickname) {
+            this._nickname = payload.nickname;
+            settingsStore.putSetting(this.registerStore, 'nickname', payload.nickname);
+            applied.push('profile');
+          }
+          const hasBio = !!(this._profile && (this._profile.bio || this._profile.scHandle));
+          if (!hasBio && (payload.bio || payload.scHandle)) {
+            this._profile = { bio: payload.bio || null, scHandle: payload.scHandle || null };
+            settingsStore.putSetting(this.registerStore, 'profile', this._profile);
+            if (applied.indexOf('profile') < 0) applied.push('profile');
+          }
+        } else if (name === deviceDataSync.PACK_GROUPS && this.groupManager) {
+          for (const row of payload.groups || []) {
+            if (row.definition) {
+              try {
+                this.groupManager.ingestContractPublish(row.definition, from);
+                applied.push('groups');
+              } catch (_) { /* not a group contract */ }
+            }
+          }
+        } else if (name === deviceDataSync.PACK_NOTES) {
+          for (const row of payload.notes || []) {
+            const n = identityNotes.sanitizeNote(row);
+            if (!n) continue;
+            const prev = identityNotes.getNote(this.registerStore, n.id);
+            if (prev && Number(prev.revision || 0) >= Number(n.revision || 0)) continue;
+            this.registerStore.put(identityNotes.COLLECTION, n.id, n);
+            applied.push('notes');
+          }
+        } else if (name === deviceDataSync.PACK_LOCAL_TAGS) {
+          for (const row of payload.tags || []) {
+            const g = localGroups.sanitizeGroup(row);
+            if (!g) continue;
+            if (!localGroups.getGroup(this.registerStore, g.id)) {
+              this.registerStore.put(localGroups.COLLECTION, g.id, g);
+              applied.push('local-tags');
+            }
+          }
+        } else if (name === deviceDataSync.PACK_CHAT && this.chatManager) {
+          for (const row of payload.messages || []) {
+            try {
+              if (!this.chatManager._shareableChannel(row.channel)) continue;
+              this.chatManager.post({
+                channel: row.channel,
+                body: row.body,
+                author: row.author,
+                handle: row.handle,
+                ts: row.ts,
+                discordMessageId: row.discordMessageId,
+                kind: row.kind,
+                source: 'cluster-sync',
+                clusterShare: true
+              });
+              applied.push('chat');
+            } catch (_) { /* skip one */ }
+          }
+        } else if (name === deviceDataSync.PACK_STATS) {
+          applied.push('stats');
+        } else if (name === deviceDataSync.PACK_PEERS) {
+          this._applyClusterPeerPack(payload, from);
+          applied.push('peers');
+        } else if (name === deviceDataSync.PACK_FILES) {
+          if (!this._clusterFileExpect) this._clusterFileExpect = new Set();
+          for (const row of payload.files || []) {
+            const compact = deviceDataSync.compactFileRow(row);
+            if (!compact) continue;
+            localDocuments.ensureClusterPlaceholder(this.registerStore, compact);
+            this._clusterFileExpect.add(compact.id);
+            applied.push('files');
+          }
+        }
+      } catch (e) {
+        this.emit('warning', '[LiveRelay] DeviceDataShare pack ' + name + ': ' + (e && e.message));
+      }
+    }
+    this._recordClusterShareInventory(from, share, applied);
+    this.emit('identity:account-replay-applied', {
+      fromPubkey: from,
+      packs: [...new Set(applied)]
+    });
+    logFabricSync(
+      'apply DeviceDataShare',
+      'from=' + String(from).slice(0, 12) + ' packs=' + [...new Set(applied)].join(',')
+    );
+    return share;
+    } finally {
+      this._applyingDeviceDataShare = false;
+    }
+  }
+
+  _putClusterPeerRow (pubkey, extra) {
+    const key = clusterSync.peerStoreKey(pubkey);
+    if (!key || !this.registerStore) return null;
+    const prev = this.registerStore.get(clusterSync.STORE_COLLECTION, key) || {};
+    const next = Object.assign({}, prev, extra || {}, {
+      pubkey: (extra && extra.pubkey) || prev.pubkey || pubkey
+    });
+    if (Array.isArray(extra && extra.candidates)) {
+      next.candidates = extra.candidates;
+    } else if (Array.isArray(prev.candidates)) {
+      next.candidates = prev.candidates;
+    }
+    if (extra && extra.inventory && typeof extra.inventory === 'object') {
+      next.inventory = extra.inventory;
+    } else if (prev.inventory && typeof prev.inventory === 'object') {
+      next.inventory = prev.inventory;
+    }
+    this.registerStore.put(clusterSync.STORE_COLLECTION, key, next);
+    return next;
+  }
+
+  _recordClusterShareInventory (fromPubkey, share, applied) {
+    const incoming = clusterInventory.fromShare(share, {
+      pubkey: fromPubkey,
+      applied: Array.isArray(applied) ? [...new Set(applied)] : undefined,
+      generatedAt: share && share.generatedAt
+    });
+    const key = clusterSync.peerStoreKey(fromPubkey);
+    const prev = key && this.registerStore
+      ? this.registerStore.get(clusterSync.STORE_COLLECTION, key)
+      : null;
+    const inventory = clusterInventory.mergeStats(prev && prev.inventory, incoming);
+    return this._putClusterPeerRow(fromPubkey, {
+      observedAt: new Date().toISOString(),
+      inventory
+    });
+  }
+
+  _storeOutboundClusterInventory (share) {
+    if (!this.registerStore || !share) return null;
+    const inventory = clusterInventory.fromShare(share, {
+      pubkey: this._identity && this._identity.pubkey,
+      fill: true
+    });
+    this.registerStore.put(
+      clusterSync.STORE_COLLECTION,
+      clusterSync.LAST_OUTBOUND_STATS_KEY,
+      inventory
+    );
+    return inventory;
+  }
+
+  /**
+   * HTTPS origins used as Hub WebRTC *registry* coordinators (RegisterWebRTCPeer /
+   * ListWebRTCPeers). Node LiveRelay advertises LAN TCP candidates there; it does
+   * not host ICE. Passport / Hub browser still use the same hubs for signaling.
+   * @returns {string[]}
+   */
+  _clusterWebrtcHubs () {
+    const extra = this.settings && this.settings.fabric && this.settings.fabric.webrtcHubs;
+    return clusterSync.sanitizeWebrtcHubs(
+      Array.isArray(extra) && extra.length
+        ? extra.concat(clusterSync.DEFAULT_WEBRTC_HUBS)
+        : clusterSync.DEFAULT_WEBRTC_HUBS
+    );
+  }
+
+  _storeOutboundClusterCollection (message) {
+    if (!this.registerStore) return null;
+    const list = Array.isArray(message) ? message : (message ? [message] : []);
+    const collection = clusterSync.collectionFromMessages(list);
+    if (!collection) return null;
+    this.registerStore.put(
+      clusterSync.STORE_COLLECTION,
+      clusterSync.LAST_OUTBOUND_KEY,
+      collection
+    );
+    return collection;
+  }
+
+  _applyClusterPeerPack (payload, fromPubkey) {
+    const compact = clusterSync.compactPeers(Object.assign({}, payload, {
+      pubkey: (payload && payload.pubkey) || fromPubkey
+    }));
+    if (!compact) return [];
+    this._putClusterPeerRow(compact.pubkey, {
+      pubkey: compact.pubkey,
+      candidates: compact.candidates,
+      webrtc: compact.webrtc,
+      observedAt: new Date().toISOString()
+    });
+    const me = this._identity && this._identity.pubkey;
+    const selfCandidates = clusterSync.localDialCandidates({
+      port: Number(this.settings.fabric && this.settings.fabric.port) || 7777,
+      advertiseHost: this._fabricAdvertiseHost || null
+    });
+    const allowLoopback = !!(this.settings.fabric && this.settings.fabric.allowLoopbackDiscovery);
+    const targets = clusterSync.dialTargets(compact, {
+      localPubkey: me,
+      selfCandidates,
+      allowLoopback
+    });
+    return this._dialClusterCandidates(targets, compact.pubkey);
+  }
+
+  _dialClusterCandidates (addresses, pubkey) {
+    if (!this.fabricNetwork || !Array.isArray(addresses) || !addresses.length) return [];
+    const allowLoopback = !!(this.settings.fabric && this.settings.fabric.allowLoopbackDiscovery);
+    const queued = this.fabricNetwork.dialClusterCandidates(addresses, {
+      pubkey,
+      allowLoopback
+    });
+    if (queued.length) this._considerDiscoveredPeers(queued, 'cluster', { pubkey });
+    return queued;
+  }
+
+  _dialStoredClusterPeers () {
+    if (!this.registerStore || !this._identity) return [];
+    const me = this._identity.pubkey;
+    const queued = [];
+    for (const row of this.registerStore.all(clusterSync.STORE_COLLECTION) || []) {
+      if (!row || !row.pubkey || !Array.isArray(row.candidates)) continue;
+      if (this.identityCluster && !this.identityCluster.clusterEquals(me, row.pubkey)) continue;
+      queued.push(...this._applyClusterPeerPack(row, row.pubkey));
+    }
+    return queued;
+  }
+
+  _listLinkedDevices () {
+    if (!this.registerStore) return [];
+    const persisted = settingsStore.loadSettings(this.registerStore);
+    return listLinkedDevices(persisted.linkedDevices);
+  }
+
+  /**
+   * Re-publish IdentityCrossSign for paired devices that are not yet a cluster
+   * edge (desktop overlay closed before the initiator tick, or Fabric was down).
+   */
+  async _nudgePendingCrossSigns () {
+    if (!this._identity || typeof this.publishLocalIdentityCrossSign !== 'function') return 0;
+    const now = Date.now();
+    if (this._lastCrossSignNudge && now - this._lastCrossSignNudge < 8000) return 0;
+    this._lastCrossSignNudge = now;
+    const me = this._identity.pubkey;
+    const list = this._listLinkedDevices() || [];
+    let n = 0;
+    for (const row of list) {
+      const pk = row.peerPubkey || row.peerPubkeyHex;
+      const nonce = row.nonce;
+      if (!pk || !nonce) continue;
+      if (this.identityCluster && this.identityCluster.clusterEquals(me, pk)) continue;
+      try {
+        await this.publishLocalIdentityCrossSign({ peerPubkey: pk, nonce });
+        n += 1;
+      } catch (e) {
+        this.emit('warning', '[LiveRelay] IdentityCrossSign nudge: ' + ((e && e.message) || e));
+      }
+    }
+    try { this._replayIdentityCrossSigns(); } catch (_) { /* ignore */ }
+    return n;
+  }
+
+  _clusterAllowPubkeys () {
+    const me = this._identity && this._identity.pubkey;
+    const allow = [];
+    if (this.identityCluster && me && typeof this.identityCluster.snapshot === 'function') {
+      const snap = this.identityCluster.snapshot(me);
+      for (const m of (snap && snap.members) || []) allow.push(m);
+    }
+    for (const d of this._listLinkedDevices()) {
+      allow.push(d.peerPubkey || d.peerFabricId);
+    }
+    return allow.filter(Boolean);
+  }
+
+  _clusterMeshHubs () {
+    const extra = this.settings && this.settings.fabric && this.settings.fabric.webrtcHubs;
+    return clusterSync.sanitizeWebrtcHubs(
+      Array.isArray(extra) && extra.length
+        ? extra.concat(clusterSync.COORDINATOR_HUBS)
+        : clusterSync.COORDINATOR_HUBS
+    );
+  }
+
+  _startClusterMeshTimer () {
+    if (this._clusterMeshTimer) return;
+    if (this.settings.fabric && this.settings.fabric.enable === false) return;
+    this._clusterMeshTick();
+    this._clusterMeshTimer = setInterval(() => this._clusterMeshTick(), clusterMesh.HEARTBEAT_MS);
+    if (this._clusterMeshTimer.unref) this._clusterMeshTimer.unref();
+  }
+
+  _stopClusterMeshTimer () {
+    if (this._clusterMeshTimer) {
+      clearInterval(this._clusterMeshTimer);
+      this._clusterMeshTimer = null;
+    }
+  }
+
+  /**
+   * Advertise LAN hints on Hub WebRTC (coordinator only) and TCP-dial siblings.
+   */
+  _clusterMeshTick () {
+    if (this._clusterMeshInflight || this._stopping) return this._clusterMeshInflight;
+    if (!this._identity) return null;
+    if (this.settings.fabric && this.settings.fabric.enable === false) return null;
+    const me = this._identity.pubkey;
+    const candidates = clusterSync.localDialCandidates({
+      port: Number(this.settings.fabric && this.settings.fabric.port) || 7777,
+      advertiseHost: this._fabricAdvertiseHost || null
+    });
+    const hubs = this._clusterMeshHubs();
+    this._clusterMeshInflight = clusterMesh.heartbeat({
+      hubs,
+      pubkey: me,
+      candidates,
+      port: Number(this.settings.fabric && this.settings.fabric.port) || 7777,
+      allowPubkeys: this._clusterAllowPubkeys()
+    }).then((out) => {
+      const prevReg = ((this._clusterMesh && this._clusterMesh.registered) || []).join('|');
+      this._clusterMesh = {
+        registered: out.registered || [],
+        discovered: out.discovered || [],
+        errors: out.errors || [],
+        at: Date.now()
+      };
+      const nextReg = (out.registered || []).join('|');
+      if (nextReg && nextReg !== prevReg) {
+        logFabricPeer('webrtc-hub', out.registered.join(', '));
+      }
+      const queued = [];
+      for (const hit of out.discovered || []) {
+        queued.push(...this._applyClusterPeerPack({
+          pubkey: hit.pubkey,
+          candidates: hit.candidates,
+          webrtc: { hubs: hit.hub ? [hit.hub] : this._clusterMeshHubs() }
+        }, hit.pubkey));
+      }
+      if (queued.length) {
+        logFabricPeer('dial', 'webrtc-hub ' + queued.join(', '));
+      }
+      if (out.errors && out.errors.length) {
+        this.emit('warning', '[LiveRelay] cluster mesh: ' + out.errors.map((e) => e.error).join('; '));
+      }
+      return out;
+    }).catch((e) => {
+      this._clusterMesh = Object.assign({}, this._clusterMesh, {
+        errors: [{ error: (e && e.message) || String(e) }],
+        at: Date.now()
+      });
+      this.emit('warning', '[LiveRelay] cluster mesh: ' + ((e && e.message) || String(e)));
+      return null;
+    }).finally(() => {
+      this._clusterMeshInflight = null;
+    });
+    return this._clusterMeshInflight;
+  }
+
+  _setFileClusterSync (documentId, enabled) {
+    const document = localDocuments.setClusterSync(
+      this.registerStore,
+      documentId,
+      enabled === true
+    );
+    this._scheduleAccountDataReplay();
+    if (enabled === true) {
+      try { this._pushClusterFiles(); } catch (e) {
+        this.emit('warning', '[LiveRelay] cluster file push: ' + (e && e.message));
+      }
+    }
+    return document;
+  }
+
+  _clusterConnectionIds () {
+    const net = this.fabricNetwork;
+    const peer = net && net.peer;
+    if (!peer || !this._identity || !this.identityCluster) return [];
+    const me = this._identity.pubkey;
+    const snap = this.identityCluster.snapshot(me);
+    if (!snap || !snap.members || snap.members.length < 2) return [];
+    const stored = [];
+    try {
+      for (const row of (this.registerStore.all(clusterSync.STORE_COLLECTION) || [])) {
+        if (!row || !row.pubkey) continue;
+        if (!this.identityCluster.clusterEquals(me, row.pubkey)) continue;
+        if (String(row.pubkey).toLowerCase() === String(me).toLowerCase()) continue;
+        for (const c of row.candidates || []) stored.push(String(c));
+      }
+    } catch (_) { /* ok */ }
+    const out = [];
+    for (const id of Object.keys(peer.connections || {})) {
+      const reg = net.lookupPeerRegistry(id);
+      if (reg && reg.id && this.identityCluster.clusterEquals(me, reg.id) &&
+        String(reg.id).toLowerCase() !== String(me).toLowerCase()) {
+        out.push(id);
+        continue;
+      }
+      if (stored.some((addr) => FabricNetwork.connectionMatchesAddress(id, addr))) {
+        out.push(id);
+      }
+    }
+    return out;
+  }
+
+  _pushClusterFiles () {
+    if (!this.fabricNetwork || !this.registerStore) return 0;
+    const targets = this._clusterConnectionIds();
+    if (!targets.length) return 0;
+    const files = localDocuments.list(this.registerStore)
+      .filter((d) => d && d.clusterSync === true && d.clusterPending !== true);
+    if (!files.length) return 0;
+    let sent = 0;
+    for (const meta of files) {
+      let buf = null;
+      try {
+        const got = localDocuments.get(this.registerStore, meta.id, {
+          dir: this._documentsDir(),
+          includeContent: true
+        });
+        const b64 = got && got.document && got.document.contentBase64;
+        if (b64) buf = Buffer.from(b64, 'base64');
+      } catch (_) { continue; }
+      if (!buf || !buf.length) continue;
+      sent += this.fabricNetwork.sendCatalogFileToAddresses(targets, buf, {
+        documentId: meta.id
+      });
+    }
+    if (sent) logFabricSync('cluster-file push', 'frames=' + sent + ' targets=' + targets.length);
+    return sent;
+  }
+
+  _expectsClusterFile (documentId) {
+    const id = String(documentId || '').trim().toLowerCase();
+    if (!/^[0-9a-f]{64}$/.test(id)) return false;
+    if (this._clusterFileExpect && this._clusterFileExpect.has(id)) return true;
+    if (!this.registerStore) return false;
+    try {
+      const row = this.registerStore.get(localDocuments.COLLECTION, id);
+      return !!(row && row.clusterSync === true);
+    } catch (_) {
+      return false;
+    }
+  }
+
+  _ingestClusterFileBytes (ev) {
+    if (!ev || !this.registerStore) return null;
+    const buf = ev.buffer;
+    if (!Buffer.isBuffer(buf) || !buf.length) return null;
+    const expected = String(ev.documentId || '').trim().toLowerCase();
+    if (!this._expectsClusterFile(expected)) return null;
+    try {
+      const created = localDocuments.createFromBuffer(
+        this.registerStore,
+        buf,
+        { clusterSync: true },
+        { dir: this._documentsDir() }
+      );
+      if (!created || created.id !== expected) return null;
+      logFabricSync('cluster-file ingest', created.id.slice(0, 12));
+      this.emit('identity:cluster-file', { id: created.id });
+      return created;
+    } catch (e) {
+      this.emit('warning', '[LiveRelay] cluster file ingest: ' + (e && e.message));
+      return null;
+    }
+  }
+
+  _clusterSyncSnapshot () {
+    const me = this._identity && this._identity.pubkey;
+    const local = me
+      ? clusterSync.compactPeers({
+        pubkey: me,
+        port: Number(this.settings.fabric && this.settings.fabric.port) || 7777,
+        candidates: clusterSync.localDialCandidates({
+          port: Number(this.settings.fabric && this.settings.fabric.port) || 7777,
+          advertiseHost: this._fabricAdvertiseHost || null
+        }),
+        advertiseHost: this._fabricAdvertiseHost || null,
+        webrtcHubs: this._clusterWebrtcHubs()
+      })
+      : null;
+    const last = this.registerStore
+      ? this.registerStore.get(clusterSync.STORE_COLLECTION, clusterSync.LAST_OUTBOUND_KEY)
+      : null;
+    const lastStats = this.registerStore
+      ? this.registerStore.get(clusterSync.STORE_COLLECTION, clusterSync.LAST_OUTBOUND_STATS_KEY)
+      : null;
+    const peers = (this.registerStore
+      ? this.registerStore.all(clusterSync.STORE_COLLECTION)
+      : [])
+      .filter((row) => clusterSync.isPeerHintRow(row));
+    const inbound = [];
+    for (const row of peers) {
+      if (row.inventory && typeof row.inventory === 'object') {
+        inbound.push(clusterInventory.sanitizeStats(Object.assign({
+          pubkey: row.pubkey,
+          generatedAt: row.inventory.generatedAt || row.observedAt
+        }, row.inventory)));
+      }
+    }
+    const cluster = (this.identityCluster && me && typeof this.identityCluster.snapshot === 'function')
+      ? this.identityCluster.snapshot(me)
+      : { canonical: me || null, members: me ? [me] : [], edges: [] };
+    const pending = clusterDevices.pendingFromClusterInstance(this.identityCluster, me);
+    const fabricStatus = this.fabricNetwork && typeof this.fabricNetwork.status === 'function'
+      ? this.fabricNetwork.status()
+      : null;
+    return {
+      type: 'ClusterSync',
+      data: {
+        transport: clusterSync.TRANSPORT.slice(),
+        local,
+        collection: last || null,
+        peers,
+        members: cluster.members || [],
+        edges: cluster.edges || [],
+        pending,
+        linkedDevices: this._listLinkedDevices(),
+        mesh: this._clusterMesh || { registered: [], discovered: [], errors: [], at: 0 },
+        fabric: {
+          ready: !!(this.fabricNetwork && this.fabricNetwork.ready),
+          connected: Number(fabricStatus && fabricStatus.fabricConnected) || 0,
+          listening: !!(fabricStatus && fabricStatus.listening)
+        },
+        inventory: {
+          local: this._localClusterInventory(),
+          outbound: lastStats || null,
+          inbound
+        }
+      }
+    };
+  }
+
+  _ingestClusterSyncCollection (doc, viewer) {
+    const rows = clusterSync.replayShareCollection(doc);
+    const applied = [];
+    for (const row of rows) {
+      const share = this._ingestDeviceDataShare(row.share, row.author || viewer);
+      if (share) applied.push({
+        fromPubkey: share.fromPubkey,
+        packs: (share.packs || []).map((p) => p.pack),
+        hash: row.hash
+      });
+    }
+    return applied.length ? applied : null;
   }
 
   /**
@@ -4285,12 +5355,31 @@ class StarCitizenService extends EventEmitter {
       return { error: 'payload.ts must be within 5 minutes of server time', code: 401 };
     }
     const token = crypto.randomBytes(24).toString('hex');
-    const session = { token, pubkey: envelope.pubkey, createdAt: Date.now(), expiresAt: Date.now() + 24 * 60 * 60 * 1000 };
+    const session = {
+      token,
+      pubkey: envelope.pubkey,
+      createdAt: Date.now(),
+      expiresAt: Date.now() + BEARER_TTL_MS
+    };
     this._sessions[token] = session;
     // Cap session table growth.
     const keys = Object.keys(this._sessions);
     if (keys.length > 5000) delete this._sessions[keys[0]];
     return { token, pubkey: session.pubkey, expiresAt: new Date(session.expiresAt).toISOString() };
+  }
+
+  /**
+   * Drop a Bearer session (logout / revoke). Returns true when a session was removed.
+   * @param {object} req
+   * @returns {boolean}
+   */
+  _revokeBearerSession (req) {
+    const header = (req.headers && req.headers.authorization) || '';
+    if (!header.startsWith('Bearer ')) return false;
+    const token = header.slice(7);
+    if (!this._sessions[token]) return false;
+    delete this._sessions[token];
+    return true;
   }
 
   /**
@@ -4654,6 +5743,32 @@ class StarCitizenService extends EventEmitter {
       'local';
   }
 
+  /**
+   * Session required for hosted / shared-LAN HTTP. Loopback desktop keeps
+   * the unlocked-identity path.
+   * @param {http.IncomingMessage} req
+   * @param {function} send
+   * @returns {boolean}
+   */
+  _requireSession (req, send) {
+    if (this._enforceRemoteAuth(req) && !this._authPubkey(req)) {
+      send(401, { error: 'Authentication required (POST …/auth with a signed login envelope)' });
+      return false;
+    }
+    return true;
+  }
+
+  /**
+   * Acting viewer for an HTTP request. Never falls back to the unlocked
+   * operator identity when a session is required.
+   * @param {http.IncomingMessage} req
+   * @returns {string|null}
+   */
+  _requestViewer (req) {
+    if (this._enforceRemoteAuth(req)) return this._authPubkey(req) || null;
+    return this._authPubkey(req) || (this._identity && this._identity.pubkey) || null;
+  }
+
   _viewerGroupIds (viewer) {
     if (!viewer || !this.groupManager) return [];
     return this.groupManager.groupsFor(viewer).map((g) => g.id);
@@ -4727,13 +5842,48 @@ class StarCitizenService extends EventEmitter {
 
   _updateIdentityNote (id, opts, actor) {
     const prev = identityNotes.getNote(this.registerStore, id);
-    if (this.settings.mode === 'server' && prev && actor && prev.author !== actor && prev.author !== 'local') {
+    if (prev && actor && prev.author !== actor && prev.author !== 'local') {
       const err = new Error('forbidden: not the note author');
       err.code = 'FORBIDDEN';
       throw err;
     }
     const note = identityNotes.updateNote(this.registerStore, id, opts);
     this._appendInbox(registerInbox.entryFromIdentityNote(note, 'update', actor));
+    return note;
+  }
+
+  /**
+   * Pin (or unpin) a note onto the subject's public profile wall.
+   * @param {string} id
+   * @param {boolean} pinned
+   * @param {string} actor
+   * @returns {object}
+   */
+  _pinIdentityNote (id, pinned, actor) {
+    const prev = identityNotes.getNote(this.registerStore, id);
+    if (!prev) {
+      const err = new Error('Note not found');
+      err.code = 'NOT_FOUND';
+      throw err;
+    }
+    if (!actor || actor === 'local') {
+      const err = new Error('Unlock your identity to pin notes');
+      err.code = 'FORBIDDEN';
+      throw err;
+    }
+    if (prev.inbound === true) {
+      const err = new Error('forbidden: not the note author');
+      err.code = 'FORBIDDEN';
+      throw err;
+    }
+    if (this.settings.mode === 'server' && prev.author !== actor && prev.author !== 'local') {
+      const err = new Error('forbidden: not the note author');
+      err.code = 'FORBIDDEN';
+      throw err;
+    }
+    const note = identityNotes.setProfilePinned(this.registerStore, id, pinned === true);
+    this._appendInbox(registerInbox.entryFromIdentityNote(note, 'update', actor));
+    this._publishGroupDataShareNow();
     return note;
   }
 
@@ -5650,9 +6800,9 @@ class StarCitizenService extends EventEmitter {
     const group = this.groupManager.getGroupByContractId(contractId)
       || (request.groupId && this.groupManager.getGroup(request.groupId));
     if (!group) return null;
-    // Only members serve journal catch-up.
+    // Cluster members (D-013 sameActor) may serve journal catch-up.
     const me = this._identity && this._identity.pubkey;
-    if (!me || !group.includes(me)) return null;
+    if (!me || !this.groupManager.isMember(group.id, me)) return null;
 
     const data = this.groupManager.store.get('groups', group.id);
     const definition = this.groupManager._groupDefinition
@@ -5734,7 +6884,7 @@ class StarCitizenService extends EventEmitter {
       res.writeHead(204, cors);
       return res.end();
     }
-    // Read the JSON body. When embedded behind Express (goon.vc Hub), body-parser
+    // Read the JSON body. When embedded behind Express (historical Hub mount), body-parser
     // has already consumed the stream and parsed req.body — use it directly.
     const body = async () => {
       if (req.body && typeof req.body === 'object' && Object.keys(req.body).length) return req.body;
@@ -5762,6 +6912,9 @@ class StarCitizenService extends EventEmitter {
           pathname === '/missions' || /^\/missions\/[^/]+$/.test(pathname) ||
           pathname === '/collections' || /^\/collections\/[^/]+\/[^/]+$/.test(pathname) ||
           pathname === '/files' || /^\/files\/[^/]+$/.test(pathname) ||
+          pathname === '/locations' ||
+          (/^\/locations\/[^/]+$/.test(pathname) &&
+            pathname !== '/locations/map' && pathname !== '/locations/reports') ||
           /^\/wallet\/construct\/?$/.test(pathname)));
       if (serveSpa) {
         let html;
@@ -5795,6 +6948,7 @@ class StarCitizenService extends EventEmitter {
         }
       }
       if (req.method === 'GET' && pathname === `${base}/overlay/primary-group`) {
+        if (!this._requireSession(req, send)) return;
         return send(200, { type: 'PrimaryGroupOverlay', data: this.getPrimaryGroupOverlay() });
       }
       // Parser rules — the configured regular expressions, for the dashboard's
@@ -5814,20 +6968,24 @@ class StarCitizenService extends EventEmitter {
       }
       // Grouped missions (by MissionId), objectives joined in.
       if (req.method === 'GET' && pathname === `${base}/missiongroups`) {
+        if (!this._requireSession(req, send)) return;
         return send(200, { type: 'Collection', data: this.missionGroups });
       }
       // Combat progress inferred from mission objectives (proxy for kills).
       if (req.method === 'GET' && pathname === `${base}/combat`) {
+        if (!this._requireSession(req, send)) return;
         return send(200, { type: 'Collection', data: this.combatlog });
       }
       // Analytics: compact merged dataset (backfilled history + live session) for
       // the "Analyze" dashboard tab. The client slices it by month/year + pilot +
       // mission type + outcome. Local-player today; same shape serves shared multi-pilot history (M4).
       if (req.method === 'GET' && pathname === `${base}/analytics`) {
+        if (!this._requireSession(req, send)) return;
         return send(200, this._analyticsDataset());
       }
       // Player log corpus: every Game.log + logbackup feeding cumulative Analyze.
       if (req.method === 'GET' && pathname === `${base}/corpus`) {
+        if (!this._requireSession(req, send)) return;
         return send(200, this._corpusStatus());
       }
       if (req.method === 'POST' && pathname === `${base}/corpus/sync`) {
@@ -5900,11 +7058,13 @@ class StarCitizenService extends EventEmitter {
         if (this.settings.mode === 'server') {
           return send(400, { error: 'filesystem browse is a local-player operation' });
         }
+        if (!this._requireSession(req, send)) return;
         const listing = fsBrowser.listDirectory(url.searchParams.get('path'));
         return send(listing.error && listing.error === 'path not found' ? 404 : 200, listing);
       }
       // Fabric Tree over cumulative history leaves (preview or publish to a Group).
       if (req.method === 'GET' && pathname === `${base}/activity-tree`) {
+        if (!this._requireSession(req, send)) return;
         const tree = activityTree.buildActivityTree(this.history, {
           ownerPubkey: (this._identity && this._identity.pubkey) || null
         });
@@ -5926,9 +7086,7 @@ class StarCitizenService extends EventEmitter {
       }
       // Snapshot for the monitor UI: counts + recent + combat candidates (newest first).
       if (req.method === 'GET' && pathname === `${base}/monitor`) {
-        if (this.settings.mode === 'server' && !this._authPubkey(req)) {
-          return send(401, { error: 'Authentication required' });
-        }
+        if (!this._requireSession(req, send)) return;
         const limit = Math.min(parseInt(url.searchParams.get('limit'), 10) || 250, 1000);
         const newest = (arr) => arr.slice(-limit).reverse();
         const cumulative = cumulativeHistory.cumulativeCounts(this.history);
@@ -5971,9 +7129,7 @@ class StarCitizenService extends EventEmitter {
       }
       // Chat-style unified activity stream (local parse + peer ingest).
       if (req.method === 'GET' && pathname === `${base}/feed`) {
-        if (this.settings.mode === 'server' && !this._authPubkey(req)) {
-          return send(401, { error: 'Authentication required' });
-        }
+        if (!this._requireSession(req, send)) return;
         const limit = Math.min(parseInt(url.searchParams.get('limit'), 10) || 400, 2000);
         return send(200, Object.assign({ type: 'LiveFeed' }, this._liveFeedSnapshot(limit)));
       }
@@ -5998,6 +7154,7 @@ class StarCitizenService extends EventEmitter {
           return send(401, { error: 'Authentication required (POST …/auth with a signed login envelope)' });
         }
         if (req.method === 'GET' && pathname === '/settings') {
+          if (!this._requireSession(req, send)) return;
           const fabricStatus = this.fabricNetwork ? this.fabricNetwork.status() : {
             enable: this.settings.fabric.enable !== false,
             fabricListenPort: this.settings.fabric.port,
@@ -6045,7 +7202,7 @@ class StarCitizenService extends EventEmitter {
               defaultGroupMessageId: this._defaultGroupMessageId || null,
               groupOverlay: this._groupOverlay === true,
               fabricShareEncoding: this._opaqueShareEncoding(),
-              shareDiscordCatalog: this._shareDiscordCatalog !== false,
+              shareDiscordCatalog: this._shareDiscordCatalog === true,
               sharePlaytimes: this._sharePlaytimes === true,
               shareFiles: this._hasPinnedProfileFiles(),
               selfPeering: (() => {
@@ -6105,11 +7262,13 @@ class StarCitizenService extends EventEmitter {
               this._nickname = updated.nickname || null;
               this._publishPeerAlias(this._nickname).catch((e) => this.emit('error', e));
               this._publishLocalProfile().catch((e) => this.emit('error', e));
+              this._scheduleAccountDataReplay();
               requiresRestart = false;
             }
             if (sMatch[1] === 'profile') {
               this._profile = peerProfile.sanitizeProfile(updated.profile);
               this._publishLocalProfile().catch((e) => this.emit('error', e));
+              this._scheduleAccountDataReplay();
               requiresRestart = false;
             }
             if (sMatch[1] === 'fabricAdvertiseHost') {
@@ -6204,7 +7363,7 @@ class StarCitizenService extends EventEmitter {
               runtime: {
                 primaryGroupId: this._primaryGroupId || null,
                 primaryGroupColor: this._primaryGroupColor(),
-                shareDiscordCatalog: this._shareDiscordCatalog !== false,
+                shareDiscordCatalog: this._shareDiscordCatalog === true,
                 sharePlaytimes: this._sharePlaytimes === true,
                 shareFiles: this._hasPinnedProfileFiles(),
                 discord: this._discordRuntime()
@@ -6253,6 +7412,9 @@ class StarCitizenService extends EventEmitter {
           } catch (e) { return send(400, { error: e.message }); }
         }
         if (pathname === `${base}/peers` || pathname === '/peers') {
+          // Shared-mode / hosted-style remote auth: do not leak the peer roster
+          // (or accept AddPeer) to unauthenticated LAN neighbors.
+          if (!this._requireSession(req, send)) return;
           if (req.method === 'GET') return send(200, { type: 'Collection', data: this._peersWithStatus() });
           if (req.method === 'POST') {
             const d = await body();
@@ -6291,6 +7453,7 @@ class StarCitizenService extends EventEmitter {
         }
         if (pathname === `${base}/peers/announce` || pathname === '/peers/announce') {
           if (req.method === 'POST') {
+            if (!this._requireSession(req, send)) return;
             if (!this._identity) {
               return send(400, { error: 'Unlock your identity to announce peering' });
             }
@@ -6329,6 +7492,7 @@ class StarCitizenService extends EventEmitter {
         }
         if (pathname === `${base}/peers/restore-seeds` || pathname === '/peers/restore-seeds') {
           if (req.method === 'POST') {
+            if (!this._requireSession(req, send)) return;
             const result = this._healPeerRoster({ persist: true, forceHubs: true });
             this._refreshFabric().catch((e) => this.emit('error', e));
             return send(200, {
@@ -6343,20 +7507,24 @@ class StarCitizenService extends EventEmitter {
         }
         if (pathname === `${base}/profile` || pathname === '/profile') {
           if (req.method === 'GET') {
+            if (!this._requireSession(req, send)) return;
             return send(200, { type: 'PeerProfile', data: this._localProfile() });
           }
         }
         let profileMatch;
         if ((profileMatch = pathname.match(new RegExp(`^(?:${base})?/profiles/([^/]+)$`))) && req.method === 'GET') {
+          if (!this._requireSession(req, send)) return;
           const detail = this._profileDetailByActor(decodeURIComponent(profileMatch[1]));
           if (!detail) return send(404, { error: 'Profile not found' });
           return send(200, { type: 'PeerProfileDetail', data: detail });
         }
         if (pathname === `${base}/presence` || pathname === '/presence') {
           if (req.method === 'GET') {
+            if (!this._requireSession(req, send)) return;
             return send(200, { type: presence.PRESENCE_TYPE, data: this.getPresenceStatus() });
           }
           if (req.method === 'PUT') {
+            if (!this._requireSession(req, send)) return;
             const d = await body();
             try {
               const result = this.setPresenceSettings(d || {});
@@ -6368,6 +7536,7 @@ class StarCitizenService extends EventEmitter {
         }
         if (pathname === `${base}/presence/ship` || pathname === '/presence/ship') {
           if (req.method === 'PUT') {
+            if (!this._requireSession(req, send)) return;
             const d = await body();
             try {
               let slug = null;
@@ -6384,6 +7553,7 @@ class StarCitizenService extends EventEmitter {
         }
         if (pathname === `${base}/presence/roster` || pathname === '/presence/roster') {
           if (req.method === 'GET') {
+            if (!this._requireSession(req, send)) return;
             return send(200, {
               type: 'PeerPresenceRoster',
               data: this.getPresenceRoster()
@@ -6393,8 +7563,16 @@ class StarCitizenService extends EventEmitter {
         // Fabric AMP Message log (wire Messages only — not Game.log). Advanced UI.
         if (pathname === `${base}/fabric/messages` || pathname === '/fabric/messages') {
           if (req.method === 'GET') {
+            if (!this._requireSession(req, send)) return;
             const q = url.searchParams;
             const hideKeepalive = q.get('keepalive') !== '1' && q.get('hideKeepalive') !== '0';
+            if (q.get('format') === 'collection' || q.get('format') === 'fabric-message-collection') {
+              const { collectionFromLog } = require('../functions/fabricMessageLog');
+              return send(200, collectionFromLog(this._fabricMessageLog, {
+                hideKeepalive,
+                limit: Number(q.get('limit')) || 2000
+              }));
+            }
             const messages = this._fabricMessageLog.list({
               limit: Number(q.get('limit')) || 200,
               direction: q.get('dir') || q.get('direction') || null,
@@ -6410,28 +7588,33 @@ class StarCitizenService extends EventEmitter {
             });
           }
           if (req.method === 'DELETE') {
+            if (!this._requireSession(req, send)) return;
             return send(200, { type: 'FabricMessageLog', data: this._fabricMessageLog.clear() });
           }
         }
         if (pathname === `${base}/fabric/messages/clear` || pathname === '/fabric/messages/clear') {
           if (req.method === 'POST' || req.method === 'DELETE') {
+            if (!this._requireSession(req, send)) return;
             return send(200, { type: 'FabricMessageLog', data: this._fabricMessageLog.clear() });
           }
         }
         if (pathname === `${base}/fabric/messages/pause` || pathname === '/fabric/messages/pause') {
           if (req.method === 'POST') {
+            if (!this._requireSession(req, send)) return;
             this._fabricMessageLog.pause();
             return send(200, { type: 'FabricMessageLog', meta: this._fabricMessageLog.status() });
           }
         }
         if (pathname === `${base}/fabric/messages/resume` || pathname === '/fabric/messages/resume') {
           if (req.method === 'POST') {
+            if (!this._requireSession(req, send)) return;
             this._fabricMessageLog.resume();
             return send(200, { type: 'FabricMessageLog', meta: this._fabricMessageLog.status() });
           }
         }
         if ((pathname === `${base}/fabric/messages/decode` || pathname === '/fabric/messages/decode') &&
             req.method === 'POST') {
+          if (!this._requireSession(req, send)) return;
           const d = await body();
           try {
             const data = this.decodeOpaqueFabricMessage(
@@ -6445,6 +7628,7 @@ class StarCitizenService extends EventEmitter {
         // Discord coordination sequence tree (Request → Claim → Response).
         if ((pathname === `${base}/fabric/messages/tree` || pathname === '/fabric/messages/tree') &&
             req.method === 'GET') {
+          if (!this._requireSession(req, send)) return;
           const requestId = String(url.searchParams.get('requestId') || url.searchParams.get('id') || '').trim();
           if (!requestId) return send(400, { error: 'requestId required' });
           return send(200, {
@@ -6455,6 +7639,7 @@ class StarCitizenService extends EventEmitter {
         let fabricMsgMatch;
         if ((fabricMsgMatch = pathname.match(new RegExp(`^(?:${base})?/fabric/messages/([^/]+)$`))) &&
             req.method === 'GET') {
+          if (!this._requireSession(req, send)) return;
           const msgId = decodeURIComponent(fabricMsgMatch[1]);
           const row = this._fabricMessageLog.get(msgId);
           if (!row) {
@@ -6465,36 +7650,49 @@ class StarCitizenService extends EventEmitter {
           }
           return send(200, { type: 'FabricMessage', data: row });
         }
-        // Discord guild / channel / user catalog for Chat Discord insight.
-        if ((pathname === `${base}/discord/link` || pathname === '/discord/link') &&
-            (req.method === 'GET' || req.method === 'POST' || req.method === 'DELETE')) {
-          const me = this._authPubkey(req) || (this._identity && this._identity.pubkey) || null;
-          if (!me) {
-            return send(401, { error: 'Unlock your identity to link Discord' });
-          }
-          if (req.method === 'GET') {
-            return send(200, {
-              type: 'DiscordIdentityLink',
-              data: this._discordLinkStatus(me)
-            });
-          }
-          if (req.method === 'POST') {
-            const pending = this._createDiscordLinkChallenge(me);
-            return send(200, {
-              type: 'DiscordIdentityLinkChallenge',
-              data: Object.assign({
-                linked: discordIdentityLink.linkForPubkey(this._discordIdentityLinks, me) || null
-              }, pending)
-            });
-          }
-          const { removed } = this._unlinkDiscordIdentity({ pubkey: me });
+      }
+
+      // Discord ↔ Fabric link is per-session identity (hosted + desktop).
+      // Guild catalog / world-view stay in the desktop-only block so a hosted
+      // session cannot read the operator bot roster.
+      if ((pathname === `${base}/discord/link` || pathname === '/discord/link') &&
+          (req.method === 'GET' || req.method === 'POST' || req.method === 'DELETE')) {
+        if (!this._requireSession(req, send)) return;
+        const me = this._requestViewer(req);
+        if (!me) {
+          return send(401, { error: 'Unlock your identity to link Discord' });
+        }
+        if (req.method === 'GET') {
           return send(200, {
             type: 'DiscordIdentityLink',
-            data: { unlinked: !!removed, removed: removed || null }
+            data: this._discordLinkStatus(me)
           });
         }
+        if (req.method === 'POST') {
+          const pending = this._createDiscordLinkChallenge(me);
+          return send(200, {
+            type: 'DiscordIdentityLinkChallenge',
+            data: Object.assign({
+              linked: discordIdentityLink.linkForPubkey(this._discordIdentityLinks, me) || null
+            }, pending)
+          });
+        }
+        const { removed } = this._unlinkDiscordIdentity({ pubkey: me });
+        return send(200, {
+          type: 'DiscordIdentityLink',
+          data: { unlinked: !!removed, removed: removed || null }
+        });
+      }
+
+      if (this.settings.mode !== 'server') {
+        const mutating = req.method !== 'GET' && req.method !== 'HEAD' && req.method !== 'OPTIONS';
+        if (mutating && this._enforceRemoteAuth(req) && !this._authPubkey(req)) {
+          return send(401, { error: 'Authentication required (POST …/auth with a signed login envelope)' });
+        }
+        // Discord guild / channel / user catalog for Chat Discord insight.
         if ((pathname === `${base}/discord/links` || pathname === '/discord/links') &&
             req.method === 'GET') {
+          if (!this._requireSession(req, send)) return;
           return send(200, {
             type: 'Collection',
             data: this._listDiscordIdentityLinks()
@@ -6502,6 +7700,7 @@ class StarCitizenService extends EventEmitter {
         }
         if ((pathname === `${base}/discord/guilds` || pathname === '/discord/guilds') &&
             req.method === 'GET') {
+          if (!this._requireSession(req, send)) return;
           const catalog = await this._discordGuildCatalog({
             force: url.searchParams.get('refresh') === '1'
           });
@@ -6510,6 +7709,7 @@ class StarCitizenService extends EventEmitter {
         if ((pathname === `${base}/world-view` || pathname === '/world-view' ||
             pathname === `${base}/discord/world-view` || pathname === '/discord/world-view') &&
             req.method === 'GET') {
+          if (!this._requireSession(req, send)) return;
           const catalog = await this._discordGuildCatalog({
             force: url.searchParams.get('refresh') === '1'
           });
@@ -6526,18 +7726,17 @@ class StarCitizenService extends EventEmitter {
               files: this.registerStore
                 ? profileFiles.loadAllFiles(this.registerStore)
                 : [],
+              notes: this.registerStore
+                ? profileNotes.loadAllNotes(this.registerStore)
+                : [],
               sourceAppId: this._discordSourceAppId(),
               botReady: catalog.botReady === true
             })
           });
         }
         if ((pathname === `${base}/search` || pathname === '/search') && req.method === 'GET') {
-          if (this.settings.mode === 'server' && !this._authPubkey(req)) {
-            return send(401, { error: 'Authentication required' });
-          }
-          const searchViewer = this._authPubkey(req) ||
-            (this._identity && this._identity.pubkey) ||
-            null;
+          if (!this._requireSession(req, send)) return;
+          const searchViewer = this._requestViewer(req);
           const q = url.searchParams.get('q') || url.searchParams.get('query') || '';
           const limit = parseInt(url.searchParams.get('limit'), 10) || appSearch.DEFAULT_LIMIT;
           const data = appSearch.searchCorpus(this._appSearchCorpus(searchViewer), q, { limit });
@@ -6546,12 +7745,8 @@ class StarCitizenService extends EventEmitter {
         let collectionMatch;
         if ((collectionMatch = pathname.match(new RegExp(`^${base}/collections/([^/]+)/([^/]+)$`))) &&
             req.method === 'GET') {
-          if (this.settings.mode === 'server' && !this._authPubkey(req)) {
-            return send(401, { error: 'Authentication required' });
-          }
-          const collectionViewer = this._authPubkey(req) ||
-            (this._identity && this._identity.pubkey) ||
-            null;
+          if (!this._requireSession(req, send)) return;
+          const collectionViewer = this._requestViewer(req);
           const kind = decodeURIComponent(collectionMatch[1]);
           const recId = decodeURIComponent(collectionMatch[2]);
           const data = this._collectionRecord(kind, recId, collectionViewer);
@@ -6560,11 +7755,13 @@ class StarCitizenService extends EventEmitter {
         }
         let fileMatch;
         if ((fileMatch = pathname.match(new RegExp(`^${base}/files/([^/]+)$`))) && req.method === 'GET') {
+          if (!this._requireSession(req, send)) return;
           const data = this._fileRecord(decodeURIComponent(fileMatch[1]));
           if (!data) return send(404, { error: 'File not found' });
           return send(200, { type: 'FileRecord', data });
         }
         if ((fileMatch = pathname.match(new RegExp(`^${base}/files/([^/]+)/pin$`))) && req.method === 'POST') {
+          if (!this._requireSession(req, send)) return;
           if (!this.registerStore) return send(503, { error: 'document store unavailable' });
           const d = await body();
           const pinned = !(d && (d.pinned === false || d.profilePinned === false));
@@ -6582,9 +7779,26 @@ class StarCitizenService extends EventEmitter {
             return send((e && e.status) || 400, { error: e.message || String(e) });
           }
         }
+        if ((fileMatch = pathname.match(new RegExp(`^${base}/files/([^/]+)/cluster-sync$`))) && req.method === 'POST') {
+          if (!this._requireSession(req, send)) return;
+          if (!this.registerStore) return send(503, { error: 'document store unavailable' });
+          const d = await body();
+          const on = !(d && (d.clusterSync === false || d.sync === false || d.enabled === false));
+          try {
+            const document = this._setFileClusterSync(decodeURIComponent(fileMatch[1]), on);
+            const data = this._fileRecord(document.id || fileMatch[1]);
+            return send(200, {
+              type: 'FileClusterSync',
+              data: data || { record: document, clusterSync: on }
+            });
+          } catch (e) {
+            return send((e && e.status) || 400, { error: e.message || String(e) });
+          }
+        }
         let discordGuildMatch;
         if ((discordGuildMatch = pathname.match(new RegExp(`^(?:${base})?/discord/guilds/([^/]+)/(channels|members)$`))) &&
             req.method === 'GET') {
+          if (!this._requireSession(req, send)) return;
           const guildId = decodeURIComponent(discordGuildMatch[1]);
           const slice = discordGuildMatch[2];
           const catalog = await this._discordGuildCatalog({
@@ -6623,6 +7837,7 @@ class StarCitizenService extends EventEmitter {
         let discordChannelMatch;
         if ((discordChannelMatch = pathname.match(new RegExp(`^(?:${base})?/discord/channels/([^/]+)$`))) &&
             req.method === 'GET') {
+          if (!this._requireSession(req, send)) return;
           const channelId = decodeURIComponent(discordChannelMatch[1]);
           const insight = await this._discordChannelInsight(channelId, {
             force: url.searchParams.get('refresh') === '1',
@@ -6648,6 +7863,7 @@ class StarCitizenService extends EventEmitter {
         let discordTreeMatch;
         if ((discordTreeMatch = pathname.match(new RegExp(`^(?:${base})?/discord/coordination/([^/]+)$`))) &&
             req.method === 'GET') {
+          if (!this._requireSession(req, send)) return;
           const requestId = decodeURIComponent(discordTreeMatch[1]);
           return send(200, {
             type: 'DiscordSequenceTree',
@@ -6656,6 +7872,7 @@ class StarCitizenService extends EventEmitter {
         }
         if ((pathname === `${base}/discord/coordination` || pathname === '/discord/coordination') &&
             req.method === 'GET') {
+          if (!this._requireSession(req, send)) return;
           return send(200, {
             type: 'Collection',
             data: this._discordCoord.listRecent(Number(url.searchParams.get('limit')) || 100)
@@ -6663,6 +7880,7 @@ class StarCitizenService extends EventEmitter {
         }
         if (pathname === `${base}/network/observe` || pathname === '/network/observe') {
           if (req.method === 'GET') {
+            if (!this._requireSession(req, send)) return;
             const force = url.searchParams.get('refresh') === '1';
             const snap = await this._refreshHubObserve({ force });
             return send(200, { type: 'NetworkObserve', data: snap });
@@ -6670,6 +7888,7 @@ class StarCitizenService extends EventEmitter {
         }
         let pMatch;
         if ((pMatch = pathname.match(new RegExp(`^(?:${base})?/peers/([^/]+)$`)))) {
+          if (!this._requireSession(req, send)) return;
           const peer = this.peers.find((p) => p.id === pMatch[1]);
           if (!peer) return send(404, { error: 'Peer not found' });
           if (req.method === 'GET') {
@@ -6695,11 +7914,13 @@ class StarCitizenService extends EventEmitter {
 
         // ---- Game.log visibility: info, raw browsing, deterministic re-parse ----
         if (req.method === 'GET' && pathname === `${base}/loginfo`) {
+          if (!this._requireSession(req, send)) return;
           return send(200, { type: 'LogInfo', data: this._logInfo() });
         }
         // Browse the raw log by byte window (the file can be hundreds of MB —
         // never read it whole). Client pages with start offsets.
         if (req.method === 'GET' && pathname === `${base}/logslice`) {
+          if (!this._requireSession(req, send)) return;
           const info = this._logInfo();
           if (!info.exists) return send(404, { error: 'Game.log not found — set the path in Settings or SC_LOGFILE' });
           const bytes = Math.min(Math.max(parseInt(url.searchParams.get('bytes'), 10) || 65536, 1024), 512 * 1024);
@@ -6716,14 +7937,90 @@ class StarCitizenService extends EventEmitter {
           return send(200, { type: 'LogSlice', data: { start, end, size: info.size, text } });
         }
         if (req.method === 'POST' && pathname === `${base}/reparse`) {
+          if (!this._requireSession(req, send)) return;
           const job = await this._runReparse();
           return send(200, { type: 'Reparse', data: job });
         }
         if (req.method === 'GET' && pathname === `${base}/reparse`) {
+          if (!this._requireSession(req, send)) return;
           return send(200, { type: 'Reparse', data: this._reparse });
         }
 
-        // ---- Ship catalog + personal fleets (Starjump / custom) ----
+        // ---- Ship + location catalogs (public) + personal fleets ----
+        // Personal fleets are operator-local (not the public ship catalog).
+        if (pathname === `${base}/locations` || pathname === '/locations') {
+          if (req.method === 'GET') {
+            const q = url.searchParams.get('q') || url.searchParams.get('query') || '';
+            const limit = Number(url.searchParams.get('limit')) || 40;
+            const system = url.searchParams.get('system') || '';
+            const hotspot = url.searchParams.get('hotspot') === '1' ||
+              url.searchParams.get('hotspots') === '1';
+            const locations = q || system || hotspot
+              ? locationCatalog.searchLocations(q, {
+                limit,
+                system: system || undefined,
+                hotspot: hotspot || undefined
+              })
+              : locationCatalog.listLocations().slice(0, Math.min(200, Math.max(1, limit)));
+            return send(200, {
+              type: 'LocationCatalog',
+              data: locations,
+              meta: locationCatalog.catalogStatus()
+            });
+          }
+        }
+        if (pathname === `${base}/locations/map` || pathname === '/locations/map') {
+          if (req.method === 'GET') {
+            const system = url.searchParams.get('system') || 'STANTON';
+            const includeHotspots = url.searchParams.get('hotspots') !== '0';
+            const destinations = url.searchParams.getAll('dest').map((raw) => {
+              const parts = String(raw).split(':');
+              const n = parts[0];
+              const c = Number(parts[1]) || 1;
+              return { n, c };
+            }).filter((r) => r.n);
+            const layout = starmapLayout.layoutSystem(system, {
+              includeHotspots,
+              destinations
+            });
+            layout.systems = (locationCatalog.listSystems() || []).map((s) => ({
+              code: s.code || s.name,
+              name: s.name || s.code
+            }));
+            return send(200, { type: 'StarMap', data: layout });
+          }
+        }
+        if (pathname === `${base}/locations/reports`) {
+          if (req.method === 'GET') {
+            if (!this._requireSession(req, send)) return;
+            const limit = parseInt(url.searchParams.get('limit'), 10) || 40;
+            return send(200, {
+              type: 'LocationReports',
+              data: locationReports.listRecent(this.registerStore, { limit })
+            });
+          }
+        }
+        {
+          const prefixes = [`${base}/locations/`];
+          let locSlug = null;
+          for (const prefix of prefixes) {
+            if (pathname.indexOf(prefix) !== 0) continue;
+            const rest = pathname.slice(prefix.length);
+            if (!rest || rest.indexOf('/') !== -1) continue;
+            if (rest === 'map' || rest === 'reports') continue;
+            try { locSlug = decodeURIComponent(rest); } catch (_) { locSlug = rest; }
+            break;
+          }
+          if (locSlug && req.method === 'GET') {
+            if (!this._requireSession(req, send)) return;
+            const data = this._locationRecord(locSlug);
+            if (!data) return send(404, { error: 'Location not found' });
+            return send(200, { type: 'LocationRecord', data });
+          }
+        }
+        const fleetPath = pathname === `${base}/fleets` || pathname === '/fleets' ||
+          pathname.startsWith(`${base}/fleets/`) || pathname.startsWith('/fleets/');
+        if (fleetPath && !this._requireSession(req, send)) return;
         if (pathname === `${base}/ships` || pathname === '/ships') {
           if (req.method === 'GET') {
             const q = url.searchParams.get('q') || url.searchParams.get('query') || '';
@@ -6835,17 +8132,20 @@ class StarCitizenService extends EventEmitter {
         const sm = this.snapshotManager;
         if (sm && pathname === `${base}/snapshots`) {
           if (req.method === 'GET') {
+            if (!this._requireSession(req, send)) return;
             const limit = parseInt(url.searchParams.get('limit'), 10) || 200;
             const before = url.searchParams.get('before') || null;
             return send(200, { type: 'Collection', data: sm.list({ limit, before }), stats: sm.stats() });
           }
           if (req.method === 'DELETE') {
+            if (!this._requireSession(req, send)) return;
             const removed = sm.purgeAll();
             return send(200, { success: true, removed });
           }
         }
         let snapMatch;
         if (sm && (snapMatch = pathname.match(new RegExp(`^${base}/snapshots/([^/]+)/image$`))) && req.method === 'GET') {
+          if (!this._requireSession(req, send)) return;
           const file = sm.imagePath(snapMatch[1]);
           if (!file) return send(404, { error: 'Snapshot not found' });
           res.writeHead(200, { 'Content-Type': 'image/jpeg', 'Cache-Control': 'max-age=31536000, immutable' });
@@ -6859,15 +8159,58 @@ class StarCitizenService extends EventEmitter {
         if (result.error) return send(result.code || 401, { error: result.error });
         return send(200, { type: 'Session', data: result });
       }
+      if (req.method === 'DELETE' && pathname === `${base}/auth`) {
+        const revoked = this._revokeBearerSession(req);
+        return send(200, { type: 'SessionRevoke', data: { revoked } });
+      }
 
       if (pathname === `${base}/identity/cluster` || pathname === '/identity/cluster') {
-        const pk = url.searchParams.get('pubkey') ||
-          (this._identity && this._identity.pubkey) ||
-          this._authPubkey(req);
+        if (!this._requireSession(req, send)) return;
+        // Prefer explicit pubkey query; never fall back to unlocked operator when
+        // remote auth is on (use session viewer instead).
+        const pk = url.searchParams.get('pubkey') || this._requestViewer(req);
         const snap = this.identityCluster
           ? this.identityCluster.snapshot(pk)
           : { canonical: pk, members: pk ? [pk] : [], edges: [] };
-        return send(200, { type: 'IdentityCluster', data: snap });
+        const pending = clusterDevices.pendingFromClusterInstance(this.identityCluster, pk);
+        return send(200, {
+          type: 'IdentityCluster',
+          data: Object.assign({}, snap, { pending })
+        });
+      }
+      if (pathname === `${base}/identity/cluster/sync` || pathname === '/identity/cluster/sync') {
+        if (!this._requireSession(req, send)) return;
+        if (req.method === 'GET') {
+          return send(200, this._clusterSyncSnapshot());
+        }
+        if (req.method === 'POST') {
+          const d = await body();
+          if (d && Array.isArray(d.dial) && d.dial.length) {
+            const queued = this._dialClusterCandidates(d.dial, d.pubkey || null);
+            const snap = this._clusterSyncSnapshot();
+            snap.data.queued = queued;
+            return send(200, snap);
+          }
+          if (d && (d.mesh === true || d.action === 'mesh')) {
+            await this._clusterMeshTick();
+            return send(200, this._clusterSyncSnapshot());
+          }
+          if (d && (d.publish === true || d.action === 'publish' || d.refresh === true)) {
+            this._scheduleAccountDataReplay();
+            this._dialStoredClusterPeers();
+            this._clusterMeshTick();
+            return send(200, this._clusterSyncSnapshot());
+          }
+          if (d && (d.crossSign === true || d.action === 'cross-sign')) {
+            await this._nudgePendingCrossSigns();
+            this._scheduleAccountDataReplay();
+            return send(200, this._clusterSyncSnapshot());
+          }
+          const applied = this._ingestClusterSyncCollection(d, this._requestViewer(req));
+          if (!applied) return send(400, { error: 'invalid cluster sync collection' });
+          return send(200, { type: 'ClusterSync', data: applied });
+        }
+        return send(405, { error: 'GET or POST' });
       }
       if ((pathname === `${base}/identity/session` || pathname === '/identity/session') &&
           req.method === 'POST') {
@@ -6896,10 +8239,14 @@ class StarCitizenService extends EventEmitter {
           const IdentityCluster = require('../functions/identityCluster');
           const kind = (d && (d.type || d['@type'])) || IdentityCluster.SIGN_TYPE;
           if (d && d.signature && d.identity) {
-            const rec = this._ingestIdentityCrossSign(d, d.pubkeyHex || d.localPubkey);
-            if (!rec) return send(400, { error: 'invalid IdentityCrossSign' });
-            this._gossipIdentityCrossSign(d);
-            return send(200, { type: kind, data: rec });
+            try {
+              const rec = this._ingestIdentityCrossSign(d, d.pubkeyHex || d.localPubkey);
+              if (!rec) return send(400, { error: 'invalid IdentityCrossSign' });
+              this._gossipIdentityCrossSign(d);
+              return send(200, { type: kind, data: rec });
+            } catch (e) {
+              return send(400, { error: (e && e.message) || 'invalid IdentityCrossSign' });
+            }
           }
           if (!this._identity) return send(401, { error: 'Unlock your identity' });
           if (this._enforceRemoteAuth(req) && !this._authPubkey(req)) {
@@ -6925,10 +8272,7 @@ class StarCitizenService extends EventEmitter {
       const remoteAuth = this._enforceRemoteAuth(req);
       let gmatch = null;
       // Hosted mode and LAN shared-mode (non-loopback) require a session.
-      const requireAuth = () => {
-        if (remoteAuth && !viewer) { send(401, { error: 'Authentication required (POST …/auth with a signed login envelope)' }); return false; }
-        return true;
-      };
+      const requireAuth = () => this._requireSession(req, send);
       const sendStoreErr = (e) => {
         const code = e.code === 'NOT_FOUND' ? 404
           : (e.code === 'FORBIDDEN' ? 403
@@ -6939,6 +8283,7 @@ class StarCitizenService extends EventEmitter {
       // ---- Local tags (operator-local Discord / Fabric identity groups) ----
       if (pathname === `${base}/local-groups`) {
         if (req.method === 'GET') {
+          if (!requireAuth()) return;
           return send(200, { type: 'Collection', data: this._listLocalGroups() });
         }
         if (req.method === 'POST') {
@@ -6947,6 +8292,7 @@ class StarCitizenService extends EventEmitter {
             const d = await body();
             const actor = this._operatorActor(req, d.createdBy);
             const group = this._createLocalGroup(d, actor);
+            this._scheduleAccountDataReplay();
             return send(200, { type: 'LocalGroup', data: group });
           } catch (e) { return sendStoreErr(e); }
         }
@@ -6959,6 +8305,7 @@ class StarCitizenService extends EventEmitter {
           const actor = this._operatorActor(req);
           const memberActor = decodeURIComponent(lgMatch[2]);
           const group = this._removeLocalGroupMember(lgMatch[1], memberActor, actor);
+          this._scheduleAccountDataReplay();
           return send(200, { type: 'LocalGroup', data: group });
         } catch (e) { return sendStoreErr(e); }
       }
@@ -6969,11 +8316,13 @@ class StarCitizenService extends EventEmitter {
           const d = await body();
           const actor = this._operatorActor(req);
           const group = this._addLocalGroupMember(lgMatch[1], d, actor);
+          this._scheduleAccountDataReplay();
           return send(200, { type: 'LocalGroup', data: group });
         } catch (e) { return sendStoreErr(e); }
       }
       if ((lgMatch = pathname.match(new RegExp(`^${base}/local-groups/([^/]+)$`)))) {
         if (req.method === 'GET') {
+          if (!requireAuth()) return;
           const group = localGroups.getGroup(this.registerStore, lgMatch[1]);
           if (!group) return send(404, { error: 'Local group not found' });
           return send(200, { type: 'LocalGroup', data: group });
@@ -6984,6 +8333,7 @@ class StarCitizenService extends EventEmitter {
             const d = await body();
             const actor = this._operatorActor(req);
             const group = this._renameLocalGroup(lgMatch[1], d.name, actor);
+            this._scheduleAccountDataReplay();
             return send(200, { type: 'LocalGroup', data: group });
           } catch (e) { return sendStoreErr(e); }
         }
@@ -6992,6 +8342,7 @@ class StarCitizenService extends EventEmitter {
           try {
             const actor = this._operatorActor(req);
             const data = this._deleteLocalGroup(lgMatch[1], actor);
+            this._scheduleAccountDataReplay();
             return send(200, { type: 'LocalGroup', data });
           } catch (e) { return sendStoreErr(e); }
         }
@@ -7000,13 +8351,20 @@ class StarCitizenService extends EventEmitter {
       // ---- Identity notes (private; share to a Federation group or peer) ----
       if (pathname === `${base}/notes`) {
         if (req.method === 'GET') {
+          if (!requireAuth()) return;
           const subject = url.searchParams.get('subject') || null;
-          const noteViewer = this._authPubkey(req) || (this._identity && this._identity.pubkey) || null;
+          const mine = url.searchParams.get('mine') === '1' ||
+            url.searchParams.get('mine') === 'true';
+          const noteViewer = this._requestViewer(req);
+          const author = url.searchParams.get('author') ||
+            (mine ? (noteViewer || 'local') : null);
           const data = this._listIdentityNotes({
-            subject,
+            subject: mine ? null : subject,
+            author,
+            includeLocal: mine && !remoteAuth,
             viewer: noteViewer,
-            enforcePrivacy: serverMode,
-            groupIds: serverMode ? this._viewerGroupIds(noteViewer) : []
+            enforcePrivacy: remoteAuth,
+            groupIds: remoteAuth ? this._viewerGroupIds(noteViewer) : []
           });
           return send(200, { type: 'Collection', data });
         }
@@ -7016,6 +8374,7 @@ class StarCitizenService extends EventEmitter {
             const d = await body();
             const actor = this._operatorActor(req, d.author);
             const note = this._createIdentityNote(d, actor);
+            this._scheduleAccountDataReplay();
             return send(200, { type: 'IdentityNote', data: note });
           } catch (e) { return sendStoreErr(e); }
         }
@@ -7031,10 +8390,28 @@ class StarCitizenService extends EventEmitter {
           return send(200, { type: 'NoteShare', data });
         } catch (e) { return sendStoreErr(e); }
       }
+      if ((noteMatch = pathname.match(new RegExp(`^${base}/notes/([^/]+)/pin$`))) &&
+          req.method === 'POST') {
+        if (!requireAuth()) return;
+        try {
+          const d = await body();
+          const actor = this._operatorActor(req);
+          const pinned = !(d && (d.pinned === false || d.profilePinned === false));
+          const data = this._pinIdentityNote(noteMatch[1], pinned, actor);
+          return send(200, { type: 'NotePin', data });
+        } catch (e) { return sendStoreErr(e); }
+      }
       if ((noteMatch = pathname.match(new RegExp(`^${base}/notes/([^/]+)$`)))) {
         if (req.method === 'GET') {
+          if (!requireAuth()) return;
           const note = identityNotes.getNote(this.registerStore, noteMatch[1]);
           if (!note) return send(404, { error: 'Note not found' });
+          if (remoteAuth) {
+            const noteViewer = this._requestViewer(req);
+            if (!identityNotes.noteVisibleTo(note, noteViewer, this._viewerGroupIds(noteViewer))) {
+              return send(404, { error: 'Note not found' });
+            }
+          }
           return send(200, { type: 'IdentityNote', data: note });
         }
         if (req.method === 'PUT') {
@@ -7043,6 +8420,7 @@ class StarCitizenService extends EventEmitter {
             const d = await body();
             const actor = this._operatorActor(req);
             const note = this._updateIdentityNote(noteMatch[1], d, actor);
+            this._scheduleAccountDataReplay();
             return send(200, { type: 'IdentityNote', data: note });
           } catch (e) { return sendStoreErr(e); }
         }
@@ -7051,10 +8429,14 @@ class StarCitizenService extends EventEmitter {
       // ---- Chat (Hub ChatMessage types: global + group:<id> channels) ----
       const cm = this.chatManager;
       if (cm && req.method === 'GET' && pathname === `${base}/chat/channels`) {
+        if (!requireAuth()) return;
         return send(200, { type: 'Collection', data: cm.channelsFor(viewer, { enforceMembership: serverMode }) });
       }
       if (cm && pathname === `${base}/chat/messages`) {
         if (req.method === 'GET') {
+          // Shared-LAN / hosted: do not dump chat history without a session.
+          // Loopback desktop keeps the unlocked path via _requireSession.
+          if (!requireAuth()) return;
           const channel = url.searchParams.get('channel') || 'global';
           if (!cm.canAccess(channel, viewer, { enforceMembership: serverMode })) {
             return send(403, { error: 'forbidden: not a member of this channel' });
@@ -7354,6 +8736,7 @@ class StarCitizenService extends EventEmitter {
             const group = await gm.createGroup(d, creator);
             // group:created listener publishes CONTRACT_PUBLISH when Fabric is up.
             this._publishGroupContractFor(group).catch((e) => this.emit('error', e));
+            this._scheduleAccountDataReplay();
             return send(200, { type: 'Group', data: group });
           } catch (e) { return send(e.code === 'FORBIDDEN' ? 403 : 400, { error: e.message }); }
         }
@@ -7632,6 +9015,7 @@ class StarCitizenService extends EventEmitter {
         }
       }
       if (req.method === 'GET' && pathname === `${base}/groupaudit`) {
+        if (!requireAuth()) return;
         return send(200, { type: 'Collection', data: gm ? gm.audit : [] });
       }
 
@@ -7667,7 +9051,11 @@ class StarCitizenService extends EventEmitter {
       const collections = { activities: () => this.activities, players: () => this.players, logins: () => this.logins, vehicles: () => this.vehicles, kills: () => this.kills, incaps: () => this.incaps, deaths: () => this.deaths, missionlog: () => this.missionlog, notifications: () => this.notifications, messages: () => this.logs };
       for (const [name, getter] of Object.entries(collections)) {
         if (pathname === `${base}/${name}`) {
-          if (req.method === 'GET') return send(200, { type: 'Collection', data: getter() });
+          if (req.method === 'GET') {
+            // Same bar as /monitor: session required on hosted / shared-LAN.
+            if (!requireAuth()) return;
+            return send(200, { type: 'Collection', data: getter() });
+          }
           if (req.method === 'POST' && name !== 'messages' && name !== 'logins' && name !== 'notifications' && name !== 'incaps' && name !== 'deaths') {
             if (!requireAuth()) return;
             const data = await body();
@@ -8026,6 +9414,7 @@ class StarCitizenService extends EventEmitter {
         }
         try {
           if (pathname === docsPath && req.method === 'GET') {
+            if (!requireAuth()) return;
             const payload = this._documentCatalogPayload();
             return send(200, {
               type: 'DocumentList',
@@ -8056,6 +9445,9 @@ class StarCitizenService extends EventEmitter {
             } else if (this._hasPinnedProfileFiles()) {
               this._publishGroupDataShareNow();
             }
+            if (d && (d.clusterSync === true || d.sync === true)) {
+              document = this._setFileClusterSync(created.id, true);
+            }
             return send(200, {
               type: document && document.published ? 'DocumentPublish' : 'DocumentCreate',
               data: { document },
@@ -8068,6 +9460,7 @@ class StarCitizenService extends EventEmitter {
             return send(200, { type: 'DocumentInventory', data: queried, local: true });
           }
           if (pathname === `${docsPath}/offers` && req.method === 'GET') {
+            if (!requireAuth()) return;
             const documentId = String(url.searchParams.get('documentId') || url.searchParams.get('id') || '').trim();
             const offers = documentId
               ? documentOffers.offersForDocument({
@@ -8080,6 +9473,7 @@ class StarCitizenService extends EventEmitter {
           }
           let docMatch = pathname.match(new RegExp(`^${docsPath}/([^/]+)$`));
           if (docMatch && req.method === 'GET') {
+            if (!requireAuth()) return;
             const payload = this._documentDetailPayload(decodeURIComponent(docMatch[1]));
             return send(200, { type: 'Document', data: payload, local: payload.local });
           }
@@ -8094,6 +9488,14 @@ class StarCitizenService extends EventEmitter {
             );
             if (this._hasPinnedProfileFiles()) this._publishGroupDataShareNow();
             return send(200, { type: 'DocumentPublish', data: { document: published }, local: true });
+          }
+          docMatch = pathname.match(new RegExp(`^${docsPath}/([^/]+)/cluster-sync$`));
+          if (docMatch && req.method === 'POST') {
+            if (!requireAuth()) return;
+            const d = await body();
+            const on = !(d && (d.clusterSync === false || d.sync === false || d.enabled === false));
+            const document = this._setFileClusterSync(decodeURIComponent(docMatch[1]), on);
+            return send(200, { type: 'FileClusterSync', data: { document, clusterSync: on }, local: true });
           }
           docMatch = pathname.match(new RegExp(`^${docsPath}/([^/]+)/purchase$`));
           if (docMatch && req.method === 'POST') {
@@ -8299,6 +9701,7 @@ class StarCitizenService extends EventEmitter {
     if (ev.timestamp) this._lastLogEventAt = ev.timestamp;
     else this._lastLogEventAt = new Date().toISOString();
     this._updateDetectedShipFromEvent(ev);
+    this._updateDetectedPlacesFromEvent(ev);
 
     // Stamp session build/hardware from header lines (one-shot, additive).
     const sinfo = parseSessionInfo(entry);
@@ -9194,11 +10597,19 @@ class StarCitizenService extends EventEmitter {
           this._ingestIdentityCrossSign(object, resolveSignerPubkey(source) || source, meta);
         } catch (e) { this.emit('error', e); }
       },
+      onDeviceDataShare: (object, source, meta) => {
+        try {
+          this._ingestDeviceDataShare(object, resolveSignerPubkey(source) || source);
+        } catch (e) { this.emit('error', e); }
+      },
       onInventoryRequest: (ev) => {
         try { this._onDocumentInventoryRequest(ev); } catch (e) { this.emit('error', e); }
       },
       onInventoryResponse: (ev) => {
         try { this._onDocumentInventoryResponse(ev); } catch (e) { this.emit('error', e); }
+      },
+      onDocumentReceived: (ev) => {
+        try { this._ingestClusterFileBytes(ev); } catch (e) { this.emit('error', e); }
       }
     };
   }
@@ -9517,6 +10928,31 @@ class StarCitizenService extends EventEmitter {
     }
   }
 
+  _updateDetectedPlacesFromEvent (ev) {
+    if (!ev || !ev.kind) return;
+    const at = ev.timestamp || this._lastLogEventAt || new Date().toISOString();
+    const kind = String(ev.kind);
+    if (kind === 'quantum:select' && ev.destination) {
+      this._detectedDestination = presence.buildDetectedPlace(ev.destination, at);
+      this._foldLocalPlaceReports(ev);
+      return;
+    }
+    if (kind === 'quantum:route') {
+      if (ev.origin) this._detectedLocation = presence.buildDetectedPlace(ev.origin, at);
+      if (ev.destination) this._detectedDestination = presence.buildDetectedPlace(ev.destination, at);
+      this._foldLocalPlaceReports(ev);
+      return;
+    }
+    if (kind === 'quantum:arrive') {
+      const landed = ev.destination ||
+        (this._detectedDestination &&
+          (this._detectedDestination.token || this._detectedDestination.slug || this._detectedDestination.name));
+      if (landed) this._detectedLocation = presence.buildDetectedPlace(landed, at);
+      this._detectedDestination = null;
+    }
+    this._foldLocalPlaceReports(ev);
+  }
+
   _buildPresenceDocument () {
     return presence.buildPresenceDocument({
       pubkey: this._identity ? this._identity.pubkey : null,
@@ -9524,6 +10960,10 @@ class StarCitizenService extends EventEmitter {
       lastEventAt: this._lastLogEventAt,
       detectedShip: this._detectedShip,
       shipOverride: this._shipOverride,
+      detectedLocation: this._detectedLocation,
+      locationOverride: this._locationOverride,
+      detectedDestination: this._detectedDestination,
+      destinationOverride: this._destinationOverride,
       visibility: this._presenceVisibility,
       groupIds: this._presenceGroupIds,
       availability: this._presenceAvailability,
@@ -9540,11 +10980,17 @@ class StarCitizenService extends EventEmitter {
         presenceVisibility: this._presenceVisibility,
         presenceGroupIds: this._presenceGroupIds.slice(),
         shipOverrideSlug: this._shipOverrideSlug,
+        locationOverrideSlug: this._locationOverrideSlug,
+        destinationOverrideSlug: this._destinationOverrideSlug,
         presenceAvailability: this._presenceAvailability,
         presenceStatusText: this._presenceStatusText
       },
       detectedShip: this._detectedShip,
       shipOverride: this._shipOverride,
+      detectedLocation: this._detectedLocation,
+      locationOverride: this._locationOverride,
+      detectedDestination: this._detectedDestination,
+      destinationOverride: this._destinationOverride,
       online: doc.online,
       lastEventAt: this._lastLogEventAt
     };
@@ -9566,6 +11012,9 @@ class StarCitizenService extends EventEmitter {
       if (x && String(x).toLowerCase() !== key.toLowerCase()) {
         this._peerPresenceByPubkey[x] = doc;
       }
+    } catch (_) { /* ignore */ }
+    try {
+      locationReports.foldPresence(this.registerStore, pubkey, doc);
     } catch (_) { /* ignore */ }
   }
 
@@ -9593,6 +11042,8 @@ class StarCitizenService extends EventEmitter {
         statusText: doc.statusText || null,
         lastEventAt: doc.lastEventAt || null,
         ship: presence.enrichShipMeta(doc.ship || null),
+        location: presence.enrichPlaceMeta(doc.location || null),
+        destination: presence.enrichPlaceMeta(doc.destination || null),
         nickname: doc.nickname || null,
         updatedAt: doc.updatedAt || doc.lastSeen || null
       };
@@ -9609,6 +11060,8 @@ class StarCitizenService extends EventEmitter {
         statusText: local.statusText || null,
         lastEventAt: local.lastEventAt,
         ship: presence.enrichShipMeta(local.ship),
+        location: presence.enrichPlaceMeta(local.location),
+        destination: presence.enrichPlaceMeta(local.destination),
         nickname: local.nickname,
         updatedAt: local.updatedAt,
         sharing: this._sharePresence === true,
@@ -9704,12 +11157,16 @@ class StarCitizenService extends EventEmitter {
       if (me && pubkeysMatch(me, pk) && p) online = p.online === true;
 
       const ship = presence.enrichShipMeta((p && p.ship) || null);
+      const location = presence.enrichPlaceMeta((p && p.location) || null);
+      const destination = presence.enrichPlaceMeta((p && p.destination) || null);
       return {
         pubkey: pk,
         nickname: (p && p.nickname) || aliasFor(pk) || null,
         online,
         ship,
         shipType: (ship && ship.type) || null,
+        location,
+        destination,
         statusText: (p && p.statusText) || null,
         lastEventAt: (p && p.lastEventAt) || null,
         connected: connected.has(String(pk).toLowerCase())
@@ -9721,12 +11178,31 @@ class StarCitizenService extends EventEmitter {
       const bn = String(b.nickname || b.pubkey).toLowerCase();
       return an < bn ? -1 : an > bn ? 1 : 0;
     });
+    const owner = groupPresence.isGroupOwner(group, me);
+    const memberRoster = Object.create(null);
+    for (const row of members) {
+      if (row && row.pubkey) memberRoster[row.pubkey] = row;
+    }
+    const composition = owner
+      ? groupPresence.summarizeOnlineMembers(group.members || [], memberRoster)
+      : null;
+    let map = null;
+    if (owner && composition) {
+      const system = groupPresence.majoritySystem(composition.members.filter((m) => m.online));
+      map = starmapLayout.layoutSystem(system, {
+        includeHotspots: true,
+        members: composition.members.filter((m) => m.online)
+      });
+    }
     return {
       groupId: group.id,
       name: group.name,
       members,
       overlayEnabled,
       memberOfPrimary,
+      owner,
+      composition,
+      map,
       warning: warning || undefined
     };
   }
@@ -9743,6 +11219,8 @@ class StarCitizenService extends EventEmitter {
       presenceVisibility: this._presenceVisibility,
       presenceGroupIds: this._presenceGroupIds,
       shipOverrideSlug: this._shipOverrideSlug,
+      locationOverrideSlug: this._locationOverrideSlug,
+      destinationOverrideSlug: this._destinationOverrideSlug,
       presenceAvailability: this._presenceAvailability,
       presenceStatusText: this._presenceStatusText
     }, patch));
@@ -9750,6 +11228,8 @@ class StarCitizenService extends EventEmitter {
     settingsStore.putSetting(this.registerStore, 'presenceVisibility', next.presenceVisibility);
     settingsStore.putSetting(this.registerStore, 'presenceGroupIds', next.presenceGroupIds.length ? next.presenceGroupIds : null);
     settingsStore.putSetting(this.registerStore, 'shipOverrideSlug', next.shipOverrideSlug);
+    settingsStore.putSetting(this.registerStore, 'locationOverrideSlug', next.locationOverrideSlug);
+    settingsStore.putSetting(this.registerStore, 'destinationOverrideSlug', next.destinationOverrideSlug);
     settingsStore.putSetting(this.registerStore, 'presenceAvailability', next.presenceAvailability);
     settingsStore.putSetting(this.registerStore, 'presenceStatusText', next.presenceStatusText);
     this._applyPresenceSettings(next);
@@ -9884,6 +11364,24 @@ class StarCitizenService extends EventEmitter {
       });
       this.fabricNetwork.setHandlers(this._fabricIngestHandlers());
       this.fabricNetwork.on('error', (e) => this.emit('error', e));
+      this.fabricNetwork.on('warning', (m) => {
+        const s = (m && m.message) || String(m);
+        if (/ECONNREFUSED|Socket timeout: connect|Socket error:|NOISE (encrypt|decrypt) error/i.test(s)) {
+          this.emit('error', m instanceof Error ? m : new Error(s));
+          return;
+        }
+        console.warn('[STAR-CITIZEN] fabric:', s);
+      });
+      this.fabricNetwork.on('connections:open', () => {
+        try { this._dialStoredClusterPeers(); } catch (e) {
+          this.emit('warning', '[LiveRelay] cluster dial: ' + (e && e.message));
+        }
+        try { this._pushClusterFiles(); } catch (e) {
+          this.emit('warning', '[LiveRelay] cluster file push: ' + (e && e.message));
+        }
+        this._scheduleAccountDataReplay({ resetTries: true, nudge: true, delay: 400 });
+        void this._nudgePendingCrossSigns();
+      });
       this.fabricNetwork.on('peer:self', (ev) => {
         const addr = ev && ev.address
           ? FabricNetwork.normalizeFabricAddress(ev.address, { migrate: false })
@@ -9913,7 +11411,13 @@ class StarCitizenService extends EventEmitter {
     // Only (re)announce when the peer just came up or the nickname changed.
     this._maybeSendPeerAlias();
     this._publishLocalProfile().catch((e) => this.emit('error', e));
-    if (starting) this._replayIdentityCrossSigns();
+    if (starting) {
+      this._replayIdentityCrossSigns();
+      void this._nudgePendingCrossSigns();
+      this._scheduleAccountDataReplay();
+      this._dialStoredClusterPeers();
+      this._startClusterMeshTimer();
+    }
     return this.fabricNetwork;
   }
 
@@ -9992,6 +11496,7 @@ class StarCitizenService extends EventEmitter {
   async _stopFabric () {
     this._stopUplink();
     this._lastPublishedAlias = null;
+    this._stopClusterMeshTimer();
     if (this._hubObserveTimer) {
       clearInterval(this._hubObserveTimer);
       this._hubObserveTimer = null;
@@ -10032,7 +11537,7 @@ class StarCitizenService extends EventEmitter {
     }, interval);
     if (this._uplinkTimer.unref) this._uplinkTimer.unref();
     const seeds = this._fabricPeerAddresses();
-    console.log(`[STAR-CITIZEN] fabric peering active` + (seeds.length ? ` → ${seeds.join(', ')}` : ''));
+    logFabricPeer('seeds', seeds.length ? seeds.join(', ') : '(none)');
   }
 
   /**
@@ -10320,7 +11825,10 @@ class StarCitizenService extends EventEmitter {
     if (!parsed.ok) throw new Error(parsed.error || 'invalid fabric message');
     try {
       const summary = summarizeMessage(parsed.message, { direction: 'in', via: 'opaque' });
-      if (summary) this._fabricMessageLog.append(summary);
+      if (summary) {
+        this._fabricMessageLog.append(summary);
+        logFabricWire(summary);
+      }
     } catch (_) { /* best-effort log */ }
     const classified = classifyGroupShareMessage(parsed.message);
     if (classified.kind === 'GroupPublish') {
@@ -11041,6 +12549,10 @@ class StarCitizenService extends EventEmitter {
     }
     this._loadPersistedSettings(); // peers + uplink cadence from the Fabric Store
     this._loadIdentityCluster();
+    try {
+      const { restorePendingDeviceLinkOffer } = require('../functions/fabricDeviceLinkLocalHttp');
+      restorePendingDeviceLinkOffer(this);
+    } catch (_) { /* Android helper optional on hosted */ }
     this._applyDiscordConfig();
     if (this.missionManager) await this.missionManager.start();
     if (this.groupManager) await this.groupManager.start();
@@ -11107,6 +12619,12 @@ class StarCitizenService extends EventEmitter {
       const host = this._httpListenHost();
       const displayHost = (host === '0.0.0.0' || host === '::') ? 'localhost' : host;
       console.log(`[STAR-CITIZEN] listening on http://${displayHost}:${this.settings.port}/services/star-citizen (bind ${host})`);
+      const bindWarn = httpBindWarning({
+        host,
+        mode: this.settings.mode,
+        httpSharedMode: this._httpSharedMode === true
+      });
+      if (bindWarn) console.warn(bindWarn);
     } else {
       console.log('[STAR-CITIZEN] API ready (embedded mode, no listener)');
     }
@@ -11116,6 +12634,10 @@ class StarCitizenService extends EventEmitter {
   async stop () {
     this.state.status = 'STOPPING';
     this._stopping = true;
+    try {
+      const { stopDeviceLinkTick } = require('../functions/fabricDeviceLinkLocalHttp');
+      stopDeviceLinkTick(this);
+    } catch (_) { /* ignore */ }
     if (this._pollTimer) { clearTimeout(this._pollTimer); this._pollTimer = null; }
     if (this._historyFlushTimer) { clearTimeout(this._historyFlushTimer); this._historyFlushTimer = null; }
     this._flushHistory();
@@ -11145,3 +12667,4 @@ class StarCitizenService extends EventEmitter {
 }
 
 module.exports = StarCitizenService;
+module.exports.BEARER_TTL_MS = BEARER_TTL_MS;

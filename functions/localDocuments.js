@@ -41,6 +41,8 @@ function publicMeta (row, opts = {}) {
     created: row.created || null,
     published: row.published === true,
     profilePinned: row.profilePinned === true,
+    clusterSync: row.clusterSync === true,
+    clusterPending: row.clusterPending === true,
     purchasePriceSats: Math.max(0, Math.floor(Number(row.purchasePriceSats) || 0)),
     local: true
   };
@@ -66,6 +68,15 @@ function list (store, opts = {}) {
     .map((row) => publicMeta(row, opts))
     .filter(Boolean)
     .sort((a, b) => String(b.created || '').localeCompare(String(a.created || '')));
+}
+
+function hasBlobBytes (row, dir) {
+  if (!row || typeof row !== 'object') return false;
+  if (row.contentBase64) return true;
+  if (dir && row.file) {
+    try { return fs.existsSync(path.join(dir, String(row.file))); } catch (_) { return false; }
+  }
+  return false;
 }
 
 function readBuffer (row, dir) {
@@ -171,23 +182,28 @@ function createFromBuffer (store, buffer, doc = {}, opts = {}) {
   const id = sha256;
   const now = new Date().toISOString();
   const existing = store.get(COLLECTION, id);
-  if (existing) return publicMeta(existing);
+  if (existing && hasBlobBytes(existing, dir)) return publicMeta(existing);
 
-  const name = doc.name ? String(doc.name).slice(0, 256) : 'upload';
-  const mime = doc.mime ? String(doc.mime).slice(0, 128) : 'application/octet-stream';
+  const name = (doc.name ? String(doc.name) : (existing && existing.name) || 'upload').slice(0, 256);
+  const mime = (doc.mime ? String(doc.mime) : (existing && existing.mime) || 'application/octet-stream').slice(0, 128);
   const record = {
     id,
     sha256,
     name,
     mime,
     size: buffer.length,
-    created: now,
+    created: (existing && existing.created) || now,
     edited: now,
-    published: false,
-    purchasePriceSats: 0,
+    published: !!(existing && existing.published),
+    profilePinned: !!(existing && existing.profilePinned),
+    clusterSync: !!(existing && existing.clusterSync) || doc.clusterSync === true,
+    purchasePriceSats: existing && existing.purchasePriceSats != null
+      ? existing.purchasePriceSats
+      : 0,
     local: true
   };
   if (doc.author) record.author = String(doc.author);
+  else if (existing && existing.author) record.author = existing.author;
 
   if (dir) {
     fs.mkdirSync(dir, { recursive: true });
@@ -317,17 +333,96 @@ function setProfilePinned (store, documentId, pinned, opts = {}) {
   return publicMeta(next, { includeBlobIndex: true });
 }
 
+/**
+ * Opt a local catalog row into identity-cluster file sync (bytes travel as
+ * `P2P_FILE_SEND`, not inside DeviceDataShare).
+ * @param {object} store
+ * @param {string} documentId
+ * @param {boolean} enabled
+ * @returns {object}
+ */
+function setClusterSync (store, documentId, enabled) {
+  const id = String(documentId || '').trim();
+  if (!id) {
+    const err = new Error('document id required');
+    err.status = 400;
+    throw err;
+  }
+  if (!store || typeof store.get !== 'function') {
+    const err = new Error('document store unavailable');
+    err.status = 503;
+    throw err;
+  }
+  const row = store.get(COLLECTION, id);
+  if (!row) {
+    const err = new Error('document not found');
+    err.status = 404;
+    throw err;
+  }
+  const next = Object.assign({}, row, {
+    clusterSync: enabled === true,
+    edited: new Date().toISOString()
+  });
+  if (enabled !== true) delete next.clusterPending;
+  store.put(COLLECTION, id, next);
+  return publicMeta(next, { includeBlobIndex: true });
+}
+
+/**
+ * Metadata-only row so a sibling can wait for `P2P_FILE_SEND` bytes.
+ * @param {object} store
+ * @param {object} meta
+ * @returns {object|null}
+ */
+function ensureClusterPlaceholder (store, meta = {}) {
+  if (!store || typeof store.put !== 'function') return null;
+  const id = String(meta.id || meta.sha256 || '').trim().toLowerCase();
+  if (!/^[0-9a-f]{64}$/.test(id)) return null;
+  const now = new Date().toISOString();
+  const existing = store.get(COLLECTION, id);
+  if (existing) {
+    const next = Object.assign({}, existing, {
+      clusterSync: true,
+      edited: now
+    });
+    if (!hasBlobBytes(existing, null) && !existing.file && !existing.contentBase64) {
+      next.clusterPending = true;
+    }
+    store.put(COLLECTION, id, next);
+    return publicMeta(next);
+  }
+  const record = {
+    id,
+    sha256: String(meta.sha256 || id).toLowerCase(),
+    name: String(meta.name || 'upload').slice(0, 256),
+    mime: String(meta.mime || 'application/octet-stream').slice(0, 128),
+    size: meta.size != null ? Math.max(0, Math.floor(Number(meta.size) || 0)) : null,
+    created: now,
+    edited: now,
+    published: false,
+    purchasePriceSats: 0,
+    local: true,
+    clusterSync: true,
+    clusterPending: true
+  };
+  store.put(COLLECTION, id, record);
+  return publicMeta(record);
+}
+
 module.exports = {
   COLLECTION,
   MAX_BYTES,
   MAX_BLOB_BYTES,
   documentsDir,
   publicMeta,
+  hasBlobBytes,
   list,
   get,
   create,
   createFromBuffer,
   createFromFile,
   publish,
-  setProfilePinned
+  setProfilePinned,
+  setClusterSync,
+  ensureClusterPlaceholder
 };

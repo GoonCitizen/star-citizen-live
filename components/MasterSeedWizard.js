@@ -6,6 +6,7 @@
  */
 
 const React = require('react');
+const { setAndroidSecureFlag } = require('../functions/androidSecureScreen');
 const {
   MAX_EXTRA_DEVICES,
   generateVaultMnemonic,
@@ -48,6 +49,22 @@ class MasterSeedWizard extends React.Component {
       showSecrets: {},
       copied: null
     };
+  }
+
+  componentDidMount () {
+    this.syncSeedSecureFlag();
+  }
+
+  componentDidUpdate (_prevProps, prevState) {
+    if (prevState.step !== this.state.step) this.syncSeedSecureFlag();
+  }
+
+  componentWillUnmount () {
+    setAndroidSecureFlag(false);
+  }
+
+  syncSeedSecureFlag () {
+    setAndroidSecureFlag(this.state.step === 'reveal');
   }
 
   passphrasesOk () {

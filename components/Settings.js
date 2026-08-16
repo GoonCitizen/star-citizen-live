@@ -14,6 +14,7 @@ const React = require('react');
 const { showDesktopNotification, ensureNotifyPermission } = require('../functions/desktopNotify');
 const { isAndroidCompanion } = require('../functions/isAndroidCompanion');
 const { postIdentityCrossSign, fetchIdentityCluster } = require('../functions/identityCrossSignClient');
+const DataSyncStatus = require('./DataSyncStatus');
 
 const CSS = `
   .st-overlay{position:fixed;inset:0;z-index:40;background:rgba(8,10,14,.7);
@@ -56,6 +57,9 @@ const CSS = `
   .gear{background:var(--panel2);border:1px solid var(--line);color:var(--text);border-radius:7px;
     padding:5px 11px;font-size:14px;cursor:pointer;line-height:1}
   .gear:hover{border-color:var(--accent)}
+  .st-embedded{background:var(--panel);border:1px solid var(--line);border-radius:10px;
+    overflow:hidden;margin:12px 18px 24px}
+  .st-embedded .st-sec:last-child{border-bottom:none}
 `;
 
 class Settings extends React.Component {
@@ -111,7 +115,7 @@ class Settings extends React.Component {
       discordAnnounceMissions: false,
       discordAnnounceCombat: false,
       discordAnnounceIncaps: false,
-      shareDiscordCatalog: true,
+      shareDiscordCatalog: false,
       discordRuntime: null,
       busy: false
     };
@@ -177,8 +181,8 @@ class Settings extends React.Component {
         discordAnnounceMissions: s.discordAnnounceMissions === true,
         discordAnnounceCombat: s.discordAnnounceCombat === true,
         discordAnnounceIncaps: s.discordAnnounceIncaps === true,
-        shareDiscordCatalog: s.shareDiscordCatalog !== false &&
-          !(settingsRes.runtime && settingsRes.runtime.shareDiscordCatalog === false),
+        shareDiscordCatalog: s.shareDiscordCatalog === true ||
+          !!(settingsRes.runtime && settingsRes.runtime.shareDiscordCatalog === true),
         discordRuntime: (settingsRes.runtime && settingsRes.runtime.discord) || null,
         discordToken: '',
         discordAppSecret: '',
@@ -231,6 +235,30 @@ class Settings extends React.Component {
   }
 
   async putBool (key, value) {
+    if (value === true) {
+      const confirms = {
+        shareLogsGlobal:
+          'Share parsed Game.log events with EVERY connected Fabric peer?\n\nPrefer per-peer “Share logs” on Network → Peers when possible.',
+        shareDiscordCatalog:
+          'Gossip Discord/chat catalog packs to Federation groups you belong to?\n\nPeers in those groups will see compact server/people/message packs from this node.',
+        httpSharedMode:
+          'Allow other machines on the LAN to open this dashboard?\n\nRemote reads/writes need a signed login; loopback on this machine still uses your unlocked identity.',
+        requireSealedGroupChat:
+          'Drop inbound group chat that is not sealed?\n\nPeers still sending cleartext GroupChat will be silent here until they enable sealing.'
+      };
+      if (confirms[key] && typeof window !== 'undefined' && window.confirm &&
+          !window.confirm(confirms[key])) {
+        return;
+      }
+    }
+    if (value === false && key === 'groupChatSeal') {
+      if (typeof window !== 'undefined' && window.confirm &&
+          !window.confirm(
+            'Turn off sealed group chat?\n\nOutbound group messages will be cleartext at relays again. Sealed GroupChat is the recommended path for confidential contract messaging.'
+          )) {
+        return;
+      }
+    }
     const prev = this.state[key];
     this.setState({ [key]: value, error: null, busy: true });
     try {
@@ -455,10 +483,10 @@ class Settings extends React.Component {
           disabled: !this.state.editable || this.state.busy,
           onChange: (e) => this.putBool('groupChatSeal', e.target.checked)
         }),
-        'Seal outbound group chat (hub-blind)'
+        'Seal outbound group chat (recommended — hub-blind)'
       ),
       React.createElement('div', { className: 'd', style: { marginTop: -4, marginBottom: 8 } },
-        'When on, group messages are encrypted for members so relays cannot read the body.'),
+        'Recommended for private ops. When on, GroupChat CONTRACT_MESSAGE bodies are encrypted for members (relays cannot read). Global mesh shoutbox stays cleartext by design — use sealed groups or onion SendOnion for confidential traffic. Sealed chat is the first wave for future contract messaging; peering/gossip remains the primary mesh fabric.'),
       React.createElement('label', { style: { display: 'flex', gap: 8, alignItems: 'center', fontSize: 13, cursor: 'pointer', marginBottom: 12 } },
         React.createElement('input', {
           type: 'checkbox',
@@ -488,7 +516,7 @@ class Settings extends React.Component {
           disabled: !this.state.editable || this.state.busy || !this.state.notifyDesktop,
           onChange: (e) => this.putNotify('notifyChatGlobal', e.target.checked)
         }),
-        'Global chat'
+        'Public shoutbox'
       ),
       React.createElement('label', { style: { display: 'flex', gap: 8, alignItems: 'center', fontSize: 13, cursor: 'pointer', marginBottom: 8 } },
         React.createElement('input', {
@@ -516,7 +544,28 @@ class Settings extends React.Component {
 
       React.createElement('h3', { style: { marginTop: 10, fontSize: 12.5 } }, 'Linked devices'),
       React.createElement('div', { className: 'd' },
-        'Peer-equivalent identity cluster. Any of Passport, Android, or desktop can create or accept a fabric://link. Revoke publishes an IdentityCrossSignRevoke Fabric Message (BIP340) — a stolen device stays you until another cluster member revokes.'),
+        'Peer-equivalent identity cluster. Add a device here to show a QR, or scan one from the header QR button. After both approve, account data replays over Fabric both ways. Revoke publishes an IdentityCrossSignRevoke Fabric Message (BIP340) — a stolen device stays you until another cluster member revokes.'),
+      React.createElement(DataSyncStatus, {
+        variant: 'panel',
+        onAddDevice: () => {
+          if (typeof this.props.onOpenIdentity === 'function') {
+            if (typeof this.props.onClose === 'function') this.props.onClose();
+            this.props.onOpenIdentity('security');
+          }
+        }
+      }),
+      React.createElement('div', { className: 'st-row', style: { marginBottom: 10 } },
+        React.createElement('button', {
+          type: 'button',
+          className: 'st-btn',
+          onClick: () => {
+            if (typeof this.props.onOpenIdentity === 'function') {
+              if (typeof this.props.onClose === 'function') this.props.onClose();
+              this.props.onOpenIdentity('security');
+            }
+          }
+        }, 'Add a device')
+      ),
       devices.length
         ? React.createElement('div', { className: 'st-devices' },
           devices.map((d, i) => {
@@ -681,14 +730,160 @@ class Settings extends React.Component {
     }
   }
 
+  renderLanBindSection () {
+    return React.createElement('div', { className: 'st-sec' },
+      React.createElement('h3', null, 'HTTP / LAN'),
+      React.createElement('div', { className: 'd' },
+        'Bind the dashboard for other machines on your network. Off by default — loopback only.'),
+      React.createElement('label', { style: { display: 'flex', gap: 8, alignItems: 'center', fontSize: 13, cursor: 'pointer', marginBottom: 10 } },
+        React.createElement('input', {
+          type: 'checkbox',
+          checked: this.state.httpSharedMode,
+          disabled: !this.state.editable || this.state.busy,
+          onChange: (e) => this.putBool('httpSharedMode', e.target.checked)
+        }),
+        'Allow LAN access to the dashboard (bind all interfaces)'
+      ),
+      React.createElement('div', { className: 'd', style: { marginTop: -4 } },
+        'LAN writes require a Schnorr/Bearer session; loopback still uses the unlocked identity. Hosted server mode always binds all interfaces. Override with FABRIC_HUB_INTERFACE.')
+    );
+  }
+
+  renderFabricNetworkSection (opts = {}) {
+    const embedded = opts.embedded === true;
+    const encodingName = embedded ? 'fabricShareEncoding-net' : 'fabricShareEncoding';
+    const openNetwork = (view) => {
+      if (typeof this.props.onOpenNetwork === 'function') {
+        this.props.onOpenNetwork(view || 'peers');
+        return;
+      }
+      if (typeof this.props.onClose === 'function') this.props.onClose();
+      if (typeof window !== 'undefined') {
+        window.location.hash = view === 'messages' ? 'network/messages' : 'network/peers';
+      }
+    };
+    return React.createElement('div', { className: 'st-sec' },
+      React.createElement('h3', null, 'Fabric Network'),
+      React.createElement('div', { className: 'd' },
+        'Native Fabric TCP/NOISE only (pubkey@host:port). Seeds hub.fabric.pub:7777 and relay.goon.vc:7777 are the default rendezvous. Set a public advertise host so others can dial you; announce open slots only when you opt in.'),
+      this.field('Advertise host (public hostname)', 'fabricAdvertiseHost', 'e.g. relay.example.com — no port; listen uses fabricPort'),
+      React.createElement('div', { className: 'st-row', style: { marginTop: -4, marginBottom: 10 } },
+        React.createElement('button', {
+          type: 'button',
+          className: 'st-btn ghost',
+          style: { padding: '3px 10px', fontSize: 11 },
+          disabled: !this.state.editable || this.state.busy,
+          onClick: async () => {
+            this.setState({ busy: true, error: null });
+            try {
+              await this.put('fabricAdvertiseHost', String(this.state.fabricAdvertiseHost || '').trim() || null);
+              this.setState({ busy: false });
+              await this.load();
+            } catch (err) {
+              this.setState({ busy: false, error: err.message });
+            }
+          }
+        }, 'Save advertise host')
+      ),
+      React.createElement('label', { style: { display: 'flex', gap: 8, alignItems: 'center', fontSize: 13, cursor: 'pointer', marginBottom: 10 } },
+        React.createElement('input', {
+          type: 'checkbox',
+          checked: this.state.broadcastPeering,
+          disabled: !this.state.editable || this.state.busy,
+          onChange: async (e) => {
+            const value = e.target.checked;
+            if (value === true && typeof window !== 'undefined' && window.confirm &&
+                !window.confirm(
+                  'Publish P2P_PEERING_OFFER on the mesh?\n\nPeers can learn you have open slots and (with advertise host) a dialable address tied to your key.'
+                )) {
+              return;
+            }
+            this.setState({ broadcastPeering: value });
+            try { await this.put('broadcastPeering', value); } catch (err) { this.setState({ error: err.message }); }
+          }
+        }),
+        'Announce open peer slots on the Fabric mesh (P2P_PEERING_OFFER)'
+      ),
+      React.createElement('div', { className: 'd', style: { marginTop: -4, marginBottom: 10 } },
+        'Off by default. Requires advertise host. Network → Peers can also force a one-shot announce.'),
+      React.createElement('label', { style: { display: 'flex', gap: 8, alignItems: 'center', fontSize: 13, cursor: 'pointer', marginBottom: 10 } },
+        React.createElement('input', {
+          type: 'checkbox',
+          checked: this.state.shareLogsGlobal,
+          disabled: !this.state.editable || this.state.busy,
+          onChange: (e) => this.putBool('shareLogsGlobal', e.target.checked)
+        }),
+        'Share logs to global — push my parsed game events to every connected Fabric peer'
+      ),
+      React.createElement('div', { className: 'd', style: { marginTop: -4, marginBottom: 10 } },
+        'Default is off. Per-peer “Share logs” on Network → Peers is the usual path for authorizing a network hub.'),
+      React.createElement('h3', { style: { margin: '14px 0 4px', fontSize: 13 } }, 'Share encoding'),
+      React.createElement('div', { className: 'd' },
+        'Groups → Share copies an opaque Fabric message as ',
+        React.createElement('code', null, 'fabric:'),
+        ' plus the raw body. Default is base64; hex is still sniffed on Import.'),
+      React.createElement('label', { style: { display: 'flex', gap: 8, alignItems: 'center', fontSize: 13, cursor: 'pointer', marginBottom: 6 } },
+        React.createElement('input', {
+          type: 'radio',
+          name: encodingName,
+          checked: this.state.fabricShareEncoding !== 'hex',
+          disabled: !this.state.editable || this.state.busy,
+          onChange: () => this.putShareEncoding('base64')
+        }),
+        'base64 body (default)'
+      ),
+      React.createElement('label', { style: { display: 'flex', gap: 8, alignItems: 'center', fontSize: 13, cursor: 'pointer', marginBottom: 10 } },
+        React.createElement('input', {
+          type: 'radio',
+          name: encodingName,
+          checked: this.state.fabricShareEncoding === 'hex',
+          disabled: !this.state.editable || this.state.busy,
+          onChange: () => this.putShareEncoding('hex')
+        }),
+        'hex body'
+      ),
+      React.createElement('div', { className: 'st-row' },
+        React.createElement('span', { style: { fontSize: 12.5, color: 'var(--muted)' } },
+          this.state.peerCount
+            ? `${this.state.peerCount} peer${this.state.peerCount === 1 ? '' : 's'} configured`
+            : 'no peers configured'),
+        React.createElement('button', {
+          className: 'st-btn ghost',
+          onClick: () => openNetwork('peers')
+        }, embedded ? 'Open Peers' : 'Open Network'),
+        this.props.advancedMode
+          ? React.createElement('button', {
+            className: 'st-btn ghost',
+            onClick: () => openNetwork('messages')
+          }, 'Fabric Messages')
+          : null
+      )
+    );
+  }
+
+  renderEmbedded () {
+    const android = isAndroidCompanion();
+    return React.createElement('div', { className: 'st-embedded' },
+      this.state.loading
+        ? React.createElement('div', { className: 'st-sec' }, 'loading…')
+        : React.createElement(React.Fragment, null,
+          this.state.error ? React.createElement('div', { className: 'st-sec' }, React.createElement('div', { className: 'st-err' }, this.state.error)) : null,
+          this.state.notice ? React.createElement('div', { className: 'st-sec' }, React.createElement('div', { className: 'st-ok' }, this.state.notice)) : null,
+          this.renderFabricNetworkSection({ embedded: true }),
+          android ? null : this.renderLanBindSection()
+        )
+    );
+  }
+
   render () {
+    if (this.props.embedded) return this.renderEmbedded();
     const rt = this.state.runtime;
     const android = isAndroidCompanion();
-    return React.createElement('div', { className: 'st-overlay', onClick: (e) => { if (e.target === e.currentTarget) this.props.onClose(); } },
+    return React.createElement('div', { className: 'st-overlay', onClick: (e) => { if (e.target === e.currentTarget && typeof this.props.onClose === 'function') this.props.onClose(); } },
       React.createElement('div', { className: 'st-card' },
         React.createElement('div', { className: 'st-head' },
           React.createElement('h2', null, '⚙️ Settings'),
-          React.createElement('button', { className: 'st-x', title: 'Close', onClick: () => this.props.onClose() }, '✕')
+          React.createElement('button', { className: 'st-x', title: 'Close', onClick: () => { if (typeof this.props.onClose === 'function') this.props.onClose(); } }, '✕')
         ),
         this.state.loading
           ? React.createElement('div', { className: 'st-sec' }, 'loading…')
@@ -724,17 +919,7 @@ class Settings extends React.Component {
                   type: 'checkbox',
                   checked: this.state.httpSharedMode,
                   disabled: !this.state.editable || this.state.busy,
-                  onChange: async (e) => {
-                    const value = e.target.checked;
-                    this.setState({ httpSharedMode: value, busy: true, error: null });
-                    try {
-                      await this.put('httpSharedMode', value);
-                      this.setState({ busy: false });
-                      await this.load();
-                    } catch (err) {
-                      this.setState({ busy: false, httpSharedMode: !value, error: err.message });
-                    }
-                  }
+                  onChange: (e) => this.putBool('httpSharedMode', e.target.checked)
                 }),
                 'Allow LAN access to the dashboard (bind all interfaces)'
               ),
@@ -783,7 +968,7 @@ class Settings extends React.Component {
               React.createElement('label', { style: { display: 'flex', gap: 8, alignItems: 'flex-start', fontSize: 13, cursor: 'pointer', marginBottom: 10 } },
                 React.createElement('input', {
                   type: 'checkbox',
-                  checked: this.state.shareDiscordCatalog !== false,
+                  checked: this.state.shareDiscordCatalog === true,
                   disabled: !this.state.editable || this.state.busy,
                   onChange: (e) => this.putBool('shareDiscordCatalog', e.target.checked),
                   style: { marginTop: 3 }
@@ -1023,7 +1208,7 @@ class Settings extends React.Component {
             React.createElement('div', { className: 'st-sec' },
               React.createElement('h3', null, 'Desktop notifications'),
               React.createElement('div', { className: 'd' },
-                'OS notifications for new chat messages. The global chat dock stays available on every tab; the Chat page still covers all channels.'),
+                'OS notifications for new chat messages. The public shoutbox dock stays available on every tab; the Chat page still covers all channels.'),
               React.createElement('label', { style: { display: 'flex', gap: 8, alignItems: 'center', fontSize: 13, cursor: 'pointer', marginBottom: 8 } },
                 React.createElement('input', {
                   type: 'checkbox',
@@ -1040,7 +1225,7 @@ class Settings extends React.Component {
                   disabled: !this.state.editable || this.state.busy || !this.state.notifyDesktop,
                   onChange: (e) => this.putNotify('notifyChatGlobal', e.target.checked)
                 }),
-                'Global chat messages'
+                'Public shoutbox messages'
               ),
               React.createElement('label', { style: { display: 'flex', gap: 8, alignItems: 'center', fontSize: 13, cursor: 'pointer', marginBottom: 8 } },
                 React.createElement('input', {
@@ -1108,107 +1293,7 @@ class Settings extends React.Component {
               )
             ),
 
-            React.createElement('div', { className: 'st-sec' },
-              React.createElement('h3', null, 'Fabric Network'),
-              React.createElement('div', { className: 'd' },
-                'Native Fabric TCP/NOISE only (pubkey@host:port). Seeds hub.fabric.pub:7777 and relay.goon.vc:7777 are the default rendezvous. Set a public advertise host so others can dial you; announce open slots only when you opt in.'),
-              this.field('Advertise host (public hostname)', 'fabricAdvertiseHost', 'e.g. relay.example.com — no port; listen uses fabricPort'),
-              React.createElement('div', { className: 'st-row', style: { marginTop: -4, marginBottom: 10 } },
-                React.createElement('button', {
-                  type: 'button',
-                  className: 'st-btn ghost',
-                  style: { padding: '3px 10px', fontSize: 11 },
-                  disabled: !this.state.editable || this.state.busy,
-                  onClick: async () => {
-                    this.setState({ busy: true, error: null });
-                    try {
-                      await this.put('fabricAdvertiseHost', String(this.state.fabricAdvertiseHost || '').trim() || null);
-                      this.setState({ busy: false });
-                      await this.load();
-                    } catch (err) {
-                      this.setState({ busy: false, error: err.message });
-                    }
-                  }
-                }, 'Save advertise host')
-              ),
-              React.createElement('label', { style: { display: 'flex', gap: 8, alignItems: 'center', fontSize: 13, cursor: 'pointer', marginBottom: 10 } },
-                React.createElement('input', {
-                  type: 'checkbox',
-                  checked: this.state.broadcastPeering,
-                  disabled: !this.state.editable || this.state.busy,
-                  onChange: async (e) => {
-                    const value = e.target.checked;
-                    this.setState({ broadcastPeering: value });
-                    try { await this.put('broadcastPeering', value); } catch (err) { this.setState({ error: err.message }); }
-                  }
-                }),
-                'Announce open peer slots on the Fabric mesh (P2P_PEERING_OFFER)'
-              ),
-              React.createElement('div', { className: 'd', style: { marginTop: -4, marginBottom: 10 } },
-                'Off by default. Requires advertise host. Network → Peers can also force a one-shot announce.'),
-              React.createElement('label', { style: { display: 'flex', gap: 8, alignItems: 'center', fontSize: 13, cursor: 'pointer', marginBottom: 10 } },
-                React.createElement('input', {
-                  type: 'checkbox',
-                  checked: this.state.shareLogsGlobal,
-                  disabled: !this.state.editable || this.state.busy,
-                  onChange: async (e) => {
-                    const value = e.target.checked;
-                    this.setState({ shareLogsGlobal: value });
-                    try { await this.put('shareLogsGlobal', value); } catch (err) { this.setState({ error: err.message }); }
-                  }
-                }),
-                'Share logs to global — push my parsed game events to every connected Fabric peer'
-              ),
-              React.createElement('div', { className: 'd', style: { marginTop: -4, marginBottom: 10 } },
-                'Default is off. Per-peer “Share logs” on Network → Peers is the usual path for authorizing a network hub.'),
-              React.createElement('h3', { style: { margin: '14px 0 4px', fontSize: 13 } }, 'Share encoding'),
-              React.createElement('div', { className: 'd' },
-                'Groups → Share copies an opaque Fabric message as ',
-                React.createElement('code', null, 'fabric:'),
-                ' plus the raw body. Default is base64; hex is still sniffed on Import.'),
-              React.createElement('label', { style: { display: 'flex', gap: 8, alignItems: 'center', fontSize: 13, cursor: 'pointer', marginBottom: 6 } },
-                React.createElement('input', {
-                  type: 'radio',
-                  name: 'fabricShareEncoding',
-                  checked: this.state.fabricShareEncoding !== 'hex',
-                  disabled: !this.state.editable || this.state.busy,
-                  onChange: () => this.putShareEncoding('base64')
-                }),
-                'base64 body (default)'
-              ),
-              React.createElement('label', { style: { display: 'flex', gap: 8, alignItems: 'center', fontSize: 13, cursor: 'pointer', marginBottom: 10 } },
-                React.createElement('input', {
-                  type: 'radio',
-                  name: 'fabricShareEncoding',
-                  checked: this.state.fabricShareEncoding === 'hex',
-                  disabled: !this.state.editable || this.state.busy,
-                  onChange: () => this.putShareEncoding('hex')
-                }),
-                'hex body'
-              ),
-              React.createElement('div', { className: 'st-row' },
-                React.createElement('span', { style: { fontSize: 12.5, color: 'var(--muted)' } },
-                  this.state.peerCount
-                    ? `${this.state.peerCount} peer${this.state.peerCount === 1 ? '' : 's'} configured`
-                    : 'no peers configured'),
-                React.createElement('button', {
-                  className: 'st-btn ghost',
-                  onClick: () => {
-                    this.props.onClose();
-                    window.location.hash = 'network/peers';
-                  }
-                }, 'Open Network'),
-                this.props.advancedMode
-                  ? React.createElement('button', {
-                    className: 'st-btn ghost',
-                    onClick: () => {
-                      this.props.onClose();
-                      window.location.hash = 'network/messages';
-                    }
-                  }, 'Fabric Messages')
-                  : null
-              )
-            ),
+            this.renderFabricNetworkSection(),
 
             React.createElement('div', { className: 'st-sec' },
               React.createElement('h3', null, 'Runtime'),

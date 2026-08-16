@@ -26,6 +26,8 @@ const CSS = `
   .dx-form{display:grid;gap:10px;max-width:640px}
   .dx-form label{display:grid;gap:4px;font-size:12px;color:var(--muted)}
   .dx-form input,.dx-form textarea,.dx-form select{background:var(--panel2);border:1px solid var(--line);color:var(--text);border-radius:7px;padding:8px 10px;font-size:13px}
+  .dx-form input[type="file"]{padding:6px 0;border:none;background:transparent}
+  .dx-form .dx-file-hint{color:var(--muted);font-size:11.5px;line-height:1.45}
   .dx-form textarea{min-height:110px;font-family:'Cascadia Code',Consolas,monospace;font-size:12px;resize:vertical}
   .dx-actions{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
   .dx-btn{background:var(--panel2);border:1px solid var(--line);color:var(--text);border-radius:7px;padding:6px 12px;font-size:12px;cursor:pointer}
@@ -80,6 +82,21 @@ function shortId (id) {
   return `${s.slice(0, 8)}…${s.slice(-6)}`;
 }
 
+const MIME_OPTIONS = [
+  'text/plain',
+  'text/markdown',
+  'application/json',
+  'text/html',
+  'image/png',
+  'image/jpeg',
+  'application/pdf',
+  'application/zip',
+  'application/octet-stream'
+];
+
+/** Browser JSON upload cap (blob dir on the node allows more via filePath ingest). */
+const MAX_UPLOAD_BYTES = 32 * 1024 * 1024;
+
 function utf8ToBase64 (text) {
   const bytes = new TextEncoder().encode(String(text || ''));
   let binary = '';
@@ -126,9 +143,11 @@ function sourceLabel (doc) {
 }
 
 function priceLabel (doc) {
-  const n = Number(doc && (doc.bestPriceSats != null ? doc.bestPriceSats : doc.purchasePriceSats) || 0);
-  if (!Number.isFinite(n) || n <= 0) return 'free';
-  return `${n.toLocaleString()} sats`;
+  const listed = Number(doc && doc.purchasePriceSats);
+  if (Number.isFinite(listed) && listed > 0) {
+    return `${listed.toLocaleString()} sats`;
+  }
+  return 'free';
 }
 
 class DocumentExchange extends React.Component {
@@ -147,6 +166,9 @@ class DocumentExchange extends React.Component {
       createName: '',
       createMime: 'text/plain',
       createText: '',
+      createFileBase64: '',
+      createFileLabel: '',
+      createClusterSync: false,
       publishPrice: '25',
       claimTxid: '',
       invoice: null,
@@ -214,24 +236,67 @@ class DocumentExchange extends React.Component {
     }
   }
 
+  canCreate () {
+    return !!(String(this.state.createText || '').length || this.state.createFileBase64);
+  }
+
+  onCreateFileChange (e) {
+    const input = e && e.target;
+    const file = input && input.files && input.files[0];
+    if (!file) {
+      this.setState({ createFileBase64: '', createFileLabel: '' });
+      return;
+    }
+    if (file.size > MAX_UPLOAD_BYTES) {
+      if (input) input.value = '';
+      this.setState({
+        error: 'File is larger than 32 MiB — choose a smaller file, or ingest from disk on this machine via the relay.',
+        createFileBase64: '',
+        createFileLabel: ''
+      });
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = () => {
+      const dataUrl = String(reader.result || '');
+      const comma = dataUrl.indexOf(',');
+      const b64 = comma >= 0 ? dataUrl.slice(comma + 1) : dataUrl;
+      const mime = file.type || this.state.createMime || 'application/octet-stream';
+      this.setState({
+        createFileBase64: b64,
+        createFileLabel: file.name + ' (' + file.size.toLocaleString() + ' bytes)',
+        createName: this.state.createName || file.name,
+        createMime: mime,
+        error: null
+      });
+    };
+    reader.onerror = () => {
+      this.setState({ error: 'Could not read that file', createFileBase64: '', createFileLabel: '' });
+    };
+    reader.readAsDataURL(file);
+  }
+
   async createDoc () {
     const name = String(this.state.createName || '').trim() || 'note.txt';
     const mime = String(this.state.createMime || 'text/plain').trim();
     const text = String(this.state.createText || '');
-    if (!text) {
-      this.setState({ error: 'Content is required' });
+    const fileB64 = String(this.state.createFileBase64 || '');
+    if (!fileB64 && !text) {
+      this.setState({ error: 'Paste text or choose a file from disk' });
       return;
     }
     this.setState({ busy: true, error: null, notice: null });
     try {
+      const body = {
+        name,
+        mime,
+        contentBase64: fileB64 || utf8ToBase64(text)
+      };
+      if (this.state.createClusterSync) body.clusterSync = true;
       const res = await fetch(`${BASE}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          name,
-          mime,
-          contentBase64: utf8ToBase64(text)
-        })
+        body: JSON.stringify(body)
       }).then((r) => r.json().then((j) => ({ ok: r.ok, j })));
       if (!res.ok) throw new Error((res.j && res.j.error) || 'Create failed');
       const doc = (res.j.data && res.j.data.document) || (res.j.data) || null;
@@ -241,7 +306,10 @@ class DocumentExchange extends React.Component {
         createOpen: false,
         notice: id ? `Created ${shortId(id)}` : 'Created',
         createText: '',
-        createName: ''
+        createName: '',
+        createFileBase64: '',
+        createFileLabel: '',
+        createClusterSync: false
       });
       await this.refresh();
       if (id) await this.selectDoc(id);
@@ -329,6 +397,29 @@ class DocumentExchange extends React.Component {
         notice: pinned ? 'Pinned to your profile' : 'Unpinned from your profile'
       });
       await this.refresh();
+    } catch (e) {
+      this.setState({ busy: false, error: e && e.message ? e.message : String(e) });
+    }
+  }
+
+  async setClusterSync (id, enabled) {
+    if (!id) return;
+    this.setState({ busy: true, error: null, notice: null });
+    try {
+      const res = await fetch(`/services/star-citizen/files/${encodeURIComponent(id)}/cluster-sync`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ clusterSync: enabled === true })
+      }).then((r) => r.json().then((j) => ({ ok: r.ok, j })));
+      if (!res.ok) throw new Error((res.j && res.j.error) || 'Cluster sync failed');
+      this.setState({
+        busy: false,
+        notice: enabled
+          ? 'This file will copy to your other linked devices over Fabric'
+          : 'Stopped syncing this file to other devices'
+      });
+      await this.refresh();
+      if (this.state.selectedId === id) await this.selectDoc(id);
     } catch (e) {
       this.setState({ busy: false, error: e && e.message ? e.message : String(e) });
     }
@@ -472,6 +563,17 @@ class DocumentExchange extends React.Component {
             title: doc.profilePinned ? 'Unpin from profile' : 'Pin to profile',
             onClick: () => this.pinDoc(id, !doc.profilePinned)
           }, '📌 ' + (doc.profilePinned ? 'Unpin' : 'Pin to profile'))
+          : null,
+        isLocal
+          ? React.createElement('button', {
+            type: 'button',
+            className: 'dx-btn' + (doc.clusterSync ? ' primary' : ''),
+            disabled: this.state.busy,
+            title: doc.clusterSync
+              ? 'Stop copying this file to linked devices'
+              : 'Copy this file to other devices in your identity cluster',
+            onClick: () => this.setClusterSync(id, !doc.clusterSync)
+          }, doc.clusterSync ? 'Stop device sync' : 'Sync to my devices')
           : null
       ),
       isLocal
@@ -556,28 +658,49 @@ class DocumentExchange extends React.Component {
         ),
         React.createElement('label', null, 'MIME',
           React.createElement('select', {
-            value: this.state.createMime,
+            value: MIME_OPTIONS.indexOf(this.state.createMime) >= 0
+              ? this.state.createMime
+              : 'application/octet-stream',
             onChange: (e) => this.setState({ createMime: e.target.value })
           },
-          React.createElement('option', { value: 'text/plain' }, 'text/plain'),
-          React.createElement('option', { value: 'text/markdown' }, 'text/markdown'),
-          React.createElement('option', { value: 'application/json' }, 'application/json'),
-          React.createElement('option', { value: 'text/html' }, 'text/html'),
-          React.createElement('option', { value: 'application/octet-stream' }, 'application/octet-stream')
+          (MIME_OPTIONS.indexOf(this.state.createMime) >= 0
+            ? MIME_OPTIONS
+            : MIME_OPTIONS.concat([this.state.createMime])
+          ).map((m) => React.createElement('option', { key: m, value: m }, m))
           )
         ),
-        React.createElement('label', null, 'Content (UTF-8 text)',
+        React.createElement('label', null, 'Choose from disk',
+          React.createElement('input', {
+            type: 'file',
+            'aria-label': 'Choose a file from disk',
+            onChange: (e) => this.onCreateFileChange(e)
+          }),
+          React.createElement('span', { className: 'dx-file-hint' },
+            this.state.createFileLabel
+              ? ('Selected: ' + this.state.createFileLabel)
+              : 'Images, PDFs, and other binaries — up to 32 MiB. Name and MIME fill from the file.')
+        ),
+        React.createElement('label', null, 'Or paste UTF-8 text',
           React.createElement('textarea', {
             value: this.state.createText,
             onChange: (e) => this.setState({ createText: e.target.value }),
-            placeholder: 'Paste text to publish…'
+            placeholder: 'Paste text to publish…',
+            disabled: !!this.state.createFileBase64
           })
+        ),
+        React.createElement('label', { style: { display: 'flex', gap: 8, alignItems: 'center' } },
+          React.createElement('input', {
+            type: 'checkbox',
+            checked: !!this.state.createClusterSync,
+            onChange: (e) => this.setState({ createClusterSync: !!(e.target && e.target.checked) })
+          }),
+          ' Sync to my other devices (identity cluster)'
         ),
         React.createElement('div', { className: 'dx-actions' },
           React.createElement('button', {
             type: 'button',
             className: 'dx-btn primary',
-            disabled: this.state.busy || !this.state.createText,
+            disabled: this.state.busy || !this.canCreate(),
             onClick: () => this.createDoc()
           }, 'Create on this node'),
           React.createElement('button', {
@@ -626,7 +749,9 @@ class DocumentExchange extends React.Component {
           React.createElement('p', { className: 'dx-note' },
             'This node\'s catalog plus published listings from connected Fabric peers. Publish marks a local file listed (optional sats on the ',
             React.createElement('code', null, 'fabric-doc:'),
-            ' chat wire). Pin a file to your profile with 📌 on its page so Federation groups see the listing (metadata only).'),
+            ' chat wire). Pin a file to your profile with 📌 on its page so Federation groups see the listing (metadata only). ',
+            React.createElement('strong', null, 'Sync to my devices'),
+            ' copies opted-in files to phones and desktops in your identity cluster over Fabric — not a public listing.'),
           this.state.error
             ? React.createElement('div', { className: 'dx-err' }, this.state.error)
             : null,
@@ -669,7 +794,11 @@ class DocumentExchange extends React.Component {
                           ? React.createElement('span', { className: 'dx-tag peer' }, 'peer')
                           : (pub
                             ? React.createElement('span', { className: 'dx-tag pub' }, 'pub')
-                            : React.createElement('span', { className: 'dx-tag mut' }, 'local'))
+                            : React.createElement('span', { className: 'dx-tag mut' }, 'local')),
+                        !isPeer && d.clusterSync
+                          ? React.createElement('span', { className: 'dx-tag peer', style: { marginLeft: 4 } },
+                            d.clusterPending ? 'sync…' : 'sync')
+                          : null
                       ),
                       React.createElement('td', null,
                         React.createElement('span', {
@@ -692,6 +821,17 @@ class DocumentExchange extends React.Component {
                             title: d.profilePinned ? 'Unpin from profile' : 'Pin to profile',
                             onClick: () => this.pinDoc(id, !d.profilePinned)
                           }, '📌')
+                          : null,
+                        !isPeer
+                          ? React.createElement('button', {
+                            type: 'button',
+                            className: 'dx-btn' + (d.clusterSync ? ' primary' : ''),
+                            disabled: this.state.busy,
+                            title: d.clusterSync
+                              ? 'Stop copying this file to linked devices'
+                              : 'Copy this file to other devices in your identity cluster',
+                            onClick: () => this.setClusterSync(id, !d.clusterSync)
+                          }, d.clusterSync ? 'Synced' : 'Sync')
                           : null
                       )
                     );

@@ -5,7 +5,12 @@
  * handlers) onto the raw Node `http` server used by GoonCitizen.
  */
 
-const { mountFabricDeviceLinkHttp } = require('@fabric/http/functions/fabricDeviceLinkHttp');
+const {
+  mountFabricDeviceLinkHttp,
+  pruneDeviceLinkSessions,
+  clientMayAccessDeviceLink
+} = require('@fabric/http/functions/fabricDeviceLinkHttp');
+const { isLocalRequest } = require('@fabric/http/functions/fabricSiteLoginVerify');
 
 function wrapRes (res) {
   const wrapped = {
@@ -39,6 +44,9 @@ function matchRoute (method, pathname) {
   m = pathname.match(/^\/device-links\/([^/]+)$/);
   if (method === 'GET' && m) {
     return { name: 'get', params: { sessionId: decodeURIComponent(m[1]) } };
+  }
+  if (method === 'DELETE' && m) {
+    return { name: 'cancel', params: { sessionId: decodeURIComponent(m[1]) } };
   }
   return null;
 }
@@ -82,9 +90,17 @@ async function tryHandleDeviceLink (relay, req, res, pathname, readBody) {
       return r.method === 'GET' && String(r.path).includes(':sessionId') &&
         !String(r.path).includes('signatures');
     }
+    if (hit.name === 'cancel') {
+      return r.method === 'DELETE' && String(r.path).includes(':sessionId') &&
+        !String(r.path).includes('signatures');
+    }
     return false;
   });
   if (!route) {
+    if (hit.name === 'cancel') {
+      cancelDeviceLinkFallback(relay, req, res, hit.params.sessionId);
+      return true;
+    }
     res.writeHead(500, { 'Content-Type': 'application/json; charset=utf-8' });
     res.end(JSON.stringify({ ok: false, error: 'device-link route missing' }));
     return true;
@@ -100,6 +116,32 @@ async function tryHandleDeviceLink (relay, req, res, pathname, readBody) {
   });
   route.fn(fakeReq, wrapRes(res));
   return true;
+}
+
+function cancelDeviceLinkFallback (relay, req, res, sessionId) {
+  if (!relay._deviceLinkSessions) relay._deviceLinkSessions = new Map();
+  pruneDeviceLinkSessions(relay);
+  const wrapped = wrapRes(res);
+  const sid = String(sessionId || '').trim();
+  if (!sid) {
+    wrapped.status(400).send({ ok: false, error: 'sessionId required' });
+    return;
+  }
+  const session = relay._deviceLinkSessions.get(sid);
+  if (!session) {
+    wrapped.status(200).send({ ok: true, cancelled: true, existed: false });
+    return;
+  }
+  if (!isLocalRequest(req) && !clientMayAccessDeviceLink(req, session.origin)) {
+    wrapped.status(403).send({ ok: false, error: 'origin does not match this session' });
+    return;
+  }
+  if (session.status === 'linked') {
+    wrapped.status(409).send({ ok: false, error: 'device link is already complete' });
+    return;
+  }
+  relay._deviceLinkSessions.delete(sid);
+  wrapped.status(200).send({ ok: true, cancelled: true, existed: true });
 }
 
 module.exports = {

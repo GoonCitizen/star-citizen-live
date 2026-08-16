@@ -56,7 +56,8 @@ function sanitizeNote (row) {
     shareGroupId: row.shareGroupId ? String(row.shareGroupId) : null,
     sharePeerPubkey: row.sharePeerPubkey ? String(row.sharePeerPubkey) : null,
     sharedAt: row.sharedAt || null,
-    inbound: row.inbound === true
+    inbound: row.inbound === true,
+    profilePinned: row.profilePinned === true || row.pinned === true
   };
 }
 
@@ -66,6 +67,9 @@ function sanitizeNote (row) {
  * @param {*} [opts.subject]
  * @param {string} [opts.viewer]
  * @param {boolean} [opts.enforcePrivacy]
+ * @param {string} [opts.author]
+ * @param {boolean} [opts.includeLocal]
+ * @param {boolean} [opts.profilePinned]
  * @param {string[]} [opts.groupIds]
  * @returns {object[]}
  */
@@ -74,19 +78,43 @@ function listNotes (store, opts = {}) {
   const subject = opts.subject ? canonicalActor(opts.subject) : null;
   let rows = (store.all(COLLECTION) || []).map(sanitizeNote).filter(Boolean);
   if (subject) rows = rows.filter((n) => n.subject === subject);
-  if (opts.viewer && opts.enforcePrivacy) {
-    const viewer = String(opts.viewer);
-    const groupIds = new Set(opts.groupIds || []);
-    rows = rows.filter((n) => {
-      if (n.author === viewer) return true;
-      if (n.visibility === 'group' && n.shareGroupId && groupIds.has(n.shareGroupId)) {
-        return true;
-      }
-      if (n.visibility === 'peer' && n.sharePeerPubkey === viewer) return true;
-      return false;
-    });
+  if (opts.author) {
+    const author = canonicalActor(opts.author) || String(opts.author);
+    rows = rows.filter((n) => n.author === author ||
+      (opts.includeLocal === true && n.author === 'local'));
+  }
+  if (opts.profilePinned === true) {
+    rows = rows.filter((n) => n.profilePinned === true);
+  }
+  if (opts.enforcePrivacy) {
+    if (!opts.viewer) return [];
+    rows = rows.filter((n) => noteVisibleTo(n, opts.viewer, opts.groupIds));
   }
   return rows.sort((a, b) => String(b.updatedAt || '').localeCompare(String(a.updatedAt || '')));
+}
+
+/**
+ * Whether a viewer may read this identity note.
+ * @param {object|null} note
+ * @param {string|null} viewer
+ * @param {string[]|Set<string>} [groupIds]
+ * @returns {boolean}
+ */
+function noteVisibleTo (note, viewer, groupIds) {
+  if (!note || typeof note !== 'object') return false;
+  const who = canonicalActor(viewer) || (viewer != null ? String(viewer).trim() : '');
+  if (!who) return false;
+  const author = canonicalActor(note.author) || String(note.author || '');
+  if (author === who) return true;
+  const groups = groupIds instanceof Set ? groupIds : new Set(groupIds || []);
+  if (note.visibility === 'group' && note.shareGroupId && groups.has(note.shareGroupId)) {
+    return true;
+  }
+  if (note.visibility === 'peer' && note.sharePeerPubkey) {
+    const peer = canonicalActor(note.sharePeerPubkey) || String(note.sharePeerPubkey);
+    if (peer === who) return true;
+  }
+  return false;
 }
 
 /**
@@ -132,7 +160,8 @@ function createNote (store, opts = {}) {
     shareGroupId: null,
     sharePeerPubkey: null,
     sharedAt: null,
-    inbound: false
+    inbound: false,
+    profilePinned: false
   };
   store.put(COLLECTION, id, note);
   return note;
@@ -190,6 +219,24 @@ function markShared (store, id, opts = {}) {
   }
   note.sharedAt = new Date().toISOString();
   note.updatedAt = note.sharedAt;
+  store.put(COLLECTION, note.id, note);
+  return note;
+}
+
+/**
+ * Pin (or unpin) a note onto the subject's public profile wall.
+ * Does not change visibility — GroupDataShare `profile.notes` carries pins.
+ * @param {object} store
+ * @param {string} id
+ * @param {boolean} pinned
+ * @returns {object}
+ */
+function setProfilePinned (store, id, pinned) {
+  const note = getNote(store, id);
+  if (!note) throw fail('Note not found', 'NOT_FOUND');
+  note.profilePinned = pinned === true;
+  note.updatedAt = new Date().toISOString();
+  note.revision = (Number(note.revision) || 1) + 1;
   store.put(COLLECTION, note.id, note);
   return note;
 }
@@ -268,7 +315,8 @@ function ingestShare (store, object, source) {
     shareGroupId: raw.groupId ? String(raw.groupId) : (prev && prev.shareGroupId) || null,
     sharePeerPubkey: raw.peerB || raw.peerPubkey || (prev && prev.sharePeerPubkey) || null,
     sharedAt: now,
-    inbound: true
+    inbound: true,
+    profilePinned: prev && prev.profilePinned === true
   };
   store.put(COLLECTION, id, note);
   return note;
@@ -281,11 +329,13 @@ module.exports = {
   COLLECTION,
   BODY_MAX,
   sanitizeNote,
+  noteVisibleTo,
   listNotes,
   getNote,
   createNote,
   updateNote,
   markShared,
+  setProfilePinned,
   buildSharePayload,
   ingestShare
 };

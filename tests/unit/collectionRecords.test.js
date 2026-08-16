@@ -24,6 +24,7 @@ describe('collectionRecords', () => {
     assert.strictEqual(hrefFor('fleet', 'fl1'), '/collections/fleet/fl1');
     assert.ok(fabricMessageHref('deadbeef').includes('/collections/fabric-message/'));
     assert.strictEqual(hrefFor('file', 'aa'.repeat(32)), '/files/' + 'aa'.repeat(32));
+    assert.strictEqual(hrefFor('location', 'area18'), '/locations/area18');
     assert.strictEqual(normalizeRecordId('note', 'note:n1'), 'n1');
   });
 
@@ -51,6 +52,14 @@ describe('collectionRecords', () => {
 
     const channel = load('channel', 'discord:c1', { corpus });
     assert.ok(channel.actions.some((a) => a.rel === 'chat' && a.channel === 'discord:c1'));
+
+    const loc = load('location', 'area18', {
+      corpus: {
+        locations: [{ slug: 'area18', name: 'Area18', system: 'Stanton', type: 'LandingZone' }]
+      }
+    });
+    assert.strictEqual(loc.title, 'Area18');
+    assert.strictEqual(loc.href, '/locations/area18');
 
     const missingNote = load('note', 'missing', { corpus });
     assert.strictEqual(missingNote, null);

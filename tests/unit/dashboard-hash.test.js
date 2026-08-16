@@ -36,6 +36,17 @@ describe('Dashboard.resolveHash', () => {
     });
   });
 
+  it('opens Network settings from #network/settings', () => {
+    assert.deepStrictEqual(Dashboard.resolveHash('#network/settings', false), {
+      tab: 'network',
+      networkView: 'settings'
+    });
+    assert.deepStrictEqual(Dashboard.resolveHash('#network/settings', true), {
+      tab: 'network',
+      networkView: 'settings'
+    });
+  });
+
   it('keeps query deep links on the Fleets / Groups tabs', () => {
     assert.deepStrictEqual(Dashboard.resolveHash('#fleet?id=f1', false), {
       tab: 'fleet',
@@ -51,8 +62,9 @@ describe('Dashboard.resolveHash', () => {
     });
   });
 
-  it('maps Keys / Security / Privacy hashes onto dedicated account pages', () => {
+  it('maps Keys / Devices / Security / Privacy hashes onto dedicated account pages', () => {
     assert.deepStrictEqual(Dashboard.resolveHash('#keys', false), { tab: 'keys', networkView: null });
+    assert.deepStrictEqual(Dashboard.resolveHash('#devices', false), { tab: 'devices', networkView: null });
     assert.deepStrictEqual(Dashboard.resolveHash('#security', false), { tab: 'security', networkView: null });
     assert.deepStrictEqual(Dashboard.resolveHash('#privacy', false), { tab: 'privacy', networkView: null });
   });

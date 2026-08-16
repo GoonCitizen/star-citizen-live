@@ -90,6 +90,8 @@ test('GET overlay/primary-group returns members + ships for primary group', asyn
       online: true,
       nickname: 'BobPilot',
       ship: { name: 'Aurora MR', slug: 'aurora-mr', type: 'Starter' },
+      location: { name: 'Area18', slug: 'area18', system: 'Stanton' },
+      destination: { name: 'CRU-L1 Ambitious Dream Station', slug: 'cru-l1-ambitious-dream-station' },
       lastEventAt: new Date().toISOString(),
       updatedAt: new Date().toISOString()
     });
@@ -106,11 +108,18 @@ test('GET overlay/primary-group returns members + ships for primary group', asyn
     assert.strictEqual(bobRow.online, true);
     assert.strictEqual(bobRow.ship.name, 'Aurora MR');
     assert.ok(bobRow.ship.type || bobRow.shipType, 'ship type should be present');
+    assert.ok(bobRow.location && /Area18/i.test(bobRow.location.name), 'member location');
+    assert.equal(overlay.body.data.owner, true);
+    assert.ok(overlay.body.data.composition);
+    assert.ok(overlay.body.data.composition.ships.some((r) => r.n === 'Aurora MR'));
+    assert.ok(overlay.body.data.map && Array.isArray(overlay.body.data.map.bodies));
 
     const html = await request(port, 'GET', '/overlay');
     assert.strictEqual(html.status, 200);
     assert.match(String(html.headers['content-type'] || ''), /text\/html/);
     assert.match(String(html.body), /shipType|ship\.type|\.type/);
+    assert.match(String(html.body), /overlay-off/);
+    assert.match(String(html.body), /Composition|composition/);
   } finally {
     await svc.stop();
   }

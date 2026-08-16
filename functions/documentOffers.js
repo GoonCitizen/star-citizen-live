@@ -243,8 +243,27 @@ function catalogRowFromOffers (documentId, group) {
     peerCount: group.length,
     peerPubkey: best.peerPubkey || null,
     peerAlias: best.peerAlias || null,
-    peerAddress: best.peerAddress || null
+    peerAddress: best.peerAddress || null,
+    bestPeerPriceSats: Number.isFinite(priceSats(best)) ? priceSats(best) : null
   };
+}
+
+/**
+ * Drop operator-only reseller fields from a catalog / GET row.
+ * @param {object} row
+ * @returns {object}
+ */
+function omitPrivateMarketFields (row) {
+  if (!row || typeof row !== 'object') return row;
+  if (row.costBasisSats == null && row.local !== false) return row;
+  const out = Object.assign({}, row);
+  delete out.costBasisSats;
+  if (out.local === false) {
+    delete out.contentBase64;
+    delete out.ciphertext;
+    delete out.content;
+  }
+  return out;
 }
 
 /**
@@ -275,6 +294,10 @@ function mergeCatalog (localDocs, offers, opts = {}) {
     if (existing) {
       existing.peerCount = group.length;
       existing.offerCount = group.length + 1;
+      const bestRemote = sortOffersByPrice(group.filter((o) => o.local !== true))[0];
+      if (bestRemote && Number.isFinite(priceSats(bestRemote))) {
+        existing.bestPeerPriceSats = priceSats(bestRemote);
+      }
       const best = sortOffersByPrice(group.concat([localOffer(existing, opts.self || {})]))[0];
       existing.bestPriceSats = Number.isFinite(priceSats(best))
         ? priceSats(best)
@@ -283,7 +306,7 @@ function mergeCatalog (localDocs, offers, opts = {}) {
       byId.set(id, catalogRowFromOffers(id, group));
     }
   }
-  return Array.from(byId.values()).sort((a, b) => {
+  return Array.from(byId.values()).map(omitPrivateMarketFields).sort((a, b) => {
     return String(b.created || '').localeCompare(String(a.created || ''));
   });
 }
@@ -297,7 +320,7 @@ function remoteDocument (store, documentId, opts = {}) {
   if (!offers.length) return null;
   const best = offers[0];
   return {
-    document: {
+    document: omitPrivateMarketFields({
       id: best.documentId,
       sha256: best.sha256,
       name: best.name,
@@ -309,7 +332,7 @@ function remoteDocument (store, documentId, opts = {}) {
       peerPubkey: best.peerPubkey,
       peerAlias: best.peerAlias,
       peerAddress: best.peerAddress
-    }
+    })
   };
 }
 
@@ -354,6 +377,7 @@ module.exports = {
   sortOffersByPrice,
   offersForDocument,
   mergeCatalog,
+  omitPrivateMarketFields,
   remoteDocument,
   replyInventory,
   requestConnectedInventories

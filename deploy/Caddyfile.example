@@ -22,6 +22,13 @@ relay.goon.vc {
 		root * /var/www/goon.vc/html
 		file_server browse
 	}
+	# Agent probe JSON (npm run probes:publish with SC_AGENT_STATIC_ROOT).
+	handle /probes* {
+		root * /var/www/goon.vc/html
+		header Content-Type application/json
+		header Cache-Control "public, max-age=60"
+		file_server browse
+	}
 
 	handle {
 		reverse_proxy 127.0.0.1:3041

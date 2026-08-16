@@ -12,6 +12,7 @@ const {
   formatVaultSlips
 } = require('../../functions/masterSeedVault');
 const { restoreIdentity } = require('../../functions/identity');
+const { fabricCoinTypeForNetwork } = require('@fabric/core/constants');
 
 describe('masterSeedVault', () => {
   it('derives a Bitcoin account and per-device identity xprvs from seed + password', () => {
@@ -33,6 +34,9 @@ describe('masterSeedVault', () => {
     assert.equal(a.devices[1].label, 'Companion device');
     assert.equal(a.devices[0].path, deviceAccountPath(0, a.network));
     assert.equal(a.devices[1].path, deviceAccountPath(1, a.network));
+    assert.equal(a.devices[0].path, `m/44'/${fabricCoinTypeForNetwork(a.network)}'/0'`);
+    assert.equal(deviceAccountPath(0, 'mainnet'), `m/44'/${fabricCoinTypeForNetwork('mainnet')}'/0'`);
+    assert.notEqual(deviceAccountPath(0, 'mainnet'), deviceAccountPath(0, 'regtest'));
     assert.equal(a.bitcoin.xprv, b.bitcoin.xprv);
     assert.equal(a.devices[0].xprv, b.devices[0].xprv);
     assert.equal(a.devices[0].pubkey, b.devices[0].pubkey);

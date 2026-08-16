@@ -5,6 +5,8 @@ A quick-start so anyone (including future-you) can pick this up.  Plain steps.
 > **Authoritative run/test surface:** `AGENTS.md` §3–§4
 > (`npm start` → `scripts/node.js` → `services/LiveRelay.js`). Prefer that over
 > the commands below until this file is rewritten.
+> **Joining / forking:** [`DEVELOPERS.md`](DEVELOPERS.md) (G00N SQUAD, PERMAFLEET,
+> other orgs). Local run: [`QUICKSTART.md`](QUICKSTART.md).
 
 ## Run the M1 service right now (no install needed)
 

@@ -120,6 +120,18 @@ class ChatManager extends EventEmitter {
   }
 
   /**
+   * Channel shape DeviceDataShare may replay even before the local group
+   * contract lands (cluster-gated ingest only).
+   * @param {*} channel
+   * @returns {boolean}
+   */
+  _shareableChannel (channel) {
+    if (this._validChannel(channel)) return true;
+    const groupId = ChatManager.groupIdOf(channel);
+    return !!(groupId && groupId.length >= 4 && groupId.length <= 128);
+  }
+
+  /**
    * May `viewer` read/post this channel? Global: anyone. Group channels:
    * members only when enforcing (hosted mode); locally the relay is the
    * player's own node, so their groups are already the visible set.
@@ -232,7 +244,11 @@ class ChatManager extends EventEmitter {
    */
   post (data = {}) {
     const channel = String(data.channel || GLOBAL_CHANNEL);
-    if (!this._validChannel(channel)) throw new Error(`unknown channel: ${channel}`);
+    if (!this._validChannel(channel)) {
+      if (!(data.clusterShare === true && this._shareableChannel(channel))) {
+        throw new Error(`unknown channel: ${channel}`);
+      }
+    }
     let attachment = normalizeAttachment(data.attachment);
     let body = String(data.body || '').trim();
     if (attachment && !isWireEncoded(body)) {

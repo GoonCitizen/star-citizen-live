@@ -87,4 +87,40 @@ describe('localDocuments', () => {
     );
     assert.strictEqual(localDocuments.list(store).length, 0);
   });
+
+  it('opts a row into cluster sync and fills a placeholder from bytes', () => {
+    const store = new Store({});
+    const created = localDocuments.create(store, {
+      name: 'cluster.txt',
+      mime: 'text/plain',
+      contentBase64: Buffer.from('cluster-bytes', 'utf8').toString('base64')
+    });
+    const flagged = localDocuments.setClusterSync(store, created.id, true);
+    assert.strictEqual(flagged.clusterSync, true);
+    assert.strictEqual(localDocuments.list(store)[0].clusterSync, true);
+
+    const other = new Store({});
+    const pending = localDocuments.ensureClusterPlaceholder(other, {
+      id: created.id,
+      sha256: created.sha256,
+      name: 'cluster.txt',
+      mime: 'text/plain',
+      size: created.size
+    });
+    assert.ok(pending.clusterPending);
+    assert.strictEqual(pending.clusterSync, true);
+    const filled = localDocuments.createFromBuffer(
+      other,
+      Buffer.from('cluster-bytes', 'utf8'),
+      { clusterSync: true }
+    );
+    assert.strictEqual(filled.id, created.id);
+    assert.strictEqual(filled.clusterSync, true);
+    assert.ok(!filled.clusterPending);
+    const got = localDocuments.get(other, created.id);
+    assert.strictEqual(
+      Buffer.from(got.document.contentBase64, 'base64').toString('utf8'),
+      'cluster-bytes'
+    );
+  });
 });

@@ -6,7 +6,7 @@
  */
 
 const React = require('react');
-const { applySearchHit } = require('../functions/appSearch');
+const { applySearchHit, hrefOfHit } = require('../functions/appSearch');
 const { isAndroidCompanion } = require('../functions/isAndroidCompanion');
 
 const BASE = '/services/star-citizen';
@@ -42,7 +42,7 @@ const CSS = `
   .app-search-hint{color:var(--muted);font-size:11.5px;padding:8px 12px;line-height:1.45}
   .app-search-hit{display:grid;grid-template-columns:auto 1fr;gap:2px 10px;align-items:baseline;
     width:100%;text-align:left;background:transparent;border:none;color:var(--text);
-    padding:7px 12px;cursor:pointer;font-family:inherit}
+    padding:7px 12px;cursor:pointer;font-family:inherit;text-decoration:none;box-sizing:border-box}
   .app-search-hit:hover,.app-search-hit.on{background:var(--panel2)}
   .app-search-hit .k{font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.3px}
   .app-search-hit .t{font-size:13px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
@@ -237,19 +237,29 @@ class AppSearch extends React.Component {
       );
     }
     return React.createElement('div', { className: 'app-search-drop', role: 'listbox' },
-      hits.map((hit, i) => React.createElement('button', {
-        type: 'button',
-        key: hit.kind + ':' + hit.id,
-        className: 'app-search-hit' + (i === this.state.active ? ' on' : ''),
-        onMouseEnter: () => this.setState({ active: i }),
-        onClick: () => this.openHit(hit)
-      },
-      React.createElement('span', { className: 'k' }, hit.label || hit.kind),
-      React.createElement('span', { className: 't' }, hit.title),
-      hit.subtitle
-        ? React.createElement('span', { className: 's' }, hit.subtitle)
-        : null
-      ))
+      hits.map((hit, i) => {
+        const href = hrefOfHit(hit);
+        const kids = [
+          React.createElement('span', { className: 'k' }, hit.label || hit.kind),
+          React.createElement('span', { className: 't' }, hit.title),
+          hit.subtitle
+            ? React.createElement('span', { className: 's' }, hit.subtitle)
+            : null
+        ];
+        const shared = {
+          key: hit.kind + ':' + hit.id,
+          className: 'app-search-hit' + (i === this.state.active ? ' on' : ''),
+          role: 'option',
+          onMouseEnter: () => this.setState({ active: i }),
+          onClick: (e) => {
+            if (href && (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || e.button === 1)) return;
+            if (href) e.preventDefault();
+            this.openHit(hit);
+          }
+        };
+        if (href) return React.createElement('a', Object.assign({ href }, shared), kids);
+        return React.createElement('button', Object.assign({ type: 'button' }, shared), kids);
+      })
     );
   }
 

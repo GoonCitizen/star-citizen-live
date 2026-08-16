@@ -124,6 +124,27 @@ function isCrossSignType (type) {
   return t === SIGN_TYPE || t === REVOKE_TYPE;
 }
 
+/**
+ * Hub / Peer CONTRACT_MESSAGE wraps the typed body as `{ type, object }`.
+ * Verify against the inner IdentityCrossSign fields, copying the wrapper type
+ * when the inner payload omitted it.
+ * @param {object} object
+ * @returns {object}
+ */
+function coerceCrossSignObject (object) {
+  if (!object || typeof object !== 'object') return object;
+  const hasFields = !!(object.localPubkey || object.peerPubkey || object.signature);
+  if (isCrossSignType(object.type || object['@type']) && hasFields) return object;
+  const inner = object.object;
+  if (!inner || typeof inner !== 'object') return object;
+  const type = inner.type || inner['@type'] || object.type || object['@type'];
+  if (!isCrossSignType(type) && !(inner.localPubkey || inner.signature)) return object;
+  return Object.assign({}, inner, {
+    type: type || inner.type,
+    '@type': inner['@type'] || type
+  });
+}
+
 module.exports = {
   CROSS_SIGN_PREFIX,
   REVOKE_PREFIX,
@@ -135,5 +156,6 @@ module.exports = {
   parseRevokeMessage,
   buildCrossSignObject,
   buildRevokeObject,
+  coerceCrossSignObject,
   isCrossSignType
 };

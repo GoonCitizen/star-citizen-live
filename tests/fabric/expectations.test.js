@@ -95,28 +95,48 @@ describe('Fabric expectations: IdentityCrossSign (local, lockstep strings)', () 
 });
 
 describe('Fabric expectations: @fabric/discord pin', () => {
-  it('OAuth callback is fail-closed (501)', async () => {
+  it('OAuth callback is fail-closed (501; CSRF 400 when the pin emits state)', async () => {
     const Discord = require('@fabric/discord');
-    const discord = new Discord({ autoCommands: false });
-    let status = 200;
-    let body = null;
-    const res = {
-      status (code) {
-        status = code;
-        return this;
-      },
-      json (obj) {
-        body = obj;
-        return this;
-      },
-      send (msg) {
-        body = msg;
-        return this;
-      }
+    const discord = new Discord({
+      autoCommands: false,
+      app: { id: '111', secret: 'x' },
+      authority: '127.0.0.1'
+    });
+    const mockRes = () => {
+      const res = {
+        statusCode: 200,
+        body: null,
+        status (code) {
+          this.statusCode = code;
+          return this;
+        },
+        json (obj) {
+          this.body = obj;
+          return this;
+        },
+        send (msg) {
+          this.body = msg;
+          return this;
+        }
+      };
+      return res;
     };
-    await discord._handleOAuthCallback({}, res);
-    assert.equal(status, 501);
-    assert.equal(body && body.status, 'error');
+    const url = discord.generateAuthorizeLink();
+    const state = new URL(url).searchParams.get('state');
+    const empty = mockRes();
+    await discord._handleOAuthCallback({}, empty);
+    assert.equal(empty.body && empty.body.status, 'error');
+    if (state) {
+      assert.equal(empty.statusCode, 400);
+      const unimplemented = mockRes();
+      await discord._handleOAuthCallback({ query: { code: 'stolen', state } }, unimplemented);
+      assert.equal(unimplemented.statusCode, 501);
+      const replay = mockRes();
+      await discord._handleOAuthCallback({ query: { code: 'stolen', state } }, replay);
+      assert.equal(replay.statusCode, 400);
+    } else {
+      assert.equal(empty.statusCode, 501);
+    }
     if (discord.client && typeof discord.client.destroy === 'function') {
       await discord.client.destroy();
     }

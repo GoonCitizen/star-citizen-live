@@ -37,6 +37,7 @@ describe('androidSurface', () => {
       assert.equal(androidDashboardTabVisible('library'), false);
       assert.equal(androidDashboardTabVisible('groups'), true);
       assert.equal(androidDashboardTabVisible('chat'), true);
+      assert.equal(androidDashboardTabVisible('map'), true);
     } finally {
       if (global.window) global.window.electronAPI = prev;
     }

@@ -11,6 +11,9 @@ const path = require('path');
 const root = path.join(__dirname, '..');
 const manifestPath = path.join(root, 'android', 'app', 'src', 'main', 'AndroidManifest.xml');
 const netSecPath = path.join(root, 'android', 'app', 'src', 'main', 'res', 'xml', 'network_security_config.xml');
+const xmlDir = path.join(root, 'android', 'app', 'src', 'main', 'res', 'xml');
+const extractionPath = path.join(xmlDir, 'data_extraction_rules.xml');
+const backupPath = path.join(xmlDir, 'backup_rules.xml');
 
 const INTENT_FILTER = `
             <intent-filter>
@@ -54,6 +57,18 @@ function patchManifest (xml) {
       'android.permission.INTERNET" />\n    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />'
     );
   }
+  if (!out.includes('android.permission.CAMERA')) {
+    out = out.replace(
+      'android.permission.POST_NOTIFICATIONS" />',
+      'android.permission.POST_NOTIFICATIONS" />\n    <uses-permission android:name="android.permission.CAMERA" />'
+    );
+  }
+  if (!out.includes('com.google.mlkit.vision.DEPENDENCIES')) {
+    out = out.replace(
+      'android:theme="@style/AppTheme">',
+      'android:theme="@style/AppTheme">\n\n        <meta-data\n            android:name="com.google.mlkit.vision.DEPENDENCIES"\n            android:value="barcode_ui" />'
+    );
+  }
   if (!out.includes('android:usesCleartextTraffic')) {
     out = out.replace('<application', '<application android:usesCleartextTraffic="true" android:networkSecurityConfig="@xml/network_security_config"');
   }
@@ -68,7 +83,75 @@ function patchManifest (xml) {
       }
     }
   }
+  return disableBackup(out);
+}
+
+/**
+ * Identity wrap + node stores must never leave via Google Auto Backup or
+ * device-to-device transfer. Capacitor's default template sets allowBackup=true.
+ */
+function disableBackup (xml) {
+  let out = xml;
+  out = out.replace(/android:allowBackup="true"/g, 'android:allowBackup="false"');
+  if (!/android:allowBackup=/.test(out)) {
+    out = out.replace('<application', '<application android:allowBackup="false"');
+  }
+  if (!out.includes('android:dataExtractionRules')) {
+    out = out.replace(
+      'android:allowBackup="false"',
+      'android:allowBackup="false"\n        android:dataExtractionRules="@xml/data_extraction_rules"\n        android:fullBackupContent="@xml/backup_rules"'
+    );
+  } else if (!out.includes('android:fullBackupContent')) {
+    out = out.replace(
+      'android:dataExtractionRules="@xml/data_extraction_rules"',
+      'android:dataExtractionRules="@xml/data_extraction_rules"\n        android:fullBackupContent="@xml/backup_rules"'
+    );
+  }
   return out;
+}
+
+const DATA_EXTRACTION_RULES = `<?xml version="1.0" encoding="utf-8"?>
+<data-extraction-rules>
+    <!-- Identity wrap + node stores stay off Google backup and device-to-device transfer. -->
+    <cloud-backup>
+        <exclude domain="file" path="." />
+        <exclude domain="sharedpref" path="." />
+        <exclude domain="database" path="." />
+        <exclude domain="root" path="." />
+        <exclude domain="external" path="." />
+    </cloud-backup>
+    <device-transfer>
+        <exclude domain="file" path="." />
+        <exclude domain="sharedpref" path="." />
+        <exclude domain="database" path="." />
+        <exclude domain="root" path="." />
+        <exclude domain="external" path="." />
+    </device-transfer>
+</data-extraction-rules>
+`;
+
+const FULL_BACKUP_CONTENT = `<?xml version="1.0" encoding="utf-8"?>
+<full-backup-content>
+    <exclude domain="file" path="." />
+    <exclude domain="sharedpref" path="." />
+    <exclude domain="database" path="." />
+    <exclude domain="root" path="." />
+    <exclude domain="external" path="." />
+</full-backup-content>
+`;
+
+const CODE_SCANNER_DEP = "    implementation 'com.google.android.gms:play-services-code-scanner:16.1.0'";
+
+function ensureCodeScannerDep (gradle) {
+  if (gradle.includes('play-services-code-scanner')) return gradle;
+  const needle = "implementation project(':capacitor-cordova-android-plugins')";
+  if (gradle.includes(needle)) {
+    return gradle.replace(needle, needle + '\n' + CODE_SCANNER_DEP);
+  }
+  return gradle.replace(
+    "apply from: 'capacitor.build.gradle'",
+    "apply from: 'capacitor.build.gradle'\n\ndependencies {\n" + CODE_SCANNER_DEP + '\n}\n'
+  );
 }
 
 function main () {
@@ -80,13 +163,26 @@ function main () {
   const next = patchManifest(xml);
   if (next !== xml) {
     fs.writeFileSync(manifestPath, next);
-    console.log('[ANDROID] patched AndroidManifest.xml (fabric:// + INTERNET + cleartext)');
+    console.log('[ANDROID] patched AndroidManifest.xml (fabric:// + INTERNET + cleartext + backup off)');
   } else {
     console.log('[ANDROID] AndroidManifest.xml already patched');
   }
   fs.mkdirSync(path.dirname(netSecPath), { recursive: true });
   fs.writeFileSync(netSecPath, NET_SEC);
   console.log('[ANDROID] wrote network_security_config.xml');
+  fs.writeFileSync(extractionPath, DATA_EXTRACTION_RULES);
+  fs.writeFileSync(backupPath, FULL_BACKUP_CONTENT);
+  console.log('[ANDROID] wrote backup exclusion XML');
+
+  const appBuild = path.join(root, 'android', 'app', 'build.gradle');
+  if (fs.existsSync(appBuild)) {
+    const raw = fs.readFileSync(appBuild, 'utf8');
+    const patched = ensureCodeScannerDep(raw);
+    if (patched !== raw) {
+      fs.writeFileSync(appBuild, patched);
+      console.log('[ANDROID] app/build.gradle Play code scanner');
+    }
+  }
 
   const capBuild = path.join(root, 'android', 'app', 'capacitor.build.gradle');
   if (fs.existsSync(capBuild)) {
@@ -122,4 +218,13 @@ function main () {
   }
 }
 
-main();
+module.exports = {
+  patchManifest,
+  disableBackup,
+  ensureCodeScannerDep,
+  main
+};
+
+if (require.main === module) {
+  main();
+}

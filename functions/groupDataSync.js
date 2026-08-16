@@ -11,6 +11,7 @@
  *   - `chat.catalog` / `chat.messages` with `platform` (discord, …)
  *   - `profile.playtimes` (opt-in common play times)
  *   - `profile.files` (opt-in published file listings — metadata only)
+ *   - `profile.notes` (opt-in pinned public notes / warnings on a profile)
  *
  * Legacy `discord.catalog` / `discord.messages` / `DiscordCatalogShare` still
  * ingest as Discord chat packs.
@@ -20,6 +21,7 @@ const discordCatalog = require('./discordCatalogAccumulate');
 const chatPlatform = require('./chatPlatform');
 const profilePlaytimes = require('./profilePlaytimes');
 const profileFiles = require('./profileFiles');
+const profileNotes = require('./profileNotes');
 
 const SHARE_TYPE = 'GroupDataShare';
 const LEGACY_DISCORD_CATALOG = discordCatalog.SHARE_TYPE || 'DiscordCatalogShare';
@@ -28,6 +30,7 @@ const PACK_CHAT_CATALOG = 'chat.catalog';
 const PACK_CHAT_MESSAGES = 'chat.messages';
 const PACK_PROFILE_PLAYTIMES = profilePlaytimes.PACK || 'profile.playtimes';
 const PACK_PROFILE_FILES = profileFiles.PACK || 'profile.files';
+const PACK_PROFILE_NOTES = profileNotes.PACK || 'profile.notes';
 
 /** @deprecated use PACK_CHAT_CATALOG + platform discord */
 const PACK_DISCORD_CATALOG = 'discord.catalog';
@@ -44,6 +47,7 @@ const KNOWN_PACKS = Object.freeze([
   PACK_CHAT_MESSAGES,
   PACK_PROFILE_PLAYTIMES,
   PACK_PROFILE_FILES,
+  PACK_PROFILE_NOTES,
   PACK_DISCORD_CATALOG,
   PACK_DISCORD_MESSAGES
 ]);
@@ -150,6 +154,18 @@ function sanitizePack (entry) {
 
   if (pack === PACK_PROFILE_FILES) {
     const compact = profileFiles.sanitizeFilesPayload(payload, {
+      pubkey: payload.pubkey || entry.pubkey
+    });
+    if (!compact) return null;
+    return {
+      pack,
+      truncated: compact.truncated === true || entry.truncated === true,
+      payload: compact
+    };
+  }
+
+  if (pack === PACK_PROFILE_NOTES) {
+    const compact = profileNotes.sanitizeNotesPayload(payload, {
       pubkey: payload.pubkey || entry.pubkey
     });
     if (!compact) return null;
@@ -276,6 +292,7 @@ function collectSources (guilds) {
  * @param {Array<object>} [opts.messageStats]
  * @param {Array<object>} [opts.playtimes]
  * @param {Array<object>} [opts.files]
+ * @param {Array<object>} [opts.notes]
  * @param {string} [opts.sourceAppId]
  * @param {boolean} [opts.botReady]
  * @returns {object}
@@ -287,6 +304,7 @@ function composeWorldView (opts = {}) {
   const stats = Array.isArray(opts.messageStats) ? opts.messageStats : [];
   const playtimes = Array.isArray(opts.playtimes) ? opts.playtimes : [];
   const files = Array.isArray(opts.files) ? opts.files : [];
+  const notes = Array.isArray(opts.notes) ? opts.notes : [];
   const sources = collectSources(guilds);
   let latestAt = null;
   let messageCount = 0;
@@ -325,6 +343,10 @@ function composeWorldView (opts = {}) {
       {
         pack: PACK_PROFILE_FILES,
         profileCount: files.length
+      },
+      {
+        pack: PACK_PROFILE_NOTES,
+        profileCount: notes.length
       }
     ],
     sources
@@ -338,6 +360,7 @@ module.exports = {
   PACK_CHAT_MESSAGES,
   PACK_PROFILE_PLAYTIMES,
   PACK_PROFILE_FILES,
+  PACK_PROFILE_NOTES,
   PACK_DISCORD_CATALOG,
   PACK_DISCORD_MESSAGES,
   KNOWN_PACKS,

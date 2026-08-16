@@ -31,13 +31,23 @@ if (typeof global.document === 'undefined') {
   global.document = {
     body: { classList: { toggle () {}, add () {}, remove () {} } },
     addEventListener () {},
-    removeEventListener () {}
+    removeEventListener () {},
+    hasFocus () { return true; }
   };
 }
 
 if (typeof global.sessionStorage === 'undefined') {
   const mem = new Map();
   global.sessionStorage = {
+    getItem (k) { return mem.has(k) ? mem.get(k) : null; },
+    setItem (k, v) { mem.set(String(k), String(v)); },
+    removeItem (k) { mem.delete(k); }
+  };
+}
+
+if (typeof global.localStorage === 'undefined') {
+  const mem = new Map();
+  global.localStorage = {
     getItem (k) { return mem.has(k) ? mem.get(k) : null; },
     setItem (k, v) { mem.set(String(k), String(v)); },
     removeItem (k) { mem.delete(k); }

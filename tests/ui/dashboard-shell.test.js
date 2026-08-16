@@ -34,6 +34,21 @@ describe('Dashboard shell UI', () => {
     assert.match(Dashboard.CSS, /\.ctrl\{[^}]*flex-wrap:wrap/);
     assert.match(Dashboard.CSS, /\.header-nav \.row\.tabs\{[^}]*min-width:0/);
     assert.match(Dashboard.CSS, /\.gear\{/);
+    assert.match(Dashboard.CSS, /\.qrscan\{/);
+    assert.match(Dashboard.CSS, /\.syncstat\{/);
+  });
+
+  it('puts My logs and Filters on the Home title row', () => {
+    const dash = new Dashboard({});
+    dash.state.tab = 'home';
+    dash.state.online = true;
+    dash.state.status = 'ok';
+    const tree = dash.render();
+    const text = textOf(tree);
+    assert.match(text, /cumulative history from your logs/);
+    assert.match(text, /My logs/);
+    assert.match(text, /Filters/);
+    assert.match(Dashboard.CSS, /\.panel h2 \.home-tools/);
   });
 });
 
@@ -43,11 +58,22 @@ describe('Built dashboard bundle', () => {
 
   it('inlines Discord chat insight styles and copy', { skip: !built }, () => {
     const html = fs.readFileSync(htmlPath, 'utf8');
-    assert.match(html, /chat-plat/);
-    assert.match(html, /Bot settings|Discord bot/);
-    assert.match(html, /GoonCitizen/);
-    assert.match(html, /Search local data/);
-    assert.match(html, /Share when I play/);
-    assert.match(html, /chat\.catalog/);
+    for (const needle of [
+      'chat-plat',
+      'GoonCitizen',
+      'Search local data',
+      'Share when I play',
+      'chat.catalog',
+      'wpage-hero',
+      'Advanced constructor',
+      'Public shoutbox',
+      'gpage-hero',
+      'Apply to join',
+      'mmap-hero',
+      'lpage-hero'
+    ]) {
+      assert.ok(html.includes(needle), 'bundle missing ' + needle);
+    }
+    assert.ok(/Bot settings|Discord bot/.test(html), 'bundle missing Discord bot copy');
   });
 });

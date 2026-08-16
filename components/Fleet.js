@@ -8,6 +8,7 @@
 
 const React = require('react');
 const { readAppHash, setAppHash } = require('../functions/appHash');
+const { fetchPresence, fetchPresenceRoster } = require('../functions/presenceClient');
 
 const BASE = '/services/star-citizen';
 
@@ -158,12 +159,12 @@ class Fleet extends React.Component {
   async loadPresence () {
     try {
       const [localRes, rosterRes] = await Promise.all([
-        fetch(`${BASE}/presence`).then((r) => (r.ok ? r.json() : null)).catch(() => null),
-        fetch(`${BASE}/presence/roster`).then((r) => (r.ok ? r.json() : null)).catch(() => null)
+        fetchPresence(),
+        fetchPresenceRoster()
       ]);
       this.setState({
-        presence: localRes && localRes.data ? localRes.data : null,
-        presenceRoster: (rosterRes && rosterRes.data) || {}
+        presence: localRes && localRes.ok ? localRes.data : null,
+        presenceRoster: (rosterRes && rosterRes.ok && rosterRes.data) || {}
       });
     } catch (_) { /* ignore */ }
   }

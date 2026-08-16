@@ -5,7 +5,8 @@
  * passphrase) → master xprv → child account xprvs.
  *
  *   m/44'/0'/0'              associated Bitcoin wallet (Hub-aligned BIP44)
- *   m/44'/{7777|7778}'/N'    device N identity HD root (restore this xprv)
+ *   m/44'/{7777|7778}'/N'    device N identity HD root via fabricCoinTypeForNetwork
+ *                            (restore this xprv)
  *
  * Each child can live on its own machine. A lost device does not reveal the
  * master. Emergency recovery is the seed phrase plus the derivation password.
@@ -13,20 +14,23 @@
  */
 
 const Key = require('@fabric/core/types/key');
+const coreConstants = require('@fabric/core/constants');
+const { fabricCoinTypeForNetwork } = coreConstants;
 const { fabricIdentityNetwork, restoreIdentity } = require('./identity');
 
 const BITCOIN_ACCOUNT_PATH = "m/44'/0'/0'";
 const MAX_EXTRA_DEVICES = 7;
 
 function fabricCoinType (network) {
-  const n = String(network || '').trim().toLowerCase();
-  if (n === 'main' || n === 'mainnet' || n === 'bitcoin' || n === 'livenet') return 7777;
-  return 7778;
+  return fabricCoinTypeForNetwork(network);
 }
 
 function deviceAccountPath (index, network) {
   const i = Math.max(0, Math.floor(Number(index) || 0));
-  return `m/44'/${fabricCoinType(network)}'/${i}'`;
+  if (typeof coreConstants.fabricIdentityAccountPath === 'function') {
+    return coreConstants.fabricIdentityAccountPath(i, network);
+  }
+  return `m/44'/${fabricCoinTypeForNetwork(network)}'/${i}'`;
 }
 
 function deviceLabel (index) {

@@ -346,7 +346,7 @@ describe('GoonCitizen dashboard Sandbox', { timeout: 300000 }, () => {
     const settings = await clickByTitle(sandbox.browser, 'Group settings');
     if (settings) {
       await capture('Groups/Sandbox Wing/settings');
-      await clickByTitle(sandbox.browser, 'Group settings');
+      await clickByTitle(sandbox.browser, 'Close settings');
     }
 
     await clickByTitle(sandbox.browser, 'Paste a group invite');
@@ -459,14 +459,14 @@ describe('GoonCitizen dashboard Sandbox', { timeout: 300000 }, () => {
     }
   });
 
-  it('opens Global chat dock from Home', async (t) => {
+  it('opens Public shoutbox dock from Home', async (t) => {
     if (!requireReady(t)) return;
     await closeOverlays(sandbox.browser);
     assert.ok(await clickTab(sandbox.browser, 'Home'), 'Home');
     await sleep(200);
-    const dock = await clickByText(sandbox.browser, 'Global chat') ||
-      await clickByText(sandbox.browser, '💬 Global chat');
-    assert.ok(dock, 'global chat dock');
+    const dock = await clickByText(sandbox.browser, 'Public shoutbox') ||
+      await clickByText(sandbox.browser, '💬 Public shoutbox');
+    assert.ok(dock, 'public shoutbox dock');
     await sleep(250);
     assert.ok(await waitForBodyText(sandbox.browser, /Send|Message as|No messages yet|hello from sandbox/, 8000));
   });
@@ -498,7 +498,7 @@ describe('GoonCitizen dashboard Sandbox', { timeout: 300000 }, () => {
     await sleep(200);
     assert.ok(await clickByTitle(sandbox.browser, 'Group settings'), 'group ⚙');
     assert.ok(await waitForBodyText(sandbox.browser, /Share this group|Make private|Primary color|Make public/, 8000));
-    await clickByTitle(sandbox.browser, 'Group settings');
+    await clickByTitle(sandbox.browser, 'Close settings');
   });
 
   it('filters the mission register and opens the mission page', async (t) => {

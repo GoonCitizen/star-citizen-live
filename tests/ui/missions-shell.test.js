@@ -19,6 +19,30 @@ describe('Missions register UI', () => {
     assert.ok(textOf(tree).includes('No missions yet'));
     assert.ok(textOf(tree).includes('+ New mission'));
     assert.ok(textOf(tree).includes('My missions (0)'));
+    assert.ok(textOf(tree).includes('Top pilots'));
+    assert.ok(textOf(tree).includes('Loading activity'));
+  });
+
+  it('lists top pilots from Game.log analytics', () => {
+    const page = new Missions({
+      identityPubkey: '02aa',
+      analytics: {
+        missions: [
+          { player: 'Neorion', outcome: 'Complete', type: 'Bounty' },
+          { player: 'Neorion', outcome: 'Complete', type: 'Bounty' },
+          { player: 'Neorion', outcome: 'Fail', type: 'Bounty' },
+          { player: 'WATCHMAN', outcome: 'Abandon', type: 'Delivery' }
+        ],
+        deaths: [{ player: 'WATCHMAN' }]
+      }
+    });
+    page.state.loading = false;
+    page.state.missions = [];
+    const text = textOf(page.render());
+    assert.ok(text.includes('Top pilots'));
+    assert.ok(text.includes('Neorion'));
+    assert.ok(text.includes('WATCHMAN'));
+    assert.ok(text.includes('67%') || text.includes('67'));
   });
 
   it('shows the create form when toggled', () => {

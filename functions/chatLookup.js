@@ -272,7 +272,9 @@ function queryLocalPublicListings (opts = {}) {
   if (q) discordUsers = discordUsers.filter((u) => matches(u.name, u.username, u.id));
   discordUsers = discordUsers.slice(0, limit);
 
-  const tagsIn = Array.isArray(opts.localTags) ? opts.localTags : [];
+  const tagsIn = opts.includeLocalTags === true && Array.isArray(opts.localTags)
+    ? opts.localTags
+    : [];
   let localTags = tagsIn.map((t) => ({
     id: t && t.id != null ? String(t.id) : null,
     name: String((t && t.name) || '').trim() || null,

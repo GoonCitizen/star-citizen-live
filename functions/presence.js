@@ -8,6 +8,7 @@
  */
 
 const shipCatalog = require('./shipCatalog');
+const locationCatalog = require('./locationCatalog');
 const { shipName } = require('./parser');
 
 const ONLINE_WINDOW_MS = 10 * 60 * 1000;
@@ -15,6 +16,8 @@ const PRESENCE_TYPE = 'PeerPresence';
 const STATUS_TEXT_MAX = 64;
 /** Stored shipOverrideSlug meaning “publish no ship” (suppresses Game.log autodetect). */
 const SHIP_NONE_SLUG = '__none__';
+/** Same sentinel for location / destination overrides. */
+const PLACE_NONE_SLUG = locationCatalog.NONE_SLUG;
 const VISIBILITIES = new Set(['private', 'peers', 'groups', 'public']);
 const AVAILABILITIES = new Set(['auto', 'online', 'offline']);
 
@@ -26,6 +29,23 @@ function isShipClearedSlug (slug) {
   if (slug === undefined || slug === null) return false;
   const s = String(slug).trim().toLowerCase();
   return s === SHIP_NONE_SLUG || s === 'none' || s === 'clear';
+}
+
+function isPlaceClearedSlug (slug) {
+  return locationCatalog.isClearedSlug(slug);
+}
+
+/**
+ * @param {*} value
+ * @returns {string|null}
+ */
+function sanitizePlaceSlug (value) {
+  if (value === undefined || value === null || value === '') return null;
+  if (isPlaceClearedSlug(value)) return PLACE_NONE_SLUG;
+  const raw = String(value).trim();
+  if (!raw) return null;
+  const hit = locationCatalog.resolveLocation(raw);
+  return hit ? hit.slug : raw.toLowerCase();
 }
 
 /**
@@ -79,6 +99,8 @@ function sanitizePresenceShare (value) {
     presenceVisibility: 'private',
     presenceGroupIds: [],
     shipOverrideSlug: null,
+    locationOverrideSlug: null,
+    destinationOverrideSlug: null,
     presenceAvailability: 'auto',
     presenceStatusText: null
   };
@@ -110,6 +132,12 @@ function sanitizePresenceShare (value) {
         base.shipOverrideSlug = hit ? hit.slug : raw.toLowerCase();
       }
     }
+  }
+  if (src.locationOverrideSlug !== undefined) {
+    base.locationOverrideSlug = sanitizePlaceSlug(src.locationOverrideSlug);
+  }
+  if (src.destinationOverrideSlug !== undefined) {
+    base.destinationOverrideSlug = sanitizePlaceSlug(src.destinationOverrideSlug);
   }
   return base;
 }
@@ -205,6 +233,10 @@ function catalogShipMeta (known) {
   };
 }
 
+function catalogPlaceMeta (known) {
+  return locationCatalog.catalogLocationMeta(known);
+}
+
 function buildDetectedShip (classId, vehicleId, at) {
   const cid = classIdFromVehicle(classId) || String(classId || '').trim() || null;
   const known = cid ? shipCatalog.resolveShip(cid) : null;
@@ -217,6 +249,24 @@ function buildDetectedShip (classId, vehicleId, at) {
     slug,
     at: at || new Date().toISOString()
   }, catalogShipMeta(known));
+}
+
+/**
+ * Resolve a Game.log origin / destination token to a catalog place.
+ * @param {string} token
+ * @param {string|null|undefined} at
+ */
+function buildDetectedPlace (token, at) {
+  const raw = String(token || '').trim();
+  if (!raw) return null;
+  const known = locationCatalog.resolveLocation(raw);
+  return Object.assign({
+    token: raw,
+    slug: (known && known.slug) || locationCatalog.slugify(raw) || null,
+    name: (known && known.name) || raw,
+    at: at || new Date().toISOString(),
+    source: 'detected'
+  }, catalogPlaceMeta(known));
 }
 
 /**
@@ -240,6 +290,54 @@ function buildShipOverride (slug) {
     name: (hit && hit.name) || resolved,
     at: new Date().toISOString()
   }, catalogShipMeta(hit));
+}
+
+/**
+ * Resolve manual location / destination override.
+ * @param {string|null} slug
+ */
+function buildPlaceOverride (slug) {
+  if (slug === undefined || slug === null || slug === '') return null;
+  if (isPlaceClearedSlug(slug)) {
+    return {
+      slug: PLACE_NONE_SLUG,
+      name: null,
+      cleared: true,
+      at: new Date().toISOString()
+    };
+  }
+  const hit = locationCatalog.resolveLocation(slug);
+  const resolved = hit ? hit.slug : String(slug).trim().toLowerCase();
+  return Object.assign({
+    slug: resolved,
+    name: (hit && hit.name) || resolved,
+    at: new Date().toISOString(),
+    source: 'override'
+  }, catalogPlaceMeta(hit));
+}
+
+function resolvePublishedPlace (override, detected) {
+  if (override && (override.cleared === true || isPlaceClearedSlug(override.slug))) return null;
+  if (override && override.slug) {
+    const known = locationCatalog.resolveLocation(override.slug);
+    return Object.assign({
+      slug: override.slug,
+      name: override.name || (known && known.name) || override.slug,
+      source: 'override'
+    }, catalogPlaceMeta(known), catalogPlaceMeta(override));
+  }
+  if (detected && (detected.slug || detected.name || detected.token)) {
+    const known = locationCatalog.resolveLocation(
+      detected.slug || detected.token || detected.name
+    );
+    return Object.assign({
+      slug: detected.slug || (known && known.slug) || null,
+      name: detected.name || (known && known.name) || detected.token || null,
+      token: detected.token || null,
+      source: 'detected'
+    }, catalogPlaceMeta(known), catalogPlaceMeta(detected));
+  }
+  return null;
 }
 
 /**
@@ -285,6 +383,8 @@ function buildPresenceDocument (opts = {}) {
     statusText: sanitizeStatusText(opts.statusText),
     lastEventAt: opts.lastEventAt || null,
     ship,
+    location: resolvePublishedPlace(opts.locationOverride, opts.detectedLocation),
+    destination: resolvePublishedPlace(opts.destinationOverride, opts.detectedDestination),
     nickname: opts.nickname || null,
     pubkey: opts.pubkey ? String(opts.pubkey) : null,
     visibility: sanitizeVisibility(opts.visibility),
@@ -307,6 +407,8 @@ function buildPresenceShareObject (doc) {
     statusText: sanitizeStatusText(doc.statusText),
     lastEventAt: doc.lastEventAt || null,
     ship: doc.ship || null,
+    location: doc.location || null,
+    destination: doc.destination || null,
     nickname: doc.nickname || null,
     ownerPubkey: doc.pubkey || null,
     visibility: sanitizeVisibility(doc.visibility),
@@ -327,6 +429,12 @@ function mergeRemotePresence (prev, patch = {}) {
   if (patch.statusText !== undefined) base.statusText = sanitizeStatusText(patch.statusText);
   if (patch.lastEventAt !== undefined) base.lastEventAt = patch.lastEventAt || null;
   if (patch.ship !== undefined) base.ship = patch.ship && typeof patch.ship === 'object' ? Object.assign({}, patch.ship) : null;
+  if (patch.location !== undefined) {
+    base.location = patch.location && typeof patch.location === 'object' ? Object.assign({}, patch.location) : null;
+  }
+  if (patch.destination !== undefined) {
+    base.destination = patch.destination && typeof patch.destination === 'object' ? Object.assign({}, patch.destination) : null;
+  }
   if (patch.nickname != null) base.nickname = String(patch.nickname).trim().slice(0, 64) || null;
   if (patch.pubkey) base.pubkey = String(patch.pubkey);
   if (patch.ownerPubkey && !base.pubkey) base.pubkey = String(patch.ownerPubkey);
@@ -356,11 +464,31 @@ function enrichShipMeta (ship) {
   return out;
 }
 
+/**
+ * Ensure location objects carry catalog name / system when missing.
+ * @param {object|null} place
+ * @returns {object|null}
+ */
+function enrichPlaceMeta (place) {
+  if (!place || typeof place !== 'object') return null;
+  const out = Object.assign({}, place);
+  const known = locationCatalog.resolveLocation(out.slug || out.token || out.name);
+  if (!known) return out;
+  if (!out.name && known.name) out.name = known.name;
+  if (!out.slug && known.slug) out.slug = known.slug;
+  if (!out.type && known.type) out.type = known.type;
+  if (!out.system && known.system) out.system = known.system;
+  if (!out.parent && known.parent) out.parent = known.parent;
+  if (out.hotspot == null && known.hotspot) out.hotspot = true;
+  return out;
+}
+
 module.exports = {
   ONLINE_WINDOW_MS,
   PRESENCE_TYPE,
   STATUS_TEXT_MAX,
   SHIP_NONE_SLUG,
+  PLACE_NONE_SLUG,
   VISIBILITIES,
   AVAILABILITIES,
   sanitizeVisibility,
@@ -368,16 +496,21 @@ module.exports = {
   sanitizeStatusText,
   sanitizeGroupIds,
   sanitizePresenceShare,
+  sanitizePlaceSlug,
   isShipClearedSlug,
+  isPlaceClearedSlug,
   isOnline,
   resolveOnline,
   classIdFromVehicle,
   displayNameFromClassId,
   slugFromClassId,
   buildDetectedShip,
+  buildDetectedPlace,
   buildShipOverride,
+  buildPlaceOverride,
   buildPresenceDocument,
   buildPresenceShareObject,
   mergeRemotePresence,
-  enrichShipMeta
+  enrichShipMeta,
+  enrichPlaceMeta
 };

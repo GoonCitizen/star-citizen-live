@@ -7,6 +7,7 @@ const {
   searchCorpus,
   buildHits,
   applySearchHit,
+  hrefOfHit,
   CHAT_CHANNEL_KEY,
   CHAT_PEOPLE_KEY,
   GROUPS_ROSTER_KEY
@@ -79,6 +80,24 @@ describe('appSearch', () => {
     assert.deepStrictEqual(empty.hits, []);
   });
 
+  it('indexes wiki locations onto /locations/:slug', () => {
+    const withLocs = Object.assign({}, corpus, {
+      locations: [{
+        slug: 'area18',
+        name: 'Area18',
+        system: 'Stanton',
+        type: 'LandingZone',
+        parent: 'ArcCorp',
+        aliases: ['Area 18']
+      }]
+    });
+    const hits = searchCorpus(withLocs, 'area18').hits;
+    const loc = hits.find((h) => h.kind === 'location');
+    assert.ok(loc);
+    assert.strictEqual(loc.href, '/locations/area18');
+    assert.match(loc.title, /Area18/);
+  });
+
   it('requires every keyword and ranks title matches first', () => {
     const hits = searchCorpus(corpus, 'nights gunner').hits;
     assert.ok(hits.length >= 1);
@@ -113,5 +132,12 @@ describe('appSearch', () => {
     const peer = searchCorpus(corpus, 'neorion').hits.find((h) => h.kind === 'peer');
     assert.ok(peer);
     assert.ok(peer.href.includes('/profiles/'));
+  });
+
+  it('hrefOfHit prefers href then hash without touching storage', () => {
+    assert.strictEqual(hrefOfHit({ href: '/profiles/discord%3Au1' }), '/profiles/discord%3Au1');
+    assert.strictEqual(hrefOfHit({ hash: 'chat' }), '#chat');
+    assert.strictEqual(hrefOfHit({ tab: 'home' }), '/');
+    assert.strictEqual(hrefOfHit(null), null);
   });
 });

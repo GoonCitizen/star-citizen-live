@@ -4,7 +4,9 @@ LiveRelay). The reference host is **`relay.goon.vc`**. Preferred tools: **`nvm`*
 and **`pm2`**.
 
 This is not a product ship checklist. Owner names the release cut. Gate before
-deploy: `npm test`.
+deploy: `npm test`. Other orgs hosting their own seed (or G00N / PERMAFLEET
+members learning the operator path) start at [`DEVELOPERS.md`](../DEVELOPERS.md).
+Threat model: [`THREAT-MODEL.md`](THREAT-MODEL.md), [`SECURITY.md`](../SECURITY.md).
 
 ## What this host is
 A public GoonCitizen relay is **LiveRelay** (`scripts/node.js`) with:
@@ -18,7 +20,8 @@ A public GoonCitizen relay is **LiveRelay** (`scripts/node.js`) with:
 Schnorr/Bearer session (even from loopback). That matters because Caddy or
 Nginx → `127.0.0.1:3041` makes every client look like loopback. Without server
 mode, the desktop “unlocked identity” write path would apply to the whole
-internet. Do not trust `X-Forwarded-For` for that gate.
+internet. Do not trust `X-Forwarded-For` for that gate. LiveRelay
+`console.warn`s when HTTP is bound off loopback (`functions/httpBindWarning.js`).
 
 Fabric Peer is **on** in server mode unless `SC_FABRIC=0`. (Older docs said
 “hosted API, no local Peer” — that was Hub-mounted LiveRelay. A public *seed*
@@ -196,9 +199,21 @@ Keep `proxy_set_header Host $host` and `X-Forwarded-Proto` so `POST /sessions`
 sees `https://relay.goon.vc`. WebSocket `Upgrade` headers are in the example for
 long-lived dashboard sockets; they do not carry Fabric Peer frames.
 
-Optional static files (`/downstream.agents.md`, `/patches/`) are served from
-the nginx/Caddy document root **before** the LiveRelay proxy. Without those
-locations, LiveRelay 404s the directory index.
+Optional static files (`/downstream.agents.md`, `/patches/`, `/probes/`) are
+served from the nginx/Caddy document root **before** the LiveRelay proxy.
+Without those locations, LiveRelay 404s the directory index.
+
+Agent probe JSON (Discord schedule dumps, adversary probes, …) lands in
+`reports/probes/` locally. On the public host:
+
+```bash
+# after enabling location ^~ /probes/ in nginx (or Caddy handle /probes*)
+SC_AGENT_STATIC_ROOT=/var/www/goon.vc/html npm run probes:publish
+# → https://relay.goon.vc/probes/index.json
+```
+
+Probe writers (`npm run discord:events -- fetch`, adversary probe) also honor
+`SC_AGENT_STATIC_ROOT` at write time. Never put bot tokens or seeds in probes.
 
 Idle timeouts in the example are 3600s so a hung proxy does not drop a slow
 upload. Tighten if you do not need large `POST …/documents`.
@@ -239,11 +254,18 @@ pm2 logs should show `listening on http://127.0.0.1:3041` (bind `127.0.0.1`),
 the register store path, and a Fabric Peer — not `SC_OFFICERS empty` as a
 silent bootstrap.
 
-Playnet contract (Hub admin token, **do not** run `--accept` unless you mean
-to Accept on Hub):
+Playnet contract (local machine = production publisher with the same
+`FABRIC_XPRV` as Hub). Deploy logs posture (`operator` / `adversary` /
+`ambiguous`); ambiguous public-host runs from this script still publish as
+operator. Adversary probes stay on `scripts/adversary-local-probe.js` (no
+`CONTRACT_PUBLISH` / Accept). `--accept` tries Hub-issued
+`FABRIC_HUB_ADMIN_TOKEN` / `~/.fabric/hub-admin-token`, then mints from
+operator key — **do not** run `--accept` unless you mean to Accept on Hub:
 
 ```bash
 npm run playnet:deploy-gooncitizen -- --production --check-only
+# same-config Accept from local:
+# npm run playnet:deploy-gooncitizen -- --production --accept
 ```
 
 ## Git pull / GitHub host keys

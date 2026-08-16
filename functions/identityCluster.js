@@ -1,7 +1,7 @@
 'use strict';
 
 /**
- * Re-export Hub union-find (`@fabric/hub` ≥ `361a750`). LiveRelay and tests
+ * Re-export Hub union-find (`@fabric/hub` ≥ `2658e18`). LiveRelay and tests
  * keep this local path. Canonical gossip strings stay in `identityCrossSign.js`
  * (browser-safe; do not pull Hub Node into the dashboard bundle).
  *
@@ -34,6 +34,10 @@ try {
         members: k ? [k] : [],
         edges: []
       };
+    }
+
+    snapshot (pubkey) {
+      return this.clusterFor(pubkey);
     }
 
     toJSON () {

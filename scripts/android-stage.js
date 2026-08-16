@@ -4,6 +4,7 @@
  * Stage the Android local-first tree:
  *   - copy the built dashboard into android-www (offline UI)
  *   - copy LiveRelay sources into android-www/nodejs/app (embedded Node)
+ *   - copy data/locations + data/ships catalogs (in-game starmap / ships)
  *   - copy Fabric runtime packages into android-www/nodejs/node_modules
  *   - patch the Capacitor Android project (fabric://, loopback cleartext)
  */
@@ -18,12 +19,22 @@ const nodeApp = path.join(www, 'nodejs', 'app');
 
 const COPY_DIRS = ['scripts', 'services', 'functions', 'types', 'contracts', 'assets'];
 const COPY_FILES = ['package.json', 'constants.js'];
+// Bundled starmap / ship JSON (not personal fleet dumps under data/fleets).
+const COPY_DATA_DIRS = ['locations', 'ships'];
 
 const SKIP_BULKY = new Set([
-  '.git', '.github', 'docs', 'test', 'tests', '__tests__', 'coverage',
+  '.git', '.github', '.cursor', '.vscode', '.idea', 'docs', 'test', 'tests', '__tests__', 'coverage',
   'examples', 'libraries', 'components', 'android',
-  'reports', 'jsdom', 'electron', 'prebuilds'
+  'reports', 'jsdom', 'electron', 'prebuilds',
+  // Linked local @fabric/{core,hub} trees (not published tarballs).
+  'stores', '_book', 'logs', 'extension'
   // Do not skip `build/` — packages such as simple-aes ship main at build/index.js.
+  // Do not skip `dist/` globally — valibot and others ship from dist/.
+]);
+
+const SKIP_SUITE_JUNK = new Set([
+  'dist',   // Hub electron-builder output (~GB)
+  'local'   // operator identity JSON
 ]);
 
 const RUNTIME_PACKAGES = [
@@ -56,13 +67,28 @@ function copyDir (src, dest, opts = {}) {
   for (const ent of fs.readdirSync(src, { withFileTypes: true })) {
     if (ent.name === '.git') continue;
     if (ent.name === 'node_modules' && !opts.includeNodeModules) continue;
-    if (opts.skipBulky && SKIP_BULKY.has(ent.name)) continue;
+    if (opts.skipBulky && (SKIP_BULKY.has(ent.name) || /^coverage(-|$)/.test(ent.name))) continue;
+    if (opts.skipSuiteJunk && SKIP_SUITE_JUNK.has(ent.name)) continue;
     if (opts.skipAssets && ent.name === 'assets') continue;
-    if (ent.isFile() && /\.node$/.test(ent.name)) continue;
     const from = path.join(src, ent.name);
     const to = path.join(dest, ent.name);
+    // Nested `npm link` of suite packages: already staged at destRoot.
+    if (ent.isSymbolicLink() &&
+      /node_modules\/@fabric\/(core|http|hub)$/.test(from.replace(/\\/g, '/'))) {
+      continue;
+    }
+    if (ent.isSymbolicLink()) {
+      let real;
+      try { real = fs.realpathSync(from); } catch (_) { continue; }
+      let st;
+      try { st = fs.statSync(real); } catch (_) { continue; }
+      if (st.isDirectory()) copyDir(real, to, opts);
+      else if (st.isFile() && !/\.node$/.test(ent.name)) fs.copyFileSync(real, to);
+      continue;
+    }
+    if (ent.isFile() && /\.node$/.test(ent.name)) continue;
     if (ent.isDirectory()) copyDir(from, to, opts);
-    else fs.copyFileSync(from, to);
+    else if (ent.isFile()) fs.copyFileSync(from, to);
   }
 }
 
@@ -78,10 +104,14 @@ function stagePackage (name, destRoot, seen) {
     console.warn('[ANDROID] missing runtime package', name);
     return;
   }
+  const suite = name === '@fabric/core' || name === '@fabric/http' ||
+    name === '@fabric/hub' || name === '@fabric/discord';
   copyDir(src, path.join(destRoot, ...String(name).split('/')), {
-    includeNodeModules: true,
+    // Linked local trees have a full desktop node_modules; APK ZIP is capped at 65535 entries.
+    includeNodeModules: !suite,
     skipBulky: true,
-    skipAssets: name === '@fabric/hub' || name === '@fabric/http' || name === '@fabric/core'
+    skipSuiteJunk: suite,
+    skipAssets: suite && name !== '@fabric/discord'
   });
   let pkg = {};
   try {
@@ -114,12 +144,20 @@ function stageNodeApp () {
     const src = path.join(root, file);
     if (fs.existsSync(src)) fs.copyFileSync(src, path.join(nodeApp, file));
   }
+  for (const dir of COPY_DATA_DIRS) {
+    const src = path.join(root, 'data', dir);
+    if (!fs.existsSync(src)) {
+      console.warn('[ANDROID] missing data/' + dir);
+      continue;
+    }
+    copyDir(src, path.join(nodeApp, 'data', dir));
+  }
   const example = path.join(root, 'settings', 'example.js');
   if (fs.existsSync(example)) {
     fs.mkdirSync(path.join(nodeApp, 'settings'), { recursive: true });
     fs.copyFileSync(example, path.join(nodeApp, 'settings', 'example.js'));
   }
-  console.log('[ANDROID] staged LiveRelay sources → android-www/nodejs/app');
+  console.log('[ANDROID] staged LiveRelay sources + data catalogs → android-www/nodejs/app');
 }
 
 function stageBuiltinModules () {
@@ -342,7 +380,15 @@ function patchValibotNoIcu (destRoot) {
 
 function stageNodeModules () {
   const destRoot = path.join(www, 'nodejs', 'node_modules');
-  fs.rmSync(destRoot, { recursive: true, force: true });
+  try {
+    fs.rmSync(destRoot, { recursive: true, force: true, maxRetries: 8, retryDelay: 50 });
+  } catch (e) {
+    if (e && (e.code === 'ENOTEMPTY' || e.code === 'EBUSY' || e.code === 'ENOENT')) {
+      execFileSync('rm', ['-rf', destRoot]);
+    } else {
+      throw e;
+    }
+  }
   const seen = new Set();
   for (const name of RUNTIME_PACKAGES) stagePackage(name, destRoot, seen);
   applyNodeModulePatches(destRoot);
@@ -350,7 +396,7 @@ function stageNodeModules () {
 }
 
 function patchAndroidProject () {
-  require('./android-patch.js');
+  require('./android-patch.js').main();
 }
 
 function main () {

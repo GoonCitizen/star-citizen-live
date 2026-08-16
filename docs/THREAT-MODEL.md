@@ -1,6 +1,7 @@
 # GoonCitizen threat model (release)
 Short security/privacy model for operators and players. See also `DECISIONS.md`
-(D-010 peering, D-017 opt-in logs).
+(D-010 peering, D-017 opt-in logs). Public seed runbook: `docs/PRODUCTION.md`.
+Contributors and other orgs: [`DEVELOPERS.md`](../DEVELOPERS.md).
 
 ## Known Attackers
 - Hostile Star Citizen organizations
@@ -22,15 +23,20 @@ Short security/privacy model for operators and players. See also `DECISIONS.md`
   (defaults + `FABRIC_HUB_ALLOWLIST`). After device-link, **IdentityCrossSign**
   is gossiped **on Fabric** so other peers treat the keys as one actor; a stolen device key
   **is** the person until another cluster member publishes `IdentityCrossSignRevoke`.
+  After that, **DeviceDataShare** is the account snapshot (cluster-gated apply).
+  Node LiveRelay advertises RFC1918 `:7777` dial hints on Hub `RegisterWebRTCPeer`
+  (pubkey + candidates only — not seeds or pairing secrets) so siblings can
+  TCP-dial; Hub WebRTC *signaling* stays Passport/browser.
 - **Gameplay log share** is **off by default** (D-017); Discord webhook is
   **env-only** (never Store).
 
 ## What we do *not* claim
-- **End-to-end confidentiality of conversational traffic.** Global chat
-  (`P2P_CHAT_MESSAGE`), DirectChat, and mission offers are **signed plaintext**.
-  Any relay hop (including `hub.fabric.pub` / `relay.goon.vc`) that forwards
-  frames can read those bodies. Membership filters hide UI for non-members;
-  they do **not** encrypt for hubs.
+- **End-to-end confidentiality of the public shoutbox.** The network `global`
+  channel (`P2P_CHAT_MESSAGE`) is **intentionally public** — signed cleartext
+  flood; every relay hop can read it (by design; see `@fabric/core`
+  `docs/MESH_CHAT.md`). DirectChat and mission offers are also **signed
+  plaintext** until sealed/onion paths are used. Membership filters hide UI
+  for non-members; they do **not** encrypt for hubs.
 - **Perfect secrecy for sealed GroupChat.** When `groupChatSeal` is on, outbound
   GroupChat uses **participant-key seal (v2)**: a random AES-256-GCM content key
   wrapped to each member via ephemeral ECDH. Relays and tip-journaling hubs

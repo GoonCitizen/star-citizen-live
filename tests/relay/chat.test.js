@@ -170,6 +170,28 @@ test('ChatManager.ingest rejects impersonation (author must be the batch signer)
   assert.throws(() => cm.ingest(b.pubkey, { channel: 'global', body: 'as alice', author: a.pubkey, ts }), /must match/);
 });
 
+test('ChatManager clusterShare can store a group channel before the group exists', async () => {
+  const a = createIdentity();
+  const store = new Store({});
+  const cm = new ChatManager({ store });
+  assert.throws(() => cm.post({
+    channel: 'group:not-here-yet',
+    body: 'later',
+    author: a.pubkey
+  }), /unknown channel/);
+  const row = cm.post({
+    channel: 'group:not-here-yet',
+    body: 'later',
+    author: a.pubkey,
+    ts: '2026-08-15T21:00:00.000Z',
+    source: 'cluster-sync',
+    clusterShare: true
+  });
+  assert.equal(row.channel, 'group:not-here-yet');
+  assert.equal(row.body, 'later');
+  assert.equal(row.source, 'cluster-sync');
+});
+
 // ---- Hosted REST: signed posts + membership enforcement ----
 
 test('hosted chat: signed envelope required, group channels members-only', async () => {

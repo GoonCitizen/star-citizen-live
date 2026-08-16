@@ -21,6 +21,61 @@ const KEEPALIVE_TYPES = new Set([
   'MessageReceipt'
 ]);
 
+/** Wire types that are slot-fill / advertise, not application sync. */
+const PEERING_WIRE_TYPES = new Set([
+  'P2P_PEERING_OFFER',
+  'P2P_PEER_GOSSIP',
+  'P2P_PEER_ANNOUNCE',
+  'P2P_STATE_ANNOUNCE'
+]);
+
+function formatPeerLog (kind, detail) {
+  const extra = detail != null && String(detail).trim() ? ' ' + String(detail).trim() : '';
+  return `[STAR-CITIZEN] fabric peering ${kind}${extra}`;
+}
+
+function formatSyncLog (kind, detail) {
+  const extra = detail != null && String(detail).trim() ? ' ' + String(detail).trim() : '';
+  return `[STAR-CITIZEN] fabric sync ${kind}${extra}`;
+}
+
+function shouldLogWireSummary (summary) {
+  if (!summary || typeof summary !== 'object') return false;
+  if (summary.keepalive === true) return false;
+  if (isKeepaliveType(summary.type) || isKeepaliveType(summary.friendlyType)) return false;
+  return true;
+}
+
+function formatWireLog (summary) {
+  if (!shouldLogWireSummary(summary)) return null;
+  const peering = PEERING_WIRE_TYPES.has(String(summary.type || ''));
+  const channel = peering ? 'peering' : 'sync';
+  const dir = summary.direction === 'out' ? 'out' : 'in';
+  const type = summary.appType
+    ? `${summary.type}/${summary.appType}`
+    : (summary.friendlyType || summary.type || 'Unknown');
+  const peer = summary.peer ? ` peer=${summary.peer}` : '';
+  return `[STAR-CITIZEN] fabric ${channel} ${dir} ${type}${peer}`;
+}
+
+function logFabricPeer (kind, detail) {
+  const line = formatPeerLog(kind, detail);
+  console.log(line);
+  return line;
+}
+
+function logFabricSync (kind, detail) {
+  const line = formatSyncLog(kind, detail);
+  console.log(line);
+  return line;
+}
+
+function logFabricWire (summary) {
+  const line = formatWireLog(summary);
+  if (line) console.log(line);
+  return line;
+}
+
 /**
  * @param {object} [opts]
  * @param {number} [opts.capacity]
@@ -210,6 +265,15 @@ function summarizeMessage (message, meta = {}) {
     bodyPreview = bodyStr.length > 280 ? bodyStr.slice(0, 280) + '…' : bodyStr;
   }
 
+  let hex = meta.hex ? String(meta.hex) : null;
+  if (!hex) {
+    try {
+      if (typeof message.toBuffer === 'function') {
+        hex = message.toBuffer().toString('hex');
+      }
+    } catch (_) { /* ignore */ }
+  }
+
   const summary = [
     meta.direction === 'out' ? '→' : '←',
     type,
@@ -231,7 +295,8 @@ function summarizeMessage (message, meta = {}) {
     bodyPreview,
     body: bodyJson != null ? bodyJson : (bodyPreview || null),
     summary,
-    keepalive: isKeepaliveType(type) || isKeepaliveType(friendlyType)
+    keepalive: isKeepaliveType(type) || isKeepaliveType(friendlyType),
+    hex: hex || null
   };
 }
 
@@ -244,14 +309,63 @@ function summarizeBuffer (buffer, meta = {}) {
   if (!Buffer.isBuffer(buffer) || !buffer.length) return null;
   const Message = require('@fabric/core/types/message');
   const message = Message.fromBuffer(buffer);
-  return summarizeMessage(message, meta);
+  return summarizeMessage(message, Object.assign({}, meta, { hex: buffer.toString('hex') }));
+}
+
+/**
+ * Export the ring as a portable {@link FabricMessageCollection} (AMP hex).
+ * Rows without `hex` are skipped — they cannot be replayed.
+ * @param {{ list: Function }} log
+ * @param {Object} [opts]
+ * @param {boolean} [opts.hideKeepalive]
+ * @param {number} [opts.limit]
+ * @returns {object}
+ */
+function collectionFromLog (log, opts = {}) {
+  const col = require('@fabric/core/functions/fabricMessageCollection');
+  const collection = col.createCollection();
+  if (!log || typeof log.list !== 'function') return col.toJSON(collection);
+  const rows = log.list({
+    hideKeepalive: opts.hideKeepalive === true,
+    limit: opts.limit || 2000
+  });
+  for (const row of rows) {
+    if (!row || !row.hex) continue;
+    col.ingest(collection, row.hex, {
+      peer: row.peer || null,
+      origin: row.direction || null,
+      ts: row.ts || null
+    });
+  }
+  return col.toJSON(collection);
+}
+
+/**
+ * Replay a saved collection through `handler`.
+ * @param {object} doc
+ * @param {Function} handler
+ * @returns {object}
+ */
+function replayLogCollection (doc, handler) {
+  const col = require('@fabric/core/functions/fabricMessageCollection');
+  return col.replay(col.fromJSON(doc), handler);
 }
 
 module.exports = {
   createFabricMessageLog,
   summarizeMessage,
   summarizeBuffer,
+  collectionFromLog,
+  replayLogCollection,
   isKeepaliveType,
   KEEPALIVE_TYPES,
+  PEERING_WIRE_TYPES,
+  shouldLogWireSummary,
+  formatPeerLog,
+  formatSyncLog,
+  formatWireLog,
+  logFabricPeer,
+  logFabricSync,
+  logFabricWire,
   DEFAULT_CAPACITY
 };

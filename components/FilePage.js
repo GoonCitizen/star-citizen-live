@@ -29,6 +29,11 @@ const CSS = `
   .fpage-tag.pub{background:rgba(63,185,80,.15);color:var(--good)}
   .fpage-tag.pin{background:rgba(247,147,26,.16);color:#f7931a}
   .fpage-tag.peer{background:rgba(56,139,253,.15);color:var(--accent)}
+  .fpage-tag.sync{background:rgba(56,139,253,.15);color:var(--accent)}
+  .fpage-toggle{display:flex;gap:10px;align-items:flex-start;padding:10px 12px;border:1px solid var(--line);
+    border-radius:8px;background:var(--panel2)}
+  .fpage-toggle label{display:grid;gap:4px;font-size:13px;font-weight:600;cursor:pointer}
+  .fpage-toggle .hint{font-weight:400;color:var(--muted);font-size:12px;line-height:1.45}
   .fpage-panel{background:var(--panel);border:1px solid var(--line);border-radius:12px;overflow:hidden}
   .fpage-panel h2{font-size:13px;margin:0;padding:12px 16px;border-bottom:1px solid var(--line);font-weight:600}
   .fpage-panel .body{padding:14px 16px;display:grid;gap:10px}
@@ -64,7 +69,8 @@ class FilePage extends React.Component {
       error: null,
       notice: null,
       detail: null,
-      pinBusy: false
+      pinBusy: false,
+      clusterBusy: false
     };
   }
 
@@ -122,6 +128,31 @@ class FilePage extends React.Component {
     }
   }
 
+  async putClusterSync (on) {
+    const id = this.fileId;
+    if (!id) return;
+    this.setState({ clusterBusy: true, error: null, notice: null });
+    try {
+      const res = await fetch(`${BASE}/files/${encodeURIComponent(id)}/cluster-sync`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ clusterSync: on === true })
+      });
+      const j = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error((j && j.error) || res.statusText);
+      this.setState({
+        clusterBusy: false,
+        notice: on
+          ? 'This file will copy to your other linked devices over Fabric.'
+          : 'Stopped syncing this file to other devices.',
+        detail: (j && j.data) || this.state.detail
+      });
+      await this.load();
+    } catch (e) {
+      this.setState({ clusterBusy: false, error: e.message || String(e) });
+    }
+  }
+
   render () {
     if (this.state.loading) {
       return React.createElement('div', { className: 'fpage' },
@@ -137,7 +168,9 @@ class FilePage extends React.Component {
     const rec = d.record || d.file || {};
     const id = rec.id || d.id || this.fileId;
     const pinned = d.profilePinned === true || rec.profilePinned === true;
+    const clusterSync = d.clusterSync === true || rec.clusterSync === true;
     const canPin = d.self === true && d.local !== false;
+    const canCluster = canPin;
     const publisher = d.publisher || rec.publisher || null;
     const publisherHref = publisher ? (profileHref(publisher) || ('/profiles/' + encodeURIComponent(publisher))) : null;
     const offers = Array.isArray(d.offers) ? d.offers : [];
@@ -161,6 +194,10 @@ class FilePage extends React.Component {
             : null,
           pinned
             ? React.createElement('span', { className: 'fpage-tag pin' }, 'on profile')
+            : null,
+          clusterSync
+            ? React.createElement('span', { className: 'fpage-tag sync' },
+              rec.clusterPending ? 'sync pending' : 'device sync')
             : null,
           d.local === false
             ? React.createElement('span', { className: 'fpage-tag peer' }, 'peer listing')
@@ -189,6 +226,22 @@ class FilePage extends React.Component {
                 ? 'Pinned — Federation groups you belong to see this listing on your profile (name, size, price — not the bytes).'
                 : 'Pin to profile to list this file for group members. A local developer install uses the same pin to share GoonCitizen builds over Fabric.')
               : 'Metadata only on this page. Bytes stay with the offering node until a Fabric inventory transfer.'),
+          canCluster
+            ? React.createElement('div', { className: 'fpage-toggle' },
+              React.createElement('input', {
+                type: 'checkbox',
+                id: 'fpage-cluster-sync',
+                checked: clusterSync,
+                disabled: this.state.clusterBusy,
+                onChange: () => this.putClusterSync(!clusterSync)
+              }),
+              React.createElement('label', { htmlFor: 'fpage-cluster-sync' },
+                'Sync to my other devices',
+                React.createElement('span', { className: 'hint' },
+                  'Copies this file to phones and desktops in your identity cluster over Fabric. Not a public listing, and not the same as pinning to your profile.')
+              )
+            )
+            : null,
           React.createElement('div', { className: 'fpage-kv' },
             React.createElement('b', null, 'type '), React.createElement('br'),
             rec.mime || 'application/octet-stream'),

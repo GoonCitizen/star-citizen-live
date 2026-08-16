@@ -1,15 +1,18 @@
 # Star Citizen Live
-A ~~**zero-dependency Node.js service**~~ that watches the Star Citizen `Game.log`
-file (read-only) and relays gameplay — logins, missions/objectives,
-combat-progress, player-downs, and (on older game builds) kills — to a **live web
-dashboard**, an optional **Discord webhook**, and a small **REST API**. On top of
-the relay runs an **officer-validated mission register** with a tamper-evident,
-hash-chained audit log.
+A Node.js service that watches the Star Citizen `Game.log` file (read-only) and
+relays gameplay — logins, missions/objectives, combat-progress, player-downs,
+and (on older game builds) kills — to a **live web dashboard**, optional
+**Discord**, and a REST API. On top of the relay: an **officer-validated mission
+register**, Federation **Groups**, signed chat, and a **Fabric Peer**.
 
-> This is a **Fabric-free** rebuild of the original `@rsi/star-citizen` Fabric
-> service (the Fabric/p2p framework was removed — see `DECISIONS.md` → D-002). The
-> service now runs on Node.js built-ins only. The original Fabric code is kept for
-> reference but is not what runs.
+> **Call for developers.** G00N SQUAD, PERMAFLEET, and other orgs (including
+> competitors): run a node, send a patch, or fork and rebrand. Using the code
+> still speaks the Fabric Protocol. See **[DEVELOPERS.md](DEVELOPERS.md)**.
+>
+> **What runs:** `npm start` → `services/LiveRelay.js` plus a Fabric Peer
+> (D-009 / D-010). Node.js **24.15.0**, then `npm i` (Fabric git pins). Current
+> surface: **[AGENTS.md](AGENTS.md) §3–§4**. D-002 removed a heavyweight
+> *transport*; the protocol is back. `services/StarCitizen.js` is reference only.
 
 ## Features
 
@@ -26,6 +29,8 @@ hash-chained audit log.
 - 💬 **Optional Discord webhook** with rich embeds.
 - 📝 **Officer-validated mission register** — post → apply → assign → claim →
   officer-validate, with a hash-chained audit trail.
+- 🌐 **Fabric Network** — Peer on `:7777` (default seeds `hub.fabric.pub` and
+  `relay.goon.vc`), Federation Groups, signed chat. Gameplay log share is **opt-in**.
 
 > **Note on kills:** CIG **removed** kill logging (`<Actor Death> CActor::Kill`,
 > `<Vehicle Destruction>`) after SC **4.3.0**. The kill feed is verified against
@@ -34,15 +39,17 @@ hash-chained audit log.
 
 ## Requirements
 
-**Node.js LTS (18+).** That's it — the service has **no runtime npm dependencies**.
-There is **no `npm install` step** needed to run it.
+**Node.js 24.15.0** (see `.nvmrc`). Then `npm i` — Fabric is pinned from Git
+(`.npmrc` sets `allow-git=all`). Desktop / mesh paths are not zero-dependency.
 
 ## Quick start
 
 ```bash
-npm start        # run the service
-npm test         # run the test suite (Node's built-in runner)
-npm run replay /path/to/Game.log   # replay a saved log and tally detected events
+npm i            # Fabric git deps
+npm start        # LiveRelay → http://localhost:3041/
+npm test         # unit + fabric + relay + integration + ui
+npm run desktop  # Electron shell
+npm run replay -- /path/to/Game.log
 ```
 
 Then open:
@@ -51,7 +58,8 @@ Then open:
 - **Status JSON:** http://localhost:3041/services/star-citizen
 
 `npm start` auto-detects your Star Citizen install. It **only ever reads** the log
-— it never modifies your game installation.
+— it never modifies your game installation. Contributor / org call:
+[DEVELOPERS.md](DEVELOPERS.md).
 
 ## Configuration
 
@@ -93,12 +101,18 @@ Errors map to **403** (officer forbidden), **404** (not found), else **400**.
 
 ## Documentation
 
-- `AGENTS.md` / `CLAUDE.md` — full project context for AI coding assistants.
-- `CONTINUE.md` — how to run/replay right now.
+- `DEVELOPERS.md` / `CONTRIBUTING.md` — call for G00N SQUAD, PERMAFLEET, and other orgs (maps the rest of this list).
+- `AGENTS.md` / `CLAUDE.md` — full project context for AI coding assistants (current surface).
+- `QUICKSTART.md` / `ELECTRON_BUILD.md` / `ANDROID.md` — run desktop, installer, sideload.
+- `docs/PRODUCTION.md` — public Fabric seed operators.
+- `SECURITY.md` / `docs/THREAT-MODEL.md` — claims vs non-claims.
+- `docs/API-SURFACES.md` — IPC vs HTTP vs Fabric (not `API.md`).
+- `CONTINUE.md` — how to run/replay right now (partially stale; prefer AGENTS §3).
 - `PROGRESS.md` — milestone + retrospective trail (newest first).
 - `DECISIONS.md` — the *why* behind key choices (ADRs).
-- `SOLUTION-BRIEF.md` — plain-English product brief.
+- `SOLUTION-BRIEF.md` / `Permafleet-Solution-Brief.md` — plain-English product brief.
 - `DESIGN-missions-mvp.md`, `DESIGN-distributed.md` — technical designs.
+- `START-HERE-claude-code.md` — first session with an AI coding tool.
 
 ## License
 

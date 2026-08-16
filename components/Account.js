@@ -1,7 +1,7 @@
 'use strict';
 
 /**
- * Dedicated Keys / Security / Privacy pages (Android-first).
+ * Dedicated Keys / Devices / Security / Privacy pages (Android + desktop).
  * Avoids stacking the Identity and Settings modals on a mobile device.
  */
 
@@ -11,6 +11,7 @@ const { isAndroidCompanion, androidSurface } = require('../functions/androidSurf
 
 const SECTIONS = [
   ['keys', 'Keys'],
+  ['devices', 'Devices'],
   ['security', 'Security'],
   ['privacy', 'Privacy']
 ];
@@ -23,6 +24,9 @@ const CSS = `
 
 function leadFor (section) {
   const android = isAndroidCompanion();
+  if (section === 'devices') {
+    return 'This identity’s linked devices. Pair with fabric://link, then chat and notes replay over Fabric both ways (desktop ↔ phone). Website login is Passport or GoonCitizen fabric://login — not this pairing QR.';
+  }
   if (section === 'security') {
     return 'Lock this identity, set auto-lock, and link or revoke Passport / desktop / another device. Unlock to sign. Lost the password? Forget the identity on this device, then restore from seed.';
   }
@@ -33,8 +37,8 @@ function leadFor (section) {
   }
   return android
     ? (androidSurface('associatedFunds')
-      ? 'This device’s Fabric key, recovery backups, and associated Bitcoin funds. Each app keeps its own seed — link devices from Security.'
-      : 'This device’s Fabric key and recovery backups. Each app keeps its own seed — link devices from Security.')
+      ? 'This device’s Fabric key, recovery backups, and associated Bitcoin funds. Each app keeps its own seed — link devices from Devices.'
+      : 'This device’s Fabric key and recovery backups. Each app keeps its own seed — link devices from Devices.')
     : 'This device’s Fabric key, recovery backups, and associated Bitcoin funds.';
 }
 

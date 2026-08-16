@@ -68,6 +68,7 @@ const {
   canOperatorPostToDiscord
 } = require('../functions/discordChannelAccess');
 const { androidSurface } = require('../functions/androidSurface');
+const { fetchPresenceRoster } = require('../functions/presenceClient');
 
 const BASE = '/services/star-citizen';
 
@@ -983,8 +984,8 @@ class Chat extends React.Component {
     const me = this.props.identityPubkey || null;
     let roster = {};
     try {
-      const r = await fetch(`${BASE}/presence/roster`).then((res) => (res.ok ? res.json() : null));
-      roster = (r && r.data) || {};
+      const r = await fetchPresenceRoster();
+      roster = (r && r.ok && r.data) || {};
     } catch (_) { /* ignore */ }
 
     const byPk = new Map();
@@ -1463,7 +1464,7 @@ class Chat extends React.Component {
             fabric.map((g) => g.name).join(' · ')))
         : null,
       React.createElement('div', { className: 'hint' },
-        'Notes stay on this node until you share one to a Federation group or a peer.')
+        'Notes stay on this node until you pin one to a profile (📌) or share it to a Federation group.')
     );
   }
 
@@ -1629,6 +1630,7 @@ class Chat extends React.Component {
       handle: nickname || m.handle,
       authToken: this.state.authToken,
       shareGroups: this.state.inviteGroups || this.state.fabricGroups || [],
+      identityPubkey: this.props.identityPubkey || null,
       sharePeer: isSelf ? null : pubkey,
       compact: true
     })
@@ -2100,7 +2102,7 @@ class Chat extends React.Component {
         ? 'Group chat'
         : (active
           ? (active.kind === 'global'
-            ? '🌐 Global'
+            ? 'Public shoutbox'
             : (active.bridged
               ? ('👥 ' + (active.label || '') +
                 (active.discordLabel ? ' · ' + String(active.discordLabel).replace(/^#/, '#') : ''))
@@ -2114,27 +2116,29 @@ class Chat extends React.Component {
       ? 'bot guilds, channels & users'
       : (embedded
         ? 'members only · same channel as Chat tab'
-        : (active && active.bridged
-          ? (discordListenOnly
-            ? 'Fabric + Discord — you cannot post to Discord (listen-only)'
-            : (!access.botCanPost
-              ? 'Fabric + Discord — the bot cannot chat on Discord'
-              : 'Fabric + Discord — the bot relays as itself'))
-          : (active && active.kind === 'discord'
+        : (active && active.kind === 'global'
+          ? 'cleartext mesh flood — relays can read; use sealed groups or onion for private'
+          : (active && active.bridged
             ? (discordListenOnly
-              ? 'you cannot chat — listen-only (no Chat → Discord)'
+              ? 'Fabric + Discord — you cannot post to Discord (listen-only)'
               : (!access.botCanPost
-                ? 'bot cannot chat here'
-                : 'Discord channel — bot relays as itself'))
-            : (active && active.kind === 'discord-dm'
-              ? (active.bot || (botDm && botDm.key === active.key)
-                ? 'local bot DM — works even when you run the bot'
-                : 'Discord DM via the local bot')
-              : (active && active.kind === 'group'
-                ? 'members only'
-                : (active && active.kind === 'dm'
-                  ? 'direct — only you and them'
-                  : 'network — relayed via your Fabric peers'))))));
+                ? 'Fabric + Discord — the bot cannot chat on Discord'
+                : 'Fabric + Discord — the bot relays as itself'))
+            : (active && active.kind === 'discord'
+              ? (discordListenOnly
+                ? 'you cannot chat — listen-only (no Chat → Discord)'
+                : (!access.botCanPost
+                  ? 'bot cannot chat here'
+                  : 'Discord channel — bot relays as itself'))
+              : (active && active.kind === 'discord-dm'
+                ? (active.bot || (botDm && botDm.key === active.key)
+                  ? 'local bot DM — works even when you run the bot'
+                  : 'Discord DM via the local bot')
+                : (active && active.kind === 'group'
+                  ? 'members only'
+                  : (active && active.kind === 'dm'
+                    ? 'direct — only you and them'
+                    : 'network — relayed via your Fabric peers')))))));
 
     const criteria = this.channelSearchCriteria();
     const keepKey = discordPage ? null : this.state.channel;
@@ -2215,7 +2219,9 @@ class Chat extends React.Component {
                     ? 'loading…'
                     : (discordChannelId
                       ? 'No recent Discord messages — the bot may lack Read Message History, or the channel is quiet.'
-                      : 'No messages yet — say hello, Citizen.'))
+                      : (active && active.kind === 'global'
+                        ? 'Public shoutbox is empty — posts are cleartext on the mesh (relays can read). Sealed group chat is for confidential traffic.'
+                        : 'No messages yet — say hello, Citizen.')))
             ),
             this.state.error ? React.createElement('div', { className: 'chat-err' }, this.state.error) : null,
             React.createElement('div', { className: 'chat-compose-wrap' },

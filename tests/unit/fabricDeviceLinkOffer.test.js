@@ -182,6 +182,70 @@ describe('fabricDeviceLinkOffer initiator', () => {
     assert.equal(res.peerPubkey, 'cd'.repeat(33));
     assert.equal(res.peerFabricId, 'id1z');
   });
+
+  it('recovers peerPubkey from responder xpub when Hub omits pubkeyHex', async () => {
+    const ident = createIdentity();
+    const peer = createIdentity();
+    const { keyFromIdentity } = require('../../functions/identity');
+    const peerKey = keyFromIdentity(peer);
+    const sessionId = crypto.randomBytes(24).toString('hex');
+    const nonce = crypto.randomBytes(32).toString('hex');
+    const fetchImpl = async () => ({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        ok: true,
+        status: 'linked',
+        sessionId,
+        nonce,
+        responder: { id: peer.id, xpub: peerKey.xpub }
+      })
+    });
+    const res = await tickDeviceLinkOffer(ident, {
+      sessionId,
+      hubBase: DEFAULT_DEVICE_LINK_HUB,
+      origin: DEFAULT_DEVICE_LINK_HUB,
+      nonce
+    }, { fetchImpl });
+    assert.equal(res.ok, true);
+    assert.equal(String(res.peerPubkey).toLowerCase(), String(peerKey.pubkey).toLowerCase());
+  });
+
+  it('marks a 404 hub poll as expired', async () => {
+    const ident = createIdentity();
+    const fetchImpl = async () => ({
+      ok: false,
+      status: 404,
+      json: async () => ({ ok: false, error: 'unknown or expired device link' })
+    });
+    const res = await tickDeviceLinkOffer(ident, {
+      sessionId: 'aa'.repeat(24),
+      hubBase: DEFAULT_DEVICE_LINK_HUB,
+      origin: DEFAULT_DEVICE_LINK_HUB,
+      createdAt: Date.now()
+    }, { fetchImpl });
+    assert.equal(res.ok, false);
+    assert.equal(res.expired, true);
+    assert.match(String(res.error), /expired/i);
+  });
+
+  it('times out a stale local offer before calling the hub', async () => {
+    const ident = createIdentity();
+    let called = 0;
+    const fetchImpl = async () => {
+      called += 1;
+      return { ok: true, status: 200, json: async () => ({ ok: true, status: 'pending' }) };
+    };
+    const res = await tickDeviceLinkOffer(ident, {
+      sessionId: 'bb'.repeat(24),
+      hubBase: DEFAULT_DEVICE_LINK_HUB,
+      origin: DEFAULT_DEVICE_LINK_HUB,
+      createdAt: Date.now() - (11 * 60 * 1000)
+    }, { fetchImpl });
+    assert.equal(res.ok, false);
+    assert.equal(res.expired, true);
+    assert.equal(called, 0);
+  });
 });
 
 describe('fabricDeviceLinkClient headers', () => {

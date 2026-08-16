@@ -8,7 +8,8 @@
 
 try {
   module.exports = require('@fabric/http/functions/httpSharedMode');
-} catch (_) {
+} catch (err) {
+  if (err && err.code !== 'MODULE_NOT_FOUND') throw err;
   const DEFAULT_HTTP_LISTEN_ENV_KEYS = Object.freeze([
     'FABRIC_HUB_INTERFACE',
     'INTERFACE',

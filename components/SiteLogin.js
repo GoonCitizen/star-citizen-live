@@ -6,8 +6,8 @@
  * or Fabric Passport (postMessage FABRIC_SITE_LOGIN_REQUEST).
  *
  * No-op in Electron (desktop uses Identity + FabricLoginModal as the signer).
- * When the page is served by standalone LiveRelay (no Hub), createSession
- * fails with a clear error — deploy goon.vc Hub as the HTTP front.
+ * POST /sessions is LiveRelay (D-011), Hub, or the goon.vc HTML zipper proxy.
+ * A 404 means this origin is not that HTTP front.
  */
 
 const React = require('react');
@@ -123,7 +123,7 @@ class SiteLogin extends React.Component {
     if (!res.ok || !j || !j.ok) {
       const hint = (j && j.error) || `HTTP ${res.status}`;
       const missing = res.status === 404
-        ? ' — this host is not serving Hub /sessions (deploy goon.vc Hub as the HTTP front).'
+        ? ' — this host is not serving /sessions (use goon.vc, Hub, or a LiveRelay with site login).'
         : '';
       throw new Error(hint + missing);
     }
@@ -261,13 +261,13 @@ class SiteLogin extends React.Component {
               className: 'sl-btn primary',
               disabled: busy,
               onClick: () => this._loginDesktop()
-            }, 'GoonCitizen'),
+            }, 'Sign in with GoonCitizen'),
             React.createElement('button', {
               type: 'button',
               className: 'sl-btn',
               disabled: busy,
               onClick: () => this._loginPassport()
-            }, 'Passport')),
+            }, 'Sign in with Passport')),
         this.state.protocolUrl && !idLabel
           ? React.createElement('div', { className: 'sl-qr' },
             this.state.qrDataUrl

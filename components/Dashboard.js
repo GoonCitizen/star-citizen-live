@@ -10,6 +10,7 @@ const React = require('react');
 const Onboarding = require('./Onboarding');
 const Identity = require('./Identity');
 const FabricLoginModal = require('./FabricLoginModal');
+const QrScanOverlay = require('./QrScanOverlay');
 const GroupOfferModal = require('./GroupOfferModal');
 const SiteLogin = require('./SiteLogin');
 const Chat = require('./Chat');
@@ -29,11 +30,17 @@ const Wallet = require('./Wallet');
 const DocumentExchange = require('./DocumentExchange');
 const LogBrowser = require('./LogBrowser');
 const AppSearch = require('./AppSearch');
+const DataSyncStatus = require('./DataSyncStatus');
+const LinkedDevices = require('./LinkedDevices');
 const ShipPicker = require('./ShipPicker');
+const LocationPicker = require('./LocationPicker');
+const StarMap = require('./StarMap');
+const MapPage = require('./MapPage');
 const activityHeat = require('../functions/activityHeat');
 const missionCharts = require('../functions/missionCharts');
 
 const { FEATURES } = require('../constants');
+const { fetchPresence, putPresence, putPresenceShip } = require('../functions/presenceClient');
 const { FEED_CATEGORIES, FEED_SOURCES, DEFAULT_FEED_SOURCES, filterLiveFeed } = require('../functions/liveFeed');
 const {
   isAndroidCompanion,
@@ -44,10 +51,11 @@ const { offerPassportDeviceLink } = require('../functions/fabricDeviceLinkOffer'
 const featureEnabled = (key) => FEATURES[key] !== false;
 
 // Top-level features, listed along the top of the dashboard (Hub-style).
-// Order is product-facing: Home → Files (advanced) → Groups → Missions → Fleets → Chat → Wallet → Network.
+// Order is product-facing: Home → Map → Files (advanced) → Groups → Missions → Fleets → Chat → Wallet → Network.
 // Feature-flagged tabs (see constants.FEATURES) are filtered out when disabled.
 const TABS = [
   ['home', 'Home'],
+  ['map', 'Map'],
   ['documents', 'Files'],
   ['groups', 'Groups'],
   ['missions', 'Missions'],
@@ -74,9 +82,9 @@ const ADVANCED_TABS = new Set(['documents']);
 // Legacy #analyze / #live / #peers / #messages hash aliases resolve in resolveHash().
 const TAB_KEYS = TABS.map(([k]) => k).concat([
   'notifications', 'analyze', 'live', 'peers', 'messages', 'feed',
-  'keys', 'security', 'privacy'
+  'keys', 'devices', 'security', 'privacy'
 ]);
-const ACCOUNT_TABS = new Set(['keys', 'security', 'privacy']);
+const ACCOUNT_TABS = new Set(['keys', 'devices', 'security', 'privacy']);
 
 function preferAccountPages () {
   return isAndroidCompanion();
@@ -100,7 +108,8 @@ function resolveHash (rawHash, advancedMode) {
   if (h === 'network' || h.startsWith('network/')) {
     const view = h.split('/')[1] || 'feed';
     const allowed = new Set(NETWORK_VIEWS.map(([k]) => k)
-      .concat(advancedMode ? NETWORK_ADVANCED_VIEWS.map(([k]) => k) : []));
+      .concat(advancedMode ? NETWORK_ADVANCED_VIEWS.map(([k]) => k) : [])
+      .concat(['settings']));
     return { tab: 'network', networkView: allowed.has(view) ? view : 'feed' };
   }
   if (TAB_KEYS.includes(h) && TABS.some(([k]) => k === h)) {
@@ -200,6 +209,8 @@ const CSS = `
   }
   .network-nav{display:flex;flex-wrap:wrap;align-items:center;gap:8px;padding:14px 18px 0}
   .network-nav .hint{color:var(--muted);font-size:12px;margin-left:4px}
+  .network-nav .gear{margin-left:auto}
+  .network-nav .gear.on{border-color:var(--accent);color:var(--accent);background:rgba(59,130,246,.14)}
   .row{display:flex;flex-wrap:wrap;align-items:center;gap:14px}
   .row.tabs{flex-wrap:nowrap;overflow-x:auto;-webkit-overflow-scrolling:touch;gap:8px;padding-bottom:4px;
     scrollbar-width:thin}
@@ -245,7 +256,10 @@ const CSS = `
   .counts .k b{color:var(--kill)}
   .ctrl{margin-left:auto;display:flex;gap:12px;align-items:center;color:var(--muted);font-size:12.5px;
     flex-wrap:wrap;min-width:0;max-width:100%;justify-content:flex-end}
-  .ctrl .btn,.ctrl .bell,.ctrl .gear,.ctrl .sl-wrap{flex:none}
+  .ctrl .btn,.ctrl .bell,.ctrl .gear,.ctrl .qrscan,.ctrl .syncstat,.ctrl .sl-wrap,.ctrl .ov-btn{flex:none}
+  .ov-btn{background:var(--panel2);border:1px solid var(--line);color:var(--text);border-radius:7px;
+    padding:5px 10px;font-size:12px;font-weight:600;cursor:pointer;line-height:1.2}
+  .ov-btn.on{border-color:var(--accent);color:var(--accent);background:rgba(59,130,246,.14)}
   .gear{background:var(--panel2);border:1px solid var(--line);color:var(--text);border-radius:7px;
     padding:5px 11px;font-size:14px;cursor:pointer;line-height:1;flex:none}
   .gear:hover{border-color:var(--accent)}
@@ -257,9 +271,13 @@ const CSS = `
          display:flex;flex-direction:column;min-height:200px}
   .panel.full{grid-column:1 / -1}
   .panel h2{font-size:13px;margin:0;padding:10px 14px;border-bottom:1px solid var(--line);
-            display:flex;align-items:center;gap:8px;font-weight:600}
+            display:flex;align-items:center;gap:8px;font-weight:600;flex-wrap:wrap}
   .panel h2 .sub{color:var(--muted);font-weight:400;font-size:12px}
   .panel h2 .btn{margin-left:auto}
+  .panel h2 .home-title{flex:1;min-width:12em}
+  .panel h2 .home-tools{margin-left:auto;padding:0;flex-wrap:wrap}
+  .panel h2 .home-tools .btn{margin-left:0}
+  .panel h2 .home-tools .sub{margin-left:0}
   .btn{background:var(--panel2);border:1px solid var(--line);color:var(--text);
        border-radius:6px;padding:4px 10px;font-size:12px;cursor:pointer}
   .btn:hover{border-color:var(--accent)}
@@ -292,7 +310,7 @@ const CSS = `
     .counts{flex:1 1 100%;gap:8px;font-size:11.5px}
     .ctrl{flex:1 1 100%;margin-left:0;gap:6px;justify-content:flex-end;width:100%}
     .ctrl .btn{padding:4px 8px;font-size:11.5px}
-    .bell,.gear{padding:5px 8px}
+    .bell,.gear,.qrscan,.syncstat{padding:5px 8px}
     .idchip{max-width:min(180px,48vw)}
     input[type=text]{min-width:0;width:100%}
     .header-nav{gap:6px;margin-top:8px}
@@ -344,6 +362,10 @@ const CSS = `
   .bell.on{border-color:var(--accent);color:var(--accent)}
   .bell .dot{position:absolute;top:-4px;right:-4px;background:var(--accent);color:#fff;border-radius:999px;
     font-size:10px;font-weight:700;min-width:16px;padding:0 4px;line-height:16px;text-align:center}
+  .qrscan{background:var(--panel2);border:1px solid var(--line);color:var(--text);border-radius:7px;
+    padding:5px 9px;cursor:pointer;display:inline-flex;align-items:center;justify-content:center;line-height:0}
+  .qrscan:hover{border-color:var(--accent)}
+  .qrscan svg{display:block}
   .home-card{background:var(--panel2);border:1px solid var(--line);border-radius:10px;padding:16px;
     text-align:left;cursor:pointer;color:var(--text);display:grid;gap:8px;align-content:start}
   .home-card:hover{border-color:var(--accent)}
@@ -552,14 +574,20 @@ class Dashboard extends React.Component {
       presenceOnline: false,
       presenceSharing: false,
       presenceShip: null,
+      presenceLocation: null,
       shipOverrideSlug: null,
       shipOverride: null,
       detectedShip: null,
+      locationOverride: null,
+      detectedLocation: null,
+      destinationOverride: null,
+      detectedDestination: null,
       presenceAvailability: 'auto',
       presenceStatusText: null,
       statusDraft: '',
       showIdFlyout: false,
       presenceBusy: false,
+      groupOverlay: false,
       primaryGroupColor: null,
       // Game.log visibility + rules + re-parse
       loginfo: null,
@@ -570,6 +598,8 @@ class Dashboard extends React.Component {
       logSlice: null,         // { start, end, size, text } from the raw browser
       logBrowserOpen: false,
       showFabricImport: false,
+      showQrScan: false,
+      qrScanError: null,
       homeView: null,          // exclusive activity tab: heatmap|charts|quantum|pilots|tree|rules
       homeFiltersOpen: false,  // flyover toggle
       showMyLogs: false,       // My logs + import modal
@@ -710,13 +740,26 @@ class Dashboard extends React.Component {
 
   async loadPresenceChip () {
     try {
-      const res = await fetch('/services/star-citizen/presence').then((r) => (r.ok ? r.json() : null));
-      const pd = res && res.data;
+      const res = await fetchPresence();
+      const pd = res && res.ok ? res.data : null;
       if (!pd) return;
       const ship = (pd.presence && pd.presence.ship) || null;
+      const loc = (pd.presence && pd.presence.location) || null;
       const statusText = (pd.settings && pd.settings.presenceStatusText) ||
         (pd.presence && pd.presence.statusText) || null;
       const ps = pd.settings || {};
+      const overlayApi = (typeof window !== 'undefined' && window.electronAPI &&
+        typeof window.electronAPI.getGroupOverlay === 'function')
+        ? window.electronAPI.getGroupOverlay()
+        : null;
+      let groupOverlay = this.state.groupOverlay;
+      try {
+        if (overlayApi && typeof overlayApi.then === 'function') {
+          const ov = await overlayApi;
+          if (ov && ov.groupOverlay === true) groupOverlay = true;
+          else if (ov && ov.groupOverlay === false) groupOverlay = false;
+        }
+      } catch (_) { /* ignore */ }
       this.setState({
         presenceOnline: pd.online === true,
         presenceSharing: !!(ps.sharePresence),
@@ -724,9 +767,15 @@ class Dashboard extends React.Component {
         presenceStatusText: statusText,
         statusDraft: statusText || '',
         presenceShip: ship && (ship.name || ship.slug) ? (ship.name || ship.slug) : null,
+        presenceLocation: loc && (loc.name || loc.slug) ? (loc.name || loc.slug) : null,
         shipOverrideSlug: ps.shipOverrideSlug || null,
         shipOverride: pd.shipOverride || null,
-        detectedShip: pd.detectedShip || null
+        detectedShip: pd.detectedShip || null,
+        locationOverride: pd.locationOverride || null,
+        detectedLocation: pd.detectedLocation || null,
+        destinationOverride: pd.destinationOverride || null,
+        detectedDestination: pd.detectedDestination || null,
+        groupOverlay
       });
     } catch (_) { /* ignore */ }
   }
@@ -734,19 +783,25 @@ class Dashboard extends React.Component {
   applyPresenceChip (p) {
     if (!p) return;
     const ship = p.ship && (p.ship.name || p.ship.slug) ? (p.ship.name || p.ship.slug) : null;
+    const loc = p.location && (p.location.name || p.location.slug) ? (p.location.name || p.location.slug) : null;
     const next = {
       presenceOnline: p.online === true,
       presenceSharing: p.sharePresence === true,
       presenceAvailability: p.availability || this.state.presenceAvailability || 'auto',
       presenceStatusText: p.statusText || null,
       statusDraft: p.statusText || '',
-      presenceShip: ship
+      presenceShip: ship,
+      presenceLocation: loc !== undefined ? loc : this.state.presenceLocation
     };
     if (p.shipOverride !== undefined) {
       next.shipOverride = p.shipOverride || null;
       next.shipOverrideSlug = p.shipOverride ? (p.shipOverride.slug || null) : null;
     }
     if (p.detectedShip !== undefined) next.detectedShip = p.detectedShip;
+    if (p.locationOverride !== undefined) next.locationOverride = p.locationOverride || null;
+    if (p.detectedLocation !== undefined) next.detectedLocation = p.detectedLocation;
+    if (p.destinationOverride !== undefined) next.destinationOverride = p.destinationOverride || null;
+    if (p.detectedDestination !== undefined) next.detectedDestination = p.detectedDestination;
     this.setState(next);
   }
 
@@ -758,15 +813,10 @@ class Dashboard extends React.Component {
       const body = autodetect
         ? { autodetect: true }
         : (none ? { clear: true } : { slug });
-      const res = await fetch('/services/star-citizen/presence/ship', {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body)
-      });
-      const j = await res.json();
-      if (!res.ok) throw new Error(j.error || res.statusText);
+      const posted = await putPresenceShip(body);
+      if (!posted.ok) throw new Error(posted.error || 'ship update failed');
       this.setState({ presenceBusy: false });
-      const pd = j.data;
+      const pd = posted.data;
       if (pd) {
         const ship = (pd.presence && pd.presence.ship) || null;
         const ps = pd.settings || {};
@@ -782,37 +832,71 @@ class Dashboard extends React.Component {
     }
   }
 
+  async setPublishedPlaceQuick (field, slug) {
+    const key = field === 'destination' ? 'destinationOverrideSlug' : 'locationOverrideSlug';
+    this.setState({ presenceBusy: true });
+    try {
+      const posted = await putPresence({ [key]: slug === undefined ? null : slug });
+      if (!posted.ok) throw new Error(posted.error || 'location update failed');
+      this.setState({ presenceBusy: false });
+      const pd = posted.data;
+      if (pd) this.applyPresenceStatus(pd);
+    } catch (_) {
+      this.setState({ presenceBusy: false });
+    }
+  }
+
+  applyPresenceStatus (pd) {
+    if (!pd) return;
+    const ship = (pd.presence && pd.presence.ship) || null;
+    const loc = (pd.presence && pd.presence.location) || null;
+    const statusText = (pd.settings && pd.settings.presenceStatusText) ||
+      (pd.presence && pd.presence.statusText) || null;
+    const ps = pd.settings || {};
+    this.setState({
+      presenceOnline: pd.online === true,
+      presenceSharing: !!ps.sharePresence,
+      presenceAvailability: ps.presenceAvailability || 'auto',
+      presenceStatusText: statusText,
+      statusDraft: statusText || '',
+      presenceShip: ship && (ship.name || ship.slug) ? (ship.name || ship.slug) : null,
+      presenceLocation: loc && (loc.name || loc.slug) ? (loc.name || loc.slug) : null,
+      shipOverrideSlug: ps.shipOverrideSlug || null,
+      shipOverride: pd.shipOverride || null,
+      detectedShip: pd.detectedShip || null,
+      locationOverride: pd.locationOverride || null,
+      detectedLocation: pd.detectedLocation || null,
+      destinationOverride: pd.destinationOverride || null,
+      detectedDestination: pd.detectedDestination || null
+    });
+  }
+
   async putPresenceQuick (patch) {
     this.setState({ presenceBusy: true });
     try {
-      const res = await fetch('/services/star-citizen/presence', {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(patch)
-      });
-      const j = await res.json();
-      if (!res.ok) throw new Error(j.error || res.statusText);
+      const posted = await putPresence(patch);
+      if (!posted.ok) throw new Error(posted.error || 'presence update failed');
       this.setState({ presenceBusy: false });
-      const pd = j.data;
-      if (pd) {
-        const ship = (pd.presence && pd.presence.ship) || null;
-        const statusText = (pd.settings && pd.settings.presenceStatusText) ||
-          (pd.presence && pd.presence.statusText) || null;
-        const ps = pd.settings || {};
-        this.setState({
-          presenceOnline: pd.online === true,
-          presenceSharing: !!ps.sharePresence,
-          presenceAvailability: ps.presenceAvailability || 'auto',
-          presenceStatusText: statusText,
-          statusDraft: statusText || '',
-          presenceShip: ship && (ship.name || ship.slug) ? (ship.name || ship.slug) : null,
-          shipOverrideSlug: ps.shipOverrideSlug || null,
-          shipOverride: pd.shipOverride || null,
-          detectedShip: pd.detectedShip || null
-        });
-      }
+      if (posted.data) this.applyPresenceStatus(posted.data);
     } catch (_) {
       this.setState({ presenceBusy: false });
+    }
+  }
+
+  canToggleOverlay () {
+    return typeof window !== 'undefined' &&
+      window.electronAPI &&
+      typeof window.electronAPI.setGroupOverlay === 'function';
+  }
+
+  async toggleGroupOverlay () {
+    if (!this.canToggleOverlay()) return;
+    const next = !this.state.groupOverlay;
+    this.setState({ groupOverlay: next });
+    try {
+      await window.electronAPI.setGroupOverlay(next);
+    } catch (_) {
+      this.setState({ groupOverlay: !next });
     }
   }
 
@@ -856,6 +940,24 @@ class Dashboard extends React.Component {
       detectedShip: this.state.detectedShip,
       onSelect: (slug) => this.setPublishedShipQuick(slug)
     }),
+    React.createElement(LocationPicker, {
+      compact: true,
+      label: 'Location',
+      noun: 'Location',
+      disabled: busy || !pk,
+      overridePlace: this.state.locationOverride,
+      detectedPlace: this.state.detectedLocation,
+      onSelect: (slug) => this.setPublishedPlaceQuick('location', slug)
+    }),
+    React.createElement(LocationPicker, {
+      compact: true,
+      label: 'Destination',
+      noun: 'Destination',
+      disabled: busy || !pk,
+      overridePlace: this.state.destinationOverride,
+      detectedPlace: this.state.detectedDestination,
+      onSelect: (slug) => this.setPublishedPlaceQuick('destination', slug)
+    }),
     React.createElement('div', { className: 'ff' },
       React.createElement('label', null, 'Status'),
       React.createElement('div', { className: 'ff-inline' },
@@ -897,6 +999,14 @@ class Dashboard extends React.Component {
           window.location.href = '/profiles/' + encodeURIComponent(pk);
         }
       }, this.preferAccountPages() ? 'Profile & privacy' : 'My profile'),
+      React.createElement('button', {
+        type: 'button',
+        className: 'btn',
+        onClick: () => {
+          this.setState({ showIdFlyout: false });
+          this.openAccount('devices');
+        }
+      }, 'Devices'),
       this.preferAccountPages()
         ? React.createElement('button', {
           type: 'button',
@@ -1145,7 +1255,7 @@ class Dashboard extends React.Component {
     }
     const patch = { tab };
     if (tab === 'network') {
-      const views = this.networkViewList().map(([k]) => k);
+      const views = this.networkViewList().map(([k]) => k).concat(['settings']);
       const next = networkView || this.state.networkView || 'feed';
       patch.networkView = views.includes(next) ? next : 'feed';
     }
@@ -1174,6 +1284,81 @@ class Dashboard extends React.Component {
 
   preferAccountPages () {
     return preferAccountPages();
+  }
+
+  async applyScannedLink (text) {
+    const { interpretQrScan } = require('../functions/qrScanLink');
+    const hit = interpretQrScan(text);
+    if (!hit.ok) {
+      this.setState({ qrScanError: hit.error, showQrScan: true });
+      return;
+    }
+    const identity = typeof window !== 'undefined' && window.electronAPI && window.electronAPI.identity;
+    if (!identity || typeof identity.openProtocolUrl !== 'function') {
+      this.setState({
+        qrScanError: 'Unlock this GoonCitizen identity first, then scan again.',
+        showQrScan: false
+      });
+      if (this.preferAccountPages()) this.openAccount('devices');
+      else this.setState({ showIdentity: true });
+      return;
+    }
+    this.setState({ showQrScan: false, qrScanError: null });
+    try {
+      const res = await identity.openProtocolUrl(hit.protocolUrl);
+      if (res && res.error) this.setState({ qrScanError: res.error });
+    } catch (e) {
+      this.setState({ qrScanError: (e && e.message) ? e.message : String(e) });
+    }
+  }
+
+  async openQrScanner () {
+    this.setState({ qrScanError: null });
+    const { scanQrNative } = require('../functions/qrScanClient');
+    try {
+      const native = await scanQrNative();
+      if (native && native.cancelled) return;
+      if (native && native.skipped) {
+        this.setState({ showQrScan: true });
+        return;
+      }
+      if (native && native.error) {
+        this.setState({ showQrScan: true, qrScanError: native.error });
+        return;
+      }
+      if (native && native.text) {
+        await this.applyScannedLink(native.text);
+        return;
+      }
+      this.setState({ showQrScan: true });
+    } catch (e) {
+      this.setState({
+        showQrScan: true,
+        qrScanError: (e && e.message) ? e.message : 'Could not open the scanner.'
+      });
+    }
+  }
+
+  qrScanButton () {
+    return React.createElement('button', {
+      type: 'button',
+      className: 'qrscan',
+      title: 'Scan QR to link a device',
+      'aria-label': 'Scan QR to link a device',
+      onClick: () => { void this.openQrScanner(); }
+    },
+    React.createElement('svg', {
+      width: 16,
+      height: 16,
+      viewBox: '0 0 16 16',
+      fill: 'none',
+      stroke: 'currentColor',
+      strokeWidth: 1.6,
+      'aria-hidden': true
+    },
+    React.createElement('path', { d: 'M2 5V3h2M14 5V3h-2M2 11v2h2M14 11v2h-2' }),
+    React.createElement('path', { d: 'M5 5h2v2H5zM9 5h2v2H9zM5 9h2v2H5zM9 9h1v1H9z' })
+    ));
   }
 
   networkViewList () {
@@ -2324,23 +2509,27 @@ class Dashboard extends React.Component {
       );
     }
     if (view === 'quantum' && m) {
-      return m.destRows.length
-        ? React.createElement('section', { className: 'panel full' },
-          React.createElement('h2', null, '🚀 Quantum destinations ',
-            React.createElement('span', { className: 'sub' }, '— QT targets in the filtered period')),
-          React.createElement('div', { style: { padding: '12px 14px' } },
-            m.destRows.map((r) => React.createElement('div', {
-              key: r.n,
-              style: { display: 'flex', gap: 10, fontSize: 12, padding: '3px 0', borderBottom: '1px solid var(--line)' }
-            },
-            React.createElement('span', { style: { flex: 1 } }, r.n),
-            React.createElement('span', { className: 'chip on' }, r.c)))
-          )
+      return React.createElement('section', { className: 'panel full' },
+        React.createElement('h2', null, '🚀 Quantum destinations ',
+          React.createElement('span', { className: 'sub' },
+            '— QT visit hotspots in the filtered period (wiki map + Game.log counts)')),
+        React.createElement('div', { style: { padding: '12px 14px' } },
+          React.createElement(StarMap, {
+            system: 'STANTON',
+            destinations: m.destRows,
+            includeHotspots: true,
+            showList: true,
+            emptyList: 'no QT hops in the filtered period',
+            height: 320,
+            onSelect: (pt) => {
+              const token = pt && (pt.slug || pt.token || pt.name);
+              if (token && typeof window !== 'undefined') {
+                window.location.href = '/locations/' + encodeURIComponent(token);
+              }
+            }
+          })
         )
-        : React.createElement('section', { className: 'panel full' },
-          React.createElement('h2', null, '🚀 Quantum destinations'),
-          React.createElement('div', { className: 'empty' }, 'no QT hops in the filtered period')
-        );
+      );
     }
     if (view === 'pilots' && m) return this.renderHomePilots(m);
     if (view === 'tree' && m && this.state.advancedMode) return this.renderHomeTree(m);
@@ -2367,6 +2556,8 @@ class Dashboard extends React.Component {
         'advanced mode · settings.documents.enable'],
       ['groups', '👥 Groups', 'Create a squad, Share a join invite, and accept requests from Notifications. Local tags stay on this node.',
         'pages at /groups/:id · Import… to join'],
+      ['map', '🗺️ Map', 'Browse the wiki star map, open a landing zone, and see who this node has recorded there.',
+        'Stanton / Pyro / Nyx · local player reports'],
       ['missions', '⭐ Missions', 'Post contracts with Bitcoin rewards — submit completion, authorities approve with Schnorr signatures, coins unlock.',
         'k-of-n approval · escrowed sats'],
       ['fleet', '🚀 Fleets', 'Import Starjump / FleetViewer JSON, browse your ships, share to peers, groups, or public.',
@@ -2396,30 +2587,30 @@ class Dashboard extends React.Component {
 
     return React.createElement('main', { onClick: onAzClick },
       React.createElement('section', { className: 'panel full' },
-        React.createElement('h2', null, '🛰️ GoonCitizen ',
-          React.createElement('span', { className: 'sub' },
-            '— ' + (androidSurface('heatmap')
-              ? 'cumulative history from your logs'
-              : 'this device’s node (groups, chat, missions, peers)'))
+        React.createElement('h2', null,
+          React.createElement('span', { className: 'home-title' },
+            '🛰️ GoonCitizen ',
+            React.createElement('span', { className: 'sub' },
+              '— ' + (androidSurface('heatmap')
+                ? 'cumulative history from your logs'
+                : 'this device’s node (groups, chat, missions, peers)'))
+          ),
+          androidSurface('heatmap')
+            ? React.createElement('span', { className: 'home-tools' },
+              React.createElement('button', {
+                type: 'button',
+                className: 'btn',
+                onClick: () => this.openMyLogs()
+              }, 'My logs…'),
+              React.createElement('button', {
+                type: 'button',
+                className: 'btn' + (this.state.homeFiltersOpen ? ' on' : ''),
+                onClick: () => this.toggleHomeFilters()
+              }, activeFilters || 'Filters')
+            )
+            : null
         ),
-        androidSurface('heatmap')
-          ? React.createElement('div', { className: 'home-tools' },
-          React.createElement('button', {
-            type: 'button',
-            className: 'btn' + (this.state.homeFiltersOpen ? ' on' : ''),
-            onClick: () => this.toggleHomeFilters()
-          }, activeFilters || 'Filters'),
-          React.createElement('button', {
-            type: 'button',
-            className: 'btn',
-            onClick: () => this.openMyLogs()
-          }, 'My logs…'),
-          React.createElement('span', { className: 'sub' },
-            m
-              ? `${c.missions || 0} missions · ${c.deaths || 0} deaths all-time`
-              : (this.state.azLoading ? 'loading activity…' : 'activity loading…'))
-        )
-          : null,
+        androidSurface('heatmap') && this.state.homeFiltersOpen && m ? this.renderHomeFilters(m) : null,
         androidSurface('heatmap')
           ? React.createElement('div', { className: 'home-views' },
           this.homeViewList().map(([key, label]) => React.createElement('button', {
@@ -2430,7 +2621,6 @@ class Dashboard extends React.Component {
           }, label))
         )
           : null,
-        androidSurface('heatmap') && this.state.homeFiltersOpen && m ? this.renderHomeFilters(m) : null,
         androidSurface('heatmap')
           ? (m
             ? React.createElement('div', { className: 'kpis' },
@@ -2449,8 +2639,8 @@ class Dashboard extends React.Component {
         ? React.createElement('section', { className: 'panel full' },
           React.createElement('h2', null, 'Features ',
             React.createElement('span', { className: 'sub' }, isAndroidCompanion()
-              ? '— Groups, Missions, Fleets, Chat, Network'
-              : '— jump to Documents, Groups, Missions, Fleets, Chat, Wallet, Network')
+              ? '— Map, Groups, Missions, Fleets, Chat, Network'
+              : '— jump to Map, Documents, Groups, Missions, Fleets, Chat, Wallet, Network')
           ),
           React.createElement('div', { className: 'home-grid' },
             cards.map(([tab, title, desc, stat]) => React.createElement('button', {
@@ -2472,6 +2662,17 @@ class Dashboard extends React.Component {
   renderNetwork () {
     const view = this.state.networkView || 'feed';
     const views = this.networkViewList();
+    const hint = view === 'settings'
+      ? 'Advertise host, peering, log share, encoding, LAN bind'
+      : (view === 'feed'
+        ? (androidSurface('corpus')
+          ? 'Live Game.log + peer event stream'
+          : 'Chat, missions, and peer event stream')
+        : (view === 'peers'
+          ? (androidSurface('hubObserve')
+            ? 'Fabric hubs, connections, and log sharing'
+            : 'Fabric peer connections')
+          : 'AMP wire Message log'));
     return React.createElement(React.Fragment, null,
       React.createElement('div', { className: 'network-nav' },
         views.map(([key, label]) => React.createElement('button', {
@@ -2480,24 +2681,56 @@ class Dashboard extends React.Component {
           className: 'tab ' + (view === key ? 'on' : ''),
           onClick: () => this.setNetworkView(key)
         }, label)),
-        React.createElement('span', { className: 'hint' },
-          view === 'feed'
-            ? (androidSurface('corpus')
-              ? 'Live Game.log + peer event stream'
-              : 'Chat, missions, and peer event stream')
-            : (view === 'peers'
-              ? (androidSurface('hubObserve')
-                ? 'Fabric hubs, connections, and log sharing'
-                : 'Fabric peer connections')
-              : 'AMP wire Message log'))
+        React.createElement('span', { className: 'hint' }, hint),
+        React.createElement('button', {
+          type: 'button',
+          className: 'gear' + (view === 'settings' ? ' on' : ''),
+          title: 'Network settings',
+          'aria-label': 'Network settings',
+          'aria-pressed': view === 'settings',
+          onClick: () => this.setNetworkView(view === 'settings' ? 'feed' : 'settings')
+        }, '⚙️')
       ),
-      view === 'peers'
-        ? React.createElement(Peers, {
-          analytics: this.state.analytics
+      view === 'settings'
+        ? React.createElement(Settings, {
+          embedded: true,
+          variant: 'network',
+          onClose: () => this.setNetworkView('feed'),
+          onOpenNetwork: (next) => this.setNetworkView(next || 'peers'),
+          onOpenIdentity: (section) => {
+            if (this.preferAccountPages()) this.openAccount(section || 'keys');
+            else this.setState({ showIdentity: true });
+          },
+          onPrimaryGroupTheme: (hex) => this.applyPrimaryGroupTheme(hex),
+          advancedMode: this.state.advancedMode,
+          onAdvancedModeChange: (on) => {
+            writeAdvancedMode(on);
+            this.setState((s) => {
+              const next = { advancedMode: on };
+              if (!on && ADVANCED_TABS.has(s.tab)) {
+                next.tab = 'home';
+                try { if (window.location.hash) history.replaceState(null, '', window.location.pathname + window.location.search); } catch (_) { /* ignore */ }
+              }
+              if (!on && (s.homeView === 'tree' || s.homeView === 'rules')) {
+                next.homeView = null;
+              }
+              if (!on && s.tab === 'network' && s.networkView === 'messages') {
+                next.networkView = 'feed';
+                try {
+                  history.replaceState(null, '', window.location.pathname + window.location.search + '#network');
+                } catch (_) { /* ignore */ }
+              }
+              return next;
+            });
+          }
         })
-        : (view === 'messages' && this.state.advancedMode
-          ? React.createElement(FabricMessages, null)
-          : this.renderLive())
+        : (view === 'peers'
+          ? React.createElement(Peers, {
+            analytics: this.state.analytics
+          })
+          : (view === 'messages' && this.state.advancedMode
+            ? React.createElement(FabricMessages, null)
+            : this.renderLive()))
     );
   }
 
@@ -2550,12 +2783,14 @@ class Dashboard extends React.Component {
         onPrimaryGroupTheme: (hex) => this.applyPrimaryGroupTheme(hex),
         onRequestImport: () => this.setState({ showFabricImport: true })
       });
+      case 'map': return React.createElement(MapPage, null);
       case 'notifications': return React.createElement(Notifications, {
         onPendingCount: (n) => {
           if (n !== this.state.notifyPending) this.setState({ notifyPending: n });
         }
       });
       case 'keys':
+      case 'devices':
       case 'security':
       case 'privacy':
         return React.createElement(Account, {
@@ -2594,6 +2829,13 @@ class Dashboard extends React.Component {
         })
       }),
       React.createElement(FabricLoginModal, null),
+      this.state.showQrScan
+        ? React.createElement(QrScanOverlay, {
+          error: this.state.qrScanError,
+          onScan: (text) => { void this.applyScannedLink(text); },
+          onClose: () => this.setState({ showQrScan: false, qrScanError: null })
+        })
+        : null,
       React.createElement(GroupOfferModal, {
         pasteOpen: this.state.showFabricImport,
         onPasteClose: () => this.setState({ showFabricImport: false }),
@@ -2652,6 +2894,10 @@ class Dashboard extends React.Component {
           onForget: () => this.setState({ identityPubkey: null, identityExists: false, identityLocked: false }),
           onNicknameChange: (n) => this.setState({ nickname: n || null }),
           onPresenceChange: (p) => this.applyPresenceChip(p),
+          onOpenDevices: () => {
+            this.setState({ showIdentity: false });
+            this.openAccount('devices');
+          },
           analytics: this.state.analytics
         })
         : null,
@@ -2679,6 +2925,24 @@ class Dashboard extends React.Component {
               title: 'Paste a group invite or fabric: share',
               onClick: () => this.setState({ showFabricImport: true })
             }, 'Import…'),
+            this.canToggleOverlay()
+              ? React.createElement('button', {
+                type: 'button',
+                className: 'ov-btn' + (this.state.groupOverlay ? ' on' : ''),
+                title: this.state.groupOverlay
+                  ? 'Turn primary-group overlay off'
+                  : 'Turn primary-group overlay on',
+                onClick: () => this.toggleGroupOverlay()
+              }, this.state.groupOverlay ? 'Overlay on' : 'Overlay')
+              : null,
+            this.qrScanButton(),
+            React.createElement(DataSyncStatus, {
+              variant: 'compact',
+              onAddDevice: () => {
+                this.openAccount('devices');
+              },
+              onManageDevices: () => this.openAccount('devices')
+            }),
             React.createElement('button', {
               type: 'button',
               className: 'bell' + (this.state.tab === 'notifications' ? ' on' : ''),
@@ -2703,6 +2967,7 @@ class Dashboard extends React.Component {
                     ? ((this.state.nickname ? this.state.nickname + ' · ' : '') +
                       (this.state.presenceStatusText ? this.state.presenceStatusText + ' · ' : '') +
                       (this.state.presenceShip ? this.state.presenceShip + ' · ' : '') +
+                      (this.state.presenceLocation ? this.state.presenceLocation + ' · ' : '') +
                       (this.state.presenceOnline ? 'online' : 'offline') +
                       ' — quick presence; Identity for profile & keys')
                     : (this.state.identityExists ? 'identity locked — click for flyout' : 'identity — click for flyout'),
@@ -2737,7 +3002,10 @@ class Dashboard extends React.Component {
                       : (this.state.presenceShip
                         ? React.createElement('span', { className: 'id-ship', title: this.state.presenceShip },
                           '· ' + this.state.presenceShip)
-                        : null)
+                        : (this.state.presenceLocation
+                          ? React.createElement('span', { className: 'id-ship', title: this.state.presenceLocation },
+                            '· ' + this.state.presenceLocation)
+                          : null))
                   )
                   : (this.state.identityExists ? '🔒 locked' : '🔑 identity')
                 ),
@@ -2807,7 +3075,8 @@ class Dashboard extends React.Component {
 
 Dashboard.TITLE = TITLE;
 Dashboard.CSS = CSS + '\n' + (SiteLogin.CSS || '') + '\n' + (LogBrowser.CSS || '') + '\n' +
-  (AppSearch.CSS || '') + '\n' + (Account.CSS || '');
+  (AppSearch.CSS || '') + '\n' + (Account.CSS || '') + '\n' + (DataSyncStatus.CSS || '') + '\n' +
+  (LinkedDevices.CSS || '') + '\n' + (Settings.CSS || '');
 Dashboard.resolveHash = resolveHash;
 Dashboard.offerPassportDeviceLink = offerPassportDeviceLink;
 

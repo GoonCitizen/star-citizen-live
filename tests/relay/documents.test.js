@@ -118,6 +118,16 @@ test('local catalog: POST /documents then GET list and GET by id', async () => {
       Buffer.from(body.contentBase64, 'base64').toString('utf8'),
       'hello local catalog'
     );
+
+    const synced = await request(port, 'POST', `${BASE}/files/${doc.id}/cluster-sync`, {
+      clusterSync: true
+    });
+    assert.strictEqual(synced.status, 200, JSON.stringify(synced.body));
+    assert.strictEqual(synced.body.type, 'FileClusterSync');
+    assert.strictEqual(synced.body.data.clusterSync, true);
+    const page = await request(port, 'GET', `${BASE}/files/${doc.id}`);
+    assert.strictEqual(page.status, 200);
+    assert.strictEqual(page.body.data.clusterSync, true);
   } finally {
     await svc.stop();
   }
@@ -213,6 +223,29 @@ test('POST /documents/inventory queries Fabric peers and GET lists remote offers
     assert.strictEqual(offers[0].purchasePriceSats, 10);
     assert.strictEqual(offers[0].peerAlias, 'Ops');
     assert.strictEqual(got.body.data.document.local, false);
+    assert.ok(!got.body.data.document.contentBase64);
+    assert.ok(got.body.data.document.costBasisSats == null);
+    assert.ok(!remote.contentBase64);
+    assert.ok(remote.costBasisSats == null);
+
+    const offersList = await request(port, 'GET', `${BASE}/documents/offers?documentId=${fileId}`);
+    assert.strictEqual(offersList.status, 200);
+    assert.strictEqual((offersList.body.data.offers || []).length, 2);
+    const allOffers = await request(port, 'GET', `${BASE}/documents/offers`);
+    assert.strictEqual(allOffers.status, 200);
+    assert.ok((allOffers.body.data.offers || []).length >= 2);
+
+    const catalog = svc._documentCatalogPayload();
+    const catRow = catalog.documents.find((d) => d.id === fileId);
+    assert.ok(catRow && catRow.local === false);
+    assert.ok(!catRow.contentBase64);
+    assert.strictEqual(catRow.bestPeerPriceSats, 10);
+
+    const file = svc._fileRecord(fileId);
+    assert.ok(file);
+    assert.strictEqual(file.local, false);
+    assert.ok(Array.isArray(file.offers) && file.offers.length === 2);
+    assert.ok(!file.record.contentBase64);
   } finally {
     await svc.stop();
   }
@@ -253,6 +286,31 @@ test('_onDocumentInventoryRequest replies with published local items only', asyn
     const ids = (sent[0].items || []).map((row) => row.id);
     assert.ok(ids.includes(created.id));
     assert.ok(!ids.includes(remoteId), 'must not republish remote-only offers on inventory reply');
+    const before = sent.length;
+    svc._onDocumentInventoryRequest({ origin: null, peer });
+    assert.strictEqual(sent.length, before);
+
+    documentOffers.replacePeerOffers(svc.registerStore, {
+      peerPubkey: '02' + 'aa'.repeat(32),
+      peerAlias: 'Ops'
+    }, [{ id: created.id, name: 'mine.txt', purchasePriceSats: 10 }]);
+    const catalog = svc._documentCatalogPayload();
+    const row = catalog.documents.find((d) => d.id === created.id);
+    assert.ok(row);
+    assert.strictEqual(row.local, true);
+    assert.strictEqual(row.purchasePriceSats, 25);
+    assert.strictEqual(row.bestPeerPriceSats, 10);
+    assert.strictEqual(row.costBasisSats, undefined);
+
+    const localDetail = svc._documentDetailPayload(created.id);
+    assert.strictEqual(localDetail.local, true);
+    assert.ok(localDetail.offers.some((o) => o.local === true));
+    assert.ok(localDetail.offers.some((o) => o.peerAlias === 'Ops'));
+
+    const remoteDetail = svc._documentDetailPayload(remoteId);
+    assert.strictEqual(remoteDetail.local, false);
+    assert.ok(!remoteDetail.document.contentBase64);
+    assert.ok(remoteDetail.document.costBasisSats == null);
   } finally {
     await svc.stop();
   }
@@ -287,6 +345,41 @@ test('_onDocumentInventoryResponse accumulates a peer snapshot', async () => {
     assert.strictEqual(offers.length, 1);
     assert.strictEqual(offers[0].purchasePriceSats, 40);
     assert.strictEqual(offers[0].peerPubkey, pubkey);
+  } finally {
+    await svc.stop();
+  }
+});
+
+test('_queryPeerInventories reports cached offers when Fabric is down', async () => {
+  const documentOffers = require('../../functions/documentOffers');
+  const svc = new LiveRelay({
+    port: 0,
+    missions: { enable: false },
+    fabric: { enable: false },
+    documents: { enable: true }
+  });
+  await svc.start();
+  try {
+    const fileId = '77'.repeat(32);
+    documentOffers.replacePeerOffers(svc.registerStore, {
+      peerPubkey: '02' + '11'.repeat(32),
+      peerAlias: 'Ops'
+    }, [{ id: fileId, name: 'ops.txt', purchasePriceSats: 15 }]);
+    const queried = svc._queryPeerInventories();
+    assert.strictEqual(queried.requested, 0);
+    assert.strictEqual(queried.ready, false);
+    assert.ok(queried.offers.some((o) => o.documentId === fileId));
+
+    svc._onDocumentInventoryResponse({
+      message: { inventory: [{ id: fileId, name: 'ops.txt', purchasePriceSats: 9 }] },
+      origin: '10.9.9.9:7777',
+      signerPubkeyHex: '02' + '22'.repeat(32)
+    });
+    const offers = documentOffers.offersForDocument({
+      store: svc.registerStore,
+      documentId: fileId
+    });
+    assert.ok(offers.some((o) => o.purchasePriceSats === 9));
   } finally {
     await svc.stop();
   }

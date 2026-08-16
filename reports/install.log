@@ -1,5 +1,4 @@
 $ npm i --allow-git=all
-npm warn Unknown env config "devdir". This will error in a future major version of npm. See `npm help npmrc` for supported config options.
 npm warn deprecated inflight@1.0.6: This module is not supported, and leaks memory. Do not use it. Check out lru-cache if you want a good and tested way to coalesce async requests by a key value, which is much more comprehensive and powerful.
 npm warn deprecated rimraf@2.6.3: Rimraf versions prior to v4 are no longer supported
 npm warn deprecated rimraf@3.0.2: Rimraf versions prior to v4 are no longer supported

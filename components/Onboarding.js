@@ -12,6 +12,7 @@
 
 const React = require('react');
 const { isAndroidCompanion } = require('../functions/isAndroidCompanion');
+const { setAndroidSecureFlag } = require('../functions/androidSecureScreen');
 const MasterSeedWizard = require('./MasterSeedWizard');
 
 const CSS = `
@@ -135,9 +136,13 @@ class Onboarding extends React.Component {
       (this.state.step === 'unlock' || this.state.step === 'password' || this.state.step === 'restore')) {
       this.focusPasswordField();
     }
+    if (this.state.step !== prevState.step) {
+      setAndroidSecureFlag(this.state.step === 'backup');
+    }
   }
 
   componentWillUnmount () {
+    setAndroidSecureFlag(false);
     if (this._unsub) this._unsub();
   }
 

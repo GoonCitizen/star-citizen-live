@@ -114,6 +114,9 @@ describe('Chat people search UI', () => {
     panel.state.notes = [{ id: 'n1', body: 'Intel: flies evenings', visibility: 'private' }];
     const text = textOf(panel.render());
     assert.ok(text.includes('Share with this person'));
-    assert.ok(text.includes('Share to group or peer'));
+    assert.ok(text.includes('📌'));
+    assert.ok(text.includes('Pin this note to profile'));
+    assert.ok(text.includes('Share this note to a Federation group'));
+    assert.ok(!text.includes('Share to group or peer'));
   });
 });

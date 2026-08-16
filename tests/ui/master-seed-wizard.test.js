@@ -7,6 +7,7 @@ require('../helpers/installReactStub');
 const { textOf, hasClass } = require('../helpers/reactTree');
 const Onboarding = require('../../components/Onboarding');
 const MasterSeedWizard = require('../../components/MasterSeedWizard');
+const { fabricCoinTypeForNetwork } = require('@fabric/core/constants');
 
 describe('Master seed wizard (optional first-run)', () => {
   it('adds a wizard button on the choice screen without removing create/restore/import', () => {
@@ -53,13 +54,13 @@ describe('Master seed wizard (optional first-run)', () => {
       },
       devices: [{
         label: 'This device',
-        path: "m/44'/7778'/0'",
+        path: `m/44'/${fabricCoinTypeForNetwork('regtest')}'/0'`,
         xprv: 'xprv-dev0',
         xpub: 'xpub-dev0',
         pubkey: '02ab'
       }, {
         label: 'Companion device',
-        path: "m/44'/7778'/1'",
+        path: `m/44'/${fabricCoinTypeForNetwork('regtest')}'/1'`,
         xprv: 'xprv-dev1',
         xpub: 'xpub-dev1',
         pubkey: '02cd'

@@ -26,4 +26,17 @@ function mergeLinkedDevice (list, entry) {
   return rows;
 }
 
-module.exports = { mergeLinkedDevice };
+function listLinkedDevices (list) {
+  return (Array.isArray(list) ? list : []).filter((d) => d && d.peerFabricId).map((d) => ({
+    kind: d.kind || 'device-link',
+    peerFabricId: String(d.peerFabricId),
+    peerPubkey: d.peerPubkey || d.peerPubkeyHex || null,
+    nonce: d.nonce || null,
+    label: d.label || 'Linked device',
+    hubOrigin: d.hubOrigin || null,
+    linkedAt: d.linkedAt || null,
+    role: d.role || null
+  }));
+}
+
+module.exports = { mergeLinkedDevice, listLinkedDevices };

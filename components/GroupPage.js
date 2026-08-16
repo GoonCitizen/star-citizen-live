@@ -26,6 +26,10 @@ const {
   sanitizePinnedChannels,
   MAX_PINNED_CHANNELS
 } = require('../functions/groupPinnedChannels');
+const { fetchPresenceRoster } = require('../functions/presenceClient');
+const groupPresence = require('../functions/groupPresence');
+const GroupComposition = require('./GroupComposition');
+const StarMap = require('./StarMap');
 
 const BASE = '/services/star-citizen';
 const ADVANCED_MODE_KEY = 'gooncitizen.advancedMode';
@@ -108,7 +112,8 @@ class GroupPage extends React.Component {
       slugEdit: '',
       colorEdit: '#3b82f6',
       discordChannels: [],
-      busy: false
+      busy: false,
+      newFleetName: ''
     };
   }
 
@@ -182,8 +187,8 @@ class GroupPage extends React.Component {
       }
       let presenceRoster = {};
       try {
-        const pr = await fetch(`${BASE}/presence/roster`, { headers: this.headers(token) });
-        if (pr.ok) presenceRoster = ((await pr.json()).data) || {};
+        const pr = await fetchPresenceRoster({ authToken: token });
+        if (pr.ok) presenceRoster = pr.data || {};
       } catch (_) { /* optional */ }
       let events = [];
       try {
@@ -229,6 +234,55 @@ class GroupPage extends React.Component {
       document.title = `${group.name} — GoonCitizen`;
     } catch (e) {
       this.setState({ loading: false, group: null, error: e.message });
+    }
+  }
+
+  async createFleetOnGroup () {
+    const g = this.state.group;
+    if (!g || this.state.busy) return;
+    if (g.role !== 'member' && g.role !== 'creator') return;
+    const name = String(this.state.newFleetName || '').trim() || (g.name + ' fleet');
+    this.setState({ busy: true, error: null, notice: null });
+    try {
+      const created = await fetch(`${BASE}/fleets`, {
+        method: 'POST',
+        headers: this.headers(),
+        body: JSON.stringify({
+          custom: true,
+          name,
+          ships: [],
+          visibility: 'groups',
+          groupIds: [g.id]
+        })
+      });
+      const cj = await created.json().catch(() => ({}));
+      if (!created.ok) throw new Error((cj && cj.error) || `HTTP ${created.status}`);
+      const fleetId = cj.data && (cj.data.id || cj.data.fleetId);
+      if (fleetId) {
+        const shared = await fetch(`${BASE}/fleets/${encodeURIComponent(fleetId)}/share`, {
+          method: 'POST',
+          headers: this.headers(),
+          body: JSON.stringify({ visibility: 'groups', groupIds: [g.id], includeExport: true })
+        });
+        const sj = await shared.json().catch(() => ({}));
+        if (!shared.ok) throw new Error((sj && sj.error) || `HTTP ${shared.status}`);
+      }
+      let fleets = this.state.fleets || [];
+      try {
+        const fr = await fetch(`${BASE}/groups/${encodeURIComponent(g.id)}/fleets`, {
+          headers: this.headers()
+        });
+        if (fr.ok) fleets = ((await fr.json()).data) || fleets;
+      } catch (_) { /* keep prior list */ }
+      this.setState({
+        busy: false,
+        newFleetName: '',
+        fleets,
+        notice: 'Created “' + ((cj.data && cj.data.name) || name) +
+          '” on this group. Open it to add ships.'
+      });
+    } catch (e) {
+      this.setState({ busy: false, error: e.message });
     }
   }
 
@@ -485,12 +539,40 @@ class GroupPage extends React.Component {
     const g = this.state.group;
     if (!g) return null;
     const list = this.state.fleets || [];
+    const canCreate = g.role === 'member' || g.role === 'creator';
+    const createRow = canCreate
+      ? React.createElement('div', {
+        className: 'gpage-actions',
+        style: { marginTop: 0, marginBottom: list.length ? 12 : 0 }
+      },
+        React.createElement('input', {
+          type: 'text',
+          value: this.state.newFleetName,
+          placeholder: 'New fleet name',
+          style: {
+            flex: 1, minWidth: 140, background: 'var(--bg)', border: '1px solid var(--line)',
+            color: 'var(--text)', borderRadius: 7, padding: '8px 10px', fontSize: 13
+          },
+          onChange: (e) => this.setState({ newFleetName: e.target.value }),
+          onKeyDown: (e) => { if (e.key === 'Enter') void this.createFleetOnGroup(); }
+        }),
+        React.createElement('button', {
+          type: 'button',
+          className: 'gpage-btn',
+          disabled: this.state.busy,
+          onClick: () => this.createFleetOnGroup()
+        }, 'Create fleet')
+      )
+      : null;
     return React.createElement('div', { className: 'gpage-panel' },
       React.createElement('h2', null, `Fleets${list.length ? ` (${list.length})` : ''}`),
       React.createElement('div', { className: 'body' },
+        createRow,
         !list.length
           ? React.createElement('p', { style: { color: 'var(--muted)', fontSize: 13, margin: 0 } },
-            'No fleets shared to this group yet. Share from Fleets with visibility “groups”, then pick this group.')
+            canCreate
+              ? 'No fleets on this group yet. Create one here, or share an existing roster from Fleets.'
+              : 'No fleets shared to this group yet.')
           : list.map((f) => React.createElement('div', {
             key: f.fleetId || f.id,
             className: 'gpage-member',
@@ -739,12 +821,17 @@ class GroupPage extends React.Component {
     const g = this.state.group;
     if (!g || !g.members) return null;
     const roster = this.state.presenceRoster || {};
+    const owner = g.role === 'creator' || groupPresence.isGroupOwner(g, this.state.pubkey);
+    const composition = owner
+      ? groupPresence.summarizeOnlineMembers(g.members, roster)
+      : null;
     return React.createElement('div', { className: 'gpage-panel' },
       React.createElement('h2', null, `Members (${g.members.length}) · ${g.threshold}-of-${(g.validators || g.members).length} signers`),
+      composition ? React.createElement(GroupComposition, { composition, showMap: true }) : null,
       React.createElement('div', { className: 'body' },
         g.members.map((m) => {
-          const p = roster[m];
-          const ship = p && p.ship && (p.ship.name || p.ship.slug);
+          const p = groupPresence.presenceFor(roster, m);
+          const chip = groupPresence.presenceChipLabel(p);
           const signers = g.validators || g.members;
           const isSigner = signers.includes(m);
           return React.createElement('div', { className: 'gpage-member', key: m },
@@ -754,12 +841,10 @@ class GroupPage extends React.Component {
                 style: { color: 'var(--muted)', marginLeft: 8, fontFamily: 'inherit' }
               }, p.nickname) : null
             ),
-            p
-              ? React.createElement('span', {
-                className: 'gpage-tag ' + (p.online ? 'public' : 'private'),
-                title: p.lastEventAt || ''
-              }, p.online ? (ship ? `online · ${ship}` : 'online') : 'offline')
-              : React.createElement('span', { className: 'gpage-tag private', title: 'No PeerPresence shared' }, '—'),
+            React.createElement('span', {
+              className: 'gpage-tag ' + (p && p.online ? 'public' : 'private'),
+              title: p && p.lastEventAt || ''
+            }, chip),
             React.createElement('span', { className: 'gpage-tag ' + (isSigner ? 'public' : 'private') }, isSigner ? 'signer' : 'reader'),
             m === g.creator ? React.createElement('span', { className: 'gpage-tag public' }, 'creator') : null,
             m === this.state.pubkey ? React.createElement('span', { className: 'gpage-tag private' }, 'you') : null
@@ -895,7 +980,8 @@ class GroupPage extends React.Component {
   }
 }
 
-GroupPage.CSS = CSS + '\n' + (GroupBitcoinPanel.CSS || '');
+GroupPage.CSS = CSS + '\n' + (GroupBitcoinPanel.CSS || '') + '\n' +
+  (GroupComposition.CSS || '') + '\n' + (StarMap.CSS || '');
 GroupPage.pathKeyFromLocation = function () {
   const m = String((typeof window !== 'undefined' && window.location.pathname) || '').match(/^\/groups\/([^/]+)/);
   return m ? m[1] : null;

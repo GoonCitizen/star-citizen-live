@@ -33,6 +33,7 @@ const crypto = require('crypto');
 const EventEmitter = require('events');
 const secp256k1 = require('tiny-secp256k1');
 const Actor = require('@fabric/core/types/actor');
+const { verifyAggregatedSchnorr } = require('@fabric/core/functions/musig2');
 const { Store } = require('../types/Store');
 
 // Local Types
@@ -999,17 +1000,18 @@ class MissionManager extends EventEmitter {
    */
   async verifyMusig2Signature (message, signature, multisigData) {
     try {
-      const { participantKeys, aggregatedKey, nonces } = multisigData;
-
-      if (!participantKeys || !aggregatedKey) {
-        throw new Error('Invalid Musig2 data');
+      const { participantKeys, aggregatedKey } = multisigData || {};
+      if (!Array.isArray(participantKeys) || participantKeys.length < 2) {
+        return false;
       }
-
-      const msgBuffer = Buffer.from(message, 'hex');
-      const sigBuffer = Buffer.from(signature, 'hex');
-      const aggKeyBuffer = Buffer.from(aggregatedKey, 'hex');
-
-      return secp256k1.verify(msgBuffer, sigBuffer, aggKeyBuffer);
+      // Aggregate is computed from participant keys (BIP-327 KeyAgg). A
+      // caller-supplied aggregatedKey is only accepted when it matches.
+      return verifyAggregatedSchnorr(
+        message,
+        signature,
+        participantKeys,
+        aggregatedKey
+      );
     } catch (error) {
       console.error('[MISSION-MANAGER]', 'Musig2 verification error:', error);
       return false;

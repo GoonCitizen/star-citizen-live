@@ -39,6 +39,21 @@ describe('documentSearch', () => {
     const peerDoc = { id: 'p1', name: 'brief.txt', mime: 'text/plain', published: true, local: false, source: 'peer', peerAlias: 'Wing' };
     assert.strictEqual(filterDocuments(docs.concat([peerDoc]), { status: 'peers' }).length, 1);
     assert.ok(documentMatchesCriteria(peerDoc, { query: 'wing' }));
+    const priced = { id: 'c1', name: 'ops.txt', mime: 'text/plain', published: true, purchasePriceSats: 110, costBasisSats: 99999 };
+    assert.ok(documentMatchesCriteria(priced, { query: '110' }));
+    assert.ok(!documentMatchesCriteria(priced, { query: '99999' }), 'operator cost basis must not be searchable');
+    const reseller = {
+      id: 'c2',
+      name: 'held.txt',
+      mime: 'text/plain',
+      published: true,
+      purchasePriceSats: 110,
+      bestPeerPriceSats: 7,
+      peerAlias: 'Ops'
+    };
+    assert.ok(documentMatchesCriteria(reseller, { query: '110' }));
+    assert.ok(documentMatchesCriteria(reseller, { query: 'ops' }));
+    assert.ok(!documentMatchesCriteria(reseller, { query: '7' }), 'cheapest peer price must not be searchable');
   });
 
   it('counts types for chip badges', () => {

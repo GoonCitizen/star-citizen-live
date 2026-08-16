@@ -32,7 +32,7 @@ test('restoreIdentity is deterministic from mnemonic and xprv', () => {
 });
 
 test('restoreIdentity rejects empty input', () => {
-  assert.throws(() => restoreIdentity({}), /mnemonic or xprv/);
+  assert.throws(() => restoreIdentity({}), /mnemonic, seed hex, or xprv/);
 });
 
 test('encrypt/decrypt round-trips with the right password only', () => {

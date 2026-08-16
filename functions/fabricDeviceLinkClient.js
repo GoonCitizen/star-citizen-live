@@ -15,6 +15,40 @@ const {
   buildDeviceLinkMessage
 } = require('@fabric/http/functions/fabricDeviceLinkMessages');
 
+/**
+ * Drop a pending hub session. 404 / already-gone is success so Cancel is always
+ * safe. Network errors still return ok so the local QR / overlay can unstick;
+ * the hub row then ages out on SESSION_TTL_MS.
+ */
+async function cancelDeviceLinkSession (hubBase, sessionId, opts = {}) {
+  const fetchImpl = opts.fetchImpl || globalThis.fetch;
+  const base = String(hubBase || '').replace(/\/$/, '');
+  const sid = String(sessionId || '').trim();
+  if (!base || !sid) return { ok: true, skipped: true };
+  const origin = String(opts.origin || base).trim().replace(/\/$/, '');
+  try {
+    const res = await fetchImpl(`${base}/device-links/${encodeURIComponent(sid)}`, {
+      method: 'DELETE',
+      headers: deviceLinkHeaders(origin),
+      cache: 'no-store'
+    });
+    const data = await res.json().catch(() => ({}));
+    if (res.status === 404 || (res.ok && data && data.ok !== false)) {
+      return { ok: true, cancelled: true, existed: !!(data && data.existed), ...data };
+    }
+    if (res.status === 409) {
+      return { ok: true, cancelled: false, alreadyLinked: true };
+    }
+    return { ok: false, status: res.status, error: (data && data.error) || `HTTP ${res.status}` };
+  } catch (err) {
+    return {
+      ok: true,
+      cancelled: false,
+      error: (err && err.message) ? String(err.message) : 'cancel failed'
+    };
+  }
+}
+
 async function fetchPendingDeviceLink (hubBase, sessionId, opts = {}) {
   const fetchImpl = opts.fetchImpl || globalThis.fetch;
   const base = String(hubBase || '').replace(/\/$/, '');
@@ -96,6 +130,7 @@ async function completeDeviceLinkAsResponder (identity, hubBase, session, opts =
 module.exports = {
   fetchPendingDeviceLink,
   completeDeviceLinkAsResponder,
+  cancelDeviceLinkSession,
   buildLinkMessage: buildDeviceLinkMessage,
   buildDeviceLinkMessage,
   DEVICE_LINK_PREFIX,

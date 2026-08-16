@@ -1,7 +1,7 @@
 'use strict';
 
 /**
- * Re-export Hub GHSA / OpenSSF bulk-advisory detector (`@fabric/hub` ≥ `361a750`).
+ * Re-export Hub GHSA / OpenSSF bulk-advisory detector (`@fabric/hub` ≥ `2658e18`).
  * Local catalog ingest uses this so malware-advisory dumps are not stored.
  * When `@fabric/hub` is missing (Android APK before fabric deps are staged),
  * the stub never matches (fail open).

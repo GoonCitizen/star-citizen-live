@@ -120,5 +120,38 @@ describe('file page UI', () => {
     assert.match(text, /gooncitizen\.dmg/);
     assert.match(text, /Pin to profile/);
     assert.match(text, /Publisher profile|Files catalog/);
+    assert.match(text, /Sync to my other devices/);
+    assert.match(text, /identity cluster/);
+  });
+
+  it('shows peer offers without operator cost basis or file bytes', () => {
+    const page = new FilePage({ fileId: FILE_ID });
+    page.state.loading = false;
+    page.state.error = null;
+    page.state.detail = {
+      id: FILE_ID,
+      self: false,
+      local: false,
+      record: {
+        id: FILE_ID,
+        name: 'ghost.txt',
+        mime: 'text/plain',
+        purchasePriceSats: 10,
+        local: false,
+        costBasisSats: 99999,
+        contentBase64: 'AAAA'
+      },
+      offers: [
+        { peerAlias: 'Ops', purchasePriceSats: 10, costBasisSats: 99999 },
+        { peerAlias: 'Wing', purchasePriceSats: 40 }
+      ]
+    };
+    const text = textOf(page.render());
+    assert.match(text, /ghost\.txt/);
+    assert.match(text, /peer listing/);
+    assert.match(text, /Ops/);
+    assert.doesNotMatch(text, /99999/);
+    assert.doesNotMatch(text, /AAAA/);
+    assert.doesNotMatch(text, /Cost basis/);
   });
 });

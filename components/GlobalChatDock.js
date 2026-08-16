@@ -1,12 +1,13 @@
 'use strict';
 
 /**
- * Always-available global chat dock + desktop notification watcher.
+ * Always-available public mesh shoutbox dock + desktop notification watcher.
  *
  * The dedicated Chat tab remains the full channel browser (global + groups).
- * This dock keeps the network `global` channel one click away on every other
- * tab, and polls for new messages so desktop notifications can fire per
- * operator settings (Settings → Desktop notifications).
+ * This dock keeps the network `global` channel (cleartext `P2P_CHAT_MESSAGE`
+ * flood) one click away on every other tab, and polls for new messages so
+ * desktop notifications can fire per operator settings
+ * (Settings → Desktop notifications).
  */
 
 const React = require('react');
@@ -130,7 +131,9 @@ class GlobalChatDock extends React.Component {
     this._acked = loadIdMap(LS_ACKED);       // dock unread cursor
     this._notified = loadIdMap(LS_NOTIFIED); // OS notification cursor
     this._bootstrapped = false;
-    this._focused = typeof document !== 'undefined' ? document.hasFocus() : true;
+    this._focused = (typeof document !== 'undefined' && typeof document.hasFocus === 'function')
+      ? document.hasFocus()
+      : true;
     this._onFocus = () => { this._focused = true; };
     this._onBlur = () => { this._focused = false; };
   }
@@ -251,7 +254,7 @@ class GlobalChatDock extends React.Component {
 
         for (const m of fresh.slice(-3)) {
           const who = m.handle || shortKey(m.author);
-          const label = ch.kind === 'global' ? 'Global chat' : (ch.label || 'Group chat');
+          const label = ch.kind === 'global' ? 'Public shoutbox' : (ch.label || 'Group chat');
           const body = String(m.body || '').slice(0, 180);
           await showDesktopNotification({
             title: `${label} · ${who}`,
@@ -342,7 +345,7 @@ class GlobalChatDock extends React.Component {
           className: 'gcdock-toggle',
           onClick: () => this.setOpen(true)
         },
-        React.createElement('span', null, '💬 Global chat'),
+        React.createElement('span', null, '💬 Public shoutbox'),
         this.state.unread
           ? React.createElement('span', { className: 'badge' }, this.state.unread > 99 ? '99+' : this.state.unread)
           : null,
@@ -354,8 +357,8 @@ class GlobalChatDock extends React.Component {
     return React.createElement('div', { className: 'gcdock' },
       React.createElement('div', { className: 'gcdock-panel' },
         React.createElement('div', { className: 'gcdock-head' },
-          React.createElement('span', null, '💬 Global'),
-          React.createElement('span', { className: 'sub' }, 'always on · network'),
+          React.createElement('span', null, '💬 Public shoutbox'),
+          React.createElement('span', { className: 'sub' }, 'cleartext mesh · always on'),
           React.createElement('button', {
             type: 'button',
             title: 'Open full Chat (global + groups)',

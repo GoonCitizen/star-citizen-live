@@ -115,19 +115,6 @@ function mintOperatorAdminToken (keySettings, opts = {}) {
   return { token: '', source: null, pubkeyPrefix: null };
 }
 
-/**
- * Production publisher Accept token: mint from local operator key, else env/file.
- * @param {object} [keySettings]
- * @param {object} [opts]
- * @returns {{ token: string, source: string|null, pubkeyPrefix: string|null }}
- */
-function resolveAcceptAdminToken (keySettings, opts = {}) {
-  const minted = mintOperatorAdminToken(keySettings, opts);
-  if (minted.token) return minted;
-  const token = loadAdminToken();
-  return { token, source: token ? 'file-or-env' : null, pubkeyPrefix: null };
-}
-
 function hubRpcBase () {
   return String(process.env.FABRIC_HUB_RPC_URL || process.env.FABRIC_HUB_URL || 'http://127.0.0.1:8080')
     .trim()
@@ -226,12 +213,299 @@ async function waitForPeerConnections (peer, { timeoutMs = 20000, min = 1 } = {}
   return Object.keys(peer.connections || {});
 }
 
+const PRODUCTION_HOST_RE = /(?:^|[./])(?:hub\.fabric\.pub|relay\.goon\.vc)(?::|\s|$)/i;
+
+/**
+ * Classify whether this process is an operator publish, an adversary probe, or
+ * ambiguous (production hosts / flags without a clear intent).
+ *
+ * Local machine + production hosts defaults to **operator** for deploy scripts
+ * (same FABRIC_XPRV config as Hub). Adversary scripts must opt in explicitly.
+ *
+ * @param {object} [opts]
+ * @param {string[]} [opts.argv]
+ * @param {NodeJS.ProcessEnv} [opts.env]
+ * @param {string} [opts.script] 'deploy' | 'adversary' | 'status' | 'unknown'
+ * @param {string[]} [opts.peers]
+ * @param {string} [opts.httpTarget]
+ * @returns {{
+ *   posture: 'operator'|'adversary'|'local'|'ambiguous',
+ *   productionTargets: boolean,
+ *   reasons: string[],
+ *   treatAsOperatorPublish: boolean,
+ *   treatAsAdversary: boolean
+ * }}
+ */
+function classifyPlaynetPosture (opts = {}) {
+  const env = opts.env || process.env;
+  const argv = Array.isArray(opts.argv) ? opts.argv : [];
+  const script = String(opts.script || 'unknown');
+  const reasons = [];
+
+  const advFlag = argv.includes('--adversary') ||
+    env.ADV_PRODUCTION === '1' || env.ADV_PRODUCTION === 'true' ||
+    env.FABRIC_PLAYNET_ADVERSARY === '1' || env.FABRIC_PLAYNET_ADVERSARY === 'true';
+  const opFlag = argv.includes('--production') ||
+    env.FABRIC_PLAYNET_PRODUCTION === '1' || env.FABRIC_PLAYNET_PRODUCTION === 'true';
+  const peers = Array.isArray(opts.peers) ? opts.peers : [];
+  const httpTarget = String(opts.httpTarget || env.ADV_HTTP || env.FABRIC_HUB_RPC_URL || '');
+  const peerBlob = peers.join(',') + ',' + String(env.FABRIC_PLAYNET_PEERS || '') + ',' +
+    String(env.ADV_FABRIC || '');
+  const productionTargets = PRODUCTION_HOST_RE.test(httpTarget) ||
+    PRODUCTION_HOST_RE.test(peerBlob) ||
+    peers.some((p) => PRODUCTION_HOST_RE.test(String(p)));
+
+  if (advFlag) reasons.push('adversary flag/env set');
+  if (opFlag) reasons.push('production/operator flag/env set');
+  if (productionTargets) reasons.push('targets public playnet hosts');
+  if (script === 'adversary') reasons.push('adversary probe script');
+  if (script === 'deploy') reasons.push('operator deploy script');
+
+  let posture = 'local';
+  if (script === 'adversary' || (advFlag && !opFlag)) {
+    posture = 'adversary';
+  } else if (opFlag && !advFlag) {
+    posture = productionTargets || script === 'deploy' ? 'operator' : 'operator';
+  } else if (advFlag && opFlag) {
+    posture = 'ambiguous';
+    reasons.push('both adversary and production/operator signals present');
+  } else if (productionTargets && script === 'deploy') {
+    posture = 'operator';
+    reasons.push('deploy against public hosts → operator publish');
+  } else if (productionTargets && script === 'adversary') {
+    posture = 'adversary';
+  } else if (productionTargets) {
+    posture = 'ambiguous';
+    reasons.push('public hosts without clear operator/adversary intent');
+  }
+
+  // Deploy never inherits adversary by accident — local config is the publisher.
+  const treatAsAdversary = posture === 'adversary' ||
+    (posture === 'ambiguous' && script === 'adversary');
+  const treatAsOperatorPublish = posture === 'operator' ||
+    (posture === 'ambiguous' && script === 'deploy') ||
+    (script === 'deploy' && opFlag);
+
+  return {
+    posture,
+    productionTargets,
+    reasons,
+    treatAsOperatorPublish: !!treatAsOperatorPublish,
+    treatAsAdversary: !!treatAsAdversary
+  };
+}
+
+/**
+ * Ordered Accept token candidates for local→production publish.
+ * Env/file first (Hub-issued), then mint from the same FABRIC_XPRV as Hub `_rootKey`.
+ *
+ * @param {object} [keySettings]
+ * @param {object} [opts]
+ * @returns {Array<{ token: string, source: string, pubkeyPrefix: string|null }>}
+ */
+function listAcceptAdminTokenCandidates (keySettings, opts = {}) {
+  const out = [];
+  const seen = new Set();
+  const push = (row) => {
+    const token = row && String(row.token || '').trim();
+    if (!token || seen.has(token)) return;
+    seen.add(token);
+    out.push({
+      token,
+      source: row.source || 'unknown',
+      pubkeyPrefix: row.pubkeyPrefix || null
+    });
+  };
+
+  // Explicit env / Hub-issued file before mint so a Hub first-time-setup token
+  // still works when local mint key ≠ production Hub `_rootKey`.
+  const stored = loadAdminToken();
+  if (stored) {
+    const fromEnv = String(
+      process.env.FABRIC_HUB_ADMIN_TOKEN || process.env.FABRIC_ADMIN_TOKEN || ''
+    ).trim();
+    push({
+      token: stored,
+      source: fromEnv && fromEnv === stored ? 'env' : 'file-or-env',
+      pubkeyPrefix: null
+    });
+  }
+
+  const mintedMaster = mintOperatorAdminToken(keySettings, Object.assign({}, opts, {
+    derivedKey: null,
+    persist: false
+  }));
+  push(mintedMaster);
+
+  if (opts.derivedKey) {
+    try {
+      let mint;
+      try {
+        mint = require('@fabric/core/functions/fabricHomeEnv').mintHubAdminToken;
+      } catch (_) {
+        const Token = require('@fabric/core/types/token');
+        mint = (issuer) => new Token({
+          capability: 'OP_IDENTITY',
+          issuer,
+          subject: 'admin'
+        }).toSignedString();
+      }
+      const token = String(mint(opts.derivedKey) || '').trim();
+      let pubkeyPrefix = null;
+      try {
+        const hex = opts.derivedKey.pubkey ? String(opts.derivedKey.pubkey) : '';
+        pubkeyPrefix = hex ? hex.slice(0, 12) + '…' : null;
+      } catch (_) { /* ignore */ }
+      push({ token, source: 'operator-derived', pubkeyPrefix });
+    } catch (_) { /* ignore */ }
+  }
+
+  return out;
+}
+
+/**
+ * Prefer stored Hub token, else first mint — same cascade head as Accept retries.
+ * @param {object} [keySettings]
+ * @param {object} [opts]
+ * @returns {{ token: string, source: string|null, pubkeyPrefix: string|null }}
+ */
+function resolveAcceptAdminToken (keySettings, opts = {}) {
+  const list = listAcceptAdminTokenCandidates(keySettings, opts);
+  if (!list.length) return { token: '', source: null, pubkeyPrefix: null };
+  const first = list[0];
+  // Persist a mint when that is what we selected and persist≠false
+  if (opts.persist !== false && first.source === 'operator-master' && keySettings) {
+    mintOperatorAdminToken(keySettings, opts);
+  }
+  return first;
+}
+
+/**
+ * Extract Hub identity pubkey hex from GetNetworkStatus / peering payloads.
+ * @param {object} status
+ * @returns {string|null}
+ */
+function extractHubPubkey (status) {
+  if (!status || typeof status !== 'object') return null;
+  const candidates = [
+    status.pubkey,
+    status.publicKey,
+    status.networkAddress,
+    status.id,
+    status.peerId,
+    status.identity && status.identity.pubkey,
+    status.identity && status.identity.id,
+    status.node && status.node.pubkey,
+    status.agent && status.agent.pubkey
+  ];
+  for (const c of candidates) {
+    const s = String(c || '').trim().toLowerCase();
+    if (/^0[23][0-9a-f]{64}$/.test(s)) return s;
+    if (/^[0-9a-f]{64}$/.test(s)) return s;
+  }
+  return null;
+}
+
+/**
+ * Compare local operator key to Hub network identity (same-config preflight).
+ * @param {object} [keySettings]
+ * @param {object} [opts]
+ * @returns {Promise<object>}
+ */
+async function preflightOperatorAlignment (keySettings, opts = {}) {
+  const Key = require('@fabric/core/types/key');
+  let localPubkey = null;
+  try {
+    if (keySettings) localPubkey = String(new Key(keySettings).pubkey || '').toLowerCase();
+  } catch (_) { /* ignore */ }
+
+  const baseUrl = opts.baseUrl || hubRpcBase();
+  let hubStatus = null;
+  let hubPubkey = null;
+  let error = null;
+  try {
+    hubStatus = await hubRpc('GetNetworkStatus', {}, { baseUrl, timeoutMs: opts.timeoutMs || 20000 });
+    hubPubkey = extractHubPubkey(hubStatus);
+  } catch (e) {
+    error = e && e.message ? e.message : String(e);
+  }
+
+  const aligned = !!(localPubkey && hubPubkey && (
+    localPubkey === hubPubkey ||
+    localPubkey.slice(-64) === hubPubkey.slice(-64)
+  ));
+
+  return {
+    baseUrl,
+    localPubkeyPrefix: localPubkey ? localPubkey.slice(0, 12) + '…' : null,
+    hubPubkeyPrefix: hubPubkey ? hubPubkey.slice(0, 12) + '…' : null,
+    aligned,
+    known: !!(localPubkey && hubPubkey),
+    error,
+    sameConfigExpected: aligned || (!hubPubkey && !!localPubkey)
+  };
+}
+
+/**
+ * Try AcceptTrackedApplicationContract with each admin token candidate.
+ * @param {object} opts
+ * @returns {Promise<object>}
+ */
+async function acceptTrackedWithTokenCascade (opts = {}) {
+  const contractId = String(opts.contractId || '').trim();
+  const baseUrl = opts.baseUrl || hubRpcBase();
+  const candidates = Array.isArray(opts.candidates) ? opts.candidates : [];
+  const rpc = typeof opts.rpc === 'function' ? opts.rpc : hubRpc;
+  const attempts = [];
+  if (!contractId) {
+    return { ok: false, accept: null, attempts, error: 'contractId required' };
+  }
+  if (!candidates.length) {
+    return { ok: false, accept: null, attempts, error: 'no admin token candidates' };
+  }
+
+  for (const row of candidates) {
+    try {
+      const accept = await rpc('AcceptTrackedApplicationContract', {
+        contractId,
+        adminToken: row.token
+      }, { baseUrl, timeoutMs: opts.timeoutMs });
+      const ok = !!(accept && accept.status !== 'error');
+      attempts.push({
+        source: row.source,
+        ok,
+        message: accept && accept.message ? String(accept.message) : null
+      });
+      if (ok) {
+        return { ok: true, accept, source: row.source, attempts };
+      }
+    } catch (e) {
+      attempts.push({
+        source: row.source,
+        ok: false,
+        message: e && e.message ? e.message : String(e)
+      });
+    }
+  }
+  return {
+    ok: false,
+    accept: null,
+    attempts,
+    error: 'all admin token candidates rejected (Hub _rootKey may not match local FABRIC_XPRV; set FABRIC_HUB_ADMIN_TOKEN from Hub setup or align keys)'
+  };
+}
+
 module.exports = {
   ROOT,
   loadPeerKeySettings,
   loadAdminToken,
   mintOperatorAdminToken,
   resolveAcceptAdminToken,
+  listAcceptAdminTokenCandidates,
+  classifyPlaynetPosture,
+  extractHubPubkey,
+  preflightOperatorAlignment,
+  acceptTrackedWithTokenCascade,
   hubRpcBase,
   productionPlaynetTarget,
   PRODUCTION_HUB_HTTP,

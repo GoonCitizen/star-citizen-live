@@ -39,7 +39,13 @@ contextBridge.exposeInMainWorld('electronAPI', {
   },
   /** Fabric mesh publish helpers (prefer over HTTP when available). */
   fabric: {
-    deliveryReceipt: (opts) => ipcRenderer.invoke('fabric:delivery-receipt', opts || {})
+    deliveryReceipt: (opts) => ipcRenderer.invoke('fabric:delivery-receipt', opts || {}),
+    publishCrossSign: (opts) => ipcRenderer.invoke('fabric:publish-cross-sign', opts || {}),
+    identityCluster: (opts) => ipcRenderer.invoke('fabric:identity-cluster', opts || {}),
+    presenceStatus: () => ipcRenderer.invoke('fabric:presence-status'),
+    presenceRoster: () => ipcRenderer.invoke('fabric:presence-roster'),
+    setPresence: (patch) => ipcRenderer.invoke('fabric:presence-set', patch || {}),
+    setPresenceShip: (opts) => ipcRenderer.invoke('fabric:presence-ship', opts || {})
   },
   notify: (payload) => ipcRenderer.invoke('notify:show', payload || {}),
   onNotifyAction: (handler) => {

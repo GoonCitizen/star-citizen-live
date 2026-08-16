@@ -109,15 +109,16 @@ accepts or rejects. Private groups are members-only.</p>
 <code>stores/gooncitizen/register</code> (Hub-style named store root).</p>
 </dd>
 <dt><a href="#http">http</a></dt>
-<dd><p>Star Citizen Live - Fabric-free service (M1 skeleton + M3 parser).</p>
-<p>Boots with ZERO external dependencies - only Node.js built-ins (http, crypto,
-events, fs, readline) plus global fetch (identity/group crypto loads lazily).
-This file is the SERVICE DEFINITION only — the server entry that boots it
-from the environment is <code>scripts/node.js</code> (<code>npm start</code>).</p>
-<p>Features: in-memory collections, REST endpoints, live log tailing (read-only,
-optional) AND offline replay, real Game.log event parsing (functions/parser.js),
-optional Discord webhook posting, and the mission/contract seam.</p>
-<p>It edits NOTHING in the Star Citizen installation - the log is only ever read.</p>
+<dd><p>Star Citizen Live — LiveRelay (dashboard, register, Fabric Peer ingest).</p>
+<p>Entry: <code>scripts/node.js</code> (<code>npm start</code>). Desktop: <code>main.js</code>.
+Game.log is read-only. Fabric git deps are required (<code>npm i</code>).</p>
+<p>Features: collections, REST, live log tail (read-only) and offline replay,
+Game.log parsing (<code>functions/parser.js</code>), optional Discord, missions/groups/
+chat, and a Fabric Peer (D-009 / D-010).</p>
+<p>It edits NOTHING in the Star Citizen installation — the log is only ever read.</p>
+</dd>
+<dt><a href="#BEARER_TTL_MS">BEARER_TTL_MS</a></dt>
+<dd><p>Hosted / site-login Bearer session lifetime (ms).</p>
 </dd>
 <dt><a href="#crypto">crypto</a></dt>
 <dd><p>MissionManager — the org mission register (M5.1).</p>
@@ -672,6 +673,7 @@ Remove one record from a collection. Returns true when it existed.
 * [ChatManager](#ChatManager)
     * [new ChatManager(opts)](#new_ChatManager_new)
     * _instance_
+        * [._shareableChannel(channel)](#ChatManager+_shareableChannel) ⇒ <code>boolean</code>
         * [.canAccess()](#ChatManager+canAccess)
         * [.dmPeerOf()](#ChatManager+dmPeerOf)
         * [.channelsFor()](#ChatManager+channelsFor)
@@ -694,6 +696,18 @@ Remove one record from a collection. Returns true when it existed.
 | opts | <code>Object</code> |  |
 | opts.store | <code>Object</code> | Shared Fabric Store. |
 | [opts.groupManager] | <code>Object</code> | For channel membership. |
+
+<a name="ChatManager+_shareableChannel"></a>
+
+### chatManager.\_shareableChannel(channel) ⇒ <code>boolean</code>
+Channel shape DeviceDataShare may replay even before the local group
+contract lands (cluster-gated ingest only).
+
+**Kind**: instance method of [<code>ChatManager</code>](#ChatManager)  
+
+| Param | Type |
+| --- | --- |
+| channel | <code>\*</code> | 
 
 <a name="ChatManager+canAccess"></a>
 
@@ -818,6 +832,7 @@ Deterministic id for a message payload (mirror of post()).
         * [._sanitizePeerCandidates(peer)](#FabricNetwork+_sanitizePeerCandidates) ⇒ <code>void</code>
         * [._ingestPeeringEvent(ev, kind)](#FabricNetwork+_ingestPeeringEvent)
         * [.fillPeerSlots()](#FabricNetwork+fillPeerSlots) ⇒ <code>number</code>
+        * [.dialClusterCandidates(addresses, [meta])](#FabricNetwork+dialClusterCandidates) ⇒ <code>Array.&lt;string&gt;</code>
         * [.maybePublishPeeringOffer([opts])](#FabricNetwork+maybePublishPeeringOffer)
         * [.publishPeeringOffer([opts])](#FabricNetwork+publishPeeringOffer)
         * [.publishGroupContract(definition)](#FabricNetwork+publishGroupContract)
@@ -829,6 +844,7 @@ Deterministic id for a message payload (mirror of post()).
         * [.publishDirectChat(payload)](#FabricNetwork+publishDirectChat)
         * [.publishNoteShare(payload)](#FabricNetwork+publishNoteShare)
         * [.publishIdentityCrossSign(payload)](#FabricNetwork+publishIdentityCrossSign)
+        * [.publishDeviceDataShare(payload)](#FabricNetwork+publishDeviceDataShare)
         * [.publishGroupDataShare(contractId, payload)](#FabricNetwork+publishGroupDataShare)
         * [.publishDiscordCatalogShare(contractId, payload)](#FabricNetwork+publishDiscordCatalogShare)
         * [.lookupPeerRegistry(address)](#FabricNetwork+lookupPeerRegistry) ⇒ <code>Object</code> \| <code>null</code>
@@ -854,6 +870,8 @@ Deterministic id for a message payload (mirror of post()).
         * [.publishFederationInviteResponse(contractId, response)](#FabricNetwork+publishFederationInviteResponse)
         * [.requestPeerInventories()](#FabricNetwork+requestPeerInventories) ⇒ <code>Object</code>
         * [.replyDocumentInventory(originName, items)](#FabricNetwork+replyDocumentInventory) ⇒ <code>boolean</code>
+        * [.sendCatalogFile(peerAddress, buffer, [opts])](#FabricNetwork+sendCatalogFile) ⇒ <code>number</code>
+        * [.sendCatalogFileToAddresses(addresses, buffer, [opts])](#FabricNetwork+sendCatalogFileToAddresses) ⇒ <code>number</code>
     * _static_
         * [.connectionMatchesAddress(connectionId, rosterAddress)](#FabricNetwork.connectionMatchesAddress)
 
@@ -1019,6 +1037,23 @@ Dial queued peering candidates into open connection slots.
 
 **Kind**: instance method of [<code>FabricNetwork</code>](#FabricNetwork)  
 **Returns**: <code>number</code> - remaining candidate count  
+<a name="FabricNetwork+dialClusterCandidates"></a>
+
+### fabricNetwork.dialClusterCandidates(addresses, [meta]) ⇒ <code>Array.&lt;string&gt;</code>
+TCP-dial cluster siblings from `account.peers` (LAN / advertise). Skips
+self, loopback (unless allowed), and network hubs. WebRTC is a browser
+Bridge path — this Node Peer does not signal Hub WebRTC.
+
+**Kind**: instance method of [<code>FabricNetwork</code>](#FabricNetwork)  
+**Returns**: <code>Array.&lt;string&gt;</code> - queued `host:port`  
+
+| Param | Type |
+| --- | --- |
+| addresses | <code>Array.&lt;string&gt;</code> | 
+| [meta] | <code>Object</code> | 
+| [meta.pubkey] | <code>string</code> | 
+| [meta.allowLoopback] | <code>boolean</code> | 
+
 <a name="FabricNetwork+maybePublishPeeringOffer"></a>
 
 ### fabricNetwork.maybePublishPeeringOffer([opts])
@@ -1144,6 +1179,17 @@ Gossip an IdentityCrossSign / IdentityCrossSignRevoke under GoonCitizen.
 | Param | Type | Description |
 | --- | --- | --- |
 | payload | <code>Object</code> | verified-ready body from signCrossSign |
+
+<a name="FabricNetwork+publishDeviceDataShare"></a>
+
+### fabricNetwork.publishDeviceDataShare(payload)
+Gossip a cluster-gated account snapshot after device-link.
+
+**Kind**: instance method of [<code>FabricNetwork</code>](#FabricNetwork)  
+
+| Param | Type | Description |
+| --- | --- | --- |
+| payload | <code>Object</code> | DeviceDataShare fields |
 
 <a name="FabricNetwork+publishGroupDataShare"></a>
 
@@ -1425,6 +1471,34 @@ Reply to `P2P_INVENTORY_REQUEST` with this node's published catalog items.
 | --- | --- |
 | originName | <code>string</code> | 
 | items | <code>Array.&lt;object&gt;</code> | 
+
+<a name="FabricNetwork+sendCatalogFile"></a>
+
+### fabricNetwork.sendCatalogFile(peerAddress, buffer, [opts]) ⇒ <code>number</code>
+Push a catalog blob as AMP-sized `P2P_FILE_SEND` frames to one TCP peer.
+
+**Kind**: instance method of [<code>FabricNetwork</code>](#FabricNetwork)  
+**Returns**: <code>number</code> - frames written  
+
+| Param | Type |
+| --- | --- |
+| peerAddress | <code>string</code> | 
+| buffer | <code>Buffer</code> | 
+| [opts] | <code>Object</code> | 
+| [opts.documentId] | <code>string</code> | 
+
+<a name="FabricNetwork+sendCatalogFileToAddresses"></a>
+
+### fabricNetwork.sendCatalogFileToAddresses(addresses, buffer, [opts]) ⇒ <code>number</code>
+Send a catalog blob to every currently connected address in `addresses`.
+
+**Kind**: instance method of [<code>FabricNetwork</code>](#FabricNetwork)  
+
+| Param | Type |
+| --- | --- |
+| addresses | <code>Array.&lt;string&gt;</code> | 
+| buffer | <code>Buffer</code> | 
+| [opts] | <code>Object</code> | 
 
 <a name="FabricNetwork.connectionMatchesAddress"></a>
 
@@ -2017,18 +2091,22 @@ Persistence: uses `types/Store.js` (composes `@fabric/core` Store;
 <a name="http"></a>
 
 ## http
-Star Citizen Live - Fabric-free service (M1 skeleton + M3 parser).
+Star Citizen Live — LiveRelay (dashboard, register, Fabric Peer ingest).
 
-Boots with ZERO external dependencies - only Node.js built-ins (http, crypto,
-events, fs, readline) plus global fetch (identity/group crypto loads lazily).
-This file is the SERVICE DEFINITION only — the server entry that boots it
-from the environment is `scripts/node.js` (`npm start`).
+Entry: `scripts/node.js` (`npm start`). Desktop: `main.js`.
+Game.log is read-only. Fabric git deps are required (`npm i`).
 
-Features: in-memory collections, REST endpoints, live log tailing (read-only,
-optional) AND offline replay, real Game.log event parsing (functions/parser.js),
-optional Discord webhook posting, and the mission/contract seam.
+Features: collections, REST, live log tail (read-only) and offline replay,
+Game.log parsing (`functions/parser.js`), optional Discord, missions/groups/
+chat, and a Fabric Peer (D-009 / D-010).
 
-It edits NOTHING in the Star Citizen installation - the log is only ever read.
+It edits NOTHING in the Star Citizen installation — the log is only ever read.
+
+**Kind**: global constant  
+<a name="BEARER_TTL_MS"></a>
+
+## BEARER\_TTL\_MS
+Hosted / site-login Bearer session lifetime (ms).
 
 **Kind**: global constant  
 <a name="crypto"></a>

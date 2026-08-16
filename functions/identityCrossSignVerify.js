@@ -20,7 +20,8 @@ const {
   buildCrossSignMessage,
   buildRevokeMessage,
   buildCrossSignObject,
-  buildRevokeObject
+  buildRevokeObject,
+  coerceCrossSignObject
 } = require('./identityCrossSign');
 
 function _messageFor (kind, rec) {
@@ -69,6 +70,7 @@ function signCrossSign (identity, fields, kind = SIGN_TYPE) {
  * @returns {{ ok: true, kind: string, record: object }|{ ok: false, error: string }}
  */
 function verifyCrossSignObject (object, _signerPubkey) {
+  object = coerceCrossSignObject(object);
   if (!object || typeof object !== 'object') {
     return { ok: false, error: 'cross-sign object required' };
   }

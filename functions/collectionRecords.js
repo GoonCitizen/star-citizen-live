@@ -24,6 +24,7 @@ const KIND_LABELS = Object.freeze({
   playtimes: 'When they play',
   file: 'File',
   document: 'File',
+  location: 'Location',
   'fabric-message': 'Fabric message'
 });
 
@@ -34,7 +35,8 @@ const KIND_ALIASES = Object.freeze({
   file: 'files',
   document: 'files',
   group: 'groups',
-  mission: 'missions'
+  mission: 'missions',
+  location: 'locations'
 });
 
 const ID_PREFIX = Object.freeze({
@@ -88,6 +90,7 @@ function hrefFor (kind, id) {
   if (k === 'group') return '/groups/' + encodeURIComponent(recId);
   if (k === 'mission') return '/missions/' + encodeURIComponent(recId);
   if (k === 'file' || k === 'document') return '/files/' + encodeURIComponent(recId);
+  if (k === 'location') return '/locations/' + encodeURIComponent(recId);
   return '/collections/' + encodeURIComponent(k) + '/' + encodeURIComponent(recId);
 }
 
@@ -390,6 +393,19 @@ function load (kind, rawId, ctx = {}) {
       links: doc.publisher
         ? [{ rel: 'profile', href: profileHref(doc.publisher) || hrefFor('person', doc.publisher), title: 'Publisher' }]
         : []
+    });
+  }
+
+  if (k === 'location') {
+    const loc = (ctx.getLocation && ctx.getLocation(id))
+      || findRow(corpus.locations, id, ['slug', 'name']);
+    if (!loc) return null;
+    const slug = loc.slug || id;
+    return recordShell(k, slug, {
+      title: loc.name || slug,
+      subtitle: [loc.system, loc.type, loc.parent].filter(Boolean).join(' · ') || 'Location',
+      record: loc,
+      href: hrefFor('location', slug)
     });
   }
 

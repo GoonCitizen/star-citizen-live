@@ -9,6 +9,7 @@ const {
   createNote,
   updateNote,
   markShared,
+  setProfilePinned,
   buildSharePayload,
   ingestShare,
   listNotes,
@@ -72,6 +73,55 @@ describe('identityNotes', () => {
     assert.strictEqual(getNote(remote, note.id).body, 'Callsign confirmed · updated');
     const stale = ingestShare(remote, payload, bob.pubkey);
     assert.strictEqual(stale.revision, 3);
+  });
+
+  it('pins a note to a profile without changing visibility', () => {
+    const store = new Store();
+    const alice = createIdentity();
+    const note = createNote(store, {
+      subject: 'discord:u1',
+      body: 'Watch this one',
+      author: alice.pubkey
+    });
+    assert.strictEqual(note.profilePinned, false);
+    const pinned = setProfilePinned(store, note.id, true);
+    assert.strictEqual(pinned.profilePinned, true);
+    assert.strictEqual(pinned.visibility, 'private');
+    assert.strictEqual(pinned.revision, 2);
+    assert.strictEqual(listNotes(store, { profilePinned: true }).length, 1);
+    assert.strictEqual(listNotes(store, { author: alice.pubkey }).length, 1);
+    const off = setProfilePinned(store, note.id, false);
+    assert.strictEqual(off.profilePinned, false);
+  });
+
+  it('enforcePrivacy with no viewer returns no notes', () => {
+    const store = new Store();
+    const alice = createIdentity();
+    createNote(store, {
+      subject: 'discord:u1',
+      body: 'secret',
+      author: alice.pubkey
+    });
+    assert.strictEqual(listNotes(store, { enforcePrivacy: true }).length, 0);
+    assert.strictEqual(listNotes(store, { enforcePrivacy: true, viewer: null }).length, 0);
+    assert.strictEqual(listNotes(store, { enforcePrivacy: true, viewer: alice.pubkey }).length, 1);
+  });
+
+  it('noteVisibleTo hides private notes from other viewers', () => {
+    const { noteVisibleTo } = require('../../functions/identityNotes');
+    const store = new Store();
+    const alice = createIdentity();
+    const bob = createIdentity();
+    const note = createNote(store, {
+      subject: 'discord:u1',
+      body: 'secret',
+      author: alice.pubkey
+    });
+    assert.strictEqual(noteVisibleTo(note, alice.pubkey), true);
+    assert.strictEqual(noteVisibleTo(note, bob.pubkey), false);
+    assert.strictEqual(noteVisibleTo(note, null), false);
+    const shared = markShared(store, note.id, { scope: 'peer', peerPubkey: bob.pubkey });
+    assert.strictEqual(noteVisibleTo(shared, bob.pubkey), true);
   });
 
   it('requires a Fabric pubkey to share with a peer', () => {

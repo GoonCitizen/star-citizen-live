@@ -7,6 +7,11 @@ All notable changes to this project will be documented in this file.
 > most of which was removed in the fabric-free rebuild — treat them as historical.
 
 ## [Unreleased] — Fabric-free rebuild (`feature/fabric-free-m1`)
+### Added
+- **Files disk upload + cluster sync:** the Files create form accepts a disk
+  picker (plus the UTF-8 textarea). Local catalog rows can **Sync to my devices**
+  (`POST …/files/:id/cluster-sync`); `DeviceDataShare` `account.files` carries
+  metadata and `P2P_FILE_SEND` copies bytes to identity-cluster siblings.
 ### Changed
 - **npm git deps:** pin `@fabric/core` / `@fabric/http` / `@fabric/hub` and set
   **`.npmrc` `allow-git=all`** so nested Hub→http→core git preparation works under
@@ -15,6 +20,10 @@ All notable changes to this project will be documented in this file.
   Node.js service (`app/server.js`). `npm start` now runs the Fabric-free service;
   the old Fabric entry is kept as `npm run start:fabric` (deprecated). (D-002)
 ### Added
+- **Fabric Message collections:** ordered AMP `Message.toBuffer()` hex as the share format for group journals, Discord / `GroupDataShare` packs, DeviceDataShare cluster catch-up, and peer replay (`functions/fabricMessageCollection.js` re-exports core; `functions/clusterSync.js`; ring stores `hex`; `GET …/fabric/messages?format=collection`; `GET|POST …/identity/cluster/sync`).
+- **Call for developers:** `DEVELOPERS.md` / `CONTRIBUTING.md` — G00N SQUAD,
+  PERMAFLEET, and other orgs invited to contribute or fork onto the Fabric
+  Network (GitHub issue templates under `.github/ISSUE_TEMPLATE/`).
 - **Live monitoring** with auto-detection of install/channel + offline replay
   (`app/locate.js`, `app/server.js`, `scripts/replay.js`), session/restart tracking.
 - **Real SC 4.x log parser** (`app/parser.js`): logins, sessions/build, missions,

@@ -346,7 +346,7 @@ function itemFromChat (m) {
     label: 'chat',
     who,
     body: m.body || '',
-    meta: ch === 'global' ? 'Global chat' : ch,
+    meta: ch === 'global' ? 'Public shoutbox' : ch,
     chatMessageId: m.id || null,
     wireHash: m.wireHash || null,
     contractId: (delivery && delivery.contractId) || m.contractId || null,

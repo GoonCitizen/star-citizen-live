@@ -33,7 +33,8 @@ const KIND_LABELS = Object.freeze({
   snapshot: 'Library',
   inbox: 'Inbox',
   playtimes: 'When they play',
-  file: 'File'
+  file: 'File',
+  location: 'Location'
 });
 
 const KIND_WEIGHT = Object.freeze({
@@ -48,6 +49,7 @@ const KIND_WEIGHT = Object.freeze({
   peer: 5,
   playtimes: 3,
   file: 4,
+  location: 6,
   message: 2,
   player: 3,
   inbox: 3,
@@ -229,7 +231,7 @@ function indexChatChannels (byKey, channels) {
       kind: 'channel',
       id: ch.key,
       title: ch.label || ch.key,
-      subtitle: ch.kind === 'global' ? 'Global chat' : (ch.kind || 'channel'),
+      subtitle: ch.kind === 'global' ? 'Public shoutbox' : (ch.kind || 'channel'),
       hash: 'chat',
       tab: 'chat',
       channel: ch.key,
@@ -469,6 +471,25 @@ function indexFiles (byKey, rows) {
   }
 }
 
+function indexLocations (byKey, locations) {
+  for (const loc of locations || []) {
+    if (!loc || !loc.slug) continue;
+    pushUnique(byKey, makeHit({
+      kind: 'location',
+      id: loc.slug,
+      title: loc.name || loc.slug,
+      subtitle: [loc.system, loc.type, loc.parent].filter(Boolean).join(' · ') || 'Location',
+      href: hrefFor('location', loc.slug),
+      tab: 'map',
+      haystack: haystack([
+        loc.name, loc.slug, loc.system, loc.parent, loc.tag, loc.type, loc.designation,
+        ...(loc.aliases || []),
+        'location', 'map', 'starmap'
+      ])
+    }));
+  }
+}
+
 /**
  * Flatten local collections into searchable hits.
  * @param {object} [corpus]
@@ -492,6 +513,7 @@ function buildHits (corpus = {}) {
   indexSnapshots(byKey, corpus.snapshots);
   indexPlaytimes(byKey, corpus.playtimes);
   indexFiles(byKey, corpus.documents);
+  indexLocations(byKey, corpus.locations);
   return Array.from(byKey.values());
 }
 
@@ -576,6 +598,20 @@ function searchCorpus (corpus, query, opts = {}) {
 }
 
 /**
+ * Browser path for a search hit without session side-effects.
+ * Home-tab hits use `/` so they can be `<a href>` targets.
+ * @param {object} hit
+ * @returns {string|null}
+ */
+function hrefOfHit (hit) {
+  if (!hit) return null;
+  if (hit.href) return String(hit.href);
+  if (hit.hash != null && hit.hash !== '') return '#' + String(hit.hash).replace(/^#/, '');
+  if (hit.tab) return hit.tab === 'home' ? '/' : ('#' + hit.tab);
+  return null;
+}
+
+/**
  * Apply navigation side-effects (Chat channel / people query, Groups local tags).
  * @param {object} hit
  * @param {Storage} [session]
@@ -609,5 +645,6 @@ module.exports = {
   buildHits,
   searchCorpus,
   applySearchHit,
+  hrefOfHit,
   makeHit
 };

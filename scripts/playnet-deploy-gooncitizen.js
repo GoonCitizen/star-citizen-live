@@ -29,7 +29,10 @@ const {
 } = require('../contracts/gooncitizen');
 const {
   loadPeerKeySettings,
-  resolveAcceptAdminToken,
+  listAcceptAdminTokenCandidates,
+  classifyPlaynetPosture,
+  preflightOperatorAlignment,
+  acceptTrackedWithTokenCascade,
   hubRpcBase,
   productionPlaynetTarget,
   hubRpc,
@@ -51,12 +54,14 @@ function printHelp () {
   --accept           Call AcceptTrackedApplicationContract after publish
   --hub <url>        Hub HTTP base (default FABRIC_HUB_RPC_URL / http://127.0.0.1:8080)
   --production       Target https://hub.fabric.pub and hub.fabric.pub:7777,relay.goon.vc:7777
+                     Local machine uses the same FABRIC_XPRV config as Hub (operator publish).
   --hold-ms <n>      Keep peer up after publish (default 4000)
   --check-only       Skip publish; only print contract id + ListTracked status
+  --adversary        Mark posture adversarial (does not change targets; for probes/CI)
 
-Env: FABRIC_XPRV (preferred), FABRIC_SEED / FABRIC_MNEMONIC. --accept mints a Hub
-     admin token from that operator key (local env = production publisher).
-     FABRIC_HUB_ADMIN_TOKEN / ~/.fabric/hub-admin-token is a fallback.
+Env: FABRIC_XPRV (preferred), FABRIC_SEED / FABRIC_MNEMONIC. --accept tries Hub
+     admin tokens in order: FABRIC_HUB_ADMIN_TOKEN / ~/.fabric/hub-admin-token,
+     then mint from operator FABRIC_XPRV (same key as Hub _rootKey when aligned).
      FABRIC_PLAYNET_PEERS, FABRIC_PLAYNET_PRODUCTION=1
 `);
 }
@@ -113,6 +118,7 @@ async function main () {
     if (a === '--accept') doAccept = true;
     else if (a === '--check-only') checkOnly = true;
     else if (a === '--production') production = true;
+    else if (a === '--adversary') { /* classified via classifyPlaynetPosture(argv) */ }
     else if (a === '--hub') hubUrl = String(argv[++i] || '').replace(/\/$/, '');
     else if (a === '--hold-ms') holdMs = Number(argv[++i] || holdMs);
     else if (!a.startsWith('-')) positional.push(a);
@@ -135,6 +141,26 @@ async function main () {
     }
   }
 
+  const peers = playnetPeers(positional);
+  const posture = classifyPlaynetPosture({
+    argv,
+    script: 'deploy',
+    peers,
+    httpTarget: hubUrl
+  });
+  console.log('[playnet:deploy] posture', {
+    posture: posture.posture,
+    treatAsOperatorPublish: posture.treatAsOperatorPublish,
+    treatAsAdversary: posture.treatAsAdversary,
+    reasons: posture.reasons
+  });
+  if (posture.posture === 'ambiguous') {
+    console.warn('[playnet:deploy] ambiguous posture — treating as operator publish (local config = production publisher)');
+  }
+  if (posture.treatAsAdversary && !posture.treatAsOperatorPublish) {
+    throw new Error('Refusing deploy in adversary posture. Drop --adversary / ADV_PRODUCTION, or use scripts/adversary-local-probe.js');
+  }
+
   const gc = loadContract();
   console.log('[playnet:deploy] GoonCitizen', {
     source: gc.source,
@@ -155,7 +181,18 @@ async function main () {
     throw new Error('FABRIC_XPRV (preferred) or FABRIC_SEED / FABRIC_MNEMONIC required');
   }
 
-  const peers = playnetPeers(positional);
+  const alignment = await preflightOperatorAlignment(peerKey, { baseUrl: hubUrl });
+  console.log('[playnet:deploy] operator alignment', {
+    aligned: alignment.aligned,
+    known: alignment.known,
+    local: alignment.localPubkeyPrefix,
+    hub: alignment.hubPubkeyPrefix,
+    error: alignment.error || undefined
+  });
+  if (alignment.known && !alignment.aligned) {
+    console.warn('[playnet:deploy] local FABRIC_XPRV pubkey ≠ Hub network identity — Accept will try stored Hub admin token before mint');
+  }
+
   const peer = new Peer({
     listen: false,
     networking: true,
@@ -194,9 +231,9 @@ async function main () {
   }
   console.log('[playnet:deploy] CONTRACT_PUBLISH sent', { contractId: gc.contractId, peers: conns.length });
 
-  const acceptToken = doAccept
-    ? resolveAcceptAdminToken(peerKey, { derivedKey: peer.key, persist: true })
-    : null;
+  const acceptCandidates = doAccept
+    ? listAcceptAdminTokenCandidates(peerKey, { derivedKey: peer.key, persist: true })
+    : [];
 
   await new Promise((r) => setTimeout(r, holdMs));
   await peer.stop();
@@ -206,20 +243,26 @@ async function main () {
   console.log('[playnet:deploy] tracked after publish', summarizeTracked(mid, gc.contractId));
 
   if (doAccept) {
-    if (!acceptToken || !acceptToken.token) {
+    if (!acceptCandidates.length) {
       throw new Error('--accept needs FABRIC_XPRV (to mint) or FABRIC_HUB_ADMIN_TOKEN');
     }
-    console.log('[playnet:deploy] accept token', {
-      source: acceptToken.source,
-      pubkey: acceptToken.pubkeyPrefix
-    });
-    const accept = await hubRpc('AcceptTrackedApplicationContract', {
+    console.log('[playnet:deploy] accept candidates', acceptCandidates.map((c) => ({
+      source: c.source,
+      pubkey: c.pubkeyPrefix
+    })));
+    const accepted = await acceptTrackedWithTokenCascade({
       contractId: gc.contractId,
-      adminToken: acceptToken.token
-    }, { baseUrl: hubUrl });
-    console.log('[playnet:deploy] AcceptTrackedApplicationContract', accept);
-    if (!accept || accept.status === 'error') {
-      throw new Error((accept && accept.message) || 'AcceptTrackedApplicationContract failed');
+      baseUrl: hubUrl,
+      candidates: acceptCandidates
+    });
+    console.log('[playnet:deploy] AcceptTrackedApplicationContract', {
+      ok: accepted.ok,
+      source: accepted.source || null,
+      attempts: accepted.attempts,
+      result: accepted.accept || null
+    });
+    if (!accepted.ok) {
+      throw new Error(accepted.error || 'AcceptTrackedApplicationContract failed');
     }
 
     try {

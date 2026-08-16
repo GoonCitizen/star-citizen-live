@@ -4,7 +4,7 @@ const { describe, it } = require('node:test');
 const assert = require('node:assert');
 
 require('../helpers/installReactStub');
-const { textOf, findType } = require('../helpers/reactTree');
+const { textOf, findType, collect } = require('../helpers/reactTree');
 const Dashboard = require('../../components/Dashboard');
 const AppSearch = require('../../components/AppSearch');
 
@@ -49,11 +49,30 @@ describe('Dashboard application search', () => {
       label: 'Person',
       id: 'discord:u1',
       title: 'Cara',
-      subtitle: 'Fleet Ops'
+      subtitle: 'Fleet Ops',
+      href: '/profiles/' + encodeURIComponent('discord:u1')
     }];
-    const text = textOf(search.render());
+    const tree = search.render();
+    const text = textOf(tree);
     assert.ok(text.includes('Cara'));
     assert.ok(text.includes('Person'));
     assert.ok(text.includes('Fleet Ops'));
+    const links = collect(tree, (n) => n && n.$$typeof === 'element' && n.type === 'a');
+    assert.ok(links.some((n) => String(n.props.href).includes('/profiles/')));
+    assert.ok(links.every((n) => String(n.props.className || '').includes('app-search-hit')));
+  });
+
+  it('shows an empty-query hint and no-match copy', () => {
+    assert.match(AppSearch.CSS, /text-decoration:\s*none/);
+    const search = new AppSearch({});
+    search.state.query = '';
+    search.state.open = true;
+    assert.match(textOf(search.render()), /Search people, notes, Discord servers/);
+
+    search.state.query = 'zzz-no-hit';
+    search.state.loading = false;
+    search.state.hits = [];
+    search.state.error = null;
+    assert.match(textOf(search.render()), /No local matches/);
   });
 });

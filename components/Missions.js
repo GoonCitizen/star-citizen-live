@@ -18,6 +18,7 @@
 const React = require('react');
 const MissionOutcomesChart = require('./MissionOutcomesChart');
 const { isMissionApprover, isMyMission } = require('../functions/missionRole');
+const { topPilots } = require('../functions/missionCharts');
 
 const BASE = '/services/star-citizen';
 
@@ -59,6 +60,8 @@ const CSS = `
   .mi-filter{display:flex;gap:8px;align-items:center;flex-wrap:wrap;padding:8px 16px;border-bottom:1px solid var(--line);font-size:12px;color:var(--muted)}
   .mi-filter button{background:var(--panel2);border:1px solid var(--line);color:var(--text);border-radius:999px;padding:3px 10px;font-size:11.5px;cursor:pointer}
   .mi-filter button.on{border-color:var(--accent);color:var(--accent)}
+  .mi-lbr{display:grid;grid-template-columns:1fr 72px 86px 56px;gap:8px;align-items:center;padding:6px 8px;font-size:12.5px;border-radius:6px}
+  .mi-lbr.head{color:var(--muted);font-size:11px}
 `;
 
 const SATS = (n) => Number(n || 0).toLocaleString() + ' sats';
@@ -564,6 +567,44 @@ class Missions extends React.Component {
     );
   }
 
+  renderTopPilots () {
+    const analytics = this.props.analytics || null;
+    const rows = topPilots(
+      analytics && analytics.missions,
+      analytics && analytics.deaths,
+      { limit: 10 }
+    );
+    return React.createElement('div', { className: 'mi-panel' },
+      React.createElement('h2', null, '🏅 Top pilots ',
+        React.createElement('span', { className: 'sub' }, '— from Game.log cumulative history')),
+      React.createElement('div', { className: 'mi-body' },
+        !analytics
+          ? React.createElement('div', { style: { color: 'var(--muted)', fontStyle: 'italic' } },
+            'Loading activity…')
+          : (!rows.length
+            ? React.createElement('div', { style: { color: 'var(--muted)', fontStyle: 'italic' } },
+              'No pilot activity yet — import logs on Home or fly to accumulate missions.')
+            : React.createElement(React.Fragment, null,
+              React.createElement('div', { className: 'mi-lbr head' },
+                React.createElement('span', null, 'pilot'),
+                React.createElement('span', { style: { textAlign: 'right' } }, 'missions'),
+                React.createElement('span', { style: { textAlign: 'right' } }, 'completion'),
+                React.createElement('span', { style: { textAlign: 'right' } }, 'deaths')
+              ),
+              rows.map((r) => {
+                const pc = r.tot ? Math.round(100 * r.done / r.tot) : 0;
+                return React.createElement('div', { className: 'mi-lbr', key: r.n },
+                  React.createElement('span', null, r.n),
+                  React.createElement('span', { style: { textAlign: 'right' } }, r.tot),
+                  React.createElement('span', { style: { textAlign: 'right' } }, pc + '%'),
+                  React.createElement('span', { style: { textAlign: 'right' } }, r.deaths)
+                );
+              })
+            ))
+      )
+    );
+  }
+
   render () {
     const me = this.me();
     const cancelled = (this.state.missions || []).filter((m) => m && m.status === 'cancelled');
@@ -594,6 +635,7 @@ class Missions extends React.Component {
           })
         )
       ),
+      this.renderTopPilots(),
       React.createElement('div', { className: 'mi-panel' },
         React.createElement('h2', null, '⭐ Mission register',
           React.createElement('span', { className: 'sub' },

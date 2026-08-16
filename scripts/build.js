@@ -37,17 +37,24 @@ const Missions = require('../components/Missions');
 const MissionPage = require('../components/MissionPage');
 const CollectionRecord = require('../components/CollectionRecord');
 const FilePage = require('../components/FilePage');
+const LocationPage = require('../components/LocationPage');
+const MapPage = require('../components/MapPage');
 const Peers = require('../components/Peers');
 const FabricMessages = require('../components/FabricMessages');
 const GroupFabricInspector = require('../components/GroupFabricInspector');
 const ActivityHeatmap = require('../components/ActivityHeatmap');
 const MissionOutcomesChart = require('../components/MissionOutcomesChart');
 const ShipPicker = require('../components/ShipPicker');
+const LocationPicker = require('../components/LocationPicker');
+const StarMap = require('../components/StarMap');
+const GroupComposition = require('../components/GroupComposition');
 const Fleet = require('../components/Fleet');
 const Settings = require('../components/Settings');
 const Wallet = require('../components/Wallet');
 const WalletConstruct = require('../components/WalletConstruct');
+const DataSyncStatus = require('../components/DataSyncStatus');
 const FabricLoginModal = require('../components/FabricLoginModal');
+const PubkeyEmoji = require('../components/PubkeyEmoji');
 const GroupOfferModal = require('../components/GroupOfferModal');
 
 async function main () {
@@ -59,6 +66,9 @@ async function main () {
     platform: 'browser',
     target: ['chrome100'],
     minify: true,
+    // Linked @fabric/core clones may have build/Release/fabric.node. The
+    // dashboard never loads the native addon (browser); ignore it.
+    loader: { '.node': 'empty' },
     define: {
       'process.env.NODE_ENV': '"production"',
       'process.env.NODE_DEBUG': 'false',
@@ -100,6 +110,7 @@ ${Onboarding.CSS}
 ${Identity.CSS}
 ${Account.CSS || ''}
 ${FabricLoginModal.CSS || ''}
+${PubkeyEmoji.CSS || ''}
 ${GroupOfferModal.CSS || ''}
 ${Chat.CSS}
 ${GlobalChatDock.CSS}
@@ -113,16 +124,22 @@ ${Missions.CSS}
 ${MissionPage.CSS}
 ${CollectionRecord.CSS}
 ${FilePage.CSS || ''}
+${LocationPage.CSS || ''}
+${MapPage.CSS || ''}
 ${Peers.CSS}
 ${FabricMessages.CSS}
 ${GroupFabricInspector.CSS}
 ${ActivityHeatmap.CSS}
 ${MissionOutcomesChart.CSS}
 ${ShipPicker.CSS}
+${LocationPicker.CSS || ''}
+${StarMap.CSS || ''}
+${GroupComposition.CSS || ''}
 ${Fleet.CSS}
 ${Settings.CSS}
 ${Wallet.CSS}
 ${WalletConstruct.CSS || ''}
+${DataSyncStatus.CSS || ''}
 </style>
 </head>
 <body>

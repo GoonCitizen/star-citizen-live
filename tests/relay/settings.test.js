@@ -125,6 +125,27 @@ test('desktop notification settings round-trip on the Fabric Store', async () =>
   fs.rmSync(dir, { recursive: true, force: true });
 });
 
+test('pendingDeviceLinkOffer persists without QR bytes', async () => {
+  const dir = tmpDir();
+  const store = new Store({ path: path.join(dir, 'register') });
+  await store.start();
+  assert.ok(settingsStore.ALLOWED_KEYS.includes('pendingDeviceLinkOffer'));
+  settingsStore.putSetting(store, 'pendingDeviceLinkOffer', {
+    sessionId: 'ab'.repeat(24),
+    hubBase: 'https://relay.goon.vc',
+    nonce: 'cd'.repeat(32),
+    qrDataUrl: 'data:image/png;base64,AAAA'
+  });
+  const loaded = settingsStore.loadSettings(store);
+  assert.equal(loaded.pendingDeviceLinkOffer.sessionId, 'ab'.repeat(24));
+  assert.equal(loaded.pendingDeviceLinkOffer.hubBase, 'https://relay.goon.vc');
+  assert.equal(loaded.pendingDeviceLinkOffer.qrDataUrl, undefined);
+  settingsStore.putSetting(store, 'pendingDeviceLinkOffer', null);
+  assert.equal(settingsStore.loadSettings(store).pendingDeviceLinkOffer, undefined);
+  await store.stop();
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
 test('legacy settings.json is imported into the Fabric Store once, then retired', async () => {
   const dir = tmpDir();
   fs.writeFileSync(path.join(dir, 'settings.json'), JSON.stringify({ logfile: '/legacy/Game.log', evil: 1 }) + '\n');
@@ -158,7 +179,7 @@ test('GET /settings and PUT /settings/:name persist and flag restarts', async ()
     assert.strictEqual(list.body.runtime.groupChatSeal, false);
     assert.strictEqual(list.body.runtime.sharePresence, false);
     assert.strictEqual(list.body.runtime.fabricShareEncoding, 'base64');
-    assert.strictEqual(list.body.runtime.shareDiscordCatalog, true);
+    assert.strictEqual(list.body.runtime.shareDiscordCatalog, false);
     assert.strictEqual(list.body.runtime.sharePlaytimes, false);
     assert.strictEqual(list.body.runtime.shareFiles, false);
 
@@ -190,12 +211,12 @@ test('GET /settings and PUT /settings/:name persist and flag restarts', async ()
     assert.strictEqual(afterEnc.body.runtime.fabricShareEncoding, 'hex');
     assert.strictEqual(settingsStore.loadSettings(svc.registerStore).fabricShareEncoding, 'hex');
 
-    const catalogShare = await request(port, 'PUT', '/settings/shareDiscordCatalog', { value: false });
+    const catalogShare = await request(port, 'PUT', '/settings/shareDiscordCatalog', { value: true });
     assert.strictEqual(catalogShare.status, 200);
     assert.strictEqual(catalogShare.body.requiresRestart, false);
     const afterCatalog = await request(port, 'GET', '/settings');
-    assert.strictEqual(afterCatalog.body.runtime.shareDiscordCatalog, false);
-    assert.strictEqual(settingsStore.loadSettings(svc.registerStore).shareDiscordCatalog, false);
+    assert.strictEqual(afterCatalog.body.runtime.shareDiscordCatalog, true);
+    assert.strictEqual(settingsStore.loadSettings(svc.registerStore).shareDiscordCatalog, true);
 
     const playtimes = await request(port, 'PUT', '/settings/sharePlaytimes', { value: true });
     assert.strictEqual(playtimes.status, 200);

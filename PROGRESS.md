@@ -9,6 +9,89 @@ next. Each milestone closes with a short retro. Newest at the top.
 
 ---
 
+## Per-device sync inventory chips ✅
+**Date:** 2026-08-15 · branch `feature/rsi`
+
+The Devices page now shows counts on each paired card: notes, groups, local tags,
+chat, opted-in files, Game.log files (`history.meta.files`), missions, and
+sessions. This node's totals come from the Store + cumulative history; a sibling
+shows the last inbound `DeviceDataShare` (`account.stats` plus pack lengths).
+No Game.log lines ride the share — counts only. Snapshot field:
+`GET /identity/cluster/sync` `inventory.local` / `outbound` / `inbound`.
+
+## Dedicated Devices page + Hub WebRTC coordinator ✅
+**Date:** 2026-08-15 · branch `feature/rsi`
+
+Device-link has a dedicated **Devices** manager (`#devices`, `components/LinkedDevices.js`)
+on Android and desktop. Pairing stays `fabric://link`. After that, both sides must
+publish Fabric `IdentityCrossSign` (one-way shows **waiting-cross-sign** — that is
+why DeviceDataShare did not fire from a single gossip). Node LiveRelay then
+registers LAN `:7777` candidates on Hub `RegisterWebRTCPeer` (coordinator, not ICE)
+and TCP-dials allowlisted siblings from `ListWebRTCPeers`. Golden egg remains
+`DeviceDataShare` over the Fabric Protocol. Coordinator origin is
+`https://hub.fabric.pub` (`functions/clusterMesh.js`); `relay.goon.vc` stays pairing
+rendezvous. Tests: `tests/unit/clusterMesh.test.js`, `tests/unit/clusterDevices.test.js`,
+`tests/ui/linked-devices.test.js`.
+
+## Files disk upload + identity-cluster file sync ✅
+**Date:** 2026-08-15 · branch `feature/rsi`
+
+The Files create form accepts a disk picker in addition to the UTF-8 textarea
+(`contentBase64` POST, 32 MiB UI cap). Each local catalog row can **Sync to my
+devices** (`POST …/files/:id/cluster-sync`). That flag rides `DeviceDataShare`
+`account.files` as metadata only; bytes copy to other keys in the same identity
+cluster as `P2P_FILE_SEND` after LAN/advertise TCP lands. Not a public listing
+and not profile pin.
+
+## Cluster sync (DeviceDataShare + LAN dial + collection replay) ✅
+**Date:** 2026-08-15 · branch `feature/rsi`
+
+After identity-link, one actor's devices share account data as
+`DeviceDataShare` CONTRACT_MESSAGE frames inside a `FabricMessageCollection`
+(`functions/clusterSync.js`). The `account.peers` pack advertises RFC1918
+`host:port` plus `fabricAdvertiseHost` so a phone and desktop on the same LAN
+TCP-dial `:7777` (no /24 scan). Hub seeds still relay when NAT blocks LAN;
+Passport / Hub browser uses Hub WebRTC (`webrtc-hub` last). Session HTTP:
+`GET|POST /identity/cluster/sync`. Tests: `tests/unit/clusterSync.test.js`,
+`tests/relay/device-data-share.test.js`, `tests/relay/identity-cluster-http.test.js`.
+
+## Fabric Message collections (AMP hex replay) ✅
+**Date:** 2026-08-15 · branch `feature/rsi`
+
+Canonical share format for contract journals, Discord `GroupDataShare` packs,
+and peer catch-up is an ordered list of bit-identical AMP frames
+(`Message.toBuffer()` hex) — not JSON application objects. Core helper
+`@fabric/core/functions/fabricMessageCollection` (CLI `npm run messages`);
+GoonCitizen re-exports it, stores `hex` on the Fabric message ring, and
+exports `GET …/fabric/messages?format=collection`. Tests: core
+`tests/functions.fabricMessageCollection.js`, GoonCitizen
+`tests/unit/fabricMessageCollection.test.js`.
+
+## 🔒 Hosted HTTP privacy gates + suite test lock ✅
+**Date:** 2026-08-14 · branch `feature/rsi`
+
+Audit H1–H7 / M1–M6 on hosted `SC_MODE=server` are gated: missing session is
+anonymous (never `_identity.pubkey`); notes, local tags, Discord link, gameplay
+GETs, documents, snapshots, settings, offers, and private groups stay behind
+`_requireSession` / `_requestViewer`. `shareDiscordCatalog` defaults off.
+`/lookup` omits local tags. Non-loopback HTTP bind warns
+(`functions/httpBindWarning.js`). Tests: `tests/relay/privacy-http-auth.test.js`.
+Staged write-up: `reports/security-privacy-audit-2026-08-14.md` (not a commit).
+Suite PR-comment locks live in each repo’s `docs/OUTSTANDING.md`. Remaining:
+DirectChat / `P2P_FORWARD`, login redeem possession proof (http), mesh flood
+limits. Production HTTP must still be loopback-behind-Caddy.
+
+## 📣 Call for developers (G00N / PERMAFLEET / other orgs)
+**Date:** 2026-08-14 · branch `feature/rsi`
+
+Staged a public contributor call: [`DEVELOPERS.md`](DEVELOPERS.md) (GitHub
+[`CONTRIBUTING.md`](CONTRIBUTING.md) + issue templates). Two audiences — G00N
+SQUAD and PERMAFLEET to staff the node we fly; other orgs (including
+competitors) to fork, rebrand, and still speak Fabric. Not a ship list. PRs
+stay on `feature/rsi`.
+
+---
+
 ## 🔗 Fabric pins after discord `eac4633` ✅
 **Date:** 2026-08-14 · branch `feature/rsi`
 

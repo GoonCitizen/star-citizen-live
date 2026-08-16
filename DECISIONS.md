@@ -2,6 +2,10 @@
 Plain-English record of the *why* behind key choices, so anyone joining later
 understands the direction. Newest at the top.
 
+Contributors (G00N SQUAD, PERMAFLEET, other orgs): [`DEVELOPERS.md`](DEVELOPERS.md).
+What runs: [`AGENTS.md`](AGENTS.md) §3–§4. D-002 removed a heavyweight *transport*;
+**D-009 / D-010** put Fabric conventions and a Peer uplink back.
+
 ---
 
 ## D-019 — Group shares as opaque Fabric Messages
@@ -189,7 +193,7 @@ meet that bar.
 ---
 
 ## D-013 — Mutual device-link attestations (separate seeds)
-**Date:** 2026-07-20 · **Amended:** 2026-08-13 · **Status:** Adopted
+**Date:** 2026-07-20 · **Amended:** 2026-08-15 · **Status:** Adopted
 
 **Decision:** Passport, Hub browser identity, GoonCitizen desktop, and GoonCitizen Android each keep **their own seed**. Cross-app trust is a **mutual Schnorr attestation** over a Hub / LiveRelay rendezvous (`/device-links`), not a shared mnemonic.
 
@@ -227,8 +231,9 @@ Gossiped cross-sign makes that agreement **network-visible**.
 **Consequences / guardrails:**
 - **Peer-equivalent initiator:** Passport, GoonCitizen Android, GoonCitizen
   desktop, and Hub browser can each create or accept a `/device-links` offer.
-  Android **Security → Add a device** is the convenient mobile QR path;
-  Passport Settings → Security & privacy can start the same ceremony.
+  Android **Devices → Add a device** (Security still has the same QR) is the
+  convenient mobile path; Passport Settings → Security & privacy can start the
+  same ceremony.
 - Same crypto rules as client-signed login (Identity.id from xpub, BIP340).
 - Cannot link a key to itself (initiator id === responder id rejected).
 - Session TTL 30 minutes. Origin: same-origin as site login, plus thin clients
@@ -243,6 +248,23 @@ Gossiped cross-sign makes that agreement **network-visible**.
 - A stolen device key **is** the person until another cluster member publishes
   revoke from Identity / Security or Settings / privacy (`docs/THREAT-MODEL.md`).
 - Mnemonic restore remains an escape hatch (Passport import), not the link path.
+- **Cluster sync (2026-08-15):** after the edge lands, `DeviceDataShare` is the
+  account snapshot (profile, groups, notes, local tags, bounded chat,
+  `account.stats` counts, `account.peers`). Frames are stored/replayed as a `FabricMessageCollection`
+  (AMP hex — same helper as group journals / Discord packs). Opt-in catalog
+  files (`account.files`) list metadata only; bytes move as `P2P_FILE_SEND` after
+  the sibling TCP-dials. Siblings TCP-dial
+  advertised RFC1918 `host:port` and `fabricAdvertiseHost` (no subnet scan).
+  Hub seeds remain the NAT path. Node LiveRelay also **registers** on Hub
+  `RegisterWebRTCPeer` / `ListWebRTCPeers` (coordinator only — pubkey + LAN
+  candidates; no ICE) so phone and desktop can find each other when interfaces
+  are hidden. Hub WebRTC *signaling* remains the Passport/browser fallback
+  (`account.peers.webrtc.hubs`). Coordinator origin is `https://hub.fabric.pub`
+  (`functions/clusterMesh.js`); `relay.goon.vc` is pairing rendezvous, not JSON-RPC.
+  Dedicated UI: dashboard **Devices** (`#devices`) with per-device inventory
+  chips (notes, Game.log folds, missions, chat, files). `GET|POST /identity/cluster/sync`
+  is a session collection export/ingest (+ `{ mesh: true }` / `{ dial: [...] }`),
+  not a second pairing ceremony. Apply stays cluster-gated.
 
 ---
 
@@ -427,7 +449,11 @@ parallel bespoke stack.
 1. **First-run identity** — desktop and Android onboard each player with a BIP39
    keypair (`functions/identity.js`, `components/Onboarding.js`), or restore from
    a seed / xprv / encrypted backup. The encrypted key lives in Electron
-   `userData` (desktop) or Capacitor Preferences (Android); the compressed
+   `userData` (desktop). On Android the password-sealed blob is wrapped with
+   AES-256-GCM in the Android Keystore (StrongBox when the device has it, else
+   TEE) and stored in app-private files; Capacitor Preferences and WebView
+   `localStorage` are migration-only and then scrubbed. Google Auto Backup and
+   device-to-device transfer are off (`allowBackup=false`). The compressed
    secp256k1 pubkey is the player's actor id. Keys never leave the client.
    Android then uses dedicated **Keys / Security / Privacy** pages instead of
    overlay modals (`components/Account.js`).

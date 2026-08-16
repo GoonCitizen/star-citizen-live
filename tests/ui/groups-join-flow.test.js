@@ -69,7 +69,7 @@ describe('Groups join flow UI', () => {
     assert.ok(text.includes('Chat'));
   });
 
-  it('group settings slideout holds color, nested channel, share, and fleet share', () => {
+  it('group settings page holds color, nested channel, share, and fleet share', () => {
     const page = new Groups({ identityPubkey: ME });
     page.state.loading = false;
     page.state.pubkey = ME;
@@ -81,15 +81,29 @@ describe('Groups join flow UI', () => {
     const tree = page.render();
     const text = textOf(tree);
     assert.ok(text.includes('Group settings'));
+    assert.ok(text.includes('Back to group'));
     assert.ok(text.includes('Primary color'));
     assert.ok(text.includes('+ Nested channel'));
     assert.ok(text.includes('Share this group'));
     assert.ok(text.includes('Set as primary'));
     assert.ok(text.includes('Share a fleet') || text.includes('Share fleet'));
     assert.ok(findByClass(tree, 'gp-settings').length >= 1);
+    assert.strictEqual(findByClass(tree, 'gp-tabs').length, 0);
   });
 
-  it('nested channel opens as a settings flyout with channel-first copy', () => {
+  it('fleets tab can create a fleet on the selected group', () => {
+    const page = new Groups({ identityPubkey: ME });
+    page.state.loading = false;
+    page.state.pubkey = ME;
+    page.state.groups = [sampleGroup()];
+    page.state.selectedId = 'group-1';
+    page.state.detailTab = 'fleets';
+    const text = textOf(page.render());
+    assert.ok(text.includes('Create fleet'));
+    assert.ok(text.includes('New fleet name'));
+  });
+
+  it('nested channel opens as a settings page with channel-first copy', () => {
     const page = new Groups({ identityPubkey: ME });
     page.state.loading = false;
     page.state.pubkey = ME;
@@ -102,6 +116,7 @@ describe('Groups join flow UI', () => {
     const tree = page.render();
     const text = textOf(tree);
     assert.ok(text.includes('Nested channel'));
+    assert.ok(text.includes('Back to group'));
     assert.ok(text.includes('Channel name'));
     assert.ok(text.includes('Create channel'));
     assert.ok(text.includes('Nested under Salvage Wing'));

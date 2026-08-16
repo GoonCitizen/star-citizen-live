@@ -7,61 +7,20 @@
  * cross-sign, not mnemonic copy.
  */
 
-const IDENTITY_PREF = 'gooncitizen.android.identity';
-const AUTOLOCK_PREF = 'gooncitizen.android.autolock';
 const { Buffer } = require('buffer');
-
-function _capPrefs () {
-  try {
-    return window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.Preferences;
-  } catch (_) {
-    return null;
-  }
-}
-
-async function _readFromPrefs () {
-  const prefs = _capPrefs();
-  if (!prefs || typeof prefs.get !== 'function') return null;
-  try {
-    const r = await prefs.get({ key: IDENTITY_PREF });
-    if (r && r.value) {
-      try { return JSON.parse(r.value); } catch (_) { return null; }
-    }
-  } catch (_) { /* plugin not ready */ }
-  return null;
-}
-
-function _readFromLocalStorage () {
-  try {
-    const raw = localStorage.getItem(IDENTITY_PREF);
-    return raw ? JSON.parse(raw) : null;
-  } catch (_) {
-    return null;
-  }
-}
-
-async function _readBlob () {
-  const fromPrefs = await _readFromPrefs();
-  if (fromPrefs) return fromPrefs;
-  return _readFromLocalStorage();
-}
-
-async function _writeBlob (blob) {
-  const json = JSON.stringify(blob);
-  const prefs = _capPrefs();
-  if (prefs && typeof prefs.set === 'function') {
-    try { await prefs.set({ key: IDENTITY_PREF, value: json }); } catch (_) { /* still write localStorage */ }
-  }
-  try { localStorage.setItem(IDENTITY_PREF, json); } catch (_) {}
-}
-
-async function _clearBlob () {
-  const prefs = _capPrefs();
-  if (prefs && typeof prefs.remove === 'function') {
-    try { await prefs.remove({ key: IDENTITY_PREF }); } catch (_) {}
-  }
-  try { localStorage.removeItem(IDENTITY_PREF); } catch (_) {}
-}
+const {
+  IDENTITY_PREF,
+  readIdentityBlob,
+  persistIdentityBlob,
+  clearIdentityBlob,
+  readAutoLockMinutes,
+  writeAutoLockMinutes
+} = require('./androidIdentityStore');
+const {
+  stampCreatedAt,
+  isDeviceLinkPromptExpired,
+  isStaleDeviceLinkError
+} = require('./deviceLinkLifecycle');
 
 function _bufToHex (buf) {
   return Array.from(new Uint8Array(buf)).map((b) => b.toString(16).padStart(2, '0')).join('');
@@ -188,14 +147,24 @@ function installAndroidIdentityBridge () {
   }
 
   function currentSummary () {
-    return Promise.resolve(_readBlob()).then((blob) => ({
-      exists: !!blob,
-      pubkey: blob ? blob.pubkey : null,
-      xpub: blob ? blob.xpub : null,
-      createdAt: blob ? blob.createdAt : null,
-      unlocked: !!unlocked,
-      autoLockMinutes
-    }));
+    return Promise.resolve(readIdentityBlob()).then(async (blob) => {
+      let pending = pendingDeviceLinkOffer && pendingDeviceLinkOffer.ok
+        ? pendingDeviceLinkOffer
+        : null;
+      try {
+        const row = await localDeviceLinkFetch('/current');
+        if (row && row.ok && row.pending) pending = row;
+      } catch (_) { /* node not up yet */ }
+      return {
+        exists: !!blob,
+        pubkey: blob ? blob.pubkey : null,
+        xpub: blob ? blob.xpub : null,
+        createdAt: blob ? blob.createdAt : null,
+        unlocked: !!unlocked,
+        autoLockMinutes,
+        pendingDeviceLinkOffer: pending
+      };
+    });
   }
 
   async function encryptAndSave (identity, password) {
@@ -205,7 +174,7 @@ function installAndroidIdentityBridge () {
     } catch (_) {
       blob = await encryptIdentityWeb(identity, password);
     }
-    await _writeBlob(blob);
+    await persistIdentityBlob(blob);
     unlocked = identity;
     armAutoLock();
     emitChanged();
@@ -219,6 +188,8 @@ function installAndroidIdentityBridge () {
   }
 
   function emitLoginPrompt (payload) {
+    if (!payload) return;
+    stampCreatedAt(payload);
     pendingLogin = payload;
     loginHandlers.forEach((fn) => {
       try { fn(payload); } catch (_) {}
@@ -283,7 +254,7 @@ function installAndroidIdentityBridge () {
   const identity = {
     get: () => currentSummary(),
     create: async (password) => {
-      const blob = await _readBlob();
+      const blob = await readIdentityBlob();
       if (blob) {
         return {
           error: 'An identity already exists. Unlock it, or forget it on this device first.',
@@ -311,7 +282,7 @@ function installAndroidIdentityBridge () {
       }
     },
     unlock: async (password) => {
-      const blob = await _readBlob();
+      const blob = await readIdentityBlob();
       if (!blob) return { error: 'No identity found.' };
       try {
         unlocked = await decryptBlob(blob, password);
@@ -348,12 +319,13 @@ function installAndroidIdentityBridge () {
     },
     lock: async () => {
       unlocked = null;
+      armAutoLock();
       emitChanged();
       void syncIdentityToLocalNode(null);
       return { ok: true };
     },
     reveal: async (password) => {
-      const blob = await _readBlob();
+      const blob = await readIdentityBlob();
       if (!blob) return { error: 'No identity found.' };
       try {
         const ident = await decryptBlob(blob, password);
@@ -363,7 +335,7 @@ function installAndroidIdentityBridge () {
       }
     },
     exportBackup: async (password) => {
-      const blob = await _readBlob();
+      const blob = await readIdentityBlob();
       if (!blob) return { error: 'No identity found.' };
       try {
         await decryptBlob(blob, password);
@@ -374,7 +346,7 @@ function installAndroidIdentityBridge () {
     },
     importBackup: async (backup, password, replace) => {
       if (!replace) {
-        const existing = await _readBlob();
+        const existing = await readIdentityBlob();
         if (existing) {
           return { error: 'An identity already exists. Forget it on this device first, or check replace.', exists: true };
         }
@@ -389,20 +361,25 @@ function installAndroidIdentityBridge () {
     },
     setAutoLock: async (minutes) => {
       autoLockMinutes = Math.max(0, Number(minutes) || 0);
-      try { localStorage.setItem(AUTOLOCK_PREF, String(autoLockMinutes)); } catch (_) {}
+      await writeAutoLockMinutes(autoLockMinutes);
       armAutoLock();
       return { autoLockMinutes };
     },
     forget: async (confirm) => {
       if (!confirm) return { error: 'confirmation required' };
       unlocked = null;
-      await _clearBlob();
+      armAutoLock();
+      await clearIdentityBlob();
       emitChanged();
       void syncIdentityToLocalNode(null);
       return { ok: true };
     },
     startDeviceLinkOffer: async (opts) => {
       if (!unlocked) return { error: 'Identity is locked — unlock it, then add a device.' };
+      if (pendingDeviceLinkOffer) {
+        try { await localDeviceLinkFetch('/cancel', { method: 'POST', body: {} }); } catch (_) { /* ignore */ }
+        pendingDeviceLinkOffer = null;
+      }
       const res = await localDeviceLinkFetch('/offer', {
         method: 'POST',
         body: {
@@ -417,9 +394,12 @@ function installAndroidIdentityBridge () {
     },
     tickDeviceLinkOffer: async () => {
       if (!unlocked) return { error: 'Identity is locked' };
-      if (!pendingDeviceLinkOffer) return { error: 'no pending device-link offer' };
+      if (!pendingDeviceLinkOffer) return { error: 'no pending device-link offer', expired: true };
       const res = await localDeviceLinkFetch('/tick', { method: 'POST', body: {} });
-      if (!res.ok) return res;
+      if (!res.ok) {
+        if (res.expired || isStaleDeviceLinkError(res)) pendingDeviceLinkOffer = null;
+        return res;
+      }
       if (res.status === 'linked') {
         pendingDeviceLinkOffer = null;
         armAutoLock();
@@ -427,9 +407,9 @@ function installAndroidIdentityBridge () {
       return res;
     },
     cancelDeviceLinkOffer: async () => {
-      pendingDeviceLinkOffer = null;
       try { await localDeviceLinkFetch('/cancel', { method: 'POST', body: {} }); } catch (_) { /* ignore */ }
-      return { ok: true };
+      pendingDeviceLinkOffer = null;
+      return { ok: true, cancelled: true };
     },
     openProtocolUrl: async (url) => {
       await handleProtocolUrl(String(url || '').trim());
@@ -452,7 +432,14 @@ function installAndroidIdentityBridge () {
         if (i >= 0) loginHandlers.splice(i, 1);
       };
     },
-    pullPending: async () => pendingLogin,
+    pullPending: async () => {
+      if (!pendingLogin) return null;
+      if (isDeviceLinkPromptExpired(pendingLogin)) {
+        pendingLogin = null;
+        return null;
+      }
+      return pendingLogin;
+    },
     resolve: async (opts) => {
       const prompt = pendingLogin;
       if (!prompt || !prompt.sessionId) return { error: 'no pending prompt' };
@@ -462,6 +449,14 @@ function installAndroidIdentityBridge () {
       }
       if (!unlocked) return { error: 'Identity is locked — unlock it, then try the link again.' };
       if (prompt.kind === 'device-link') {
+        if (prompt.error && !prompt.initiator) {
+          pendingLogin = null;
+          return { error: prompt.error };
+        }
+        if (isDeviceLinkPromptExpired(prompt)) {
+          pendingLogin = null;
+          return { error: 'This device-link expired. Scan a fresh QR.' };
+        }
         const result = await localDeviceLinkFetch('/accept', {
           method: 'POST',
           body: {
@@ -510,6 +505,11 @@ function installAndroidIdentityBridge () {
     onNotifyAction: () => () => {},
     onNotifyClick: () => () => {}
   });
+
+  void readAutoLockMinutes(autoLockMinutes).then((minutes) => {
+    autoLockMinutes = minutes;
+    armAutoLock();
+  }).catch(() => {});
 
   try {
     const CapApp = window.Capacitor.Plugins && window.Capacitor.Plugins.App;

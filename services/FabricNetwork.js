@@ -32,7 +32,9 @@ const {
 const {
   createFabricMessageLog,
   summarizeMessage,
-  summarizeBuffer
+  summarizeBuffer,
+  logFabricPeer,
+  logFabricWire
 } = require('../functions/fabricMessageLog');
 
 let peerHost;
@@ -96,7 +98,8 @@ const APP_RELAY_TYPES = new Set([
   CONTRACT_BODY_TYPES.GroupDataShare || 'GroupDataShare',
   CONTRACT_BODY_TYPES.DiscordCatalogShare || 'DiscordCatalogShare',
   CONTRACT_BODY_TYPES.IdentityCrossSign || 'IdentityCrossSign',
-  CONTRACT_BODY_TYPES.IdentityCrossSignRevoke || 'IdentityCrossSignRevoke'
+  CONTRACT_BODY_TYPES.IdentityCrossSignRevoke || 'IdentityCrossSignRevoke',
+  CONTRACT_BODY_TYPES.DeviceDataShare || 'DeviceDataShare'
 ]);
 
 /** True when `appType` is a known GoonCitizen / Group contract body type. */
@@ -247,6 +250,9 @@ function attachAppHandlers (peer, handlers = {}, _opts = {}) {
           appType === CONTRACT_BODY_TYPES.IdentityCrossSignRevoke || appType === 'IdentityCrossSignRevoke') &&
           typeof handlers.onIdentityCrossSign === 'function') {
           handlers.onIdentityCrossSign(object, signer, meta);
+        } else if ((appType === CONTRACT_BODY_TYPES.DeviceDataShare || appType === 'DeviceDataShare') &&
+          typeof handlers.onDeviceDataShare === 'function') {
+          handlers.onDeviceDataShare(object, signer, meta);
         }
         return;
       }
@@ -333,6 +339,15 @@ function attachAppHandlers (peer, handlers = {}, _opts = {}) {
       handlers.onInventoryResponse(Object.assign({}, ev || {}, { peer }));
     } catch (e) {
       peer.emit('warning', `[FABRIC:GOON] inventory response handler error: ${(e && e.message) || e}`);
+    }
+  });
+
+  peer.on('documentReceived', (ev) => {
+    if (typeof handlers.onDocumentReceived !== 'function') return;
+    try {
+      handlers.onDocumentReceived(Object.assign({}, ev || {}, { peer }));
+    } catch (e) {
+      peer.emit('warning', `[FABRIC:GOON] documentReceived handler error: ${(e && e.message) || e}`);
     }
   });
 
@@ -499,6 +514,7 @@ class FabricNetwork extends EventEmitter {
         ? summarizeBuffer(messageOrBuffer, { direction, peer: meta.peer || null, via: meta.via || null })
         : summarizeMessage(messageOrBuffer, { direction, peer: meta.peer || null, via: meta.via || null });
       if (!summary) return null;
+      logFabricWire(summary);
       return this._messageLog.append(summary);
     } catch (_) {
       return null;
@@ -686,8 +702,18 @@ class FabricNetwork extends EventEmitter {
     peer.on('warning', (m) => this.emit('warning', m));
     peer.on('log', (m) => this.emit('log', m));
     peer.on('ready', (info) => this.emit('ready', info));
-    peer.on('connections:open', (ev) => this.emit('connections:open', ev));
-    peer.on('connections:close', (ev) => this.emit('connections:close', ev));
+    peer.on('connections:open', (ev) => {
+      this.emit('connections:open', ev);
+      const n = Object.keys((this._peer && this._peer.connections) || {}).length;
+      const addr = ev && (ev.address || ev.id);
+      logFabricPeer('open', (addr || '') + ` (${n} connected)`);
+    });
+    peer.on('connections:close', (ev) => {
+      this.emit('connections:close', ev);
+      const n = Object.keys((this._peer && this._peer.connections) || {}).length;
+      const addr = ev && (ev.address || ev.id);
+      logFabricPeer('close', (addr || '') + ` (${n} connected)`);
+    });
     peer.on('peer:self', (ev) => {
       this.emit('peer:self', ev);
       const addr = ev && ev.address;
@@ -817,6 +843,10 @@ class FabricNetwork extends EventEmitter {
         this.emit('identityCrossSign', { object, source, meta });
         this._forward('onIdentityCrossSign', object, source, meta);
       },
+      onDeviceDataShare: (object, source, meta) => {
+        this.emit('deviceDataShare', { object, source, meta });
+        this._forward('onDeviceDataShare', object, source, meta);
+      },
       onInventoryRequest: (ev) => {
         this.emit('inventoryRequest', ev);
         this._forward('onInventoryRequest', ev);
@@ -824,12 +854,17 @@ class FabricNetwork extends EventEmitter {
       onInventoryResponse: (ev) => {
         this.emit('inventoryResponse', ev);
         this._forward('onInventoryResponse', ev);
+      },
+      onDocumentReceived: (ev) => {
+        this.emit('documentReceived', ev);
+        this._forward('onDocumentReceived', ev);
       }
     });
 
     peer.on('connections:open', () => {
       try { this.publishContract(); } catch (_) { /* not ready / no peers yet */ }
       this.fillPeerSlots();
+      this.emit('connections:open');
     });
     peer.on('connections:close', () => {
       this.fillPeerSlots();
@@ -850,6 +885,7 @@ class FabricNetwork extends EventEmitter {
     this._sanitizePeerCandidates(peer);
     this._startSlotFillTimer();
     console.log(`[STAR-CITIZEN] fabric peer listening on ${peer.settings.port} (id ${String(peer.key.pubkey).slice(0, 12)}…)`);
+    logFabricPeer('listen', `port=${peer.settings.port} id=${String(peer.key.pubkey).slice(0, 12)}`);
     try { this.publishContract(); } catch (_) { /* best-effort */ }
     this.fillPeerSlots();
     // Opt-in only: do not force on start (broadcastPeering must be on).
@@ -1008,6 +1044,7 @@ class FabricNetwork extends EventEmitter {
     }
     this.fillPeerSlots();
     if (addrs.length) {
+      logFabricPeer(kind, addrs.join(', '));
       const payload = {
         addresses: addrs,
         kind,
@@ -1032,6 +1069,52 @@ class FabricNetwork extends EventEmitter {
       this.emit('warning', `fillPeerSlots: ${(e && e.message) || e}`);
     }
     return Array.isArray(peer.candidates) ? peer.candidates.length : 0;
+  }
+
+  /**
+   * TCP-dial cluster siblings from `account.peers` (LAN / advertise). Skips
+   * self, loopback (unless allowed), and network hubs. WebRTC is a browser
+   * Bridge path — this Node Peer does not signal Hub WebRTC.
+   * @param {string[]} addresses
+   * @param {Object} [meta]
+   * @param {string} [meta.pubkey]
+   * @param {boolean} [meta.allowLoopback]
+   * @returns {string[]} queued `host:port`
+   */
+  dialClusterCandidates (addresses, meta = {}) {
+    if (!this._peer || typeof this._peer._enqueuePeeringCandidate !== 'function') {
+      return [];
+    }
+    const allowLoopback = meta.allowLoopback === true ||
+      this.settings.allowLoopbackDiscovery === true;
+    const queued = [];
+    const seen = new Set();
+    for (const raw of addresses || []) {
+      const address = this._canonicalizeDial(raw);
+      if (!address || seen.has(address)) continue;
+      if (isLoopbackFabricAddress(address) && !allowLoopback) continue;
+      if (isNetworkHubAddress(address)) continue;
+      const parts = splitFabricHostPort(address);
+      if (!parts.host || parts.port == null) continue;
+      try {
+        this._peer._enqueuePeeringCandidate(parts.host, parts.port, {
+          pubkey: meta.pubkey || null,
+          cluster: true
+        });
+        seen.add(address);
+        queued.push(address);
+      } catch (_) { /* ignore one */ }
+    }
+    this.fillPeerSlots();
+    if (queued.length) {
+      this.emit('cluster:dial', {
+        addresses: queued,
+        pubkey: meta.pubkey || null
+      });
+      const pk = meta.pubkey ? String(meta.pubkey).slice(0, 12) : '';
+      logFabricPeer('dial', queued.join(', ') + (pk ? ` pubkey=${pk}` : ''));
+    }
+    return queued;
   }
 
   /**
@@ -1252,6 +1335,18 @@ class FabricNetwork extends EventEmitter {
     const type = (payload && (payload.type || payload['@type'])) ||
       CONTRACT_BODY_TYPES.IdentityCrossSign || 'IdentityCrossSign';
     return this._publishContractMessage(gooncitizenContractId(), type, Object.assign({}, payload));
+  }
+
+  /**
+   * Gossip a cluster-gated account snapshot after device-link.
+   * @param {Object} payload DeviceDataShare fields
+   */
+  publishDeviceDataShare (payload) {
+    const type = CONTRACT_BODY_TYPES.DeviceDataShare || 'DeviceDataShare';
+    return this._publishContractMessage(gooncitizenContractId(), type, Object.assign({
+      type,
+      '@type': type
+    }, payload || {}));
   }
 
   /**
@@ -1604,6 +1699,84 @@ class FabricNetwork extends EventEmitter {
   replyDocumentInventory (originName, items) {
     const documentOffers = require('../functions/documentOffers');
     return documentOffers.replyInventory(this._peer, originName, items);
+  }
+
+  _connectionForAddress (peerAddress) {
+    const peer = this._peer;
+    if (!peer || !peer.connections) return null;
+    const want = String(peerAddress || '').trim();
+    if (!want) return null;
+    const direct = peer.connections[want];
+    if (direct && typeof direct._writeFabric === 'function') {
+      return { id: want, conn: direct };
+    }
+    for (const id of Object.keys(peer.connections)) {
+      const conn = peer.connections[id];
+      if (conn && typeof conn._writeFabric === 'function' &&
+        FabricNetwork.connectionMatchesAddress(id, want)) {
+        return { id, conn };
+      }
+    }
+    return null;
+  }
+
+  /**
+   * Push a catalog blob as AMP-sized `P2P_FILE_SEND` frames to one TCP peer.
+   * @param {string} peerAddress
+   * @param {Buffer} buffer
+   * @param {Object} [opts]
+   * @param {string} [opts.documentId]
+   * @returns {number} frames written
+   */
+  sendCatalogFile (peerAddress, buffer, opts = {}) {
+    const hit = this._connectionForAddress(peerAddress);
+    if (!hit) return 0;
+    const buf = Buffer.isBuffer(buffer) ? buffer : Buffer.from(buffer == null ? '' : buffer);
+    if (!buf.length) return 0;
+    const documentId = String(opts.documentId || '').trim().toLowerCase();
+    if (!/^[0-9a-f]{64}$/.test(documentId)) return 0;
+    const Message = require('@fabric/core/types/message');
+    const manifest = require('@fabric/core/functions/documentBlobManifest');
+    const key = this._peer && this._peer.key;
+    if (!key) return 0;
+    const split = manifest.splitBlobs(buf, opts.chunkBytes, documentId);
+    let wrote = 0;
+    for (const b of split.blobs) {
+      const fileObj = {
+        name: documentId,
+        body: b.bytes.toString('base64'),
+        blobIndex: b.index,
+        blobTotal: b.total,
+        blobHashHex: b.blobHashHex,
+        merkleRootHex: split.merkleRootHex,
+        contentSha256: split.contentSha256,
+        chunkBytes: split.chunkBytes,
+        clusterSync: true
+      };
+      const msg = Message.fromVector(['P2P_FILE_SEND', JSON.stringify(fileObj)]).signWithKey(key);
+      hit.conn._writeFabric(msg.toBuffer());
+      wrote += 1;
+    }
+    return wrote;
+  }
+
+  /**
+   * Send a catalog blob to every currently connected address in `addresses`.
+   * @param {string[]} addresses
+   * @param {Buffer} buffer
+   * @param {Object} [opts]
+   * @returns {number}
+   */
+  sendCatalogFileToAddresses (addresses, buffer, opts = {}) {
+    let wrote = 0;
+    const seen = new Set();
+    for (const addr of addresses || []) {
+      const key = String(addr || '').trim();
+      if (!key || seen.has(key)) continue;
+      seen.add(key);
+      wrote += this.sendCatalogFile(key, buffer, opts);
+    }
+    return wrote;
   }
 
   _publishContractMessage (contractId, type, object, opts = {}) {

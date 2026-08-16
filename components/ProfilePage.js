@@ -10,6 +10,7 @@ const React = require('react');
 const ActivityHeatmap = require('./ActivityHeatmap');
 const Identity = require('./Identity');
 const Settings = require('./Settings');
+const IdentityNotePanel = require('./IdentityNotePanel');
 const {
   peeringInfoForGoonCitizen,
   copyPeeringString
@@ -75,6 +76,10 @@ const CSS = `
     background:var(--bg);border:1px solid var(--line);border-radius:7px;padding:8px 10px}
   .ppage-file .name{font-size:13px;font-weight:600}
   .ppage-file .meta{color:var(--muted);font-size:11.5px;font-family:'Cascadia Code',Consolas,monospace}
+  .ppage-notes{list-style:none;margin:10px 0 0;padding:0;display:grid;gap:6px}
+  .ppage-note{background:var(--bg);border:1px solid var(--line);border-radius:7px;padding:8px 10px;
+    font-size:13px;line-height:1.45}
+  .ppage-note .meta{color:var(--muted);font-size:11.5px;margin-top:4px}
 `;
 
 function shortKey (pubkey) {
@@ -301,6 +306,10 @@ class ProfilePage extends React.Component {
     if (files.length) {
       bits.push(files.length + ' pinned file' + (files.length === 1 ? '' : 's'));
     }
+    const notes = d.notes && Array.isArray(d.notes.notes) ? d.notes.notes : [];
+    if (notes.length) {
+      bits.push(notes.length + ' public note' + (notes.length === 1 ? '' : 's'));
+    }
     if (!bits.length) return null;
     return React.createElement('div', { className: 'ppage-kv' },
       React.createElement('b', null, 'shared '), React.createElement('br'),
@@ -358,6 +367,75 @@ class ProfilePage extends React.Component {
       React.createElement('div', { className: 'ppage-hint', style: { marginTop: 4 } },
         'Files they pinned to this profile for a Federation group.'),
       this.renderFileRows(files)
+    );
+  }
+
+  publicNotes (d) {
+    if (!d || !d.notes) return [];
+    if (Array.isArray(d.notes.notes)) return d.notes.notes;
+    return Array.isArray(d.notes) ? d.notes : [];
+  }
+
+  renderPublicNotes (d) {
+    if (!d) return null;
+    const notes = this.publicNotes(d);
+    if (d.self) {
+      return React.createElement('div', { style: { marginTop: 16 } },
+        React.createElement('div', { style: { fontSize: 13, fontWeight: 600 } }, 'Public notes'),
+        notes.length
+          ? React.createElement('ul', { className: 'ppage-notes' },
+            notes.map((n) => React.createElement('li', {
+              key: n.id,
+              className: 'ppage-note'
+            },
+            n.body,
+            React.createElement('div', { className: 'meta' },
+              [n.subjectHandle, n.author ? String(n.author).slice(0, 10) + '…' : null]
+                .filter(Boolean).join(' · ')
+            )
+            )))
+          : React.createElement('div', { className: 'ppage-hint', style: { marginTop: 8 } },
+            'Nothing pinned yet. Use 📌 on a note to publish a warning, note, or comment on this profile for Federation groups.'),
+        React.createElement('div', { className: 'ppage-hint', style: { marginTop: 8 } },
+          'Pinned notes gossip with groups you belong to — not the whole mesh.')
+      );
+    }
+    if (!notes.length) {
+      const hasFabric = !!(d.actor && d.actor.platforms
+        && d.actor.platforms.some((p) => p.platform === 'fabric'));
+      if (!hasFabric && d.pubkey && String(d.pubkey).indexOf('discord:') === 0) return null;
+      return React.createElement('div', { className: 'ppage-hint', style: { marginTop: 10 } },
+        'No public notes on this profile.');
+    }
+    return React.createElement('div', { style: { marginTop: 16 } },
+      React.createElement('div', { style: { fontSize: 13, fontWeight: 600 } }, 'Public notes'),
+      React.createElement('div', { className: 'ppage-hint', style: { marginTop: 4 } },
+        'Warnings, notes, and comments pinned to this profile.'),
+      React.createElement('ul', { className: 'ppage-notes' },
+        notes.map((n) => React.createElement('li', {
+          key: n.id,
+          className: 'ppage-note'
+        }, n.body))
+      )
+    );
+  }
+
+  renderMyNotes (d) {
+    if (!d || !d.self) return null;
+    return React.createElement('div', { className: 'ppage-panel' },
+      React.createElement('h2', null, 'My notes'),
+      React.createElement('div', { className: 'body' },
+        React.createElement('div', { className: 'ppage-hint', style: { marginBottom: 8 } },
+          'Browse notes you authored. 📌 pins one to a profile for public warnings and comments; 👥 shares it to a Federation group.'),
+        React.createElement(IdentityNotePanel, {
+          actor: d.pubkey,
+          handle: this.displayName(d),
+          mine: true,
+          compact: false,
+          hideTags: true,
+          identityPubkey: d.pubkey
+        })
+      )
     );
   }
 
@@ -466,6 +544,15 @@ class ProfilePage extends React.Component {
                   'ship ', ship.name || ship.slug,
                   ship.type ? ` · ${ship.type}` : '',
                   ship.source === 'override' ? ' (manual)' : '')
+                : null,
+              presence.location
+                ? React.createElement('div', { style: { marginTop: 4 } },
+                  'location ', presence.location.name || presence.location.slug,
+                  presence.location.system ? ` · ${presence.location.system}` : '')
+                : null,
+              presence.destination
+                ? React.createElement('div', { style: { marginTop: 4 } },
+                  'destination ', presence.destination.name || presence.destination.slug)
                 : null)
             : (hasFabric
               ? React.createElement('div', { className: 'ppage-hint', style: { marginTop: 10 } },
@@ -484,9 +571,11 @@ class ProfilePage extends React.Component {
                 : null)
             : null,
           this.renderActivity(d),
-          this.renderFiles(d)
+          this.renderFiles(d),
+          this.renderPublicNotes(d)
         )
       ),
+      this.renderMyNotes(d),
       this.state.showSettings
         ? React.createElement(Settings, {
           onClose: () => this.setState({ showSettings: false }),
@@ -512,7 +601,7 @@ class ProfilePage extends React.Component {
   }
 }
 
-ProfilePage.CSS = CSS;
+ProfilePage.CSS = CSS + '\n' + (IdentityNotePanel.CSS || '');
 ProfilePage.pubkeyFromLocation = function () {
   const m = String((typeof window !== 'undefined' && window.location.pathname) || '').match(/^\/profiles\/([^/]+)/);
   return m ? decodeURIComponent(m[1]) : null;

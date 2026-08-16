@@ -15,7 +15,9 @@ const {
   buildCrossSignMessage,
   buildRevokeMessage,
   parseCrossSignMessage,
-  parseRevokeMessage
+  parseRevokeMessage,
+  coerceCrossSignObject,
+  isCrossSignType
 } = require('../../functions/identityCrossSign');
 const IdentityCluster = require('../../functions/identityCluster');
 const { signCrossSign, verifyCrossSignObject } = require('../../functions/identityCrossSignVerify');
@@ -168,6 +170,30 @@ describe('identityCrossSign Schnorr', () => {
     const v = verifyCrossSignObject(obj);
     assert.equal(v.ok, true);
     assert.equal(v.kind, REVOKE_TYPE);
+  });
+
+  it('verifies a CONTRACT_MESSAGE-wrapped IdentityCrossSign', () => {
+    const ident = createIdentity();
+    const peer = createIdentity();
+    const obj = signCrossSign(ident, { peerPubkey: peer.pubkey, nonce: nonce() });
+    const wrapped = { contract: 'goon', type: SIGN_TYPE, actor: { publicKey: ident.pubkey }, object: obj };
+    const coerced = coerceCrossSignObject(wrapped);
+    assert.equal(coerced.localPubkey, obj.localPubkey);
+    assert.equal(isCrossSignType(coerced.type), true);
+    const v = verifyCrossSignObject(wrapped);
+    assert.equal(v.ok, true);
+    assert.equal(v.kind, SIGN_TYPE);
+  });
+
+  it('verifies a wrapper whose inner payload omitted type', () => {
+    const ident = createIdentity();
+    const peer = createIdentity();
+    const obj = signCrossSign(ident, { peerPubkey: peer.pubkey, nonce: nonce() });
+    const inner = Object.assign({}, obj);
+    delete inner.type;
+    delete inner['@type'];
+    const v = verifyCrossSignObject({ type: SIGN_TYPE, object: inner });
+    assert.equal(v.ok, true);
   });
 
   it('rejects unknown kind and missing fields', () => {

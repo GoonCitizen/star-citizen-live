@@ -44,6 +44,36 @@ test('isKeepaliveType recognizes ping/pong', () => {
   assert.equal(isKeepaliveType('CONTRACT_MESSAGE'), false);
 });
 
+test('formatWireLog covers peering vs message sync and skips keepalives', () => {
+  const {
+    formatWireLog,
+    formatPeerLog,
+    formatSyncLog,
+    shouldLogWireSummary
+  } = require('../../functions/fabricMessageLog');
+  assert.equal(shouldLogWireSummary({ type: 'P2P_PING' }), false);
+  assert.equal(formatWireLog({ type: 'P2P_PING', direction: 'in' }), null);
+  assert.match(
+    formatWireLog({
+      direction: 'in',
+      type: 'CONTRACT_MESSAGE',
+      appType: 'DeviceDataShare',
+      peer: 'hub.fabric.pub:7777'
+    }),
+    /\[STAR-CITIZEN\] fabric sync in CONTRACT_MESSAGE\/DeviceDataShare peer=hub\.fabric\.pub:7777/
+  );
+  assert.match(
+    formatWireLog({ direction: 'in', type: 'P2P_PEERING_OFFER', peer: '10.0.0.8:7777' }),
+    /\[STAR-CITIZEN\] fabric peering in P2P_PEERING_OFFER peer=10\.0\.0\.8:7777/
+  );
+  assert.match(
+    formatWireLog({ direction: 'out', type: 'P2P_CHAT_MESSAGE', friendlyType: 'P2P_CHAT_MESSAGE' }),
+    /\[STAR-CITIZEN\] fabric sync out P2P_CHAT_MESSAGE/
+  );
+  assert.match(formatPeerLog('open', 'hub.fabric.pub:7777 (1 connected)'), /fabric peering open/);
+  assert.match(formatSyncLog('publish DeviceDataShare', 'packs=account.peers'), /fabric sync publish DeviceDataShare/);
+});
+
 test('createFabricMessageLog rings, filters, pause', () => {
   const log = createFabricMessageLog({ capacity: 3 });
   log.append(summarizeMessage({
@@ -199,6 +229,12 @@ test('GET /fabric/messages exposes only Fabric message log API', async () => {
     const missing = await request(port, 'GET', '/services/star-citizen/fabric/messages/nope');
     assert.equal(missing.status, 200);
     assert.equal(missing.body.data.missing, true);
+
+    const collection = await request(port, 'GET',
+      '/services/star-citizen/fabric/messages?format=collection');
+    assert.equal(collection.status, 200);
+    assert.equal(collection.body.type, 'FabricMessageCollection');
+    assert.ok(typeof collection.body.count === 'number');
   } finally {
     await svc.stop();
     fs.rmSync(dir, { recursive: true, force: true });

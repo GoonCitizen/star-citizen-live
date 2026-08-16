@@ -37,10 +37,12 @@ const COLLECTIONS = [
   'fleets', // Starjump / FleetViewer personal fleets (functions/starjumpFleet.js)
   'localgroups', // operator-local identity tags (functions/localGroups.js)
   'identitynotes', // notes on Discord / Fabric identities (functions/identityNotes.js)
-  'discordcatalog', // accumulated Discord guild/channel/member/message packs (functions/discordCatalogAccumulate.js)
+  'discordcatalog', // Discord guild/channel/member/message packs + guild-events (functions/discordCatalogAccumulate.js, discordScheduledEvents.js)
   'datasync', // Federation GroupDataShare folds (profile.playtimes, profile.files, …)
+  'clustersync', // last DeviceDataShare collection + sibling LAN/WebRTC dial hints
   'documents', // this node's file catalog (functions/localDocuments.js) — not hub.fabric.pub
-  'documentoffers' // remote Fabric inventory listings (functions/documentOffers.js)
+  'documentoffers', // remote Fabric inventory listings (functions/documentOffers.js)
+  'locationreports' // node-local QT / presence sightings (functions/locationReports.js)
 ];
 
 function collectionPath (name) {

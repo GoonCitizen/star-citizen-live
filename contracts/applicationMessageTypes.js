@@ -112,7 +112,14 @@ const APP_CONTRACT_BODY_TYPES = Object.freeze({
    * pubkeys into one actor. Not frozen into genesis messageTypes.
    */
   IdentityCrossSign: 'IdentityCrossSign',
-  IdentityCrossSignRevoke: 'IdentityCrossSignRevoke'
+  IdentityCrossSignRevoke: 'IdentityCrossSignRevoke',
+  /**
+   * Cluster-gated account replay after device-link. Compact packs (profile,
+   * groups, notes, local tags, bounded chat) on the GoonCitizen contract.
+   * Not frozen into genesis messageTypes. Receivers apply only when the
+   * signer is in the same IdentityCluster. Never carries seeds or tokens.
+   */
+  DeviceDataShare: 'DeviceDataShare'
 });
 
 const CONTRACT_BODY_TYPES = Object.freeze(Object.assign(

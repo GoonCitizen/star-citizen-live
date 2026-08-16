@@ -21,6 +21,8 @@ const https = require('https');
 
 const LiveRelay = require('../services/LiveRelay');
 const { createIdentity } = require('../functions/identity');
+const { writeAgentProbe } = require('../functions/agentProbeExport');
+const { classifyPlaynetPosture } = require('../functions/playnetDeploy');
 
 const PRODUCTION = process.argv.includes('--production') ||
   process.env.ADV_PRODUCTION === '1' ||
@@ -33,6 +35,26 @@ const TARGET_FABRIC = (process.env.ADV_FABRIC ||
   .split(',')
   .map((s) => s.trim())
   .filter(Boolean);
+
+const PLAYNET_POSTURE = classifyPlaynetPosture({
+  argv: process.argv.slice(2),
+  env: process.env,
+  script: 'adversary',
+  peers: TARGET_FABRIC,
+  httpTarget: TARGET_HTTP
+});
+console.log('[adversary-probe] posture', {
+  posture: PLAYNET_POSTURE.posture,
+  treatAsAdversary: PLAYNET_POSTURE.treatAsAdversary,
+  treatAsOperatorPublish: PLAYNET_POSTURE.treatAsOperatorPublish,
+  reasons: PLAYNET_POSTURE.reasons
+});
+if (PLAYNET_POSTURE.posture === 'ambiguous') {
+  console.warn('[adversary-probe] ambiguous vs operator publish — this script stays adversarial (read-only probe; no CONTRACT_PUBLISH / Accept)');
+}
+if (PLAYNET_POSTURE.treatAsOperatorPublish && !PLAYNET_POSTURE.treatAsAdversary) {
+  console.warn('[adversary-probe] operator signals without adversary — prefer npm run playnet:deploy-gooncitizen for publish');
+}
 
 const findings = [];
 
@@ -334,12 +356,23 @@ async function main () {
       ? 'adversary-public-probe.json'
       : 'adversary-local-probe.json');
   const out = path.join(outDir, reportName);
-  fs.writeFileSync(out, JSON.stringify({
+  const report = {
     findings,
     targets: { http: TARGET_HTTP, fabric: TARGET_FABRIC, production: PRODUCTION },
     at: new Date().toISOString()
-  }, null, 2));
+  };
+  fs.writeFileSync(out, JSON.stringify(report, null, 2));
   console.log('\nWrote', out);
+  try {
+    const probeName = reportName.replace(/\.json$/i, '');
+    const written = writeAgentProbe(probeName, {
+      title: PRODUCTION ? 'Adversary public probe' : 'Adversary local probe',
+      ...report
+    }, { cwd: path.join(__dirname, '..') });
+    console.log('Agent probe', written.localPath);
+  } catch (e) {
+    console.warn('Agent probe export failed:', e && e.message ? e.message : e);
+  }
 
   const holdMs = Number(process.env.ADV_HOLD_MS) || (PRODUCTION ? 15000 : 8000);
   await new Promise((r) => setTimeout(r, holdMs));

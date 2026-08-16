@@ -20,6 +20,14 @@ describe('android local-first node', () => {
     assert.equal(isLoopbackRequest({ socket: { remoteAddress: '::1' } }), true);
     assert.equal(isLoopbackRequest({ socket: { remoteAddress: '::ffff:127.0.0.1' } }), true);
     assert.equal(isLoopbackRequest({ socket: { remoteAddress: '8.8.8.8' } }), false);
+    assert.equal(isLoopbackRequest({
+      socket: { remoteAddress: '8.8.8.8' },
+      headers: { 'x-forwarded-for': '127.0.0.1' }
+    }), false);
+    assert.equal(isLoopbackRequest({
+      socket: { remoteAddress: '203.0.113.9' },
+      headers: { 'x-forwarded-for': '::1' }
+    }), false);
   });
 
   it('rewrites Capacitor https://localhost onto loopback LiveRelay', () => {
@@ -103,6 +111,13 @@ describe('android-stage runtime packages', () => {
     assert.match(src, /function fillMissingNestedDeps/);
     assert.match(src, /xtend/);
     assert.match(src, /simple-aes/);
+    assert.match(src, /skipSuiteJunk/);
+    assert.match(src, /SKIP_SUITE_JUNK/);
+    assert.match(src, /\.cursor/);
     assert.doesNotMatch(src, /'prebuilds', 'build'/);
+    assert.match(src, /COPY_DATA_DIRS/);
+    assert.match(src, /'locations'/);
+    assert.match(src, /'ships'/);
+    assert.doesNotMatch(src, /COPY_DIRS = \[[^\]]*data/);
   });
 });

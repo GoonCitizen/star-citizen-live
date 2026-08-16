@@ -20,8 +20,16 @@ const { buildFabricIdentitySignedPayload } = require('@fabric/http/functions/fab
 const { assertAllowedFabricHub } = require('./fabricHubAllowlist');
 const { keyFromIdentity } = require('./identity');
 const { protocolQrDataUrl } = require('./protocolQr');
+const { cancelDeviceLinkSession } = require('./fabricDeviceLinkClient');
+const {
+  DEVICE_LINK_OFFER_TTL_MS,
+  stampCreatedAt,
+  isDeviceLinkOfferExpired,
+  isStaleDeviceLinkError
+} = require('./deviceLinkLifecycle');
 
 const DEFAULT_DEVICE_LINK_HUB = 'https://relay.goon.vc';
+const DEVICE_LINK_TICK_MS = 2000;
 
 function randomNonceHex () {
   try {
@@ -37,6 +45,51 @@ function randomNonceHex () {
 function httpsLandingUrl (hubBase, sessionId) {
   const base = String(hubBase || '').replace(/\/$/, '');
   return `${base}/#device-link=${encodeURIComponent(sessionId)}`;
+}
+
+/**
+ * Compressed / x-only hex from a device-link party, or the protocol pubkey
+ * on a Fabric-node xpub when Hub omitted pubkeyHex.
+ * @param {object} [party]
+ * @returns {string|null}
+ */
+function peerPubkeyFromParty (party) {
+  if (!party || typeof party !== 'object') return null;
+  const raw = String(party.pubkeyHex || party.pubkey || party.peerPubkey || '')
+    .trim().toLowerCase().replace(/^0x/, '');
+  if (/^0[23][a-f0-9]{64}$/.test(raw) || /^[a-f0-9]{64}$/.test(raw) || /^[a-f0-9]{66}$/.test(raw)) {
+    return raw;
+  }
+  const xpub = String(party.xpub || '').trim();
+  if (!xpub) return null;
+  try {
+    const Key = require('@fabric/core/types/key');
+    const pk = String(new Key({ xpub }).pubkey || '').toLowerCase();
+    if (/^0[23][a-f0-9]{64}$/.test(pk) || /^[a-f0-9]{64}$/.test(pk)) return pk;
+  } catch (_) { /* watch-only / non-protocol xpub */ }
+  return null;
+}
+
+/**
+ * Persistable initiator offer (no QR data URL).
+ * @param {object} [offer]
+ * @returns {object|null}
+ */
+function compactPendingOffer (offer) {
+  if (!offer || !offer.sessionId || !offer.hubBase) return null;
+  return {
+    ok: true,
+    sessionId: String(offer.sessionId),
+    hubBase: String(offer.hubBase).replace(/\/$/, ''),
+    origin: String(offer.origin || offer.hubBase).replace(/\/$/, ''),
+    nonce: offer.nonce || null,
+    label: offer.label || null,
+    createdAt: Number(offer.createdAt) || Date.now(),
+    protocolUrl: offer.protocolUrl || null,
+    httpsUrl: offer.httpsUrl || null,
+    initiatorId: offer.initiatorId || null,
+    status: 'pending'
+  };
 }
 
 /**
@@ -80,7 +133,7 @@ async function startDeviceLinkOffer (identity, opts = {}) {
   const httpsUrl = httpsLandingUrl(hubBase, created.sessionId);
   let qrDataUrl = null;
   try { qrDataUrl = await protocolQrDataUrl(protocolUrl); } catch (_) { qrDataUrl = null; }
-  return {
+  return stampCreatedAt({
     ok: true,
     sessionId: created.sessionId,
     nonce: created.nonce || nonce,
@@ -92,7 +145,19 @@ async function startDeviceLinkOffer (identity, opts = {}) {
     qrDataUrl,
     initiatorId,
     status: 'pending'
-  };
+  });
+}
+
+/**
+ * Best-effort remote cancel then forget the local offer.
+ * Always returns ok so the UI can unstick even if the hub is unreachable.
+ */
+async function abandonDeviceLinkOffer (offer, opts = {}) {
+  if (!offer || !offer.sessionId || !offer.hubBase) return { ok: true, skipped: true };
+  return cancelDeviceLinkSession(offer.hubBase, offer.sessionId, {
+    origin: offer.origin || offer.hubBase,
+    fetchImpl: opts.fetchImpl
+  });
 }
 
 /**
@@ -104,14 +169,31 @@ async function startDeviceLinkOffer (identity, opts = {}) {
 async function tickDeviceLinkOffer (identity, offer, opts = {}) {
   if (!identity) return { ok: false, error: 'Identity is locked' };
   if (!offer || !offer.sessionId || !offer.hubBase) {
-    return { ok: false, error: 'no pending device-link offer' };
+    return { ok: false, expired: true, error: 'no pending device-link offer' };
+  }
+  if (isDeviceLinkOfferExpired(offer)) {
+    return {
+      ok: false,
+      expired: true,
+      error: 'device-link offer timed out — start a new one'
+    };
   }
   const origin = offer.origin || offer.hubBase;
   const st = await fetchDeviceLinkSession(offer.hubBase, offer.sessionId, {
     origin,
     fetchImpl: opts.fetchImpl
   });
-  if (!st.ok) return st;
+  if (!st.ok) {
+    if (isStaleDeviceLinkError(st)) {
+      return {
+        ok: false,
+        expired: true,
+        status: st.status,
+        error: st.error || 'unknown or expired device link'
+      };
+    }
+    return st;
+  }
   if (st.status === 'pending') {
     return { ok: true, status: 'pending', sessionId: offer.sessionId };
   }
@@ -125,7 +207,7 @@ async function tickDeviceLinkOffer (identity, offer, opts = {}) {
       responder,
       label: st.label || offer.label,
       hubBase: offer.hubBase,
-      peerPubkey: (responder && responder.pubkeyHex) || null,
+      peerPubkey: peerPubkeyFromParty(responder),
       peerFabricId: (responder && responder.id) || null,
       peerXpub: (responder && responder.xpub) || null
     };
@@ -155,8 +237,7 @@ async function tickDeviceLinkOffer (identity, offer, opts = {}) {
     responder: done.responder || st.responder || null,
     label: done.label || st.label || offer.label,
     hubBase: offer.hubBase,
-    peerPubkey: (done.responder && done.responder.pubkeyHex) ||
-      (st.responder && st.responder.pubkeyHex) || null,
+    peerPubkey: peerPubkeyFromParty(done.responder) || peerPubkeyFromParty(st.responder),
     peerFabricId: (done.responder && done.responder.id) ||
       (st.responder && st.responder.id) || null,
     peerXpub: (done.responder && done.responder.xpub) ||
@@ -228,9 +309,14 @@ function offerPassportDeviceLink (loc, win) {
 
 module.exports = {
   DEFAULT_DEVICE_LINK_HUB,
+  DEVICE_LINK_OFFER_TTL_MS,
+  DEVICE_LINK_TICK_MS,
   httpsLandingUrl,
   startDeviceLinkOffer,
   tickDeviceLinkOffer,
+  abandonDeviceLinkOffer,
+  peerPubkeyFromParty,
+  compactPendingOffer,
   parseDeviceLinkLanding,
   notifyPassportDeviceLink,
   offerPassportDeviceLink

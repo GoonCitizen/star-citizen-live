@@ -8,6 +8,8 @@
 const fs = require('fs');
 const path = require('path');
 
+console.log('[STAR-CITIZEN] android node boot', __dirname);
+
 function loadBoot () {
   const staged = path.join(__dirname, 'app', 'functions', 'androidNodeBoot.js');
   const repo = path.join(__dirname, '..', '..', 'functions', 'androidNodeBoot.js');

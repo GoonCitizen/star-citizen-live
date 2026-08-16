@@ -6,8 +6,8 @@ const path = require('path');
 
 function loadHubMarket () {
   const candidates = [
-    '@fabric/hub/functions/documentInventoryMarket',
-    path.join(__dirname, '..', '..', '..', 'hub.fabric.pub', 'functions', 'documentInventoryMarket')
+    path.join(__dirname, '..', '..', '..', 'hub.fabric.pub', 'functions', 'documentInventoryMarket'),
+    '@fabric/hub/functions/documentInventoryMarket'
   ];
   for (const id of candidates) {
     try {
@@ -43,5 +43,32 @@ describe('document market Hub helper alignment', () => {
       policy: { republishWithMarkup: true, markupBps: 1000 }
     });
     assert.strictEqual(noBlob.reason, 'no-local-file');
+
+    if (typeof market.omitPrivateMarketFields === 'function') {
+      const publicRow = market.omitPrivateMarketFields({
+        purchasePriceSats: listed,
+        costBasisSats: origin,
+        local: true
+      });
+      assert.strictEqual(publicRow.purchasePriceSats, 110);
+      assert.strictEqual(publicRow.costBasisSats, undefined);
+
+      const fileId = 'ab'.repeat(32);
+      const map = {};
+      market.replacePeerOffers(map, { peerPubkey: '02' + 'aa'.repeat(32) }, [{
+        id: fileId,
+        purchasePriceSats: origin,
+        published: true
+      }]);
+      const merged = market.mergeCatalog([{
+        id: fileId,
+        purchasePriceSats: listed,
+        costBasisSats: origin,
+        published: true
+      }], market.listOffers(map));
+      assert.strictEqual(merged[0].purchasePriceSats, 110);
+      assert.strictEqual(merged[0].bestPeerPriceSats, 100);
+      assert.strictEqual(merged[0].costBasisSats, undefined);
+    }
   });
 });

@@ -16,6 +16,8 @@
 > reality it describes — not a copy.
 
 ### Release posture (owner cut TBD)
+- **Humans joining:** [`DEVELOPERS.md`](DEVELOPERS.md) (G00N SQUAD, PERMAFLEET,
+  other orgs — fork and still speak Fabric).
 - **Gate before PR:** `npm test` (unit + fabric + relay + integration + ui).
 - **What runs:** `npm start` / `npm run desktop` → `scripts/node.js` →
   `services/LiveRelay.js` (package `main` is Electron `main.js`).
@@ -29,10 +31,13 @@
 - **Playnet (hub.fabric.pub + relay.goon.vc):** after Hub is up, Beacon registers
   native `fabric-beacon`. From this tree, with `FABRIC_XPRV` (or `FABRIC_SEED` hex /
   `FABRIC_MNEMONIC` / `~/.fabric/wallet.json`). The local developer environment
-  is the production publisher: `--accept` mints a Hub admin token from that
-  operator key (HD master, same `FABRIC_XPRV` as Hub `_rootKey`). Optional
-  `FABRIC_HUB_ADMIN_TOKEN` / `~/.fabric/hub-admin-token` remain a fallback.
-  `npm run playnet:deploy-gooncitizen -- --production --accept`
+  is the production publisher (same config as Hub). Deploy classifies posture
+  (`operator` / `adversary` / `ambiguous` / `local`): unclear public-host runs
+  from `playnet:deploy-gooncitizen` still treat as operator publish; pure
+  adversary posture is refused (use `scripts/adversary-local-probe.js` instead).
+  `--accept` tries Hub-issued `FABRIC_HUB_ADMIN_TOKEN` / `~/.fabric/hub-admin-token`
+  first, then mints from operator `FABRIC_XPRV` (same key as Hub `_rootKey` when
+  aligned). `npm run playnet:deploy-gooncitizen -- --production --accept`
   publishes the GoonCitizen application contract to both peers and Accepts it on Hub.
 - **Public relays:** operators of `relay.goon.vc` (nvm 24.15 + pm2, Caddy or
   Nginx → loopback HTTP, Peer on the dedicated NIC) read **`docs/PRODUCTION.md`**.
@@ -102,6 +107,9 @@ Requires **Node.js 24.15.0** (see `.nvmrc` / `package.json` `engines`). Desktop 
 Fabric mesh paths need **`npm i`** (pins `@fabric/core`, `@fabric/http`,
 `@fabric/hub` from Git). **`.npmrc` sets `allow-git=all`** — npm 12+
 `allow-git=root` still fails during nested git-dep preparation of commit SHAs.
+npm 12 can also leave empty `node_modules/@fabric/{core,http,hub}` next to hashed
+checkouts (`.core-*`). `npm test` / `test:ui` / `test:unit` / `test:relay` run
+`scripts/ensure-fabric-linked.js` first (sibling `~/fabric-clean` / env overrides).
 
 ```bash
 npm i                     # Fabric git deps + Electron (dev); needs allow-git=all
@@ -116,12 +124,29 @@ npm run test:relay        # node --test tests/relay
 npm run test:integration  # LiveRelay HTTP / Discord full-flow
 npm run test:ui           # dashboard component trees (no browser)
 npm run test:browser      # rebuild SPA + Fabric HTTP Sandbox click suite (Chromium)
+npm run link:fabric       # repair empty npm 12 `@fabric/{core,http,hub}` dirs (or FABRIC_CORE / FABRIC_HTTP / FABRIC_HUB)
 npm run replay /path/to/Game.log
+npm run discord:events -- fetch   # pull Guild Scheduled Events → discordcatalog (needs bot token)
+npm run probes:publish            # copy reports/probes/*.json → $SC_AGENT_STATIC_ROOT/probes/
 npm run build:desktop     # installers for the current OS
 npm run build:installers  # Windows x64 + Debian x64 + macOS
 npm run publish:builds    # SPA + dist/ installers + APKs → local Files catalog
 ```
 
+- `npm run discord:events` — `scripts/discord-events.js` + `functions/discordScheduledEvents.js`.
+  Uses `DISCORD_BOT_TOKEN` or Electron `stores/gooncitizen/discord.secrets.json`
+  (auto-detects `~/Library/Application Support/@rsi/star-citizen/…`). Persists
+  into Fabric Store `discordcatalog` as `guild-events:<guildId>` (default G00N
+  SQUAD `1190527980120850493`). Subcommands: `fetch`, `list`, `get`,
+  `categorize` (day theme vs timed vs special), `resolve <id>…`. If the
+  desktop LevelDB is locked, pass `--register stores/gooncitizen/register`.
+  Also writes agent probe JSON under `reports/probes/` (and into
+  `$SC_AGENT_STATIC_ROOT/probes/` when set — live URL
+  `https://relay.goon.vc/probes/` after nginx/Caddy is updated).
+- `npm run probes:publish` — `functions/agentProbeExport.js` /
+  `scripts/publish-agent-probes.js`. Copies local probe dumps to the relay
+  static document root. Adversary probes (`scripts/adversary-local-probe.js`)
+  use the same export path. Index: `reports/probes/index.json`.
 - `npm test` layers: **unit** (`tests/unit`, `tests/fabric`) for leaf functions;
   **relay** (`tests/relay`) for LiveRelay + parser + register; **integration**
   (`tests/integration`) for HTTP / Discord / lookup flows; **UI** (`tests/ui`)
@@ -154,19 +179,22 @@ npm run publish:builds    # SPA + dist/ installers + APKs → local Files catalo
   identity notes, local-tag membership, and other register inbox events
   (mission shares/updates, note shares/updates);
   type/from chips default to All with optional keyword filter. Chat uses Hub message types
-  (`ChatMessage` records): **`global`** is Fabric `P2P_CHAT_MESSAGE` with a
-  raw UTF-8 text body (no JSON / handle on the wire); each **`group:<id>`**
+  (`ChatMessage` records): **`global`** is the **public mesh shoutbox** —
+  cleartext Fabric `P2P_CHAT_MESSAGE` with a raw UTF-8 text body (no JSON /
+  handle on the wire; relays can read — by design). Each **`group:<id>`**
   channel is `GroupChat` under that Group's Federation `CONTRACT_MESSAGE`
-  (`contracts/gooncitizenGroup.js`). Nicknames broadcast separately as
+  (`contracts/gooncitizenGroup.js`); opt-in **`groupChatSeal`** (recommended)
+  is sealed **wave 1** confidential messaging for future contract work. Model:
+  `@fabric/core/docs/MESH_CHAT.md`. Nicknames broadcast separately as
   **`P2P_PEER_ALIAS`** (UTF-8). Local posts publish over the Fabric Peer;
   remotes arrive via Peer ingest (`services/ChatManager.js` +
-  `services/FabricNetwork.js`). The dedicated Chat tab remains; **global chat
-  is also always available** via a floating dock on other tabs
+  `services/FabricNetwork.js`). The dedicated Chat tab remains; **global
+  shoutbox is also always available** via a floating dock on other tabs
   (`components/GlobalChatDock.js`). The header tabs row (under the identity chip)
   has **Search local data…** (`components/AppSearch.js`, `GET …/search`) over
   local packs (`chat.catalog` / `chat.messages` / `profile.playtimes` / `profile.files`) plus
   notes, groups, missions, fleets, peers, chat, inbox, and library. Ctrl/Cmd+K
-  focuses it. Every hit opens a dedicated collection page (`/profiles/:id`,
+  focuses it. Hits are `<a href>` so open-in-new-tab works. Every hit opens a dedicated collection page (`/profiles/:id`,
   `/groups/:id`, `/missions/:id`, `/files/:id`, or `/collections/:kind/:id`). Discord people
   get `/profiles/discord:<id>` (same chrome as Fabric, with an identity rollup
   of linked keys). Hash jumps (Chat channel, people query) remain as actions
@@ -181,7 +209,7 @@ npm run publish:builds    # SPA + dist/ installers + APKs → local Files catalo
   (Identity; Store keys `nickname` + `profile` `{ bio, scHandle }`) — nickname
   is `P2P_PEER_ALIAS`, richer fields publish as GoonCitizen `PeerProfile`;
   Peers → **Inspect** shows `GET /peers/:id` (alias/profile/pubkey). On Android
-  the identity chip and header ⚙ open **Keys / Security / Privacy** pages
+  the identity chip and header ⚙ open **Keys / Devices / Security / Privacy** pages
   (`components/Account.js`) instead of the Identity and Settings overlay modals.
   Hub Bitcoin (Wallet tab / associated funds) is desktop-only. **Profiles** (`GET …/profiles/:id`) accept a
   Fabric pubkey, `discord:<snowflake>`, or future `platform:id`
@@ -223,7 +251,11 @@ npm run publish:builds    # SPA + dist/ installers + APKs → local Files catalo
   Federation group — optional `parentId` subgroup — then that `group:<id>`
   chat). The group **Log** tab lists synchronized journal events; each row has
   **Data** (journal payload) and **Fabric** (opens `/collections/fabric-message/:hash`
-  when `fabricMessage.hash` is present). Group
+  when `fabricMessage.hash` is present). Journal `fabricMessage.hex` is a
+  bit-identical AMP frame; collect / restore / replay those frames as a
+  `FabricMessageCollection` (`functions/fabricMessageCollection.js`, core
+  helper). `GET …/fabric/messages?format=collection` exports the local peer
+  ring the same way. Group
   **creators** set channel shortcuts; members pin messages and share fleets. The
   Groups tab also has **Local tags**:
   operator-only lists of Discord members and Fabric identities (`GET|POST
@@ -265,7 +297,11 @@ npm run publish:builds    # SPA + dist/ installers + APKs → local Files catalo
   — **not** hub.fabric.pub / Hub JSON-RPC. The Files page **New file** button
   opens create; **Query peers** sends Fabric `P2P_INVENTORY_REQUEST` to connected
   peers (`POST …/documents/inventory`) and lists published remote files with peer
-  attribution and sats prices (`documentoffers`). File detail shows **Offers** for
+  attribution and sats prices (`documentoffers`). **New file** accepts a disk
+  picker (plus UTF-8 text). Local rows can **Sync to my devices**
+  (`POST …/files/:id/cluster-sync`) so identity-cluster siblings receive
+  `account.files` metadata and `P2P_FILE_SEND` bytes — not a public listing.
+  File detail shows **Offers** for
   the same id/sha256, cheapest first (`GET …/documents/:id` `offers`,
   `GET …/documents/offers?documentId=`). Chat (and the global dock) **📎 attach**
   always writes that local catalog at `documents.defaultPriceSats` (default **25**)
@@ -366,14 +402,39 @@ npm run publish:builds    # SPA + dist/ installers + APKs → local Files catalo
   completion issues a Bearer `delegationToken` for hosted API auth.
 - **Device link (D-013):** mutual Schnorr attestation with separate seeds.
   **Peer-equivalent:** Passport, Android, desktop, and Hub browser can each
-  **create or accept** a `fabric://link` (Identity → **Add a device**, or
-  Android **Security → Add a device**, or Passport Settings → Security & privacy). Offers post to an allowlisted hub
+  **create or accept** a `fabric://link` (Identity / **Devices** → **Add a device**,
+  Android **Devices** or **Security → Add a device**, or Passport Settings →
+  Security & privacy). Offers post to an allowlisted hub
   (`https://relay.goon.vc` by default) and show QR (`fabric://link`) plus an
-  HTTPS landing (`https://<hub>/#device-link=`) for Passport. After `linked`,
+  HTTPS landing (`https://<hub>/#device-link=`) for Passport. The Android (and
+  desktop) header has a **QR scanner** that opens `fabric://link` from that
+  code, a **data sync** chip (DeviceDataShare + Fabric peers; Sync now
+  re-publishes; **Manage devices** opens `#devices`), and a dedicated **Devices**
+  page for the roster (pairing → IdentityCrossSign → LAN / Hub coordinator →
+  DeviceDataShare). After `linked`,
   both devices gossip BIP340 `IdentityCrossSign` as Fabric `CONTRACT_MESSAGE`
   so the mesh treats them as one actor; the signed object is stored locally and
-  re-shared with later peers. **Revoke** (Identity / Security, or Settings / privacy) publishes
-  `IdentityCrossSignRevoke`. See `DECISIONS.md` D-013 and `ANDROID.md`.
+  re-shared with later peers. After the cluster edge lands, each node also
+  gossips a compact `DeviceDataShare` (profile, groups, notes, local tags,
+  bounded chat, `account.stats` counts, plus `account.peers` LAN RFC1918/`advertiseHost` dial hints and
+  Hub WebRTC origins — no seeds/tokens) as a Fabric `CONTRACT_MESSAGE`, stored
+  and replayed as a `FabricMessageCollection` (`functions/clusterSync.js`). The
+  **Devices** page shows per-device chips (notes, groups, tags, chat, files,
+  Game.log files, missions, sessions) from this node's Store plus the last
+  inbound `account.stats`. Opt-in
+  Files **Sync to my devices** adds `account.files` metadata (id / sha256 / name /
+  mime / size — no bytes); blobs follow as `P2P_FILE_SEND` once the sibling TCP
+  session is up. LiveRelay registers those LAN hints on Hub
+  `RegisterWebRTCPeer` (coordinator, not ICE) and TCP-dials allowlisted siblings
+  from `ListWebRTCPeers`. The
+  sibling applies that share only when the signer is in the same identity
+  cluster, then TCP-dials those candidates (Hub seeds already relay when NAT
+  blocks LAN; Passport/Hub browser uses Hub WebRTC signaling). Later profile / group /
+  note writes re-publish that share. `GET|POST …/identity/cluster/sync` exports
+  or ingests the collection (session); `{ mesh: true }` re-registers on Hub.
+  **Revoke** (Devices / Security, or
+  Settings / privacy) publishes `IdentityCrossSignRevoke`. See `DECISIONS.md`
+  D-013 and `ANDROID.md`.
 - **Android:** Capacitor shell (`vc.goon.android`) around a **local LiveRelay +
   Fabric Peer** (`SC_MODE=android`). Capacitor-NodeJS loads `nodejs/index.js`,
   which always calls `main()` so loopback HTTP, the JSON register store, and Peer
@@ -384,9 +445,15 @@ npm run publish:builds    # SPA + dist/ installers + APKs → local Files catalo
   (D-010), not HTTPS to `relay.goon.vc`. Own seed; first-run is a full-screen
   create / restore (BIP39 or xprv) / backup-import flow (optional master-seed
   wizard for one seed → Bitcoin xprv + per-device xprvs), then dedicated
-  **Keys / Security / Privacy** pages (`#keys`, `#security`, `#privacy`) instead
+  **Keys / Devices / Security / Privacy** pages (`#keys`, `#devices`, `#security`,
+  `#privacy`) instead
   of the Identity and Settings overlay modals. The identity chip and header ⚙
-  open those pages. D-011/D-013 HTTPS is pairing rendezvous only. See `ANDROID.md`.
+  open those pages. A header **QR scanner** (Play code scanner on device, camera
+  overlay on desktop) opens a `fabric://link` from Add a device on the other
+  app. The password-sealed identity blob is wrapped in Android
+  Keystore AES-256-GCM (`FabricKeyStore`, app-private `files/identity.wrapped`);
+  Preferences / `localStorage` are migration-only; Auto Backup is off. D-011/D-013
+  HTTPS is pairing rendezvous only. See `ANDROID.md`.
 
 ### Environment variables (config; secrets via env only)
 | Var | Purpose |
@@ -441,7 +508,7 @@ are gitignored. See §7.
 | `services/GroupManager.js` | Federation groups, invites, `GroupChange`, pinned channels, statechain. |
 | `services/ChatManager.js` | Global / group / Discord / DM chat records. |
 | `services/FabricNetwork.js` | Fabric Peer ingest/publish (chat, aliases, shares, presence). |
-| `components/` | Dashboard React UI (Chat, Groups, Missions, Peers, CollectionRecord, …). Android Keys / Security / Privacy: `components/Account.js`. |
+| `components/` | Dashboard React UI (Chat, Groups, Missions, Peers, CollectionRecord, …). Android Keys / Devices / Security / Privacy: `components/Account.js`, `components/LinkedDevices.js`. |
 | `functions/identityActor.js` | Fabric / Discord / platform actor ids + identity rollup. |
 | `functions/collectionRecords.js` | `/collections/:kind/:id` loader + first-class path aliases. |
 | `functions/transactionConstruct.js` | Wallet send draft / `/wallet/construct` preview (Hub one-output sends). |
@@ -455,13 +522,27 @@ are gitignored. See §7.
 - The old Fabric-free **`app/`** skeleton (`app/server.js`, `app/ui.html`, …) is
   **gone** — do not recreate it or cite it as the live API.
 
-### REST API (base path: `/services/star-citizen`)
-Authoritative handlers live in **`services/LiveRelay.js`** (not a separate
-`app/server.js`). Dashboard HTML is served at `/`. Status at
-`GET /services/star-citizen`. Monitor / feed / missions / groups / chat /
-discord / peers / wallet / documents / settings are mounted there — see §3 for
-the product surface. `API.md` remains **stale** legacy JSDoc; trust LiveRelay +
-tests over `API.md`.
+### API surfaces (IPC vs HTTP vs Fabric)
+Which wire to use is **[`docs/API-SURFACES.md`](docs/API-SURFACES.md)** — not
+`API.md` (stale JSDoc). Short rules:
+
+- **IPC** (`preload.js` / Android `electronAPI` polyfill) — seed, unlock, sign,
+  native dialogs, `fabric:` prompts. `electronAPI.fabric` is in-process Peer
+  helpers (cross-sign, cluster snapshot, delivery receipt) — not a second
+  register API. Not chat/groups/missions.
+- **HTTP** (`LiveRelay._handle`) — dashboard + register. Base
+  `/services/star-citizen`. Hub-shaped `/sessions`, `/device-links`,
+  `/services/peering` on the same process so Passport can treat
+  `relay.goon.vc` like a Hub. Loopback uses the unlocked identity; hosted /
+  non-loopback shared bind needs Bearer (`functions/httpRemoteAuth.js`).
+  Desktop SPA prefers Fabric helpers when the Peer already owns the job
+  (`docs/API-SURFACES.md` Fabric-first).
+- **Fabric Peer** (`FabricNetwork`, `:7777` AMP/NOISE) — gossip after this node
+  accepted a local command (D-010). UI does not speak AMP except via
+  `electronAPI.fabric`.
+- **Not this process:** Hub JSON-RPC / WebRTC. Bitcoin wallet HTTP is a **proxy**
+  to Hub. Discord I/O is the bot gateway; Fabric only coordinates multi-operator
+  replies (`DiscordRequest` / Claim / Response).
 
 ---
 
@@ -496,8 +577,8 @@ tests over `API.md`.
   Beacon epochs use `consensus: 'federation'` (Elements-style signed blocks) on the
   same Chain type. Groups persist Statechain STATE+JOURNAL in the Fabric Store
   collection `groupsidechains` via `functions/groupStatechain.js` (no direct `fs`).
-  Helpers: `functions/gooncitizenGameState.js`; hub sync in
-  `goon.vc/functions/gooncitizenSidechainSync.js`.
+  Helpers: `functions/gooncitizenGameState.js`. Public HTML at `goon.vc` is a
+  site zipper (not a Hub); sidechain seal stays on Hub / this relay.
 - Kill / vehicle-destruction parsing — **format-verified on real ≤4.3.0 logs**,
   wired to the dashboard 💀 panel + Discord, but dormant on the current game (§1).
 - Live dashboard + REST API + optional Discord webhook embeds + **Discord bot bridge**.
@@ -560,6 +641,7 @@ Discord webhook into a tracked file.**
 | Doc | What it is |
 |-----|------------|
 | `AGENTS.md` (this file) / `CLAUDE.md` | Canonical AI-assistant context (CLAUDE.md imports this). |
+| `DEVELOPERS.md` / `CONTRIBUTING.md` | Call for G00N SQUAD, PERMAFLEET, and other orgs (fork + Fabric mesh). |
 | `docs/PRODUCTION.md` | Public relay operators (`relay.goon.vc`): nvm 24.15, pm2, Caddy or Nginx, Peer bind. |
 | `@fabric/core` `docs/TYPES_AND_SERVICES.md` | Suite `types/` + `services/` layering (core / http / Hub / Passport / this app). |
 | `CONTINUE.md` | Quick-start — **partially stale** (still describes M1 `app/`); prefer §3. |
@@ -575,13 +657,16 @@ Discord webhook into a tracked file.**
 | `MOBILE-SETUP.md` | Mobile/remote access notes (second computers — not the Android APK). |
 | `ANDROID.md` | Local-first Android node (LiveRelay + Fabric Peer), identity clusters, sideload. |
 | `START-HERE-claude-code.md` | Beginner walkthrough for running this in Claude Code. |
-| `README.md` | Public-facing readme (may lag AGENTS §3). |
-| `API.md` | ⚠️ Stale legacy-Fabric JSDoc — see LiveRelay + §3 / §4. |
+| `README.md` | Public-facing readme (call + current run commands; details in AGENTS §3). |
+| `docs/API-SURFACES.md` | Runtime map: IPC vs HTTP vs Fabric vs Discord vs Hub RPC. |
+| `API.md` | ⚠️ Stale legacy-Fabric JSDoc — use `docs/API-SURFACES.md` + LiveRelay. |
 | `CHANGELOG.md` | Keep-a-changelog file; see `PROGRESS.md` for the real milestone trail. |
 | `REVIEW.md` | Async AI collaboration log — historical reviews stay dated; owner authorises work. |
 
-When picking up work, read **AGENTS.md §3–§4 → PROGRESS.md (newest) → DECISIONS.md**
-first. Do not treat `CONTINUE.md` as authoritative until refreshed.
+When picking up work, read **AGENTS.md §3–§4 → `docs/API-SURFACES.md` (if the
+change is a wire) → PROGRESS.md (newest) → DECISIONS.md** first. Do not treat
+`CONTINUE.md` as authoritative until refreshed. Human contributors (G00N SQUAD,
+PERMAFLEET, other orgs) start at **`DEVELOPERS.md`**.
 
 ---
 

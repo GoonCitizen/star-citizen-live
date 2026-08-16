@@ -22,7 +22,8 @@ const { restoreIdentity } = require('./identity');
 function tryCore (name) {
   try {
     return require(name);
-  } catch (_) {
+  } catch (err) {
+    if (err && err.code !== 'MODULE_NOT_FOUND') throw err;
     return null;
   }
 }

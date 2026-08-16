@@ -62,7 +62,8 @@ test('queryLocalPublicListings: public groups only + player filter', () => {
     ],
     discordGuilds: [{ id: '1', name: 'GoonCitizen', memberCount: 10 }],
     discordUsers: [{ id: 'u1', displayName: 'GoonPilot', username: 'goon' }],
-    localTags: [{ id: 't1', name: 'Goon Friends', members: ['a', 'b'] }]
+    localTags: [{ id: 't1', name: 'Goon Friends', members: ['a', 'b'] }],
+    includeLocalTags: true
   });
   assert.strictEqual(out.players.length, 2);
   assert.ok(out.players.every((p) => /go/i.test(p.name)));
@@ -75,6 +76,19 @@ test('queryLocalPublicListings: public groups only + player filter', () => {
   assert.strictEqual(out.discordGuilds.length, 1);
   assert.ok(out.discordUsers.some((u) => u.name === 'GoonPilot'));
   assert.strictEqual(out.localTags.length, 1);
+});
+
+test('queryLocalPublicListings omits local tags unless includeLocalTags', () => {
+  const hidden = chatLookup.queryLocalPublicListings({
+    localTags: [{ id: 't1', name: 'Hangar intel', members: ['a'] }]
+  });
+  assert.deepStrictEqual(hidden.localTags, []);
+  const shown = chatLookup.queryLocalPublicListings({
+    localTags: [{ id: 't1', name: 'Hangar intel', members: ['a'] }],
+    includeLocalTags: true
+  });
+  assert.strictEqual(shown.localTags.length, 1);
+  assert.strictEqual(shown.localTags[0].name, 'Hangar intel');
 });
 
 test('formatLookupReply includes master report sections', () => {

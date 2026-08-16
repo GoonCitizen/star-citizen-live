@@ -10,6 +10,7 @@
  *   /profiles/:id       → Fabric / Discord / platform identity (from search, chat, …)
  *   /missions/:id       → dedicated mission register page
  *   /files/:id            → dedicated file / build listing (pin to profile)
+ *   /locations/:slug      → wiki location + local player reports
  *   /collections/:kind/:id → other search hits (notes, guilds, channels, Fabric AMP, …)
  *   /wallet/construct     → advanced Hub-wallet transaction constructor
  */
@@ -22,6 +23,7 @@ const ProfilePage = require('../components/ProfilePage');
 const MissionPage = require('../components/MissionPage');
 const CollectionRecord = require('../components/CollectionRecord');
 const FilePage = require('../components/FilePage');
+const LocationPage = require('../components/LocationPage');
 const WalletConstruct = require('../components/WalletConstruct');
 
 function renderDashboard (el) {
@@ -30,12 +32,14 @@ function renderDashboard (el) {
   const missionId = MissionPage.missionIdFromLocation();
   const collection = CollectionRecord.fromLocation();
   const fileId = FilePage.idFromLocation();
+  const locationSlug = LocationPage.slugFromLocation();
   const walletConstruct = WalletConstruct.fromLocation();
   let page = React.createElement(Dashboard, null);
   if (groupKey) page = React.createElement(GroupPage, { pathKey: groupKey });
   else if (profileKey) page = React.createElement(ProfilePage, { pubkey: profileKey });
   else if (missionId) page = React.createElement(MissionPage, { missionId });
   else if (fileId) page = React.createElement(FilePage, { fileId });
+  else if (locationSlug) page = React.createElement(LocationPage, { slug: locationSlug });
   else if (collection) {
     page = React.createElement(CollectionRecord, { kind: collection.kind, recordId: collection.id });
   } else if (walletConstruct) {
