@@ -275,9 +275,12 @@ const CSS = `
   .chat-wrap.chat-embedded .chat-side,
   .chat-wrap.chat-embedded .chat-members{display:none}
   .chat-wrap.chat-embedded .chat-main{border-radius:0;border:none;min-height:0}
+  .chat-wrap.chat-people-only{grid-template-columns:1fr;height:100%;min-height:0;padding:0;gap:0}
+  .chat-wrap.chat-people-only .chat-members{border:none;border-radius:0;height:100%}
   @media(max-width:980px){
     .chat-wrap{grid-template-columns:1fr;grid-template-rows:minmax(120px,22%) minmax(0,1fr) minmax(120px,22%);gap:10px}
     .chat-wrap.chat-embedded{grid-template-rows:minmax(0,1fr);height:min(440px,55vh)}
+    .chat-wrap.chat-people-only{grid-template-rows:minmax(0,1fr)}
     .chat-side,.chat-members{max-height:none}
     .chat-mem-card{width:min(260px,calc(100vw - 24px))}
   }
@@ -538,6 +541,16 @@ class Chat extends React.Component {
   }
 
   async refresh () {
+    if (this.props.peopleOnly) {
+      try {
+        this.setState({ loading: false });
+        await this.refreshMembers([], [], null);
+        await this.refreshGroupPins();
+      } catch (_) {
+        this.setState({ loading: false });
+      }
+      return;
+    }
     try {
       await this.refreshDiscordCatalog(false);
       const discordDmUserId = parseDiscordDmChannel(this.state.channel);
@@ -592,7 +605,7 @@ class Chat extends React.Component {
   }
 
   async refreshGroupPins () {
-    if (this.props.embedded) return;
+    if (this.props.embedded && !this.props.peopleOnly) return;
     const now = Date.now();
     if (this._groupPinsFetchedAt &&
         (now - this._groupPinsFetchedAt) < 15000 &&
@@ -852,8 +865,8 @@ class Chat extends React.Component {
     if (!me || !peerPubkey || me === peerPubkey) return;
     const key = dmChannelKey(me, peerPubkey);
     if (!key) return;
-    // Embedded group chat has no channel rail — hand off to the Chat tab.
-    if (this.props.embedded) {
+    // Embedded / page-rail chat has no channel list — hand off to the Chat tab.
+    if (this.props.embedded || this.props.peopleOnly) {
       try { sessionStorage.setItem(PREFERRED_CHANNEL_KEY, key); } catch (_) { /* ignore */ }
       window.location.href = '/#chat';
       return;
@@ -877,7 +890,7 @@ class Chat extends React.Component {
     const id = String(discordUserId || '').trim();
     const key = discordDmChannelKey(id);
     if (!parseDiscordDmChannel(key)) return;
-    if (this.props.embedded) {
+    if (this.props.embedded || this.props.peopleOnly) {
       try { sessionStorage.setItem(PREFERRED_CHANNEL_KEY, key); } catch (_) { /* ignore */ }
       window.location.href = '/#chat';
       return;
@@ -1018,15 +1031,18 @@ class Chat extends React.Component {
       });
     }
 
-    if (active && active.kind === 'group' && active.groupId) {
+    const groupId = this.props.groupId || (active && active.kind === 'group' && active.groupId) || null;
+    if (groupId) {
       try {
-        const gRes = await fetch(`${BASE}/groups/${encodeURIComponent(active.groupId)}`);
+        const gRes = await fetch(`${BASE}/groups/${encodeURIComponent(groupId)}`);
         const gJson = await gRes.json();
         const g = gJson && gJson.data;
         if (g && Array.isArray(g.members)) {
+          const validators = Array.isArray(g.validators) ? g.validators : [];
           for (const pk of g.members) {
+            const signer = validators.some((v) => String(v).toLowerCase() === String(pk).toLowerCase());
             upsert(pk, {
-              role: pk === g.creator ? 'creator' : 'member'
+              role: pk === g.creator ? 'creator' : (signer ? 'signer' : 'reader')
             });
           }
         }
@@ -1054,14 +1070,14 @@ class Chat extends React.Component {
     }
 
     if (me && !byPk.has(me)) {
-      upsert(me, { handle: this.props.nickname || null, role: active && active.kind === 'group' ? 'you' : null });
+      upsert(me, { handle: this.props.nickname || null, role: groupId ? 'you' : null });
     }
 
     const members = sortChatMembers([...byPk.values()]);
 
     this.setState({
       members,
-      membersLabel: active && active.kind === 'group' ? 'Members' : 'On channel'
+      membersLabel: groupId || (active && active.kind === 'group') ? 'Members' : 'On channel'
     });
   }
 
@@ -1672,7 +1688,9 @@ class Chat extends React.Component {
       }, m.handle || (discordOnly ? 'Discord' : shortKey(m.pubkey))),
       m.role === 'creator'
         ? React.createElement('span', { className: 'tag' }, 'creator')
-        : null,
+        : (m.role === 'signer'
+          ? React.createElement('span', { className: 'tag' }, 'signer')
+          : null),
       m.linked
         ? React.createElement('span', { className: 'tag' }, 'linked')
         : null,
@@ -2082,6 +2100,12 @@ class Chat extends React.Component {
 
 
   render () {
+    if (this.props.peopleOnly) {
+      return React.createElement('div', { className: 'chat-wrap chat-people-only' },
+        this.renderMembers(),
+        this.renderMemberCard()
+      );
+    }
     const me = this.props.identityPubkey || null;
     const discordPage = this.showDiscordBotUi() && !this.props.embedded && this.state.page === 'discord';
     const active = this.channelRowFor(this.state.channel);

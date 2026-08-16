@@ -29,6 +29,7 @@ const {
 const { fetchPresenceRoster } = require('../functions/presenceClient');
 const groupPresence = require('../functions/groupPresence');
 const GroupComposition = require('./GroupComposition');
+const GroupContractSummary = require('./GroupContractSummary');
 const StarMap = require('./StarMap');
 
 const BASE = '/services/star-citizen';
@@ -43,13 +44,28 @@ function readAdvancedMode () {
 }
 
 const CSS = `
-  .gpage{width:100%;max-width:none;margin:0;padding:12px 14px;display:grid;gap:16px;box-sizing:border-box}
+  .gpage{width:100%;max-width:none;margin:0;padding:12px 14px;display:grid;gap:12px;box-sizing:border-box}
   .gpage-back{color:var(--muted);font-size:13px;text-decoration:none}
   .gpage-back:hover{color:var(--accent)}
-  .gpage-hero{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:22px 24px}
-  .gpage-hero h1{margin:0 0 6px;font-size:22px}
-  .gpage-hero .sub{color:var(--muted);font-size:13px;line-height:1.5}
-  .gpage-actions{display:flex;flex-wrap:wrap;gap:8px;margin-top:14px}
+  .gpage-shell{display:grid;grid-template-columns:minmax(0,1fr) minmax(220px,280px);gap:12px;align-items:start;min-width:0}
+  .gpage-main{display:grid;gap:16px;min-width:0}
+  .gpage-rail{background:var(--panel);border:1px solid var(--line);border-radius:12px;overflow:hidden;
+    display:flex;flex-direction:column;min-width:0;min-height:280px;max-height:calc(100vh - 48px);
+    position:sticky;top:12px}
+  .gpage-rail .chat-wrap.chat-people-only{flex:1 1 auto;min-height:0}
+  .gpage-rail-invite{padding:10px 12px;border-top:1px solid var(--line);display:flex;flex-wrap:wrap;gap:6px}
+  .gpage-rail-invite input{flex:1;min-width:120px;background:var(--bg);border:1px solid var(--line);color:var(--text);
+    border-radius:7px;padding:7px 10px;font-size:12px;font-family:'Cascadia Code',Consolas,monospace}
+  .gpage-rail .gcomp{border-bottom:1px solid var(--line)}
+  @media(max-width:900px){
+    .gpage-shell{grid-template-columns:1fr}
+    .gpage-rail{position:static;max-height:min(50vh,420px);order:-1}
+  }
+  .gpage-hero{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:16px 20px}
+  .gpage-hero h1{margin:0 0 8px;font-size:22px}
+  .gpage-hero .gcs{margin:0 0 4px}
+  .gpage-hero .sub{color:var(--muted);font-size:13px;line-height:1.5;margin-top:4px}
+  .gpage-actions{display:flex;flex-wrap:wrap;gap:8px;margin-top:12px}
   .gpage-btn{background:var(--accent);border:none;color:#fff;border-radius:7px;padding:8px 14px;
     font-size:13px;font-weight:600;cursor:pointer}
   .gpage-btn:disabled{opacity:.45;cursor:default}
@@ -817,60 +833,44 @@ class GroupPage extends React.Component {
     );
   }
 
-  renderMembers () {
+  renderMembersRail () {
     const g = this.state.group;
-    if (!g || !g.members) return null;
+    if (!g) return null;
     const roster = this.state.presenceRoster || {};
     const owner = g.role === 'creator' || groupPresence.isGroupOwner(g, this.state.pubkey);
-    const composition = owner
+    const composition = owner && Array.isArray(g.members) && g.members.length
       ? groupPresence.summarizeOnlineMembers(g.members, roster)
       : null;
-    return React.createElement('div', { className: 'gpage-panel' },
-      React.createElement('h2', null, `Members (${g.members.length}) · ${g.threshold}-of-${(g.validators || g.members).length} signers`),
-      composition ? React.createElement(GroupComposition, { composition, showMap: true }) : null,
-      React.createElement('div', { className: 'body' },
-        g.members.map((m) => {
-          const p = groupPresence.presenceFor(roster, m);
-          const chip = groupPresence.presenceChipLabel(p);
-          const signers = g.validators || g.members;
-          const isSigner = signers.includes(m);
-          return React.createElement('div', { className: 'gpage-member', key: m },
-            React.createElement('span', { style: { flex: 1 } },
-              shortKey(m),
-              p && p.nickname ? React.createElement('span', {
-                style: { color: 'var(--muted)', marginLeft: 8, fontFamily: 'inherit' }
-              }, p.nickname) : null
-            ),
-            React.createElement('span', {
-              className: 'gpage-tag ' + (p && p.online ? 'public' : 'private'),
-              title: p && p.lastEventAt || ''
-            }, chip),
-            React.createElement('span', { className: 'gpage-tag ' + (isSigner ? 'public' : 'private') }, isSigner ? 'signer' : 'reader'),
-            m === g.creator ? React.createElement('span', { className: 'gpage-tag public' }, 'creator') : null,
-            m === this.state.pubkey ? React.createElement('span', { className: 'gpage-tag private' }, 'you') : null
-          );
-        }),
-        (g.role === 'creator' || g.role === 'member')
-          ? React.createElement('div', { style: { display: 'flex', gap: 8, marginTop: 12, flexWrap: 'wrap' } },
-            React.createElement('input', {
-              type: 'text',
-              value: this.state.inviteKey,
-              placeholder: 'Invite — paste a compressed pubkey (02…/03…)',
-              style: {
-                flex: 1, minWidth: 180, background: 'var(--bg)', border: '1px solid var(--line)',
-                color: 'var(--text)', borderRadius: 7, padding: '7px 10px', fontSize: 12,
-                fontFamily: "'Cascadia Code',Consolas,monospace"
-              },
-              onChange: (e) => this.setState({ inviteKey: e.target.value })
-            }),
-            React.createElement('button', {
-              className: 'gpage-btn',
-              disabled: this.state.busy || !/^0[23][0-9a-f]{64}$/.test(String(this.state.inviteKey || '').trim()),
-              onClick: () => this.inviteMember()
-            }, 'Send invite')
-          )
-          : null
-      )
+    const canSeeMembers = Array.isArray(g.members) && g.members.length;
+    const nMembers = GroupContractSummary.memberCount(g);
+    return React.createElement('aside', { className: 'gpage-rail' },
+      composition ? React.createElement(GroupComposition, { composition, showMap: false }) : null,
+      canSeeMembers
+        ? React.createElement(Chat, {
+          groupId: g.id,
+          peopleOnly: true,
+          identityPubkey: this.state.pubkey,
+          nickname: this.state.nickname
+        })
+        : React.createElement('div', { className: 'chat-mem-hint' },
+          nMembers
+            ? nMembers + ' members — join to see the roster.'
+            : 'No members listed yet.'),
+      (g.role === 'creator' || g.role === 'member')
+        ? React.createElement('div', { className: 'gpage-rail-invite' },
+          React.createElement('input', {
+            type: 'text',
+            value: this.state.inviteKey,
+            placeholder: 'Invite — paste a compressed pubkey (02…/03…)',
+            onChange: (e) => this.setState({ inviteKey: e.target.value })
+          }),
+          React.createElement('button', {
+            className: 'gpage-btn',
+            disabled: this.state.busy || !/^0[23][0-9a-f]{64}$/.test(String(this.state.inviteKey || '').trim()),
+            onClick: () => this.inviteMember()
+          }, 'Send invite')
+        )
+        : null
     );
   }
 
@@ -888,45 +888,52 @@ class GroupPage extends React.Component {
     const isPublic = g.visibility === 'public';
     return React.createElement('div', { className: 'gpage' },
       React.createElement('a', { className: 'gpage-back', href: '/#groups', onClick: (e) => { e.preventDefault(); window.location.href = '/#groups'; } }, '← Back to groups'),
-      React.createElement('div', { className: 'gpage-hero' },
-        React.createElement('h1', null,
-          g.name,
-          React.createElement('span', { className: 'gpage-tag ' + (isPublic ? 'public' : 'private') }, isPublic ? 'public' : 'private')
-        ),
-        React.createElement('div', { className: 'sub' },
-          isPublic
-            ? `${g.memberCount != null ? g.memberCount : (g.members || []).length} members · ${g.threshold}-of-n decisions · shareable join page`
-            : 'Private group — members only',
-          g.role === 'member' || g.role === 'creator' ? ` · you are a ${g.role}` : null
-        ),
-        React.createElement('div', { className: 'gpage-actions' },
-          React.createElement('button', {
-            className: 'gpage-btn',
-            title: g.visibility === 'public'
-              ? 'Copy a share others paste via Import… to apply'
-              : 'Copy a join invite — they paste Import… and Accept',
-            onClick: () => this.share()
-          }, 'Share'),
-          g.role === 'creator' || g.role === 'member'
-            ? React.createElement('button', {
-              className: 'gpage-btn ghost',
-              onClick: () => { window.location.href = '/#groups'; }
-            }, 'Manage in dashboard')
-            : null
-        )
-      ),
       this.state.error ? React.createElement('div', { className: 'gpage-err' }, this.state.error) : null,
       this.state.notice ? React.createElement('div', { className: 'gpage-ok' }, this.state.notice) : null,
-      this.renderVisitorApply(),
-      this.renderCreatorSettings(),
-      this.renderWallet(),
-      this.renderFleets(),
-      this.renderChat(),
-      this.renderApplications(),
-      this.renderProposals(),
-      this.renderMembers(),
-      this.renderActivity(),
-      this.renderFabricInspector()
+      React.createElement('div', { className: 'gpage-shell' },
+        React.createElement('div', { className: 'gpage-main' },
+          React.createElement('div', { className: 'gpage-hero' },
+            React.createElement('h1', null,
+              g.name,
+              React.createElement('span', { className: 'gpage-tag ' + (isPublic ? 'public' : 'private') }, isPublic ? 'public' : 'private')
+            ),
+            GroupContractSummary({
+              group: g,
+              presenceRoster: this.state.presenceRoster,
+              viewerPubkey: this.state.pubkey
+            }),
+            React.createElement('div', { className: 'sub' },
+              isPublic ? 'Shareable join page' : 'Members only',
+              g.role === 'member' || g.role === 'creator' ? ` · you are a ${g.role}` : null
+            ),
+            React.createElement('div', { className: 'gpage-actions' },
+              React.createElement('button', {
+                className: 'gpage-btn',
+                title: g.visibility === 'public'
+                  ? 'Copy a share others paste via Import… to apply'
+                  : 'Copy a join invite — they paste Import… and Accept',
+                onClick: () => this.share()
+              }, 'Share'),
+              g.role === 'creator' || g.role === 'member'
+                ? React.createElement('button', {
+                  className: 'gpage-btn ghost',
+                  onClick: () => { window.location.href = '/#groups'; }
+                }, 'Manage in dashboard')
+                : null
+            )
+          ),
+          this.renderVisitorApply(),
+          this.renderCreatorSettings(),
+          this.renderWallet(),
+          this.renderFleets(),
+          this.renderChat(),
+          this.renderApplications(),
+          this.renderProposals(),
+          this.renderActivity(),
+          this.renderFabricInspector()
+        ),
+        this.renderMembersRail()
+      )
     );
   }
 
@@ -981,7 +988,8 @@ class GroupPage extends React.Component {
 }
 
 GroupPage.CSS = CSS + '\n' + (GroupBitcoinPanel.CSS || '') + '\n' +
-  (GroupComposition.CSS || '') + '\n' + (StarMap.CSS || '');
+  (GroupComposition.CSS || '') + '\n' + (StarMap.CSS || '') + '\n' +
+  (GroupContractSummary.CSS || '') + '\n' + (Chat.CSS || '');
 GroupPage.pathKeyFromLocation = function () {
   const m = String((typeof window !== 'undefined' && window.location.pathname) || '').match(/^\/groups\/([^/]+)/);
   return m ? m[1] : null;

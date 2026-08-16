@@ -195,6 +195,7 @@ class Group {
       creator: this.creator,
       memberCount: this.members.length,
       signerCount: this.validators.length,
+      validators: this.validators.slice(),
       threshold: this.threshold,
       visibility: this.visibility,
       slug: this.slug,
@@ -202,6 +203,7 @@ class Group {
       path: this.pagePath(),
       createdAt: this.createdAt,
       contractId: this.contractId || null,
+      policyFingerprint: this.policyFingerprint || null,
       primaryColor: this.primaryColor || null,
       pinnedChannels: Array.isArray(this.pinnedChannels) ? this.pinnedChannels.slice() : [],
       pinnedMessages: Array.isArray(this.pinnedMessages) ? this.pinnedMessages.slice() : []

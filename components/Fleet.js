@@ -22,6 +22,7 @@ const CSS = `
     flex:0 0 auto;min-width:0}
   .fl-panel h2 .sub{font-weight:500;color:var(--muted);font-size:12px}
   .fl-panel .body{padding:14px 16px;flex:1 1 auto;min-height:0;min-width:0;overflow-x:hidden;overflow-y:auto}
+  .fl-panel .body:has(.fl-list){padding:0}
   .fl-toolbar .body{flex:0 0 auto;overflow:visible}
   .fl-hint{color:var(--muted);font-size:12.5px;line-height:1.55;margin:0 0 12px}
   .fl-err{background:rgba(248,81,73,.12);color:var(--kill);border-radius:7px;padding:9px 12px;font-size:13px;margin-bottom:10px}
@@ -36,10 +37,14 @@ const CSS = `
   .fl-chip{background:var(--panel2);border:1px solid var(--line);color:var(--muted);border-radius:999px;
     padding:3px 10px;font-size:11.5px;cursor:pointer}
   .fl-chip.on{background:rgba(56,139,253,.15);border-color:var(--accent);color:var(--accent)}
-  .fl-list{display:grid;gap:10px;min-width:0;max-width:100%}
+  .fl-list{display:grid;gap:0;min-width:0;max-width:100%}
   .fl-card{border:1px solid var(--line);border-radius:10px;padding:12px 14px;background:var(--panel2);
     display:grid;gap:8px;cursor:pointer;min-width:0;max-width:100%;overflow:hidden;box-sizing:border-box}
   .fl-card:hover,.fl-card.on{border-color:var(--accent)}
+  .fl-list .fl-card{border:none;border-bottom:1px solid var(--line);border-radius:0;padding:8px 16px;
+    background:transparent;gap:2px}
+  .fl-list .fl-card:hover{background:rgba(56,139,253,.06);border-color:var(--line)}
+  .fl-list .fl-card.on{background:rgba(56,139,253,.1);border-color:var(--line);box-shadow:inset 2px 0 0 var(--accent)}
   .fl-card .title{font-size:14px;font-weight:600;display:flex;flex-wrap:wrap;gap:8px;align-items:baseline;
     min-width:0;max-width:100%;overflow-wrap:anywhere;word-break:break-word}
   .fl-card .meta{font-size:12px;color:var(--muted);display:flex;flex-wrap:wrap;gap:8px;

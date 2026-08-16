@@ -21,6 +21,8 @@ describe('Missions register UI', () => {
     assert.ok(textOf(tree).includes('My missions (0)'));
     assert.ok(textOf(tree).includes('Top pilots'));
     assert.ok(textOf(tree).includes('Loading activity'));
+    assert.ok(findByClass(tree, 'mi-outcomes').length >= 1);
+    assert.ok(findByClass(tree, 'mi-pilots').length >= 1);
   });
 
   it('lists top pilots from Game.log analytics', () => {
@@ -38,7 +40,10 @@ describe('Missions register UI', () => {
     });
     page.state.loading = false;
     page.state.missions = [];
-    const text = textOf(page.render());
+    const tree = page.render();
+    const text = textOf(tree);
+    assert.ok(findByClass(tree, 'mi-outcomes').length >= 1);
+    assert.ok(findByClass(tree, 'mi-pilots').length >= 1);
     assert.ok(text.includes('Top pilots'));
     assert.ok(text.includes('Neorion'));
     assert.ok(text.includes('WATCHMAN'));

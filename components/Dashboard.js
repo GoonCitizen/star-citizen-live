@@ -50,6 +50,11 @@ const {
 const { offerPassportDeviceLink } = require('../functions/fabricDeviceLinkOffer');
 const featureEnabled = (key) => FEATURES[key] !== false;
 
+/** Cumulative Analyze payload — never treat a 401 `{ error }` body as history. */
+function isCumulativeAnalytics (j) {
+  return !!(j && typeof j === 'object' && !Array.isArray(j) && Array.isArray(j.missions));
+}
+
 // Top-level features, listed along the top of the dashboard (Hub-style).
 // Order is product-facing: Home → Map → Files (advanced) → Groups → Missions → Fleets → Chat → Wallet → Network.
 // Feature-flagged tabs (see constants.FEATURES) are filtered out when disabled.
@@ -1034,6 +1039,7 @@ class Dashboard extends React.Component {
   async poll () {
     try {
       const r = await fetch('/services/star-citizen/monitor?limit=300');
+      if (!r.ok) return;
       const d = await r.json();
       const s = d.session || {};
       const parts = [d.channel, s.branch, s.changelist].filter(Boolean);
@@ -1122,8 +1128,15 @@ class Dashboard extends React.Component {
     }
     this.setState({ azLoading: true });
     fetch('/services/star-citizen/analytics')
-      .then((r) => r.json())
+      .then((r) => {
+        if (!r.ok) throw new Error(String(r.status));
+        return r.json();
+      })
       .then((j) => {
+        if (!isCumulativeAnalytics(j)) {
+          this.setState({ azLoading: false });
+          return;
+        }
         const prev = this.state.analytics;
         if (prev && j && prev.generatedAt && prev.generatedAt === j.generatedAt &&
             (prev.missions || []).length === (j.missions || []).length &&
@@ -1546,6 +1559,7 @@ class Dashboard extends React.Component {
 
   aggMonths (set) {
     const D = this.state.analytics;
+    if (!isCumulativeAnalytics(D)) return { done: 0, deaths: 0, sessions: 0 };
     const ms = (D.missions || []).filter((m) => this.pSel(m.player) && set.has(ymOf(m.ts)) && this.tSel(m.type) && this.fSel(facOf(m)));
     return {
       done: ms.filter((m) => m.outcome === 'Complete').length,
@@ -1791,7 +1805,7 @@ class Dashboard extends React.Component {
   /** Shared cumulative-history view model for Home activity panels. */
   buildAnalyzeModel () {
     const D = this.state.analytics;
-    if (!D) return null;
+    if (!isCumulativeAnalytics(D)) return null;
     const key = [
       D.generatedAt || '',
       (D.missions || []).length,
@@ -1804,7 +1818,7 @@ class Dashboard extends React.Component {
     ].join('|');
     if (this._analyzeModelKey === key && this._analyzeModel) return this._analyzeModel;
 
-    const months = D.availableMonths || [];
+    const months = Array.isArray(D.availableMonths) ? D.availableMonths : [];
     const asc = months.slice().sort();
     const selArr = this.state.azMonths ? [...this.state.azMonths].sort() : [];
     const lo = selArr[0] || '';
@@ -1889,7 +1903,7 @@ class Dashboard extends React.Component {
     if (this.state.azTypes && this.state.azTypes.size) af.push(['azTypes', 'type: ' + [...this.state.azTypes].join(', ')]);
     if (this.state.azFactions && this.state.azFactions.size) af.push(['azFactions', 'faction: ' + [...this.state.azFactions].join(', ')]);
     if (this.state.azOutcomes && this.state.azOutcomes.size) af.push(['azOutcomes', 'outcome: ' + [...this.state.azOutcomes].map((o) => OC[o].t).join(', ')]);
-    const monthsAll = this.state.azMonths && this.state.azMonths.size === D.availableMonths.length;
+    const monthsAll = this.state.azMonths && this.state.azMonths.size === months.length;
     if (this.state.azMonths && !monthsAll) af.push(['azMonths', this.state.azMonths.size + ' month' + (this.state.azMonths.size === 1 ? '' : 's') + ' selected']);
 
     const ts = [];

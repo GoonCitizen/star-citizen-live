@@ -149,8 +149,9 @@ async function startDeviceLinkOffer (identity, opts = {}) {
 }
 
 /**
- * Best-effort remote cancel then forget the local offer.
- * Always returns ok so the UI can unstick even if the hub is unreachable.
+ * Best-effort remote cancel. Callers drop the local QR / overlay regardless of
+ * whether the hub DELETE succeeded. Network errors return `ok: false` so they
+ * can retry; the hub row ages out on SESSION_TTL_MS.
  */
 async function abandonDeviceLinkOffer (offer, opts = {}) {
   if (!offer || !offer.sessionId || !offer.hubBase) return { ok: true, skipped: true };

@@ -4,11 +4,13 @@ const { describe, it } = require('node:test');
 const assert = require('node:assert');
 
 require('../helpers/installReactStub');
-const { textOf, findType } = require('../helpers/reactTree');
+const { textOf, findType, findByClass } = require('../helpers/reactTree');
 const GroupPage = require('../../components/GroupPage');
 const GroupComposition = require('../../components/GroupComposition');
+const Chat = require('../../components/Chat');
 
 const ME = '02' + 'ab'.repeat(32);
+const OTHER = '03' + 'cd'.repeat(32);
 
 describe('GroupPage dedicated share/join page', () => {
   it('reads /groups/:id from the location', () => {
@@ -42,17 +44,32 @@ describe('GroupPage dedicated share/join page', () => {
       visibility: 'public',
       role: 'visitor',
       canApply: true,
+      creator: ME,
+      contractId: 'ab'.repeat(32),
       members: [],
+      validators: [ME, OTHER],
+      signerCount: 2,
       memberCount: 3,
-      threshold: 2
+      threshold: 2,
+      createdAt: '2026-08-01T00:00:00.000Z',
+      path: '/groups/salvage-wing'
     };
-    const text = textOf(page.render());
+    const tree = page.render();
+    const text = textOf(tree);
+    assert.ok(findByClass(tree, 'gcs').length, 'expected contract summary');
+    assert.ok(findByClass(tree, 'gpage-rail').length, 'expected members rail');
     assert.match(text, /Salvage Wing/);
     assert.match(text, /public/);
     assert.match(text, /Share/);
     assert.match(text, /Join this group/);
     assert.match(text, /Apply to join/);
     assert.match(text, /Group chat is for members/);
+    assert.match(text, /Publisher/);
+    assert.match(text, /Created/);
+    assert.match(text, /Signers/);
+    assert.match(text, /2-of-2/);
+    assert.match(text, /3 members/);
+    assert.doesNotMatch(text, /Current validators/);
     assert.doesNotMatch(text, /Create fleet/);
   });
 
@@ -65,17 +82,32 @@ describe('GroupPage dedicated share/join page', () => {
       name: 'Salvage Wing',
       visibility: 'public',
       role: 'creator',
+      creator: ME,
+      contractId: 'cd'.repeat(32),
       members: [ME],
+      validators: [ME],
       memberCount: 1,
-      threshold: 1
+      signerCount: 1,
+      threshold: 1,
+      createdAt: '2026-08-01T00:00:00.000Z',
+      path: '/groups/group-1'
     };
-    const text = textOf(page.render());
+    const tree = page.render();
+    const text = textOf(tree);
+    assert.ok(findByClass(tree, 'gpage-rail').length, 'expected members rail');
+    assert.ok(findType(tree, Chat).some((n) => n.props && n.props.peopleOnly),
+      'expected Chat people rail');
     assert.match(text, /you are a creator/);
     assert.match(text, /Manage in dashboard/);
     assert.match(text, /Group settings/);
     assert.match(text, /Custom URL/);
     assert.match(text, /Create fleet/);
     assert.match(text, /New fleet name/);
+    assert.match(text, /Publisher/);
+    assert.match(text, /Created/);
+    assert.match(text, /Signers/);
+    assert.match(text, /Send invite/);
+    assert.doesNotMatch(text, /Current validators/);
     assert.doesNotMatch(text, /Join this group/);
   });
 
@@ -109,6 +141,27 @@ describe('GroupPage dedicated share/join page', () => {
     assert.match(text, /Online composition/);
     assert.match(text, /Gladius/);
     assert.match(text, /Area18/);
-    assert.match(textOf(tree), /online · Gladius · Area18/);
+  });
+
+  it('member hover card offers Message, Profile, and Invite', () => {
+    const chat = new Chat({
+      groupId: 'group-1',
+      peopleOnly: true,
+      identityPubkey: ME
+    });
+    chat.state.loading = false;
+    chat.state.members = [
+      { pubkey: ME, handle: 'Neorion', online: true, role: 'creator' },
+      { pubkey: OTHER, handle: 'Cara', online: false, role: 'signer' }
+    ];
+    chat.state.hoverPubkey = OTHER;
+    const tree = chat.render();
+    assert.ok(findByClass(tree, 'chat-people-only').length);
+    assert.ok(findByClass(tree, 'chat-mem-card').length, 'expected hover card');
+    const text = textOf(tree);
+    assert.match(text, /Cara/);
+    assert.match(text, /Message/);
+    assert.match(text, /Profile/);
+    assert.match(text, /Invite to group/);
   });
 });

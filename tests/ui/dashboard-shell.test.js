@@ -60,6 +60,20 @@ describe('Dashboard shell UI', () => {
     const text = textOf(dash.render());
     assert.match(text, /Indexing 2\/40 logs/);
   });
+
+  it('does not crash Home when hosted analytics returns 401 JSON', () => {
+    const dash = new Dashboard({});
+    dash.state.tab = 'home';
+    dash.state.online = true;
+    dash.state.status = 'ok';
+    dash.state.azLoading = false;
+    dash.state.analytics = {
+      error: 'Authentication required (POST …/auth with a signed login envelope)'
+    };
+    assert.doesNotThrow(() => dash.render());
+    assert.equal(dash.buildAnalyzeModel(), null);
+    assert.match(textOf(dash.render()), /no activity history yet/);
+  });
 });
 
 describe('Built dashboard bundle', () => {

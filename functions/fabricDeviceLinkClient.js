@@ -17,8 +17,8 @@ const {
 
 /**
  * Drop a pending hub session. 404 / already-gone is success so Cancel is always
- * safe. Network errors still return ok so the local QR / overlay can unstick;
- * the hub row then ages out on SESSION_TTL_MS.
+ * safe. Fetch rejection is `ok: false` — the remote row may still exist (it ages
+ * out on SESSION_TTL_MS). Callers drop the local QR / overlay themselves.
  */
 async function cancelDeviceLinkSession (hubBase, sessionId, opts = {}) {
   const fetchImpl = opts.fetchImpl || globalThis.fetch;
@@ -34,7 +34,12 @@ async function cancelDeviceLinkSession (hubBase, sessionId, opts = {}) {
     });
     const data = await res.json().catch(() => ({}));
     if (res.status === 404 || (res.ok && data && data.ok !== false)) {
-      return { ok: true, cancelled: true, existed: !!(data && data.existed), ...data };
+      return {
+        ...data,
+        ok: true,
+        cancelled: true,
+        existed: !!(data && data.existed)
+      };
     }
     if (res.status === 409) {
       return { ok: true, cancelled: false, alreadyLinked: true };
@@ -42,7 +47,7 @@ async function cancelDeviceLinkSession (hubBase, sessionId, opts = {}) {
     return { ok: false, status: res.status, error: (data && data.error) || `HTTP ${res.status}` };
   } catch (err) {
     return {
-      ok: true,
+      ok: false,
       cancelled: false,
       error: (err && err.message) ? String(err.message) : 'cancel failed'
     };

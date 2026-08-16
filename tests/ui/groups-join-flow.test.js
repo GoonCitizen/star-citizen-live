@@ -67,6 +67,10 @@ describe('Groups join flow UI', () => {
     assert.ok(!text.includes('+ Nested channel'));
     assert.ok(text.includes('Salvage Wing'));
     assert.ok(text.includes('Chat'));
+    assert.ok(text.includes('Publisher'));
+    assert.ok(text.includes('Created'));
+    assert.ok(text.includes('1-of-1'));
+    assert.ok(!text.includes('Current validators'));
   });
 
   it('group settings page holds color, nested channel, share, and fleet share', () => {

@@ -34,7 +34,9 @@ const { fabricMessageHref } = require('../functions/collectionRecords');
 const { fetchPresenceRoster } = require('../functions/presenceClient');
 const groupPresence = require('../functions/groupPresence');
 const GroupComposition = require('./GroupComposition');
+const GroupContractSummary = require('./GroupContractSummary');
 const StarMap = require('./StarMap');
+const { profileHref } = require('../functions/identityActor');
 
 const BASE = '/services/star-citizen';
 const PUBKEY_RE = /^0[23][0-9a-f]{64}$/;
@@ -106,11 +108,14 @@ const CSS = `
   .gp-ok{background:rgba(63,185,80,.12);color:var(--good);border-radius:7px;padding:8px 11px;font-size:12.5px;margin:0 14px 10px}
   .gp-member{display:flex;gap:10px;align-items:center;padding:7px 14px;border-bottom:1px solid #20262f}
   .gp-member code{font-family:'Cascadia Code',Consolas,monospace;font-size:11px;word-break:break-all;flex:1}
+  .gp-member a{color:var(--accent);text-decoration:none}
+  .gp-member a:hover{text-decoration:underline}
   .gp-tag{font-size:10px;font-weight:700;padding:1px 7px;border-radius:5px;white-space:nowrap}
   .gp-tag.creator{background:rgba(59,130,246,.18);color:var(--accent)}
   .gp-tag.you{background:rgba(63,185,80,.15);color:var(--good)}
-  .gp-meta{padding:10px 14px;color:var(--muted);font-size:12px;display:flex;gap:16px;flex-wrap:wrap}
-  .gp-meta b{color:var(--text)}
+  .gp-meta{padding:10px 14px;color:var(--muted);font-size:12px;display:block;border-bottom:1px solid var(--line)}
+  .gp-meta .gcs{width:100%}
+  .gp-meta-tags{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px;align-items:center}
   .gp-add{display:flex;gap:8px;padding:10px 14px;border-top:1px solid var(--line)}
   .gp-add input{flex:1;background:var(--bg);border:1px solid var(--line);color:var(--text);
     border-radius:7px;padding:7px 10px;font-size:12px;font-family:'Cascadia Code',Consolas,monospace}
@@ -1121,8 +1126,12 @@ class Groups extends React.Component {
           memberList.map((m) => {
             const p = groupPresence.presenceFor(roster, m);
             const chip = groupPresence.presenceChipLabel(p);
+            const isSigner = GroupContractSummary.isSignerKey(g, m);
+            const href = profileHref(m) || ('/profiles/' + encodeURIComponent(m));
             return React.createElement('div', { className: 'gp-member', key: m },
-              React.createElement('code', null, m),
+              React.createElement('code', null,
+                React.createElement('a', { href, title: m }, m)
+              ),
               p && p.nickname
                 ? React.createElement('span', { className: 'gp-tag you' }, p.nickname)
                 : null,
@@ -1130,6 +1139,9 @@ class Groups extends React.Component {
                 className: 'gp-tag ' + (p && p.online ? 'public' : 'private'),
                 title: p && p.lastEventAt || ''
               }, chip),
+              React.createElement('span', {
+                className: 'gp-tag ' + (isSigner ? 'public' : 'private')
+              }, isSigner ? 'signer' : 'reader'),
               m === g.creator ? React.createElement('span', { className: 'gp-tag creator' }, 'creator') : null,
               m === me ? React.createElement('span', { className: 'gp-tag you' }, 'you') : null,
               (isCreator && m !== g.creator)
@@ -1593,7 +1605,6 @@ class Groups extends React.Component {
     const me = this.state.pubkey;
     const isCreator = me && g.creator === me;
     const canManage = me && Array.isArray(g.members) && g.members.includes(me);
-    const memberList = Array.isArray(g.members) ? g.members : null;
     const tab = this.state.detailTab || 'chat';
     const tabs = DETAIL_TABS.filter(([id]) => id !== 'fabric' || this.props.advancedMode);
     const tabCounts = {
@@ -1636,17 +1647,21 @@ class Groups extends React.Component {
       ),
       React.createElement('div', { className: 'gp-body-wrap' },
         React.createElement('div', { className: 'gp-meta' },
-          React.createElement('span', null, 'decisions ', React.createElement('b', null, `${g.threshold}-of-${memberList ? memberList.length : 'n'}`)),
-          React.createElement('span', null, 'created ', React.createElement('b', null, String(g.createdAt || '').slice(0, 10))),
-          React.createElement('span', { className: 'gp-tag ' + (g.visibility === 'public' ? 'public' : 'private') }, g.visibility || 'private'),
-          g.id === this.state.primaryGroupId
-            ? React.createElement('span', { className: 'gp-tag primary' }, 'primary')
-            : null,
-          g.parentId
-            ? React.createElement('span', null, 'subgroup of ', React.createElement('b', null,
-              (this.state.groups.find((x) => x.id === g.parentId) || {}).name || g.parentId.slice(0, 8) + '…'))
-            : null,
-          React.createElement('span', { title: g.path }, 'page ', React.createElement('b', null, g.path || `/groups/${g.id}`))
+          GroupContractSummary({
+            group: g,
+            presenceRoster: this.state.presenceRoster,
+            viewerPubkey: me
+          }),
+          React.createElement('div', { className: 'gp-meta-tags' },
+            React.createElement('span', { className: 'gp-tag ' + (g.visibility === 'public' ? 'public' : 'private') }, g.visibility || 'private'),
+            g.id === this.state.primaryGroupId
+              ? React.createElement('span', { className: 'gp-tag primary' }, 'primary')
+              : null,
+            g.parentId
+              ? React.createElement('span', null, 'subgroup of ', React.createElement('b', null,
+                (this.state.groups.find((x) => x.id === g.parentId) || {}).name || g.parentId.slice(0, 8) + '…'))
+              : null
+          )
         ),
         React.createElement('div', { className: 'gp-tabs', role: 'tablist' },
           tabs.map(([id, label]) => {
@@ -1864,7 +1879,7 @@ class Groups extends React.Component {
                     ),
                     React.createElement('span', { className: 'd' },
                       (g.members ? `${g.members.length} member${g.members.length === 1 ? '' : 's'}` : `${g.memberCount || 0} members`) +
-                      ` · ${g.threshold}-of-${g.members ? g.members.length : 'n'}`)
+                      ` · ${GroupContractSummary.thresholdLabel(g)}`)
                   );
                 })
                 : React.createElement('div', { className: 'empty' },
@@ -1883,6 +1898,7 @@ class Groups extends React.Component {
 }
 
 Groups.CSS = CSS + '\n' + (LocalGroups.CSS || '') + '\n' + (GroupBitcoinPanel.CSS || '') +
-  '\n' + (GroupComposition.CSS || '') + '\n' + (StarMap.CSS || '');
+  '\n' + (GroupComposition.CSS || '') + '\n' + (StarMap.CSS || '') + '\n' +
+  (GroupContractSummary.CSS || '');
 
 module.exports = Groups;

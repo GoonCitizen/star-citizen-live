@@ -60,8 +60,11 @@ const CSS = `
   .mi-filter{display:flex;gap:8px;align-items:center;flex-wrap:wrap;padding:8px 16px;border-bottom:1px solid var(--line);font-size:12px;color:var(--muted)}
   .mi-filter button{background:var(--panel2);border:1px solid var(--line);color:var(--text);border-radius:999px;padding:3px 10px;font-size:11.5px;cursor:pointer}
   .mi-filter button.on{border-color:var(--accent);color:var(--accent)}
-  .mi-lbr{display:grid;grid-template-columns:1fr 72px 86px 56px;gap:8px;align-items:center;padding:6px 8px;font-size:12.5px;border-radius:6px}
+  .mi-outcomes{display:grid;grid-template-columns:280px minmax(0,1fr);gap:8px 28px;align-items:start}
+  .mi-pilots h3{font-size:12.5px;margin:0 0 8px;font-weight:600}
+  .mi-lbr{display:grid;grid-template-columns:minmax(0,1fr) 56px 64px 48px;gap:6px;align-items:center;padding:4px 0;font-size:12px}
   .mi-lbr.head{color:var(--muted);font-size:11px}
+  @media(max-width:720px){.mi-outcomes{grid-template-columns:1fr}}
 `;
 
 const SATS = (n) => Number(n || 0).toLocaleString() + ' sats';
@@ -574,34 +577,31 @@ class Missions extends React.Component {
       analytics && analytics.deaths,
       { limit: 10 }
     );
-    return React.createElement('div', { className: 'mi-panel' },
-      React.createElement('h2', null, '🏅 Top pilots ',
-        React.createElement('span', { className: 'sub' }, '— from Game.log cumulative history')),
-      React.createElement('div', { className: 'mi-body' },
-        !analytics
+    return React.createElement('div', { className: 'mi-pilots' },
+      React.createElement('h3', null, '🏅 Top pilots'),
+      !analytics
+        ? React.createElement('div', { style: { color: 'var(--muted)', fontStyle: 'italic' } },
+          'Loading activity…')
+        : (!rows.length
           ? React.createElement('div', { style: { color: 'var(--muted)', fontStyle: 'italic' } },
-            'Loading activity…')
-          : (!rows.length
-            ? React.createElement('div', { style: { color: 'var(--muted)', fontStyle: 'italic' } },
-              'No pilot activity yet — import logs on Home or fly to accumulate missions.')
-            : React.createElement(React.Fragment, null,
-              React.createElement('div', { className: 'mi-lbr head' },
-                React.createElement('span', null, 'pilot'),
-                React.createElement('span', { style: { textAlign: 'right' } }, 'missions'),
-                React.createElement('span', { style: { textAlign: 'right' } }, 'completion'),
-                React.createElement('span', { style: { textAlign: 'right' } }, 'deaths')
-              ),
-              rows.map((r) => {
-                const pc = r.tot ? Math.round(100 * r.done / r.tot) : 0;
-                return React.createElement('div', { className: 'mi-lbr', key: r.n },
-                  React.createElement('span', null, r.n),
-                  React.createElement('span', { style: { textAlign: 'right' } }, r.tot),
-                  React.createElement('span', { style: { textAlign: 'right' } }, pc + '%'),
-                  React.createElement('span', { style: { textAlign: 'right' } }, r.deaths)
-                );
-              })
-            ))
-      )
+            'No pilot activity yet — import logs on Home or fly to accumulate missions.')
+          : React.createElement(React.Fragment, null,
+            React.createElement('div', { className: 'mi-lbr head' },
+              React.createElement('span', null, 'pilot'),
+              React.createElement('span', { style: { textAlign: 'right' } }, 'missions'),
+              React.createElement('span', { style: { textAlign: 'right' } }, 'done'),
+              React.createElement('span', { style: { textAlign: 'right' } }, 'deaths')
+            ),
+            rows.map((r) => {
+              const pc = r.tot ? Math.round(100 * r.done / r.tot) : 0;
+              return React.createElement('div', { className: 'mi-lbr', key: r.n },
+                React.createElement('span', { style: { overflow: 'hidden', textOverflow: 'ellipsis' } }, r.n),
+                React.createElement('span', { style: { textAlign: 'right' } }, r.tot),
+                React.createElement('span', { style: { textAlign: 'right' } }, pc + '%'),
+                React.createElement('span', { style: { textAlign: 'right' } }, r.deaths)
+              );
+            })
+          ))
     );
   }
 
@@ -633,13 +633,15 @@ class Missions extends React.Component {
         React.createElement('h2', null, '🎯 Game.log outcomes ',
           React.createElement('span', { className: 'sub' }, '— cumulative from Home → Missions stats')),
         React.createElement('div', { className: 'mi-body' },
-          React.createElement(MissionOutcomesChart, {
-            analytics: this.props.analytics || null,
-            subtitle: 'Parsed in-game mission ends (not the officer register below).'
-          })
+          React.createElement('div', { className: 'mi-outcomes' },
+            React.createElement(MissionOutcomesChart, {
+              analytics: this.props.analytics || null,
+              subtitle: 'Parsed in-game mission ends (not the officer register below).'
+            }),
+            this.renderTopPilots()
+          )
         )
       ),
-      this.renderTopPilots(),
       React.createElement('div', { className: 'mi-panel' },
         React.createElement('h2', null, '⭐ Mission register',
           React.createElement('span', { className: 'sub' },
