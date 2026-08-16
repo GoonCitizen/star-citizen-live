@@ -17,6 +17,9 @@ const crypto = require('crypto');
 const readline = require('readline');
 const { parseLine, missionType, missionFaction } = require('./parser');
 
+/** Pause readline this often so HTTP / IPC can run during a large first ingest. */
+const INGEST_YIELD_EVERY = 4000;
+
 function idFor (content) {
   return crypto.createHash('sha256').update(String(content)).digest('hex').slice(0, 32);
 }
@@ -283,6 +286,10 @@ function ingestFile (file, history, index, cursors, opts = {}) {
       if (ev.kind === 'session:start' && !sessionTs) sessionTs = ev.timestamp;
       if (ev.kind === 'mission:marker' && ev.missionId) generators[ev.missionId] = ev.generator;
       if (applyEvent(history, index, ev, { handle, generators, countHeat: true })) changed = true;
+      if (lines % INGEST_YIELD_EVERY === 0) {
+        rl.pause();
+        setImmediate(() => rl.resume());
+      }
     });
 
     rl.on('close', () => {
@@ -428,5 +435,6 @@ module.exports = {
   cumulativeCounts,
   historyLeaves,
   historyPath,
-  cursorsPath
+  cursorsPath,
+  INGEST_YIELD_EVERY
 };

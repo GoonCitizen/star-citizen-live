@@ -87,6 +87,19 @@ const peerPeeringString = require('../functions/peerPeeringString');
 const presence = require('../functions/presence');
 const hubPeeringObserve = require('../functions/hubPeeringObserve');
 const liveFeed = require('../functions/liveFeed');
+
+/** Rolling cap for raw session log/activity maps (history.json is the archive). */
+const SESSION_LOG_CAP = 2000;
+/** Rolling cap for classified session collections filled by seed + live tail. */
+const SESSION_EVENT_CAP = 4000;
+/** Newest Game.log mission groups on GET /monitor (full register is /missions). */
+const MONITOR_MISSION_CAP = 250;
+/** Seed the Live tab from the tail of the current Game.log, not the whole file. */
+const SEED_MAX_BYTES = 8 * 1024 * 1024;
+const CORPUS_CACHE_MS = 8000;
+const ANALYTICS_CACHE_MS = 4000;
+const FEED_STORE_CACHE_MS = 8000;
+const FOLD_YIELD_EVERY = 200;
 const localGroups = require('../functions/localGroups');
 const identityNotes = require('../functions/identityNotes');
 const deviceDataSync = require('../functions/deviceDataSync');
@@ -542,6 +555,15 @@ class StarCitizenService extends EventEmitter {
     this._historyFlushTimer = null;
     this._historyApplyLive = false; // true only after startup sync (avoids double heat on seed)
     this._historyGenerators = {}; // missionId → generator (for live mission:end typing)
+    this._sessionQueues = Object.create(null);
+    this._historySync = {
+      status: 'idle', files: 0, fileIndex: 0, lines: 0, startedAt: null, finishedAt: null
+    };
+    this._corpusCache = null;
+    this._analyticsCache = null;
+    this._discordFeedKeys = [];
+    this._discordFeedKeysAt = 0;
+    this._inboxFeedCache = { at: 0, rows: [] };
     // Gossip Chain of Blocks (D-018, consensus=gossip): union-mergeable firehose; history.json remains the fold.
     this.eventChain = eventChain.available
       ? eventChain.fromHistory(this.history, null)
@@ -2423,6 +2445,10 @@ class StarCitizenService extends EventEmitter {
               const { raw, ...payload } = ev;
               const messageId = sha256hex(canonicalStringify({ type: 'GoonCitizenLogEvent', payload }));
               job.digest = sha256hex(job.digest + messageId);
+              if (job.lines % 4000 === 0) {
+                rl.pause();
+                setImmediate(() => rl.resume());
+              }
             });
             rl.on('close', resolve);
             rl.on('error', resolve); // unreadable file: skip, keep going
@@ -2880,16 +2906,21 @@ class StarCitizenService extends EventEmitter {
           chat = chat.concat(more);
         }
         // Discord bridged threads are not in channelsFor — fold them into logs.
-        const discordKeys = new Set();
-        try {
-          const rows = this.registerStore ? (this.registerStore.all('chatmessages') || []) : [];
-          for (const m of rows) {
-            if (m && String(m.channel || '').indexOf('discord:') === 0) {
-              discordKeys.add(m.channel);
+        const now = Date.now();
+        if (!this._discordFeedKeys || (now - this._discordFeedKeysAt) >= FEED_STORE_CACHE_MS) {
+          const discordKeys = new Set();
+          try {
+            const rows = this.registerStore ? (this.registerStore.all('chatmessages') || []) : [];
+            for (const m of rows) {
+              if (m && String(m.channel || '').indexOf('discord:') === 0) {
+                discordKeys.add(m.channel);
+              }
             }
-          }
-        } catch (_) { /* optional */ }
-        for (const key of discordKeys) {
+          } catch (_) { /* optional */ }
+          this._discordFeedKeys = [...discordKeys];
+          this._discordFeedKeysAt = now;
+        }
+        for (const key of this._discordFeedKeys) {
           const more = this.chatManager.list(key, { limit: 40 });
           chat = chat.concat(more);
         }
@@ -2909,10 +2940,16 @@ class StarCitizenService extends EventEmitter {
     } catch (_) { broadcasts = []; }
     let inbox = [];
     try {
-      inbox = ((this.registerStore && this.registerStore.all('inbox')) || [])
-        .slice()
-        .sort((a, b) => String(b.ts || '').localeCompare(String(a.ts || '')))
-        .slice(0, 200);
+      const now = Date.now();
+      if (this._inboxFeedCache && (now - this._inboxFeedCache.at) < FEED_STORE_CACHE_MS) {
+        inbox = this._inboxFeedCache.rows;
+      } else {
+        inbox = ((this.registerStore && this.registerStore.all('inbox')) || [])
+          .slice()
+          .sort((a, b) => String(b.ts || '').localeCompare(String(a.ts || '')))
+          .slice(0, 200);
+        this._inboxFeedCache = { at: now, rows: inbox };
+      }
     } catch (_) { inbox = []; }
     return liveFeed.buildLiveFeed({
       chat,
@@ -4865,11 +4902,21 @@ class StarCitizenService extends EventEmitter {
 
     if (!files.length) return { changed: false, files: 0, lines: 0 };
 
+    this._historySync = {
+      status: 'running',
+      files: files.length,
+      fileIndex: 0,
+      lines: 0,
+      startedAt: new Date().toISOString(),
+      finishedAt: null
+    };
     const result = await cumulativeHistory.syncFiles(
       files,
       this.history,
       this._logCursors,
       (done, total) => {
+        this._historySync.fileIndex = done;
+        this._historySync.files = total;
         if (done === total || done === 1) {
           console.log(`[STAR-CITIZEN] cumulative sync ${done}/${total} log files`);
         }
@@ -4880,16 +4927,21 @@ class StarCitizenService extends EventEmitter {
       ownerPubkey: (this._identity && this._identity.pubkey) || null,
       fileCount: files.length
     });
-    if (result.changed || result.lines > 0 || files.length) {
+    if (result.changed || result.lines > 0) {
       this._historyDirty = true;
       this._flushHistory();
     }
+    this._corpusCache = null;
+    this._analyticsCache = null;
+    this._historySync.status = 'done';
+    this._historySync.lines = result.lines || 0;
+    this._historySync.finishedAt = new Date().toISOString();
     if (result.lines > 0) {
       const c = cumulativeHistory.cumulativeCounts(this.history);
       console.log(`[STAR-CITIZEN] cumulative history: ${c.missions} missions · ${c.deaths} deaths · ${c.players} pilots (${result.lines} new lines · ${files.length} files)`);
     }
     // Fold ended Game.log missions into the officer register (evidence rows).
-    try { this._foldHistoryMissionsIntoRegister(); } catch (e) { this.emit('error', e); }
+    try { await this._foldHistoryMissionsIntoRegister(); } catch (e) { this.emit('error', e); }
     if (this._sharePlaytimes === true || this._hasPinnedProfileFiles()) {
       this._publishGroupDataShareNow();
     }
@@ -4900,18 +4952,23 @@ class StarCitizenService extends EventEmitter {
    * Upsert cumulative-history mission ends into MissionManager (idempotent).
    * @returns {{ created: number, updated: number }}
    */
-  _foldHistoryMissionsIntoRegister () {
+  async _foldHistoryMissionsIntoRegister () {
     if (!this.missionManager || !this.history || !Array.isArray(this.history.missions)) {
       return { created: 0, updated: 0 };
     }
     let created = 0;
     let updated = 0;
-    for (const row of this.history.missions) {
-      const snap = gameLogMissionRegister.snapshotFromHistoryRow(row);
-      if (!snap) continue;
-      const r = this.missionManager.upsertFromGameLog(snap);
-      if (r.created) created += 1;
-      else if (r.updated) updated += 1;
+    const rows = this.history.missions;
+    for (let i = 0; i < rows.length; i++) {
+      const snap = gameLogMissionRegister.snapshotFromHistoryRow(rows[i]);
+      if (snap) {
+        const r = this.missionManager.upsertFromGameLog(snap);
+        if (r.created) created += 1;
+        else if (r.updated) updated += 1;
+      }
+      if (i > 0 && i % FOLD_YIELD_EVERY === 0) {
+        await new Promise((resolve) => setImmediate(resolve));
+      }
     }
     if (created || updated) {
       console.log(`[STAR-CITIZEN] register ← Game.log history: +${created} new · ${updated} updated`);
@@ -5031,6 +5088,10 @@ class StarCitizenService extends EventEmitter {
   }
 
   _corpusStatus () {
+    const now = Date.now();
+    if (this._corpusCache && (now - this._corpusCache.at) < CORPUS_CACHE_MS) {
+      return this._corpusCache.value;
+    }
     const summary = logCorpus.summarizeCorpus({
       files: this._discoverCorpusFileList(),
       cursors: this._logCursors,
@@ -5039,6 +5100,7 @@ class StarCitizenService extends EventEmitter {
     });
     summary.importedDirs = this._corpusDirs();
     summary.importedFiles = this._corpusFiles();
+    this._corpusCache = { at: now, value: summary };
     return summary;
   }
 
@@ -5128,19 +5190,33 @@ class StarCitizenService extends EventEmitter {
   // Cumulative history is the analytics source of truth. Active (not-yet-ended)
   // missions from the live session are merged in so the current flight still shows.
   _analyticsDataset () {
+    const now = Date.now();
+    const stamp = [
+      (this.history && this.history.meta && (this.history.meta.lastFlushAt || this.history.meta.generatedAt)) || '',
+      (this.history && this.history.missions && this.history.missions.length) || 0,
+      (this.history && this.history.deaths && this.history.deaths.length) || 0,
+      this._mapCount(this.state.missionGroups)
+    ].join(':');
+    if (this._analyticsCache && this._analyticsCache.stamp === stamp &&
+        (now - this._analyticsCache.at) < ANALYTICS_CACHE_MS) {
+      return this._analyticsCache.payload;
+    }
     const h = this.history || cumulativeHistory.emptyHistory();
     const me = this._sessionHandle || 'you';
-    const liveActive = this.missionGroups
-      .filter((m) => m.startedAt && !m.outcome)
-      .map((m) => ({
-        type: m.type,
+    const liveActive = [];
+    for (const m of Object.values(this.state.missionGroups || {})) {
+      if (!m.startedAt || m.outcome) continue;
+      const ts = m.startedAt || m.firstSeen;
+      if (!ts) continue;
+      liveActive.push({
+        type: missionType(m.generator),
         faction: missionFaction(m.generator),
         outcome: null,
         player: m.player || me,
-        ts: m.startedAt || m.firstSeen,
+        ts,
         active: true
-      }))
-      .filter((x) => x.ts);
+      });
+    }
 
     const heat = Object.assign({}, h.heat);
     const heatcells = Object.keys(heat).map((k) => {
@@ -5173,7 +5249,7 @@ class StarCitizenService extends EventEmitter {
     ))].filter(Boolean);
 
     const corpus = this._corpusStatus();
-    return {
+    const payload = {
       type: 'Analytics',
       generatedAt: (h.meta && (h.meta.lastFlushAt || h.meta.generatedAt)) || null,
       cumulative: true,
@@ -5196,6 +5272,8 @@ class StarCitizenService extends EventEmitter {
       },
       ownerPubkey: (h.meta && h.meta.ownerPubkey) || (this._identity && this._identity.pubkey) || null
     };
+    this._analyticsCache = { stamp, at: now, payload };
+    return payload;
   }
 
   /**
@@ -5235,20 +5313,79 @@ class StarCitizenService extends EventEmitter {
   get notifications () { return Object.values(this.state.notifications); }  // general HUD/zone notices
   get combatlog () { return Object.values(this.state.combatlog); }          // combat progress via mission objectives
 
+  _mapCount (obj) {
+    return obj ? Object.keys(obj).length : 0;
+  }
+
+  /**
+   * Keep a bounded insertion-order map so a full Game.log seed cannot pin
+   * hundreds of thousands of raw lines in RAM (history.json is the archive).
+   */
+  _rememberSession (bucket, id, value, cap) {
+    if (!this._sessionQueues) this._sessionQueues = Object.create(null);
+    const map = this.state[bucket];
+    if (!map) return value;
+    if (!Object.prototype.hasOwnProperty.call(map, id)) {
+      let q = this._sessionQueues[bucket];
+      if (!q) q = this._sessionQueues[bucket] = [];
+      q.push(id);
+      while (q.length > cap) {
+        const old = q.shift();
+        delete map[old];
+      }
+    }
+    map[id] = value;
+    return value;
+  }
+
+  _sessionCounts () {
+    return {
+      activities: this._mapCount(this.state.activities),
+      players: this._mapCount(this.state.players),
+      logins: this._mapCount(this.state.logins),
+      vehicles: this._mapCount(this.state.vehicles),
+      kills: this._mapCount(this.state.kills),
+      incaps: this._mapCount(this.state.incaps),
+      deaths: this._mapCount(this.state.deaths),
+      missionlog: this._mapCount(this.state.missionlog),
+      missions: this._mapCount(this.state.missionGroups),
+      notifications: this._mapCount(this.state.notifications),
+      combat: this._mapCount(this.state.combatlog),
+      logs: this._mapCount(this.state.logs),
+      flagged: this.flagged.length
+    };
+  }
+
+  _formatMissionGroup (m) {
+    const objectives = Object.keys(m.objectiveIds || {}).map((oid) => this.state.objectives[oid]).filter(Boolean);
+    const last = m.notifications && m.notifications.length
+      ? m.notifications[m.notifications.length - 1]
+      : null;
+    const status = m.outcome || (m.startedAt ? 'Active' : null);
+    return {
+      id: m.id, title: last ? last.text : null, generator: m.generator || null, type: missionType(m.generator),
+      firstSeen: m.firstSeen, lastSeen: m.lastSeen,
+      startedAt: m.startedAt || null, endedAt: m.endedAt || null, outcome: m.outcome || null, reason: m.reason || null,
+      status, contractId: m.contractId || null, player: m.player || null,
+      objectives, notifications: m.notifications
+    };
+  }
+
   // Missions grouped by MissionId, with their objectives joined in by ObjectiveId.
   get missionGroups () {
-    return Object.values(this.state.missionGroups).map((m) => {
-      const objectives = Object.keys(m.objectiveIds).map((oid) => this.state.objectives[oid]).filter(Boolean);
-      const last = m.notifications[m.notifications.length - 1];
-      // Lifecycle status: an explicit outcome (Complete/Abandon/Fail/Deactivate) once
-      // ended, else 'Active' if we saw it start, else null (seen only via objectives).
-      const status = m.outcome || (m.startedAt ? 'Active' : null);
-      return { id: m.id, title: last ? last.text : null, generator: m.generator || null, type: missionType(m.generator),
-        firstSeen: m.firstSeen, lastSeen: m.lastSeen,
-        startedAt: m.startedAt || null, endedAt: m.endedAt || null, outcome: m.outcome || null, reason: m.reason || null,
-        status, contractId: m.contractId || null, player: m.player || null,
-        objectives, notifications: m.notifications };
-    });
+    return Object.values(this.state.missionGroups).map((m) => this._formatMissionGroup(m));
+  }
+
+  /** Newest session mission groups for the monitor payload (not the full register). */
+  _missionGroupsSnapshot (limit) {
+    const cap = limit > 0 ? limit : MONITOR_MISSION_CAP;
+    const raw = Object.values(this.state.missionGroups);
+    if (raw.length <= cap) return raw.map((m) => this._formatMissionGroup(m));
+    return raw
+      .slice()
+      .sort((a, b) => String(b.lastSeen || '').localeCompare(String(a.lastSeen || '')))
+      .slice(0, cap)
+      .map((m) => this._formatMissionGroup(m));
   }
 
   // Mission-outcome tallies for the dashboard, computed from the grouped missions.
@@ -7091,11 +7228,13 @@ class StarCitizenService extends EventEmitter {
         const newest = (arr) => arr.slice(-limit).reverse();
         const cumulative = cumulativeHistory.cumulativeCounts(this.history);
         const feed = this._liveFeedSnapshot(limit);
+        const sessionCounts = this._sessionCounts();
         return send(200, {
           status: this.status, startedAt: this.state.startedAt, now: new Date().toISOString(),
           loginfo: this._logInfo(), reparse: this._reparse, corpus: this._corpusStatus(),
+          historySync: this._historySync,
           channel: this.channel, session: this.session, sessions: this.sessions,
-          missions: this.missionGroups,
+          missions: this._missionGroupsSnapshot(Math.min(limit, MONITOR_MISSION_CAP)),
           missionStats: this.missionStats(),
           kills: newest(this.kills),
           deaths: newest(this.deaths),
@@ -7110,18 +7249,12 @@ class StarCitizenService extends EventEmitter {
             abandoned: cumulative.abandoned,
             failed: cumulative.failed,
             // Session-scoped (this process / current Game.log seed + live).
-            session: {
-              activities: this.activities.length, players: this.players.length, logins: this.logins.length,
-              vehicles: this.vehicles.length, kills: this.kills.length, incaps: this.incaps.length, deaths: this.deaths.length,
-              missionlog: this.missionlog.length, missions: this.missionGroups.length, notifications: this.notifications.length,
-              combat: this.combatlog.length,
-              logs: this.logs.length, flagged: this.flagged.length
-            },
+            session: sessionCounts,
             // Aliases kept for older UI bits that still read session fields.
-            activities: this.activities.length, kills: this.kills.length, incaps: this.incaps.length,
-            vehicles: this.vehicles.length, logins: this.logins.length,
-            missionlog: this.missionlog.length, notifications: this.notifications.length,
-            combat: this.combatlog.length, logs: this.logs.length, flagged: this.flagged.length
+            activities: sessionCounts.activities, kills: sessionCounts.kills, incaps: sessionCounts.incaps,
+            vehicles: sessionCounts.vehicles, logins: sessionCounts.logins,
+            missionlog: sessionCounts.missionlog, notifications: sessionCounts.notifications,
+            combat: sessionCounts.combat, logs: sessionCounts.logs, flagged: sessionCounts.flagged
           },
           recent: newest(this.recent),
           flagged: newest(this.flagged)
@@ -7134,12 +7267,13 @@ class StarCitizenService extends EventEmitter {
         return send(200, Object.assign({ type: 'LiveFeed' }, this._liveFeedSnapshot(limit)));
       }
       if (req.method === 'GET' && pathname === base) {
+        const sessionCounts = this._sessionCounts();
         return send(200, { type: 'StarCitizen', data: {
           status: this.status, startedAt: this.state.startedAt, channel: this.channel, session: this.session, sessions: this.sessions.length,
-          activities: this.activities.length, players: this.players.length, logins: this.logins.length,
-          vehicles: this.vehicles.length, kills: this.kills.length, incaps: this.incaps.length, deaths: this.deaths.length,
-          missionlog: this.missionlog.length, missionStats: this.missionStats(),
-          logs: this.logs.length, missions: this.missions.length
+          activities: sessionCounts.activities, players: sessionCounts.players, logins: sessionCounts.logins,
+          vehicles: sessionCounts.vehicles, kills: sessionCounts.kills, incaps: sessionCounts.incaps, deaths: sessionCounts.deaths,
+          missionlog: sessionCounts.missionlog, missionStats: this.missionStats(),
+          logs: sessionCounts.logs, missions: this.missions.length
         }});
       }
       // ---- Operator settings + peers (Hub-compatible shapes; LOCAL relay only) ----
@@ -9707,10 +9841,10 @@ class StarCitizenService extends EventEmitter {
     const sinfo = parseSessionInfo(entry);
     if (sinfo) this.session[sinfo.key] = sinfo.value;
 
-    // Always keep a generic record.
-    this.state.logs[id] = ev;
+    // Bounded session copies — cumulative history.json is the durable archive.
+    this._rememberSession('logs', id, ev, SESSION_LOG_CAP);
     const activity = { type: 'StarCitizenLogEntry', id, kind: ev.kind, timestamp: ev.timestamp, object: { id, content: entry }, target: '/logs' };
-    this.state.activities[id] = activity;
+    this._rememberSession('activities', id, activity, SESSION_LOG_CAP);
 
     // Rolling buffers powering the live monitor UI.
     const recognized = !(ev.kind === 'log:raw' || ev.kind === 'log:notice');
@@ -9735,7 +9869,7 @@ class StarCitizenService extends EventEmitter {
           timestamp: ev.timestamp,
           raw: String(entry)
         };
-        this.state.kills[id] = kill;
+        this._rememberSession('kills', id, kill, SESSION_EVENT_CAP);
         this.emit('kill', kill);
         break;
       }
@@ -9750,7 +9884,7 @@ class StarCitizenService extends EventEmitter {
           id, kind: ev.kind, player: this._sessionHandle || null, text: ev.text,
           timestamp: ev.timestamp, raw: String(entry)
         };
-        this.state.incaps[id] = inc;
+        this._rememberSession('incaps', id, inc, SESSION_EVENT_CAP);
         this.emit('player:incap', inc);
         break;
       }
@@ -9761,7 +9895,7 @@ class StarCitizenService extends EventEmitter {
           id, kind: ev.kind, player: this._sessionHandle || null, bodyId: ev.bodyId,
           timestamp: ev.timestamp, raw: String(entry)
         };
-        this.state.deaths[id] = d;
+        this._rememberSession('deaths', id, d, SESSION_EVENT_CAP);
         this.emit('player:death', d);
         this._applyHistoryEvent(ev);
         break;
@@ -9772,7 +9906,7 @@ class StarCitizenService extends EventEmitter {
           attacker: ev.attacker, fromLevel: ev.fromLevel, toLevel: ev.toLevel,
           timestamp: ev.timestamp, raw: String(entry)
         };
-        this.state.vehicles[id] = v;
+        this._rememberSession('vehicles', id, v, SESSION_EVENT_CAP);
         this.emit('vehicle:destroy', v);
         break;
       }
@@ -9786,7 +9920,7 @@ class StarCitizenService extends EventEmitter {
           contract: ev.contract, generator: ev.generator, text: ev.text, objectiveId: ev.objectiveId, missionId: ev.missionId,
           contractId: ev.contractId, completionType: ev.completionType, reason: ev.reason, player: ev.player,
           raw: String(entry) };
-        this.state.missionlog[id] = me;
+        this._rememberSession('missionlog', id, me, SESSION_EVENT_CAP);
         this._indexMission(ev);
         this.emit(ev.kind, me);
         this.emit('mission:event', me);
@@ -9795,7 +9929,7 @@ class StarCitizenService extends EventEmitter {
       }
       case 'hud:notification': {
         const n = { id, kind: ev.kind, text: ev.text, timestamp: ev.timestamp, raw: String(entry) };
-        this.state.notifications[id] = n;
+        this._rememberSession('notifications', id, n, SESSION_EVENT_CAP);
         this.emit('notification', n);
         break;
       }
@@ -9866,7 +10000,7 @@ class StarCitizenService extends EventEmitter {
     if (ev.text && COMBAT_OBJECTIVE.test(ev.text)) {
       if (ev.objectiveId && this.state.objectives[ev.objectiveId]) this.state.objectives[ev.objectiveId].combat = true;
       const c = { id: idFor(ev.text + '|' + ev.timestamp), text: ev.text, missionId: ev.missionId || null, objectiveId: ev.objectiveId || null, timestamp: ev.timestamp };
-      this.state.combatlog[c.id] = c;
+      this._rememberSession('combatlog', c.id, c, SESSION_EVENT_CAP);
       this.emit('combat:progress', c);
     }
   }
@@ -9885,7 +10019,7 @@ class StarCitizenService extends EventEmitter {
     player.lastSeen = timestamp;
     player.logins += 1;
     const login = { id: idFor(name + '|' + timestamp), name, timestamp };
-    this.state.logins[login.id] = login;
+    this._rememberSession('logins', login.id, login, SESSION_EVENT_CAP);
     if (isNew) this.emit('player:join', player);
     this.emit('player:login', login);
     return { player, isNew };
@@ -9942,11 +10076,41 @@ class StarCitizenService extends EventEmitter {
     });
   }
 
-  async replayLog (path) {
+  /**
+   * Replay a log file into session collections (Live tab). Cumulative history
+   * is a separate cursor ingest. Desktop seed uses the last 8 MiB so a 400 MB
+   * Game.log does not freeze the Electron main thread before the window opens.
+   * Pass `{ maxBytes: 0 }` for an unbounded read (CLI replay / tests).
+   */
+  async replayLog (file, opts = {}) {
+    const maxBytes = opts.maxBytes === 0
+      ? Infinity
+      : (Number.isFinite(opts.maxBytes) ? opts.maxBytes : Infinity);
+    let start = 0;
+    try {
+      const st = fs.statSync(file);
+      if (Number.isFinite(maxBytes) && maxBytes > 0 && st.size > maxBytes) {
+        start = st.size - maxBytes;
+      }
+    } catch (e) {
+      return Promise.reject(e);
+    }
     return new Promise((resolve, reject) => {
       let count = 0;
-      const rl = readline.createInterface({ input: fs.createReadStream(path), crlfDelay: Infinity });
-      rl.on('line', (line) => { if (line.trim()) { this.handleLogChange(line); count++; } });
+      let skipPartial = start > 0;
+      const stream = fs.createReadStream(file, { encoding: 'utf8', start });
+      const rl = readline.createInterface({ input: stream, crlfDelay: Infinity });
+      let sinceYield = 0;
+      rl.on('line', (line) => {
+        if (skipPartial) { skipPartial = false; return; }
+        if (line.trim()) { this.handleLogChange(line); count++; }
+        sinceYield += 1;
+        if (sinceYield >= 2000) {
+          sinceYield = 0;
+          rl.pause();
+          setImmediate(() => rl.resume());
+        }
+      });
       rl.on('close', () => resolve(count));
       rl.on('error', reject);
     });
@@ -12536,6 +12700,37 @@ class StarCitizenService extends EventEmitter {
     }
   }
 
+  /**
+   * Bind dashboard HTTP before Game.log ingest so the UI can load while
+   * cumulative history sync yields on the event loop.
+   */
+  async _listenHttp () {
+    if (this.settings.listen === false) {
+      this.emit('listening', { port: null, embedded: true });
+      return;
+    }
+    this.server = http.createServer((req, res) => this._handle(req, res));
+    const host = this._httpListenHost();
+    await new Promise((resolve, reject) => {
+      this.server.once('error', reject);
+      this.server.listen(this.settings.port, host, () => {
+        this.server.removeListener('error', reject);
+        resolve();
+      });
+    });
+    const addr = this.server.address();
+    if (addr && typeof addr === 'object' && addr.port) this.settings.port = addr.port;
+    const displayHost = (host === '0.0.0.0' || host === '::') ? 'localhost' : host;
+    console.log(`[STAR-CITIZEN] listening on http://${displayHost}:${this.settings.port}/services/star-citizen (bind ${host})`);
+    const bindWarn = httpBindWarning({
+      host,
+      mode: this.settings.mode,
+      httpSharedMode: this._httpSharedMode === true
+    });
+    if (bindWarn) console.warn(bindWarn);
+    this.emit('listening', { port: this.settings.port, host });
+  }
+
   // ---- Lifecycle ----
   async start () {
     this.state.status = 'STARTING';
@@ -12558,16 +12753,28 @@ class StarCitizenService extends EventEmitter {
     if (this.groupManager) await this.groupManager.start();
     this._applyDefaultGroupFromLocal();
     const skipGameLog = this._skipGameLog();
+    // HTTP first so the desktop window / dashboard can load while Game.log
+    // ingest runs cooperatively on the same thread.
+    await this._listenHttp();
+    this.state.status = 'STARTED';
+    this.state.startedAt = this.state.startedAt || new Date().toISOString();
+    if (this.missionManager && this.missionManager.officers.size === 0) {
+      if (this.missionManager.settings.requireOfficers) {
+        console.error('[STAR-CITIZEN] SC_OFFICERS empty — mission officer mutations are denied until an allowlist is set');
+      } else {
+        console.warn('[STAR-CITIZEN] SC_OFFICERS empty — bootstrap mode (everyone is an officer). Set SC_OFFICERS for production.');
+      }
+    }
     // 1) Fold Game.log + logbackups into durable cumulative history (cursor-based).
-    // 2) Seed the Live tab from the current Game.log (session memory only).
+    // 2) Seed the Live tab from the tail of the current Game.log (session memory).
     // 3) Tail new lines; those update both session state and cumulative history.
     if (!skipGameLog) {
-      try { await this._syncCumulativeHistory(); } catch (e) { this.emit('error', e); }
       this._historyApplyLive = false;
+      try { await this._syncCumulativeHistory(); } catch (e) { this.emit('error', e); }
       if (this.settings.seed && fs.existsSync(this.settings.seed)) {
         try {
-          const n = await this.replayLog(this.settings.seed);
-          console.log(`[STAR-CITIZEN] seeded ${n} lines from ${this.settings.seed}`);
+          const n = await this.replayLog(this.settings.seed, { maxBytes: SEED_MAX_BYTES });
+          console.log(`[STAR-CITIZEN] seeded ${n} lines from ${this.settings.seed} (tail ≤${Math.round(SEED_MAX_BYTES / 1048576)} MiB)`);
         } catch (e) { this.emit('error', e); }
       }
       this._historyApplyLive = true;
@@ -12577,26 +12784,6 @@ class StarCitizenService extends EventEmitter {
       // SCEventBatch / GameStateSnapshot ingest (no Game.log on this device).
       this._historyApplyLive = true;
       console.log(`[STAR-CITIZEN] cumulative aggregator: ${this._historyFile()}`);
-    }
-    if (this.settings.listen !== false) {
-      this.server = http.createServer((req, res) => this._handle(req, res));
-      const host = this._httpListenHost();
-      await new Promise((resolve, reject) => {
-        this.server.once('error', reject);
-        this.server.listen(this.settings.port, host, () => {
-          this.server.removeListener('error', reject);
-          resolve();
-        });
-      });
-      const addr = this.server.address();
-      if (addr && typeof addr === 'object' && addr.port) this.settings.port = addr.port;
-    }
-    if (this.missionManager && this.missionManager.officers.size === 0) {
-      if (this.missionManager.settings.requireOfficers) {
-        console.error('[STAR-CITIZEN] SC_OFFICERS empty — mission officer mutations are denied until an allowlist is set');
-      } else {
-        console.warn('[STAR-CITIZEN] SC_OFFICERS empty — bootstrap mode (everyone is an officer). Set SC_OFFICERS for production.');
-      }
     }
     if (this._identity) {
       try {
@@ -12612,19 +12799,9 @@ class StarCitizenService extends EventEmitter {
       this.emit('error', e);
       console.error('[STAR-CITIZEN] discord bot failed to start:', e && e.message ? e.message : e);
     }
-    this.state.status = 'STARTED';
-    this.state.startedAt = new Date().toISOString();
     this.emit('ready');
     if (this.server) {
-      const host = this._httpListenHost();
-      const displayHost = (host === '0.0.0.0' || host === '::') ? 'localhost' : host;
-      console.log(`[STAR-CITIZEN] listening on http://${displayHost}:${this.settings.port}/services/star-citizen (bind ${host})`);
-      const bindWarn = httpBindWarning({
-        host,
-        mode: this.settings.mode,
-        httpSharedMode: this._httpSharedMode === true
-      });
-      if (bindWarn) console.warn(bindWarn);
+      console.log('[STAR-CITIZEN] ready (log history + fabric)');
     } else {
       console.log('[STAR-CITIZEN] API ready (embedded mode, no listener)');
     }
@@ -12668,3 +12845,5 @@ class StarCitizenService extends EventEmitter {
 
 module.exports = StarCitizenService;
 module.exports.BEARER_TTL_MS = BEARER_TTL_MS;
+module.exports.SESSION_LOG_CAP = SESSION_LOG_CAP;
+module.exports.SEED_MAX_BYTES = SEED_MAX_BYTES;

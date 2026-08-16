@@ -624,6 +624,10 @@ class Missions extends React.Component {
       if (sourceFilter === 'mine' && !mineOf(m)) return false;
       return true;
     });
+    const MISSION_LIST_CAP = 200;
+    const listed = visible.slice().reverse();
+    const clipped = listed.length > MISSION_LIST_CAP;
+    const shown = clipped ? listed.slice(0, MISSION_LIST_CAP) : listed;
     return React.createElement('div', { className: 'mi-wrap' },
       React.createElement('div', { className: 'mi-panel' },
         React.createElement('h2', null, '🎯 Game.log outcomes ',
@@ -677,8 +681,12 @@ class Missions extends React.Component {
         this.renderCreate(),
         this.state.error ? React.createElement('div', { className: 'mi-body' }, React.createElement('div', { className: 'mi-err' }, this.state.error)) : null,
         this.state.notice ? React.createElement('div', { className: 'mi-body' }, React.createElement('div', { className: 'mi-ok' }, this.state.notice)) : null,
-        visible.length
-          ? visible.slice().reverse().map((m) => this.renderMission(m))
+        clipped
+          ? React.createElement('div', { className: 'mi-body', style: { color: 'var(--muted)', fontSize: 12 } },
+            `Showing ${shown.length} of ${listed.length} — use the filters above to narrow Game.log evidence rows.`)
+          : null,
+        shown.length
+          ? shown.map((m) => this.renderMission(m))
           : React.createElement('div', { className: 'mi-body', style: { color: 'var(--muted)', fontStyle: 'italic' } },
             this.state.loading
               ? 'loading…'

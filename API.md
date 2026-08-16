@@ -120,6 +120,18 @@ chat, and a Fabric Peer (D-009 / D-010).</p>
 <dt><a href="#BEARER_TTL_MS">BEARER_TTL_MS</a></dt>
 <dd><p>Hosted / site-login Bearer session lifetime (ms).</p>
 </dd>
+<dt><a href="#SESSION_LOG_CAP">SESSION_LOG_CAP</a></dt>
+<dd><p>Rolling cap for raw session log/activity maps (history.json is the archive).</p>
+</dd>
+<dt><a href="#SESSION_EVENT_CAP">SESSION_EVENT_CAP</a></dt>
+<dd><p>Rolling cap for classified session collections filled by seed + live tail.</p>
+</dd>
+<dt><a href="#MONITOR_MISSION_CAP">MONITOR_MISSION_CAP</a></dt>
+<dd><p>Newest Game.log mission groups on GET /monitor (full register is /missions).</p>
+</dd>
+<dt><a href="#SEED_MAX_BYTES">SEED_MAX_BYTES</a></dt>
+<dd><p>Seed the Live tab from the tail of the current Game.log, not the whole file.</p>
+</dd>
 <dt><a href="#crypto">crypto</a></dt>
 <dd><p>MissionManager — the org mission register (M5.1).</p>
 <p>Implements D-005: a centralized, OFFICER-VALIDATED register. Lifecycle:
@@ -2107,6 +2119,30 @@ It edits NOTHING in the Star Citizen installation — the log is only ever read.
 
 ## BEARER\_TTL\_MS
 Hosted / site-login Bearer session lifetime (ms).
+
+**Kind**: global constant  
+<a name="SESSION_LOG_CAP"></a>
+
+## SESSION\_LOG\_CAP
+Rolling cap for raw session log/activity maps (history.json is the archive).
+
+**Kind**: global constant  
+<a name="SESSION_EVENT_CAP"></a>
+
+## SESSION\_EVENT\_CAP
+Rolling cap for classified session collections filled by seed + live tail.
+
+**Kind**: global constant  
+<a name="MONITOR_MISSION_CAP"></a>
+
+## MONITOR\_MISSION\_CAP
+Newest Game.log mission groups on GET /monitor (full register is /missions).
+
+**Kind**: global constant  
+<a name="SEED_MAX_BYTES"></a>
+
+## SEED\_MAX\_BYTES
+Seed the Live tab from the tail of the current Game.log, not the whole file.
 
 **Kind**: global constant  
 <a name="crypto"></a>

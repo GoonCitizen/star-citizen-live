@@ -581,9 +581,19 @@ async function startService () {
       }
 
       starCitizenService = new LiveRelay(opts);
-      await starCitizenService.start();
       loadEnvPublishingIdentity();
       applyIdentityToService();
+      applySnapshotCaptureToService();
+      const listening = new Promise((resolve) => {
+        starCitizenService.once('listening', resolve);
+      });
+      const startP = starCitizenService.start();
+      // Open HTTP (and the window) as soon as the dashboard port is bound —
+      // do not wait for Game.log corpus ingest on machines with huge log trees.
+      await Promise.race([listening, startP]);
+      startP.catch((error) => {
+        console.error('[ELECTRON]', '[ERROR]', 'Relay start after listen failed:', error);
+      });
 
       // If we requested port 0, read the OS-assigned port from the server.
       const bound = starCitizenService.server && starCitizenService.server.address();

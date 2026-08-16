@@ -50,6 +50,16 @@ describe('Dashboard shell UI', () => {
     assert.match(text, /Filters/);
     assert.match(Dashboard.CSS, /\.panel h2 \.home-tools/);
   });
+
+  it('shows an indexing hint while historySync is running', () => {
+    const dash = new Dashboard({});
+    dash.state.tab = 'home';
+    dash.state.online = true;
+    dash.state.status = 'STARTED';
+    dash.state.historySync = { status: 'running', fileIndex: 2, files: 40 };
+    const text = textOf(dash.render());
+    assert.match(text, /Indexing 2\/40 logs/);
+  });
 });
 
 describe('Built dashboard bundle', () => {

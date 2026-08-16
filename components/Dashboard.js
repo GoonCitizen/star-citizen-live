@@ -609,7 +609,8 @@ class Dashboard extends React.Component {
       azPublishStatus: null,
       azTree: null,
       azTreeShowLeaves: false,
-      azGroupTreeTip: null
+      azGroupTreeTip: null,
+      historySync: null
     };
     this._timer = null;
     this._copiedTimers = {};
@@ -1042,7 +1043,7 @@ class Dashboard extends React.Component {
       const feedPayload = d.feed || null;
       this.setState({
         status: d.status,
-        online: d.status === 'STARTED',
+        online: d.status === 'STARTED' || d.status === 'STARTING',
         counts: d.counts || this.state.counts,
         missionStats: d.missionStats || {},
         sessions: d.sessions || [],
@@ -1059,7 +1060,8 @@ class Dashboard extends React.Component {
         feedSourcesMeta: (feedPayload && feedPayload.sources) || this.state.feedSourcesMeta,
         loginfo: d.loginfo || null,
         corpus: d.corpus || this.state.corpus,
-        reparse: d.reparse || null
+        reparse: d.reparse || null,
+        historySync: d.historySync || this.state.historySync
       }, () => {
         if (pinnedTop && this._feedRef.current) {
           this._feedRef.current.scrollTop = 0;
@@ -1122,6 +1124,17 @@ class Dashboard extends React.Component {
     fetch('/services/star-citizen/analytics')
       .then((r) => r.json())
       .then((j) => {
+        const prev = this.state.analytics;
+        if (prev && j && prev.generatedAt && prev.generatedAt === j.generatedAt &&
+            (prev.missions || []).length === (j.missions || []).length &&
+            (prev.deaths || []).length === (j.deaths || []).length &&
+            (prev.heatcells || []).length === (j.heatcells || []).length) {
+          this.setState({
+            azLoading: false,
+            corpus: j.corpus || this.state.corpus
+          });
+          return;
+        }
         this.setState({
           analytics: j,
           corpus: j.corpus || this.state.corpus,
@@ -1779,6 +1792,17 @@ class Dashboard extends React.Component {
   buildAnalyzeModel () {
     const D = this.state.analytics;
     if (!D) return null;
+    const key = [
+      D.generatedAt || '',
+      (D.missions || []).length,
+      (D.deaths || []).length,
+      this.state.azMonths ? [...this.state.azMonths].sort().join(',') : '',
+      this.state.azPlayers ? [...this.state.azPlayers].sort().join(',') : '',
+      this.state.azTypes ? [...this.state.azTypes].sort().join(',') : '',
+      this.state.azFactions ? [...this.state.azFactions].sort().join(',') : '',
+      this.state.azOutcomes ? [...this.state.azOutcomes].sort().join(',') : ''
+    ].join('|');
+    if (this._analyzeModelKey === key && this._analyzeModel) return this._analyzeModel;
 
     const months = D.availableMonths || [];
     const asc = months.slice().sort();
@@ -1881,10 +1905,13 @@ class Dashboard extends React.Component {
     const destRows = Object.keys(destCounts).map((k) => ({ n: k, c: destCounts[k] }))
       .sort((a, b) => b.c - a.c).slice(0, 12);
 
-    return {
+    const model = {
       D, months, asc, selArr, lo, hi, ss, years, byY, src, kpis,
       msMain, msBars, msFac, rows, cmpRows, af, ts, fs, destRows
     };
+    this._analyzeModelKey = key;
+    this._analyzeModel = model;
+    return model;
   }
 
   renderHomeFilters (m) {
@@ -2606,7 +2633,11 @@ class Dashboard extends React.Component {
                 type: 'button',
                 className: 'btn' + (this.state.homeFiltersOpen ? ' on' : ''),
                 onClick: () => this.toggleHomeFilters()
-              }, activeFilters || 'Filters')
+              }, activeFilters || 'Filters'),
+              (this.state.historySync && this.state.historySync.status === 'running')
+                ? React.createElement('span', { className: 'sub' },
+                  `Indexing ${this.state.historySync.fileIndex || 0}/${this.state.historySync.files || 0} logs…`)
+                : null
             )
             : null
         ),
@@ -2631,7 +2662,9 @@ class Dashboard extends React.Component {
               ))
             )
             : React.createElement('div', { className: 'empty' },
-              this.state.azLoading ? 'loading cumulative activity…' : 'no activity history yet — open My logs… to import, or start the game'))
+              (this.state.historySync && this.state.historySync.status === 'running')
+                ? `indexing logs (${this.state.historySync.fileIndex || 0}/${this.state.historySync.files || 0})…`
+                : (this.state.azLoading ? 'loading cumulative activity…' : 'no activity history yet — open My logs… to import, or start the game')))
           : null
       ),
       androidSurface('heatmap') ? this.renderHomeView(m) : null,

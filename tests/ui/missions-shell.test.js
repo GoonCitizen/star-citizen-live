@@ -56,6 +56,24 @@ describe('Missions register UI', () => {
     assert.ok(textOf(tree).includes('Escort the Hull-C'));
   });
 
+  it('caps the register list so thousands of Game.log rows do not paint at once', () => {
+    const page = new Missions({ identityPubkey: '02aa' });
+    page.state.loading = false;
+    page.state.missions = [];
+    for (let i = 0; i < 210; i++) {
+      page.state.missions.push({
+        id: 'm' + i,
+        title: 'Log mission ' + i,
+        status: 'completed',
+        source: 'gamelog',
+        createdBy: '02aa'
+      });
+    }
+    const text = textOf(page.render());
+    assert.ok(text.includes('Showing 200 of 210'));
+    assert.ok(text.includes('From log (210)'));
+  });
+
   it('Dashboard Missions tab mounts the Missions view', () => {
     const dash = new Dashboard({});
     dash.state.tab = 'missions';
