@@ -68,6 +68,69 @@ test('ChatManager: global + per-group channels with membership access', async ()
   assert.throws(() => cm.post({ channel: 'group:nope', body: 'x', author: a.pubkey }), /unknown channel/);
 });
 
+test('ChatManager.setPinned toggles the stored flag', async () => {
+  const a = createIdentity();
+  const store = new Store({});
+  const cm = new ChatManager({ store });
+  const msg = cm.post({ channel: 'global', body: 'pin me', author: a.pubkey });
+  const pinned = cm.setPinned(msg.id, { pinned: true, actor: a.pubkey });
+  assert.strictEqual(pinned.pinned, true);
+  assert.ok(pinned.pinnedAt);
+  assert.strictEqual(pinned.pinnedBy, a.pubkey);
+  const off = cm.setPinned(msg.id, { pinned: false });
+  assert.strictEqual(off.pinned, false);
+  assert.strictEqual(off.pinnedAt, null);
+  assert.throws(() => cm.setPinned('missingmsg'), /not found/);
+});
+
+test('ChatManager: discord channels accept Discord or Fabric authors and skip mesh ingest', async () => {
+  const a = createIdentity();
+  const store = new Store({});
+  const cm = new ChatManager({ store });
+
+  assert.strictEqual(cm.canAccess('discord:c1', null, { enforceMembership: false }), true);
+  assert.strictEqual(cm.canAccess('discord:c1', null, { enforceMembership: true }), false);
+  assert.strictEqual(cm.canAccess('discord:c1', a.pubkey, { enforceMembership: true }), true);
+
+  const fromDiscord = cm.post({
+    channel: 'discord:c1',
+    body: 'o7 from Discord',
+    author: 'discord:u1',
+    handle: 'alice',
+    kind: 'discord',
+    discordMessageId: 'm1',
+    discordUserId: 'u1'
+  });
+  assert.strictEqual(fromDiscord.author, 'discord:u1');
+  assert.strictEqual(fromDiscord.discordMessageId, 'm1');
+  const dup = cm.post({
+    channel: 'discord:c1',
+    body: 'different text same discord id',
+    author: 'discord:u1',
+    kind: 'discord',
+    discordMessageId: 'm1'
+  });
+  assert.strictEqual(dup.id, fromDiscord.id);
+
+  const fromLocal = cm.post({
+    channel: 'discord:c1',
+    body: 'hello guild',
+    author: a.pubkey,
+    handle: 'Neorion',
+    kind: 'discord',
+    discordMessageId: 'posted-1'
+  });
+  assert.ok(fromLocal.author);
+  assert.notStrictEqual(fromLocal.author, 'discord:u1');
+
+  assert.throws(() => cm.ingest(a.pubkey, {
+    channel: 'discord:c1',
+    body: 'nope',
+    author: a.pubkey,
+    ts: new Date().toISOString()
+  }), /not mesh-ingested/);
+});
+
 test('ChatManager: DM channels are participant-only and publishable', async () => {
   const a = createIdentity(); const b = createIdentity(); const eve = createIdentity();
   const store = new Store({});
@@ -76,6 +139,9 @@ test('ChatManager: DM channels are participant-only and publishable', async () =
   const key = ChatManager.dmChannelKey(a.pubkey, b.pubkey);
   assert.ok(key && key.startsWith('dm:'));
   assert.strictEqual(ChatManager.dmChannelKey(b.pubkey, a.pubkey), key);
+  const pair = key.slice('dm:'.length).split(':');
+  assert.strictEqual(pair.length, 2);
+  assert.ok(pair[0] < pair[1], 'DM pair order is lexicographic, not localeCompare');
   assert.strictEqual(cm.canAccess(key, a.pubkey, { enforceMembership: true }), true);
   assert.strictEqual(cm.canAccess(key, b.pubkey, { enforceMembership: true }), true);
   assert.strictEqual(cm.canAccess(key, eve.pubkey, { enforceMembership: true }), false);
@@ -105,6 +171,28 @@ test('ChatManager.ingest rejects impersonation (author must be the batch signer)
   assert.strictEqual(again.created, false, 'replay is a no-op');
 
   assert.throws(() => cm.ingest(b.pubkey, { channel: 'global', body: 'as alice', author: a.pubkey, ts }), /must match/);
+});
+
+test('ChatManager clusterShare can store a group channel before the group exists', async () => {
+  const a = createIdentity();
+  const store = new Store({});
+  const cm = new ChatManager({ store });
+  assert.throws(() => cm.post({
+    channel: 'group:not-here-yet',
+    body: 'later',
+    author: a.pubkey
+  }), /unknown channel/);
+  const row = cm.post({
+    channel: 'group:not-here-yet',
+    body: 'later',
+    author: a.pubkey,
+    ts: '2026-08-15T21:00:00.000Z',
+    source: 'cluster-sync',
+    clusterShare: true
+  });
+  assert.equal(row.channel, 'group:not-here-yet');
+  assert.equal(row.body, 'later');
+  assert.equal(row.source, 'cluster-sync');
 });
 
 // ---- Hosted REST: signed posts + membership enforcement ----

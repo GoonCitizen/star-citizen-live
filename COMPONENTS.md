@@ -1,6 +1,11 @@
 # Components Guide
 This document explains the different UI components provided by Star Citizen Live and their intended uses.
 
+> **Lags LiveRelay.** The dashboard that runs is `components/Dashboard.js` (and
+> Chat, Groups, Missions, Peers, …) as described in [`AGENTS.md`](AGENTS.md) §3.
+> `StarCitizenHome` / `StarCitizenInterface` below are the older Hub/Sensemaker
+> shells. Contributors: [`DEVELOPERS.md`](DEVELOPERS.md).
+
 ## Overview
 Star Citizen Live provides two UI components with different purposes:
 

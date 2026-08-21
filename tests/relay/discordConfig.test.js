@@ -56,3 +56,13 @@ test('discordRuntimeSummary never leaks secrets', () => {
   assert.ok(!blob.includes('app-secret-UNIQUE-77'));
   assert.ok(!blob.includes('webhooks/z'));
 });
+
+test('persisted discordBotEnable false keeps the token but disables the bot', () => {
+  const cfg = resolveDiscordConfig({
+    localDiscord: { enable: true, token: 'tok' },
+    persisted: { discordBotEnable: false },
+    env: {}
+  });
+  assert.equal(cfg.token, 'tok');
+  assert.equal(cfg.enable, false);
+});

@@ -4,15 +4,46 @@
 // password-encrypted storage (scrypt + AES-256-GCM, Node built-ins only),
 // and Schnorr-signed event envelopes for the goon.vc uplink.
 //
-// The player's actor id is the compressed secp256k1 public key (hex).
+// Actor id is the Fabric-protocol compressed pubkey (Identity#pubkey /
+// m/44'/7777|7778'/…), matching @fabric/core Peer signing — not the HD master.
 
 const crypto = require('crypto');
 const Key = require('@fabric/core/types/key');
+const Identity = require('@fabric/core/types/identity');
 const fabricPubkey = require('@fabric/http/functions/fabricPubkey');
+const { fromSeed: bip32FromSeed } = require('@fabric/core/functions/bip32');
 
 const ENCRYPTION_VERSION = 1;
 const SCRYPT_PARAMS = { N: 16384, r: 8, p: 1 };
 const KEY_LENGTH = 32;
+
+/**
+ * Bitcoin network label for Fabric coin-type selection (7777 mainnet / 7778 else).
+ * @param {object} [opts]
+ * @returns {string}
+ */
+function fabricIdentityNetwork (opts = {}) {
+  const raw = opts.network
+    || process.env.FABRIC_BITCOIN_NETWORK
+    || process.env.BITCOIN_NETWORK
+    || 'regtest';
+  return String(raw).trim().toLowerCase() || 'regtest';
+}
+
+/**
+ * @param {object} [opts]
+ * @param {string} [opts.mnemonic]
+ * @param {string} [opts.xprv]
+ * @param {string} [opts.network]
+ * @returns {InstanceType<typeof Identity>}
+ */
+function fabricIdentityFrom (opts = {}) {
+  const settings = { network: fabricIdentityNetwork(opts) };
+  if (opts.xprv) settings.xprv = opts.xprv;
+  if (opts.mnemonic) settings.mnemonic = opts.mnemonic;
+  if (opts.seed) settings.seed = opts.seed;
+  return new Identity(settings);
+}
 
 /**
  * Deterministic JSON stringify (recursively sorted object keys) so that
@@ -37,53 +68,117 @@ function payloadDigest (payload) {
 }
 
 /**
- * Create a brand-new identity (BIP39 mnemonic + secp256k1 keypair).
- * @returns {{ mnemonic: String, xprv: String, xpub: String, pubkey: String, id: String }}
+ * Create a brand-new identity (BIP39 mnemonic + Fabric-protocol keypair).
+ * @param {Object} [opts]
+ * @param {String} [opts.network] Bitcoin network for Fabric coin type (default regtest)
+ * @returns {{ mnemonic: String, xprv: String, xpub: String, pubkey: String, id: String, network: String }}
  */
-function createIdentity () {
-  const key = new Key();
+function createIdentity (opts = {}) {
+  const identity = fabricIdentityFrom(opts);
+  const master = identity.key;
   return {
-    mnemonic: key.mnemonic,
-    xprv: key.xprv,
-    xpub: key.xpub,
-    pubkey: key.pubkey,
-    id: key.pubkey
+    mnemonic: master.mnemonic,
+    xprv: master.xprv,
+    xpub: master.xpub,
+    pubkey: identity.pubkey,
+    id: identity.pubkey,
+    network: fabricIdentityNetwork(opts)
   };
 }
 
+function looksLikeRawSeedHex (value) {
+  if (value == null) return false;
+  const trimmed = String(value).trim();
+  if (!trimmed || /\s/.test(trimmed)) return false;
+  if (!/^(?:0x)?[0-9a-fA-F]+$/i.test(trimmed)) return false;
+  const hex = trimmed.replace(/^0x/i, '');
+  if (hex.length % 2 !== 0) return false;
+  const bytes = hex.length / 2;
+  return bytes >= 16 && bytes <= 64;
+}
+
+function xprvFromRawSeedHex (hex) {
+  const buf = Buffer.from(String(hex).trim().replace(/^0x/i, ''), 'hex');
+  return bip32FromSeed(buf).toBase58();
+}
+
 /**
- * Restore an identity from a BIP39 mnemonic (or an xprv).
- * @param {Object|String} input Mnemonic string, or `{ mnemonic }` / `{ xprv }`.
- * @returns {{ mnemonic: String|null, xprv: String, xpub: String, pubkey: String, id: String }}
+ * Restore an identity from a BIP39 mnemonic, raw seed hex, or an xprv.
+ * @param {Object|String} input Mnemonic string, seed hex, or `{ mnemonic }` / `{ seed }` / `{ xprv }` / `{ network }`.
+ * @returns {{ mnemonic: String|null, seed: String|null, xprv: String, xpub: String, pubkey: String, id: String, network: String }}
  */
 function restoreIdentity (input) {
   let opts = input;
   if (typeof input === 'string') {
-    opts = input.trim().startsWith('xprv') ? { xprv: input.trim() } : { mnemonic: input.trim() };
+    const trimmed = input.trim();
+    if (trimmed.startsWith('xprv') || trimmed.startsWith('tprv')) {
+      opts = { xprv: trimmed };
+    } else if (looksLikeRawSeedHex(trimmed)) {
+      opts = { seed: trimmed.replace(/^0x/i, '').toLowerCase() };
+    } else {
+      opts = { mnemonic: trimmed };
+    }
   }
-  if (!opts || (!opts.mnemonic && !opts.xprv)) {
-    throw new Error('restoreIdentity requires a mnemonic or xprv');
+  if (!opts || (!opts.mnemonic && !opts.xprv && !opts.seed)) {
+    throw new Error('restoreIdentity requires a mnemonic, seed hex, or xprv');
   }
-  const key = new Key(opts);
+  if (opts.seed && looksLikeRawSeedHex(opts.seed) && !opts.xprv) {
+    opts = Object.assign({}, opts, { xprv: xprvFromRawSeedHex(opts.seed) });
+  }
+  const identity = fabricIdentityFrom({
+    xprv: opts.xprv,
+    mnemonic: opts.mnemonic,
+    seed: (opts.seed && !looksLikeRawSeedHex(opts.seed)) ? opts.seed : undefined,
+    network: opts.network
+  });
+  const master = identity.key;
+  const seedHex = opts.seed && looksLikeRawSeedHex(opts.seed)
+    ? String(opts.seed).replace(/^0x/i, '').toLowerCase()
+    : null;
   return {
-    mnemonic: opts.mnemonic || key.mnemonic || null,
-    xprv: key.xprv,
-    xpub: key.xpub,
-    pubkey: key.pubkey,
-    id: key.pubkey
+    mnemonic: opts.mnemonic || master.mnemonic || null,
+    seed: seedHex,
+    xprv: master.xprv,
+    xpub: master.xpub,
+    pubkey: identity.pubkey,
+    id: identity.pubkey,
+    network: fabricIdentityNetwork(opts)
   };
 }
 
 /**
- * Load a signing {@link Key} from a decrypted identity object.
+ * Load the Fabric-protocol signing {@link Key} (matches Peer / actor pubkey).
  * @param {Object} identity Identity with `xprv` (or `mnemonic`).
- * @returns {Key} Fabric key capable of Schnorr signing.
+ * @returns {Key} Protocol key capable of Schnorr signing.
  */
 function keyFromIdentity (identity) {
+  return protocolKeyFromIdentity(identity);
+}
+
+/**
+ * HD master {@link Key} for Peer construction (Peer derives the Fabric path).
+ * @param {Object} identity
+ * @returns {Key}
+ */
+function masterKeyFromIdentity (identity) {
   if (!identity) throw new Error('identity required');
   if (identity.xprv) return new Key({ xprv: identity.xprv });
   if (identity.mnemonic) return new Key({ mnemonic: identity.mnemonic });
-  throw new Error('identity has no private material (xprv or mnemonic)');
+  if (identity.seed) return new Key({ seed: identity.seed });
+  throw new Error('identity has no private material (xprv, mnemonic, or seed)');
+}
+
+/**
+ * Fabric-protocol signing key (matches Peer / Identity#pubkey / CONTRACT_MESSAGE author).
+ * @param {Object} identity
+ * @returns {Key}
+ */
+function protocolKeyFromIdentity (identity) {
+  if (!identity) throw new Error('identity required');
+  if (!identity.xprv && !identity.mnemonic) {
+    throw new Error('identity has no private material (xprv or mnemonic)');
+  }
+  return fabricIdentityFrom(identity).fabricKey;
 }
 
 /**
@@ -146,13 +241,18 @@ function decryptIdentity (blob, password) {
     throw new Error('Could not decrypt identity (wrong password or corrupted file)');
   }
 
-  const key = new Key({ xprv: secret.xprv });
+  const identity = fabricIdentityFrom({
+    xprv: secret.xprv,
+    mnemonic: secret.mnemonic || undefined,
+    network: blob.network
+  });
   return {
     mnemonic: secret.mnemonic || null,
     xprv: secret.xprv,
-    xpub: key.xpub,
-    pubkey: key.pubkey,
-    id: key.pubkey
+    xpub: identity.key.xpub,
+    pubkey: identity.pubkey,
+    id: identity.pubkey,
+    network: fabricIdentityNetwork({ network: blob.network })
   };
 }
 
@@ -163,7 +263,7 @@ function decryptIdentity (blob, password) {
  * @returns {{ pubkey: String, payload: Object, signature: String, digest: String }}
  */
 function signEnvelope (identity, payload) {
-  const key = (identity instanceof Key) ? identity : keyFromIdentity(identity);
+  const key = (identity instanceof Key) ? identity : protocolKeyFromIdentity(identity);
   const digest = payloadDigest(payload);
   const signature = key.signSchnorr(digest);
   return {
@@ -234,6 +334,9 @@ module.exports = {
   createIdentity,
   restoreIdentity,
   keyFromIdentity,
+  protocolKeyFromIdentity,
+  masterKeyFromIdentity,
+  fabricIdentityNetwork,
   encryptIdentity,
   decryptIdentity,
   signEnvelope,

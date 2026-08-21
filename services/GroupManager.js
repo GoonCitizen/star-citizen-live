@@ -22,6 +22,7 @@ const EventEmitter = require('events');
 
 const Group = require('../types/Group');
 const { Store } = require('../types/Store');
+const { pubkeysMatch } = require('../functions/identity');
 const {
   GROUP_CONTRACT_NAME,
   groupContractDefinition,
@@ -40,6 +41,9 @@ class GroupManager extends EventEmitter {
     this.settings = Object.assign({ enable: true, dir: null }, settings);
     this.store = settings.store || new Store({ path: this.settings.dir || this.settings.path || null });
     this._counter = 0;
+    this.sameActor = typeof settings.sameActor === 'function'
+      ? settings.sameActor
+      : pubkeysMatch;
   }
 
   get groups () { return this.store.all('groups'); }
@@ -577,17 +581,24 @@ class GroupManager extends EventEmitter {
     if (!data) throw Object.assign(new Error('group not found'), { code: 'NOT_FOUND' });
     if (!Group.isValidPubkey(pubkey)) throw new Error('invalid member pubkey');
     if (!invite || !invite.inviteId) throw new Error('invite required');
+    const { assertInviteNotExpired } = require('../functions/inviteExpiry');
+    assertInviteNotExpired(invite);
+    if (invite.inviteePubkey && !this.sameActor(invite.inviteePubkey, pubkey)) {
+      const e = new Error('this invite is addressed to another identity');
+      e.code = 'FORBIDDEN';
+      throw e;
+    }
     if (data.contractId && invite.contractId && data.contractId !== invite.contractId) {
       throw new Error('invite contract does not match group');
     }
-    if (data.members.includes(pubkey)) return new Group(data).toJSON();
+    if (this._memberMatch(new Group(data), pubkey)) return new Group(data).toJSON();
 
     const role = String(invite.role || 'signer').toLowerCase() === 'reader' ? 'reader' : 'signer';
     data.members = data.members.concat([pubkey]);
     if (!Array.isArray(data.validators) || !data.validators.length) {
       data.validators = this._signerList(data);
     }
-    if (role === 'signer' && !data.validators.includes(pubkey)) {
+    if (role === 'signer' && !data.validators.some((v) => this.sameActor(v, pubkey))) {
       data.validators = data.validators.concat([pubkey]);
     }
     this._syncPolicyFromSigners(data);
@@ -621,7 +632,8 @@ class GroupManager extends EventEmitter {
 
   /**
    * Apply a remote GroupChange. Actions: member.add | member.remove | update.
-   * Idempotent where possible.
+   * Idempotent where possible. The AMP signer (`source`) is the capability —
+   * `change.actor` is not trusted.
    * @param {Object} change
    * @param {string|null} [source]
    * @returns {Object} `{ group, applied, skipped }` — `skipped` only when not applied
@@ -634,24 +646,27 @@ class GroupManager extends EventEmitter {
 
     const data = this.store.get('groups', group.id);
     const action = String(change.action || '');
-    const actor = change.actor || source || null;
+    const actor = source || null;
     const changeId = change.id || null;
     if (changeId) {
       const seen = this.store.get('groupchanges', changeId);
       if (seen) return { group: new Group(data).toJSON(), applied: false, skipped: 'duplicate' };
     }
+    if (!this._ingestGroupChangeAuthorized(data, change, actor)) {
+      return { group: new Group(data).toJSON(), applied: false, skipped: 'unauthorized' };
+    }
 
     if (action === 'member.add') {
       const pubkey = String(change.member || '').trim();
       if (!Group.isValidPubkey(pubkey)) return { group: null, applied: false, skipped: 'bad-member' };
-      if (!data.members.includes(pubkey)) {
+      if (!data.members.some((m) => this.sameActor(m, pubkey))) {
         data.members = data.members.concat([pubkey]);
       }
       if (!Array.isArray(data.validators) || !data.validators.length) {
         data.validators = this._signerList(data);
       }
       const role = String(change.role || 'signer').toLowerCase() === 'reader' ? 'reader' : 'signer';
-      if (role === 'signer' && !data.validators.includes(pubkey)) {
+      if (role === 'signer' && !data.validators.some((v) => this.sameActor(v, pubkey))) {
         data.validators = data.validators.concat([pubkey]);
       }
     } else if (action === 'member.remove') {
@@ -671,6 +686,14 @@ class GroupManager extends EventEmitter {
       if (patch.primaryColor !== undefined) {
         const { sanitizePrimaryColor } = require('../functions/groupPrimaryColor');
         data.primaryColor = sanitizePrimaryColor(patch.primaryColor);
+      }
+      if (patch.pinnedChannels !== undefined) {
+        const { sanitizePinnedChannels } = require('../functions/groupPinnedChannels');
+        data.pinnedChannels = sanitizePinnedChannels(patch.pinnedChannels);
+      }
+      if (patch.pinnedMessages !== undefined) {
+        const { sanitizePinnedMessageIds } = require('../functions/chatMessagePins');
+        data.pinnedMessages = sanitizePinnedMessageIds(patch.pinnedMessages);
       }
     } else {
       return { group: null, applied: false, skipped: 'bad-action' };
@@ -715,15 +738,77 @@ class GroupManager extends EventEmitter {
     return { group: json, applied: true };
   }
 
+  /**
+   * Same actor gates as proposeChange / updateGroup. Mesh GroupChange must not
+   * let a stranger (or a spoofed `change.actor`) mutate the roster.
+   *
+   * Targeted FederationContractInvite: the invitee may gossip `member.add` for
+   * themselves when this node holds a pending/accepted outbound invite addressed
+   * to that pubkey (clipboard and mesh share that same invite).
+   * @private
+   */
+  _ingestGroupChangeAuthorized (data, change, signer) {
+    if (!data || !signer) return false;
+    const action = String((change && change.action) || '');
+    const patch = change && change.patch;
+    const g0 = new Group(data);
+    if (action === 'member.add') {
+      if (this._memberMatch(g0, signer)) return true;
+      return this._pendingInviteAuthorizesMemberAdd(data, change, signer);
+    }
+    if (action === 'member.remove') return this.sameActor(data.creator, signer);
+    if (action === 'update') {
+      const p = patch && typeof patch === 'object' ? patch : {};
+      const { isPinnedMessagesOnlyPatch } = require('../functions/chatMessagePins');
+      if (isPinnedMessagesOnlyPatch(p)) return this._memberMatch(g0, signer);
+      return pubkeysMatch(data.creator, signer);
+    }
+    return false;
+  }
+
+  /**
+   * True when `change` is the invitee adding themselves under a stored
+   * FederationContractInvite gated to their destination pubkey.
+   * @private
+   */
+  _pendingInviteAuthorizesMemberAdd (data, change, signer) {
+    const member = String((change && change.member) || '').trim();
+    if (!member || !this.sameActor(member, signer)) return false;
+    const inviteId = change && change.inviteId ? String(change.inviteId) : '';
+    const via = String((change && change.via) || '');
+    if (via && via !== 'FederationContractInvite' && !inviteId) return false;
+    const rows = typeof this.store.all === 'function' ? (this.store.all('groupinvites') || []) : [];
+    for (const inv of rows) {
+      if (!inv || !inv.inviteePubkey) continue;
+      if (!this.sameActor(inv.inviteePubkey, member)) continue;
+      if (inviteId && inv.inviteId && String(inv.inviteId) !== inviteId) continue;
+      const st = String(inv.status || 'pending');
+      if (st === 'rejected') continue;
+      if (inv.groupId && data.id && String(inv.groupId) !== String(data.id)) continue;
+      if (inv.contractId && data.contractId && String(inv.contractId) !== String(data.contractId)) {
+        continue;
+      }
+      return true;
+    }
+    return false;
+  }
+
+  _memberMatch (group, pubkey) {
+    if (!group || !pubkey) return false;
+    if (typeof group.includes === 'function' && group.includes(pubkey)) return true;
+    const members = group.members || [];
+    return members.some((m) => this.sameActor(m, pubkey));
+  }
+
   /** Groups the pubkey belongs to. */
   groupsFor (pubkey) {
-    return this.groups.filter((g) => Array.isArray(g.members) && g.members.includes(pubkey));
+    return this.groups.filter((g) => this._memberMatch(g, pubkey));
   }
 
   /** @returns {Boolean} True when pubkey is a direct member of group `groupId`. */
   isMember (groupId, pubkey) {
-    const g = this.store.get('groups', groupId);
-    return !!(g && Array.isArray(g.members) && g.members.includes(pubkey));
+    const g = this.getGroup(groupId);
+    return this._memberMatch(g, pubkey);
   }
 
   /** Immediate child groups of `parentId`. */
@@ -771,7 +856,7 @@ class GroupManager extends EventEmitter {
   canView (group, viewer) {
     if (!group) return false;
     if (group.isPublic()) return true;
-    return !!(viewer && group.includes(viewer));
+    return this._memberMatch(group, viewer);
   }
 
   /**
@@ -780,7 +865,7 @@ class GroupManager extends EventEmitter {
    */
   viewFor (group, viewer) {
     if (!group) return null;
-    const member = !!(viewer && group.includes(viewer));
+    const member = this._memberMatch(group, viewer);
     if (member) return Object.assign(group.toJSON(), { role: group.creator === viewer ? 'creator' : 'member' });
     if (group.isPublic()) {
       return Object.assign(group.toPublicJSON(), { role: 'visitor', canApply: true });
@@ -810,7 +895,7 @@ class GroupManager extends EventEmitter {
     if (parentId) {
       const parent = this.getGroup(parentId);
       if (!parent) throw new Error('parent group not found');
-      if (!parent.includes(creator)) {
+      if (!this._memberMatch(parent, creator)) {
         const e = new Error('forbidden: only a parent-group member may create a subgroup');
         e.code = 'FORBIDDEN';
         throw e;
@@ -921,12 +1006,12 @@ class GroupManager extends EventEmitter {
 
     const action = String(opts.action || '');
     if (action === 'member.add') {
-      if (!g0.includes(actor)) {
+      if (!this._memberMatch(g0, actor)) {
         const e = new Error('forbidden: only members may add members'); e.code = 'FORBIDDEN'; throw e;
       }
       const pubkey = String(opts.member || '').trim();
       if (!Group.isValidPubkey(pubkey)) throw new Error('invalid member pubkey');
-      if (g0.includes(pubkey)) {
+      if (this._memberMatch(g0, pubkey)) {
         return {
           group: g0.toJSON(),
           proposal: null,
@@ -936,12 +1021,12 @@ class GroupManager extends EventEmitter {
         };
       }
     } else if (action === 'member.remove') {
-      if (!pubkeysMatch(data.creator, actor)) {
+      if (!this.sameActor(data.creator, actor)) {
         const e = new Error('forbidden: only the creator may remove members'); e.code = 'FORBIDDEN'; throw e;
       }
       const pubkey = String(opts.member || '').trim();
-      if (pubkeysMatch(pubkey, data.creator)) throw new Error('creator cannot be removed');
-      if (!g0.includes(pubkey)) {
+      if (this.sameActor(pubkey, data.creator)) throw new Error('creator cannot be removed');
+      if (!this._memberMatch(g0, pubkey)) {
         return {
           group: g0.toJSON(),
           proposal: null,
@@ -951,10 +1036,18 @@ class GroupManager extends EventEmitter {
         };
       }
     } else if (action === 'update') {
-      if (!pubkeysMatch(data.creator, actor)) {
+      const patch = opts.patch && typeof opts.patch === 'object' ? opts.patch : {};
+      const {
+        isPinnedMessagesOnlyPatch,
+        sanitizePinnedMessageIds
+      } = require('../functions/chatMessagePins');
+      if (isPinnedMessagesOnlyPatch(patch)) {
+        if (!this._memberMatch(g0, actor)) {
+          const e = new Error('forbidden: only members may pin messages'); e.code = 'FORBIDDEN'; throw e;
+        }
+      } else if (!pubkeysMatch(data.creator, actor)) {
         const e = new Error('forbidden: only the creator may change group settings'); e.code = 'FORBIDDEN'; throw e;
       }
-      const patch = opts.patch && typeof opts.patch === 'object' ? opts.patch : {};
       if (patch.visibility !== undefined &&
           patch.visibility !== 'public' && patch.visibility !== 'private') {
         throw new Error('visibility must be public or private');
@@ -969,6 +1062,15 @@ class GroupManager extends EventEmitter {
         const color = sanitizePrimaryColor(patch.primaryColor);
         if (!color) throw new Error('primaryColor must be #RRGGBB');
         opts = Object.assign({}, opts, { patch: Object.assign({}, patch, { primaryColor: color }) });
+      }
+      if (patch.pinnedChannels !== undefined) {
+        const { sanitizePinnedChannels } = require('../functions/groupPinnedChannels');
+        const pins = sanitizePinnedChannels(patch.pinnedChannels);
+        opts = Object.assign({}, opts, { patch: Object.assign({}, patch, { pinnedChannels: pins }) });
+      }
+      if (patch.pinnedMessages !== undefined) {
+        const pins = sanitizePinnedMessageIds(patch.pinnedMessages);
+        opts = Object.assign({}, opts, { patch: Object.assign({}, patch, { pinnedMessages: pins }) });
       }
     } else {
       throw new Error(`unsupported proposal action: ${action}`);
@@ -1194,7 +1296,9 @@ class GroupManager extends EventEmitter {
   }
 
   /**
-   * Update group settings (creator only): name, threshold, visibility, slug, primaryColor.
+   * Update group settings. Creator-only for name / threshold / visibility /
+   * slug / primaryColor / pinnedChannels. Members may patch `pinnedMessages`
+   * alone (chat 📌 overlay).
    * Published as a GroupChangeProposal until validators adopt.
    */
   async updateGroup (groupId, patch = {}, actor) {
@@ -1212,6 +1316,14 @@ class GroupManager extends EventEmitter {
         if (!color) throw new Error('primaryColor must be #RRGGBB');
         clean.primaryColor = color;
       }
+    }
+    if (patch.pinnedChannels !== undefined) {
+      const { sanitizePinnedChannels } = require('../functions/groupPinnedChannels');
+      clean.pinnedChannels = sanitizePinnedChannels(patch.pinnedChannels);
+    }
+    if (patch.pinnedMessages !== undefined) {
+      const { sanitizePinnedMessageIds } = require('../functions/chatMessagePins');
+      clean.pinnedMessages = sanitizePinnedMessageIds(patch.pinnedMessages);
     }
     const result = this.proposeChange({
       groupId,
@@ -1276,7 +1388,7 @@ class GroupManager extends EventEmitter {
       const e = new Error('forbidden: only public groups accept join applications'); e.code = 'FORBIDDEN'; throw e;
     }
     if (!Group.isValidPubkey(applicantId)) throw new Error('applicant must be an authenticated pubkey');
-    if (group.includes(applicantId)) throw new Error('already a member');
+    if (this._memberMatch(group, applicantId)) throw new Error('already a member');
     const pending = this.applications.find((a) => a.groupId === groupId && a.applicantId === applicantId && a.status === 'pending');
     if (pending) throw new Error('application already pending');
 
@@ -1333,7 +1445,7 @@ class GroupManager extends EventEmitter {
         acceptedAt: app.decidedAt
       });
       await this.addMember(app.groupId, app.applicantId, data.actor);
-      this._audit(data.actor, 'group.application.accept', app.groupId, app.applicantId);
+      this._audit(data.actor, 'group.application.accept', app.groupId, app.id);
       this.emit('group:application-accepted', app);
     } else if (data.decision === 'reject') {
       app.status = 'rejected';
@@ -1353,7 +1465,7 @@ class GroupManager extends EventEmitter {
         },
         acceptedAt: app.decidedAt
       });
-      this._audit(data.actor, 'group.application.reject', app.groupId, app.applicantId);
+      this._audit(data.actor, 'group.application.reject', app.groupId, app.id);
       this.emit('group:application-rejected', app);
     } else {
       throw new Error('decision must be "accept" or "reject"');

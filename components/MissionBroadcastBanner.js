@@ -17,8 +17,9 @@ const LS_SEEN = 'gc.missionBroadcast.seen';
 const LS_INBOX_SEEN = 'gc.inboxNotify.seen';
 
 const CSS = `
-  .mbb-stack{position:fixed;left:16px;bottom:16px;z-index:32;display:flex;flex-direction:column;gap:10px;
+  .mbb-stack{position:fixed;left:16px;bottom:var(--chrome-inset,16px);z-index:32;display:flex;flex-direction:column;gap:10px;
     width:min(400px,calc(100vw - 28px));pointer-events:none}
+  .mbb-stack.raised{bottom:calc(var(--chrome-inset,16px) + 88px)}
   .mbb-card{pointer-events:auto;background:var(--panel);border:1px solid var(--line);border-radius:12px;
     box-shadow:0 12px 40px rgba(0,0,0,.45);padding:12px 14px;display:grid;gap:8px}
   .mbb-card h4{margin:0;font-size:13px;font-weight:650}
@@ -100,12 +101,24 @@ class MissionBroadcastBanner extends React.Component {
         }
       });
     }
+    if (typeof window !== 'undefined') {
+      window.addEventListener('gooncitizen:inbox', this._onInbox);
+      window.addEventListener('gooncitizen:group-imported', this._onInbox);
+    }
   }
+
+  _onInbox = () => {
+    this.tick();
+  };
 
   componentWillUnmount () {
     if (this._timer) clearInterval(this._timer);
     if (this._unsubAction) this._unsubAction();
     if (this._unsubClick) this._unsubClick();
+    if (typeof window !== 'undefined') {
+      window.removeEventListener('gooncitizen:inbox', this._onInbox);
+      window.removeEventListener('gooncitizen:group-imported', this._onInbox);
+    }
   }
 
   headers () {
@@ -299,7 +312,7 @@ class MissionBroadcastBanner extends React.Component {
     const cards = this.state.pending.slice(0, 3);
     if (!cards.length && !this.state.error) return null;
 
-    return React.createElement('div', { className: 'mbb-stack' },
+    return React.createElement('div', { className: 'mbb-stack' + (this.props.raised ? ' raised' : '') },
       this.state.error ? React.createElement('div', { className: 'mbb-card' },
         React.createElement('div', { className: 'mbb-err' }, this.state.error)
       ) : null,

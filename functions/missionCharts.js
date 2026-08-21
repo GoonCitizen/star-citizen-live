@@ -67,8 +67,35 @@ function renderOutcomesDonut (missions, opts = {}) {
   return s + '</svg>';
 }
 
+/**
+ * Rank pilots by completed Game.log missions, then total missions.
+ * @param {Array<{ player?: string, outcome?: string }>} missions
+ * @param {Array<{ player?: string }>} [deaths]
+ * @param {{ limit?: number }} [opts]
+ * @returns {Array<{ n: string, tot: number, done: number, deaths: number }>}
+ */
+function topPilots (missions, deaths, opts) {
+  const limit = (opts && opts.limit) || 10;
+  const by = {};
+  (missions || []).forEach((m) => {
+    if (!m || !m.player) return;
+    const b = by[m.player] || (by[m.player] = { tot: 0, done: 0, deaths: 0 });
+    b.tot++;
+    if (m.outcome === 'Complete') b.done++;
+  });
+  (deaths || []).forEach((d) => {
+    if (!d || !d.player) return;
+    const b = by[d.player] || (by[d.player] = { tot: 0, done: 0, deaths: 0 });
+    b.deaths++;
+  });
+  return Object.keys(by).map((k) => Object.assign({ n: k }, by[k]))
+    .sort((a, b) => (b.done - a.done) || (b.tot - a.tot) || a.n.localeCompare(b.n))
+    .slice(0, limit);
+}
+
 module.exports = {
   OUTCOMES,
   OUTCOME_KEYS,
-  renderOutcomesDonut
+  renderOutcomesDonut,
+  topPilots
 };

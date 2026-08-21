@@ -21,6 +21,61 @@ const KEEPALIVE_TYPES = new Set([
   'MessageReceipt'
 ]);
 
+/** Wire types that are slot-fill / advertise, not application sync. */
+const PEERING_WIRE_TYPES = new Set([
+  'P2P_PEERING_OFFER',
+  'P2P_PEER_GOSSIP',
+  'P2P_PEER_ANNOUNCE',
+  'P2P_STATE_ANNOUNCE'
+]);
+
+function formatPeerLog (kind, detail) {
+  const extra = detail != null && String(detail).trim() ? ' ' + String(detail).trim() : '';
+  return `[STAR-CITIZEN] fabric peering ${kind}${extra}`;
+}
+
+function formatSyncLog (kind, detail) {
+  const extra = detail != null && String(detail).trim() ? ' ' + String(detail).trim() : '';
+  return `[STAR-CITIZEN] fabric sync ${kind}${extra}`;
+}
+
+function shouldLogWireSummary (summary) {
+  if (!summary || typeof summary !== 'object') return false;
+  if (summary.keepalive === true) return false;
+  if (isKeepaliveType(summary.type) || isKeepaliveType(summary.friendlyType)) return false;
+  return true;
+}
+
+function formatWireLog (summary) {
+  if (!shouldLogWireSummary(summary)) return null;
+  const peering = PEERING_WIRE_TYPES.has(String(summary.type || ''));
+  const channel = peering ? 'peering' : 'sync';
+  const dir = summary.direction === 'out' ? 'out' : 'in';
+  const type = summary.appType
+    ? `${summary.type}/${summary.appType}`
+    : (summary.friendlyType || summary.type || 'Unknown');
+  const peer = summary.peer ? ` peer=${summary.peer}` : '';
+  return `[STAR-CITIZEN] fabric ${channel} ${dir} ${type}${peer}`;
+}
+
+function logFabricPeer (kind, detail) {
+  const line = formatPeerLog(kind, detail);
+  console.log(line);
+  return line;
+}
+
+function logFabricSync (kind, detail) {
+  const line = formatSyncLog(kind, detail);
+  console.log(line);
+  return line;
+}
+
+function logFabricWire (summary) {
+  const line = formatWireLog(summary);
+  if (line) console.log(line);
+  return line;
+}
+
 /**
  * @param {object} [opts]
  * @param {number} [opts.capacity]
@@ -82,13 +137,31 @@ function createFabricMessageLog (opts = {}) {
       out = out.filter((e) => {
         const hay = [
           e.type, e.friendlyType, e.appType, e.contract, e.peer, e.hash, e.actor,
-          e.bodyPreview, e.summary
+          e.frameId, e.parent, e.bodyPreview, e.summary
         ].filter(Boolean).join(' ').toLowerCase();
         return hay.includes(q);
       });
     }
     if (out.length > limit) out = out.slice(out.length - limit);
     return out;
+  }
+
+  /**
+   * @param {string|number} id hash, seq id, or stringified seq
+   * @returns {object|null}
+   */
+  function get (id) {
+    if (id == null || id === '') return null;
+    const s = String(id).trim();
+    const lower = s.toLowerCase();
+    for (let i = entries.length - 1; i >= 0; i--) {
+      const e = entries[i];
+      if (!e) continue;
+      if (e.hash && String(e.hash).toLowerCase() === lower) return e;
+      if (e.frameId && String(e.frameId).toLowerCase() === lower) return e;
+      if (String(e.id) === s) return e;
+    }
+    return null;
   }
 
   function clear () {
@@ -116,6 +189,7 @@ function createFabricMessageLog (opts = {}) {
 
   return {
     append,
+    get,
     list,
     clear,
     pause,
@@ -140,14 +214,26 @@ function summarizeMessage (message, meta = {}) {
   const friendlyType = message.friendlyType || null;
   const type = wireType || friendlyType || 'Unknown';
   let hash = null;
+  let frameId = null;
+  let parent = null;
   try {
-    if (typeof message.hash === 'string') hash = message.hash;
+    if (typeof message.hash === 'string' && /^[0-9a-f]{64}$/i.test(message.hash)) hash = message.hash;
     else if (message.raw && message.raw.hash) {
       hash = Buffer.isBuffer(message.raw.hash)
         ? message.raw.hash.toString('hex')
         : String(message.raw.hash);
-    } else if (typeof message.id === 'string') hash = message.id;
+    }
+    if (typeof message.id === 'string' && /^[0-9a-f]{64}$/i.test(message.id)) {
+      frameId = String(message.id).toLowerCase();
+    }
+    if (typeof message.parent === 'string') parent = String(message.parent).toLowerCase();
+    else if (message.raw && message.raw.parent) {
+      parent = Buffer.isBuffer(message.raw.parent)
+        ? message.raw.parent.toString('hex')
+        : String(message.raw.parent);
+    }
   } catch (_) { /* ignore */ }
+  if (!hash && frameId) hash = frameId;
 
   let bodyStr = '';
   let bodyBytes = 0;
@@ -192,6 +278,15 @@ function summarizeMessage (message, meta = {}) {
     bodyPreview = bodyStr.length > 280 ? bodyStr.slice(0, 280) + '…' : bodyStr;
   }
 
+  let hex = meta.hex ? String(meta.hex) : null;
+  if (!hex) {
+    try {
+      if (typeof message.toBuffer === 'function') {
+        hex = message.toBuffer().toString('hex');
+      }
+    } catch (_) { /* ignore */ }
+  }
+
   const summary = [
     meta.direction === 'out' ? '→' : '←',
     type,
@@ -209,11 +304,15 @@ function summarizeMessage (message, meta = {}) {
     peer: meta.peer ? String(meta.peer) : null,
     via: meta.via || null,
     hash: hash ? String(hash) : null,
+    frameId: frameId ? String(frameId) : null,
+    parent: parent ? String(parent) : null,
+    genesis: parent ? /^0+$/.test(parent) : null,
     bodyBytes,
     bodyPreview,
     body: bodyJson != null ? bodyJson : (bodyPreview || null),
     summary,
-    keepalive: isKeepaliveType(type) || isKeepaliveType(friendlyType)
+    keepalive: isKeepaliveType(type) || isKeepaliveType(friendlyType),
+    hex: hex || null
   };
 }
 
@@ -226,14 +325,63 @@ function summarizeBuffer (buffer, meta = {}) {
   if (!Buffer.isBuffer(buffer) || !buffer.length) return null;
   const Message = require('@fabric/core/types/message');
   const message = Message.fromBuffer(buffer);
-  return summarizeMessage(message, meta);
+  return summarizeMessage(message, Object.assign({}, meta, { hex: buffer.toString('hex') }));
+}
+
+/**
+ * Export the ring as a portable {@link FabricMessageCollection} (AMP hex).
+ * Rows without `hex` are skipped — they cannot be replayed.
+ * @param {{ list: Function }} log
+ * @param {Object} [opts]
+ * @param {boolean} [opts.hideKeepalive]
+ * @param {number} [opts.limit]
+ * @returns {object}
+ */
+function collectionFromLog (log, opts = {}) {
+  const col = require('@fabric/core/functions/fabricMessageCollection');
+  const collection = col.createCollection();
+  if (!log || typeof log.list !== 'function') return col.toJSON(collection);
+  const rows = log.list({
+    hideKeepalive: opts.hideKeepalive === true,
+    limit: opts.limit || 2000
+  });
+  for (const row of rows) {
+    if (!row || !row.hex) continue;
+    col.ingest(collection, row.hex, {
+      peer: row.peer || null,
+      origin: row.direction || null,
+      ts: row.ts || null
+    });
+  }
+  return col.toJSON(collection);
+}
+
+/**
+ * Replay a saved collection through `handler`.
+ * @param {object} doc
+ * @param {Function} handler
+ * @returns {object}
+ */
+function replayLogCollection (doc, handler) {
+  const col = require('@fabric/core/functions/fabricMessageCollection');
+  return col.replay(col.fromJSON(doc), handler);
 }
 
 module.exports = {
   createFabricMessageLog,
   summarizeMessage,
   summarizeBuffer,
+  collectionFromLog,
+  replayLogCollection,
   isKeepaliveType,
   KEEPALIVE_TYPES,
+  PEERING_WIRE_TYPES,
+  shouldLogWireSummary,
+  formatPeerLog,
+  formatSyncLog,
+  formatWireLog,
+  logFabricPeer,
+  logFabricSync,
+  logFabricWire,
   DEFAULT_CAPACITY
 };

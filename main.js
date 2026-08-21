@@ -14,7 +14,7 @@ if (!electron || typeof electron !== 'object' || !electron.app) {
   process.exit(1);
 }
 
-const { app, BrowserWindow, Tray, Menu, nativeImage, ipcMain, shell, Notification, dialog } = electron;
+const { app, BrowserWindow, Tray, Menu, nativeImage, ipcMain, shell, Notification, dialog, globalShortcut } = electron;
 const path = require('path');
 const fs = require('fs');
 const http = require('http');
@@ -36,8 +36,17 @@ const {
   fetchPendingDeviceLink,
   completeDeviceLinkAsResponder
 } = require('./functions/fabricDeviceLinkClient');
+const { abandonDeviceLinkOffer, compactPendingOffer, peerPubkeyFromParty, DEVICE_LINK_TICK_MS } = require('./functions/fabricDeviceLinkOffer');
+const {
+  stampCreatedAt,
+  isDeviceLinkPromptExpired,
+  isStaleDeviceLinkError,
+  isDeviceLinkOfferExpired
+} = require('./functions/deviceLinkLifecycle');
 const { applyFabricEnvConfig, loadRepoDotEnv } = require('./functions/fabricEnvIdentity');
 const { applyGoonCitizenEnvAliases } = require('./functions/goonCitizenEnvAliases');
+const voicePttGlobal = require('./functions/voicePttGlobal');
+const groupVoiceSettings = require('./functions/groupVoiceSettings');
 
 let settings = {};
 try {
@@ -60,7 +69,7 @@ let unlockedIdentity = null;
 let pendingFabricLoginPrompt = null;
 /** In-flight login prompts keyed by sessionId (message retained for sign). */
 const fabricLoginBySession = new Map();
-/** Pending opaque fabric:<hex> group share prompt. */
+/** Pending opaque fabric: group share prompt. */
 let pendingGroupSharePrompt = null;
 
 const startHidden = process.argv.includes('--hidden') ||
@@ -186,15 +195,8 @@ function buildRelaySettings (port) {
         null
     }),
     documents: Object.assign({
-      enable: false,
-      hub: null
-    }, settings.documents || {}, {
-      hub: process.env.SC_DOCUMENTS_HUB ||
-        (settings.documents && settings.documents.hub) ||
-        process.env.SC_BITCOIN_HUB ||
-        (settings.bitcoin && settings.bitcoin.hub) ||
-        'http://127.0.0.1:8080'
-    }),
+      enable: false
+    }, settings.documents || {}),
     settingsDir: appStoreRoot,
     // Cumulative Game.log history lives next to the Fabric store (userData),
     // not the repo tree — survives restarts and is the Analyze default.
@@ -466,8 +468,8 @@ function createOverlayWindow (port) {
   const { screen } = electron;
   const display = screen.getPrimaryDisplay();
   const work = display.workArea || display.bounds;
-  const width = 300;
-  const height = 420;
+  const width = 340;
+  const height = 520;
   const x = Math.max(work.x, work.x + work.width - width - 16);
   const y = work.y + 16;
 
@@ -488,6 +490,7 @@ function createOverlayWindow (port) {
     focusable: false,
     show: false,
     webPreferences: {
+      preload: path.join(__dirname, 'preload-overlay.js'),
       nodeIntegration: false,
       contextIsolation: true,
       webSecurity: true
@@ -561,12 +564,31 @@ function syncOverlayFromSettings () {
   rebuildTrayMenu();
 }
 
+function sendVoicePtt (held) {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  mainWindow.webContents.send('voice:ptt', !!held);
+}
+
+function syncVoicePttFromSettings (override) {
+  const settings = override || (starCitizenService && starCitizenService._voiceSettings) ||
+    groupVoiceSettings.defaultVoiceSettings();
+  const sanitized = groupVoiceSettings.sanitizeVoiceSettings(settings);
+  return voicePttGlobal.start({
+    enabled: sanitized.mode === 'ptt',
+    pttKey: sanitized.pttKey,
+    globalShortcut,
+    onHeld: sendVoicePtt,
+    isRendererFocused: () => !!(mainWindow && !mainWindow.isDestroyed() && mainWindow.isFocused())
+  });
+}
+
 async function startService () {
   const preferred = servicePort();
   const candidates = [preferred, preferred + 1, preferred + 2, 0];
 
   console.log('[ELECTRON]', '[STATUS]', `Starting ${BRAND_NAME} relay...`);
   await openAppStore(); // Fabric Store first — settings live there
+  restorePendingDeviceLinkOffer();
 
   let lastError = null;
   for (const port of candidates) {
@@ -579,9 +601,19 @@ async function startService () {
       }
 
       starCitizenService = new LiveRelay(opts);
-      await starCitizenService.start();
       loadEnvPublishingIdentity();
       applyIdentityToService();
+      applySnapshotCaptureToService();
+      const listening = new Promise((resolve) => {
+        starCitizenService.once('listening', resolve);
+      });
+      const startP = starCitizenService.start();
+      // Open HTTP (and the window) as soon as the dashboard port is bound —
+      // do not wait for Game.log corpus ingest on machines with huge log trees.
+      await Promise.race([listening, startP]);
+      startP.catch((error) => {
+        console.error('[ELECTRON]', '[ERROR]', 'Relay start after listen failed:', error);
+      });
 
       // If we requested port 0, read the OS-assigned port from the server.
       const bound = starCitizenService.server && starCitizenService.server.address();
@@ -649,8 +681,26 @@ function registerFabricProtocol () {
   }
 }
 
+function pruneFabricLoginPrompts () {
+  for (const [id, p] of fabricLoginBySession) {
+    if (isDeviceLinkPromptExpired(p)) fabricLoginBySession.delete(id);
+  }
+  if (pendingFabricLoginPrompt && isDeviceLinkPromptExpired(pendingFabricLoginPrompt)) {
+    pendingFabricLoginPrompt = null;
+  }
+}
+
 function deliverFabricLoginPrompt (payload) {
   if (!payload) return;
+  stampCreatedAt(payload);
+  pruneFabricLoginPrompts();
+  if (payload.kind === 'device-link') {
+    for (const [id, p] of fabricLoginBySession) {
+      if (p && p.kind === 'device-link' && String(id) !== String(payload.sessionId)) {
+        fabricLoginBySession.delete(id);
+      }
+    }
+  }
   pendingFabricLoginPrompt = payload;
   fabricLoginBySession.set(String(payload.sessionId), payload);
   showMainWindow();
@@ -675,21 +725,9 @@ function deliverFabricLoginPrompt (payload) {
 function mergeLinkedDeviceLocal (entry) {
   if (!appStore || !entry || !entry.peerFabricId) return;
   try {
+    const { mergeLinkedDevice } = require('./functions/linkedDevices');
     const cur = settingsStore.loadSettings(appStore);
-    const list = Array.isArray(cur.linkedDevices) ? cur.linkedDevices.slice() : [];
-    const peer = String(entry.peerFabricId);
-    const idx = list.findIndex((d) => d && String(d.peerFabricId) === peer);
-    const row = {
-      kind: entry.kind || 'device-link',
-      peerFabricId: peer,
-      peerXpub: entry.peerXpub || null,
-      label: entry.label || 'Linked device',
-      hubOrigin: entry.hubOrigin || null,
-      linkedAt: entry.linkedAt || new Date().toISOString(),
-      role: entry.role || 'responder'
-    };
-    if (idx >= 0) list[idx] = { ...list[idx], ...row };
-    else list.push(row);
+    const list = mergeLinkedDevice(cur.linkedDevices, entry);
     settingsStore.putSetting(appStore, 'linkedDevices', list);
   } catch (e) {
     console.warn('[ELECTRON]', '[WARNING]', 'linkedDevices persist:', e && e.message ? e.message : e);
@@ -697,7 +735,7 @@ function mergeLinkedDeviceLocal (entry) {
 }
 
 /**
- * Handle fabric://login, fabric://link, or opaque fabric:<hex> group shares.
+ * Handle fabric://login, fabric://link, or opaque fabric: group shares.
  */
 async function handleFabricProtocolUrl (urlStr) {
   const linkParsed = parseFabricDeviceLinkUrl(urlStr);
@@ -740,7 +778,7 @@ async function handleFabricProtocolUrl (urlStr) {
     return;
   }
 
-  // Opaque AMP Message: fabric:<hex>
+  // Opaque AMP Message: fabric:<hex|base64>
   try {
     const {
       parseOpaqueFabricMessage,
@@ -875,6 +913,7 @@ if (gotLock) {
       applySnapshotCaptureToService();
       createWindow(activePort || servicePort());
       syncOverlayFromSettings();
+      syncVoicePttFromSettings();
       if (earlyFabricUrl) {
         const u = earlyFabricUrl;
         earlyFabricUrl = null;
@@ -909,12 +948,19 @@ if (gotLock) {
       tray.destroy();
       tray = null;
     }
+    try { voicePttGlobal.stop(); } catch (_) { /* ignore */ }
+    try { globalShortcut.unregisterAll(); } catch (_) { /* ignore */ }
     await stopService();
   });
 }
 
 ipcMain.handle('fabric-login:pull-pending', () => {
+  pruneFabricLoginPrompts();
   const p = pendingFabricLoginPrompt;
+  if (p && isDeviceLinkPromptExpired(p)) {
+    pendingFabricLoginPrompt = null;
+    return null;
+  }
   return p || null;
 });
 
@@ -953,7 +999,12 @@ ipcMain.handle('fabric-login:resolve', async (_e, { approve, sessionId } = {}) =
 
   if (prompt.kind === 'device-link') {
     if (prompt.error && !prompt.initiator) {
+      clearPrompt();
       return { error: prompt.error };
+    }
+    if (isDeviceLinkPromptExpired(prompt)) {
+      clearPrompt();
+      return { error: 'This device-link expired. Scan a fresh QR.' };
     }
     const result = await completeDeviceLinkAsResponder(
       unlockedIdentity,
@@ -967,14 +1018,26 @@ ipcMain.handle('fabric-login:resolve', async (_e, { approve, sessionId } = {}) =
       }
     );
     if (!result.ok) return { error: result.error || 'Device link failed.' };
+    const peerPk = peerPubkeyFromParty(prompt.initiator) || result.peerPubkeyHex;
     mergeLinkedDeviceLocal({
       kind: 'device-link',
       peerFabricId: result.peerFabricId || (prompt.initiator && prompt.initiator.id),
       peerXpub: result.peerXpub || (prompt.initiator && prompt.initiator.xpub),
+      peerPubkey: peerPk,
+      nonce: prompt.nonce || null,
       label: result.label || prompt.label || 'Linked device',
       hubOrigin: prompt.origin || prompt.hubBase,
       role: 'responder'
     });
+    if (starCitizenService && peerPk && prompt.nonce &&
+      typeof starCitizenService.publishLocalIdentityCrossSign === 'function') {
+      void starCitizenService.publishLocalIdentityCrossSign({
+        peerPubkey: peerPk,
+        nonce: prompt.nonce
+      }).catch((e) => {
+        console.warn('[ELECTRON]', '[WARNING]', 'IdentityCrossSign:', e && e.message ? e.message : e);
+      });
+    }
     armIdentityAutoLock();
     clearPrompt();
     return { ok: true, approved: true, kind: 'device-link', status: result.status };
@@ -1041,7 +1104,9 @@ function loadEnvPublishingIdentity () {
 /** Push publishing identity into the running relay (env > unlocked UI identity). */
 function applyIdentityToService () {
   if (starCitizenService && typeof starCitizenService.setIdentity === 'function') {
-    starCitizenService.setIdentity(envPublishingIdentity || unlockedIdentity);
+    starCitizenService.setIdentity(envPublishingIdentity || unlockedIdentity, {
+      unlockedPubkey: unlockedIdentity ? unlockedIdentity.pubkey : null
+    });
   }
 }
 
@@ -1106,6 +1171,7 @@ function setUnlockedIdentity (identity) {
   unlockedIdentity = identity;
   applyIdentityToService();
   armIdentityAutoLock();
+  if (unlockedIdentity) armDeviceLinkTick();
   broadcastIdentityChanged();
 }
 
@@ -1117,7 +1183,8 @@ function identitySummary () {
     xpub: blob ? blob.xpub : null,
     createdAt: blob ? blob.createdAt : null,
     unlocked: !!unlockedIdentity,
-    autoLockMinutes: identityAutoLockMinutes()
+    autoLockMinutes: identityAutoLockMinutes(),
+    pendingDeviceLinkOffer: compactPendingOffer(pendingDeviceLinkOffer)
   };
 }
 
@@ -1267,6 +1334,146 @@ ipcMain.handle('identity:forget', (_e, { confirm } = {}) => {
   return { removed };
 });
 
+let pendingDeviceLinkOffer = null;
+let deviceLinkTickTimer = null;
+let deviceLinkTickBusy = false;
+
+function persistPendingDeviceLinkOffer (offer) {
+  if (!appStore) return;
+  try {
+    settingsStore.putSetting(appStore, 'pendingDeviceLinkOffer', compactPendingOffer(offer));
+  } catch (e) {
+    console.warn('[ELECTRON]', '[WARNING]', 'pendingDeviceLinkOffer persist:', e && e.message ? e.message : e);
+  }
+}
+
+function stopDeviceLinkTick () {
+  if (deviceLinkTickTimer) {
+    clearInterval(deviceLinkTickTimer);
+    deviceLinkTickTimer = null;
+  }
+  deviceLinkTickBusy = false;
+}
+
+function clearPendingDeviceLinkOffer () {
+  pendingDeviceLinkOffer = null;
+  stopDeviceLinkTick();
+  persistPendingDeviceLinkOffer(null);
+}
+
+function restorePendingDeviceLinkOffer () {
+  if (pendingDeviceLinkOffer || !appStore) return;
+  try {
+    const cur = settingsStore.loadSettings(appStore);
+    const row = cur.pendingDeviceLinkOffer;
+    if (!row || !row.sessionId) return;
+    if (isDeviceLinkOfferExpired(row)) {
+      persistPendingDeviceLinkOffer(null);
+      return;
+    }
+    pendingDeviceLinkOffer = row;
+    armDeviceLinkTick();
+  } catch (_) { /* ignore */ }
+}
+
+function armDeviceLinkTick () {
+  if (deviceLinkTickTimer || !pendingDeviceLinkOffer) return;
+  deviceLinkTickTimer = setInterval(() => {
+    void runDeviceLinkTick();
+  }, DEVICE_LINK_TICK_MS);
+  if (deviceLinkTickTimer.unref) deviceLinkTickTimer.unref();
+}
+
+async function finishDeviceLinkLinked (res) {
+  const peerPk = res.peerPubkey || peerPubkeyFromParty(res.responder);
+  mergeLinkedDeviceLocal({
+    kind: 'device-link',
+    peerFabricId: res.peerFabricId,
+    peerXpub: res.peerXpub,
+    peerPubkey: peerPk,
+    nonce: res.nonce,
+    label: res.label || 'Linked device',
+    hubOrigin: res.hubBase,
+    role: 'initiator'
+  });
+  clearPendingDeviceLinkOffer();
+  if (starCitizenService && peerPk && res.nonce &&
+    typeof starCitizenService.publishLocalIdentityCrossSign === 'function') {
+    try {
+      await starCitizenService.publishLocalIdentityCrossSign({
+        peerPubkey: peerPk,
+        nonce: res.nonce
+      });
+    } catch (e) {
+      console.warn('[ELECTRON]', '[WARNING]', 'IdentityCrossSign:', e && e.message ? e.message : e);
+    }
+  }
+  armIdentityAutoLock();
+  broadcastIdentityChanged();
+}
+
+async function runDeviceLinkTick () {
+  if (!unlockedIdentity) return { error: 'Identity is locked' };
+  if (!pendingDeviceLinkOffer) return { error: 'no pending device-link offer', expired: true };
+  if (deviceLinkTickBusy) return { ok: true, status: 'pending', busy: true };
+  deviceLinkTickBusy = true;
+  try {
+    const { tickDeviceLinkOffer } = require('./functions/fabricDeviceLinkOffer');
+    const res = await tickDeviceLinkOffer(unlockedIdentity, pendingDeviceLinkOffer);
+    if (!res.ok) {
+      if (res.expired || isStaleDeviceLinkError(res)) clearPendingDeviceLinkOffer();
+      return res;
+    }
+    if (res.status === 'linked') await finishDeviceLinkLinked(res);
+    return res;
+  } catch (e) {
+    return { ok: false, error: e && e.message ? e.message : String(e) };
+  } finally {
+    deviceLinkTickBusy = false;
+  }
+}
+
+ipcMain.handle('identity:device-link-start', async (_e, { hubBase, label } = {}) => {
+  if (!unlockedIdentity) return { error: 'Identity is locked — unlock it, then add a device.' };
+  if (pendingDeviceLinkOffer) {
+    await abandonDeviceLinkOffer(pendingDeviceLinkOffer);
+    clearPendingDeviceLinkOffer();
+  }
+  const { startDeviceLinkOffer } = require('./functions/fabricDeviceLinkOffer');
+  const res = await startDeviceLinkOffer(unlockedIdentity, {
+    hubBase,
+    label: label || 'GoonCitizen desktop'
+  });
+  if (!res.ok) return { error: res.error || 'Could not create device-link offer' };
+  pendingDeviceLinkOffer = res;
+  persistPendingDeviceLinkOffer(res);
+  armDeviceLinkTick();
+  armIdentityAutoLock();
+  return res;
+});
+
+ipcMain.handle('identity:device-link-tick', async () => {
+  return runDeviceLinkTick();
+});
+
+ipcMain.handle('identity:device-link-cancel', async () => {
+  const offer = pendingDeviceLinkOffer;
+  clearPendingDeviceLinkOffer();
+  if (offer) await abandonDeviceLinkOffer(offer);
+  return { ok: true, cancelled: true };
+});
+
+ipcMain.handle('identity:open-protocol-url', async (_e, url) => {
+  const raw = String(url || '').trim();
+  if (!raw) return { error: 'empty url' };
+  try {
+    await handleFabricProtocolUrl(raw);
+    return { ok: true };
+  } catch (e) {
+    return { error: (e && e.message) ? e.message : String(e) };
+  }
+});
+
 // --- Service status --------------------------------------------------------
 
 ipcMain.handle('get-service-status', () => {
@@ -1283,9 +1490,85 @@ ipcMain.handle('get-service-status', () => {
 });
 
 /**
- * Delivery sync receipt over in-process Fabric (no HTTP).
- * Publishes MessageReceipt CONTRACT_MESSAGE via the local peer.
+ * Fabric mesh helpers over in-process Peer (no LiveRelay HTTP).
+ * IdentityCrossSign / cluster snapshot + delivery MessageReceipt.
  */
+ipcMain.handle('fabric:identity-cluster', (_e, { pubkey } = {}) => {
+  if (!starCitizenService) return { error: 'relay not ready' };
+  const pk = pubkey || (starCitizenService._identity && starCitizenService._identity.pubkey) || null;
+  const cluster = starCitizenService.identityCluster;
+  const snap = cluster && typeof cluster.snapshot === 'function'
+    ? cluster.snapshot(pk)
+    : { canonical: pk, members: pk ? [pk] : [], edges: [] };
+  return { data: snap, transport: 'fabric' };
+});
+
+ipcMain.handle('fabric:publish-cross-sign', async (_e, { peerPubkey, nonce, type } = {}) => {
+  if (!starCitizenService || typeof starCitizenService.publishLocalIdentityCrossSign !== 'function') {
+    return { error: 'relay not ready' };
+  }
+  if (!starCitizenService._identity) return { error: 'Identity is locked' };
+  try {
+    const data = await starCitizenService.publishLocalIdentityCrossSign(
+      { peerPubkey, nonce },
+      type || undefined
+    );
+    return { data, transport: 'fabric' };
+  } catch (e) {
+    return { error: e && e.message ? e.message : String(e) };
+  }
+});
+
+ipcMain.handle('fabric:presence-status', () => {
+  if (!starCitizenService || typeof starCitizenService.getPresenceStatus !== 'function') {
+    return { error: 'relay not ready' };
+  }
+  try {
+    return { data: starCitizenService.getPresenceStatus(), transport: 'fabric' };
+  } catch (e) {
+    return { error: e && e.message ? e.message : String(e) };
+  }
+});
+
+ipcMain.handle('fabric:presence-roster', () => {
+  if (!starCitizenService || typeof starCitizenService.getPresenceRoster !== 'function') {
+    return { error: 'relay not ready' };
+  }
+  try {
+    return { data: starCitizenService.getPresenceRoster(), transport: 'fabric' };
+  } catch (e) {
+    return { error: e && e.message ? e.message : String(e) };
+  }
+});
+
+ipcMain.handle('fabric:presence-set', (_e, patch = {}) => {
+  if (!starCitizenService || typeof starCitizenService.setPresenceSettings !== 'function') {
+    return { error: 'relay not ready' };
+  }
+  try {
+    return { data: starCitizenService.setPresenceSettings(patch || {}), transport: 'fabric' };
+  } catch (e) {
+    return { error: e && e.message ? e.message : String(e) };
+  }
+});
+
+ipcMain.handle('fabric:presence-ship', (_e, opts = {}) => {
+  if (!starCitizenService || typeof starCitizenService.setShipOverride !== 'function') {
+    return { error: 'relay not ready' };
+  }
+  try {
+    const presence = require('./functions/presence');
+    let slug = null;
+    if (opts.autodetect === true) slug = null;
+    else if (opts.clear === true || presence.isShipClearedSlug(opts.slug)) {
+      slug = presence.SHIP_NONE_SLUG;
+    } else if (opts.slug !== undefined) slug = opts.slug;
+    return { data: starCitizenService.setShipOverride(slug), transport: 'fabric' };
+  } catch (e) {
+    return { error: e && e.message ? e.message : String(e) };
+  }
+});
+
 ipcMain.handle('fabric:delivery-receipt', (_e, opts = {}) => {
   if (!starCitizenService || typeof starCitizenService._markDeliveryReceipt !== 'function') {
     return { error: 'relay not ready' };
@@ -1315,12 +1598,31 @@ ipcMain.handle('set-group-overlay', async (_e, enabled) => {
   return setGroupOverlayEnabled(!!enabled);
 });
 
+ipcMain.on('overlay:ignore-mouse', (event, ignore) => {
+  if (!overlayWindow || overlayWindow.isDestroyed()) return;
+  if (event.sender !== overlayWindow.webContents) return;
+  try {
+    if (ignore) overlayWindow.setIgnoreMouseEvents(true, { forward: true });
+    else overlayWindow.setIgnoreMouseEvents(false);
+  } catch (_) { /* ignore */ }
+});
+
 ipcMain.handle('get-group-overlay', () => {
   return {
     groupOverlay: !!(overlayWindow && !overlayWindow.isDestroyed() && overlayWindow.isVisible()),
     primaryGroupId: (starCitizenService && starCitizenService._primaryGroupId) || null,
     platform: process.platform
   };
+});
+
+ipcMain.handle('voice:set-ptt-bind', (_e, payload) => {
+  const src = payload && typeof payload === 'object' && !Array.isArray(payload)
+    ? payload
+    : { enabled: true, pttKey: { code: String(payload || 'Shift+Tab') } };
+  return syncVoicePttFromSettings({
+    mode: src.enabled === false ? 'vad' : 'ptt',
+    pttKey: src.pttKey || src
+  });
 });
 
 ipcMain.handle('notify:show', (_e, { title, body, id, kind, actions } = {}) => {

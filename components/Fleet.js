@@ -7,6 +7,8 @@
  */
 
 const React = require('react');
+const { readAppHash, setAppHash } = require('../functions/appHash');
+const { fetchPresence, fetchPresenceRoster } = require('../functions/presenceClient');
 
 const BASE = '/services/star-citizen';
 
@@ -20,6 +22,7 @@ const CSS = `
     flex:0 0 auto;min-width:0}
   .fl-panel h2 .sub{font-weight:500;color:var(--muted);font-size:12px}
   .fl-panel .body{padding:14px 16px;flex:1 1 auto;min-height:0;min-width:0;overflow-x:hidden;overflow-y:auto}
+  .fl-panel .body:has(.fl-list){padding:0}
   .fl-toolbar .body{flex:0 0 auto;overflow:visible}
   .fl-hint{color:var(--muted);font-size:12.5px;line-height:1.55;margin:0 0 12px}
   .fl-err{background:rgba(248,81,73,.12);color:var(--kill);border-radius:7px;padding:9px 12px;font-size:13px;margin-bottom:10px}
@@ -34,10 +37,14 @@ const CSS = `
   .fl-chip{background:var(--panel2);border:1px solid var(--line);color:var(--muted);border-radius:999px;
     padding:3px 10px;font-size:11.5px;cursor:pointer}
   .fl-chip.on{background:rgba(56,139,253,.15);border-color:var(--accent);color:var(--accent)}
-  .fl-list{display:grid;gap:10px;min-width:0;max-width:100%}
+  .fl-list{display:grid;gap:0;min-width:0;max-width:100%}
   .fl-card{border:1px solid var(--line);border-radius:10px;padding:12px 14px;background:var(--panel2);
     display:grid;gap:8px;cursor:pointer;min-width:0;max-width:100%;overflow:hidden;box-sizing:border-box}
   .fl-card:hover,.fl-card.on{border-color:var(--accent)}
+  .fl-list .fl-card{border:none;border-bottom:1px solid var(--line);border-radius:0;padding:8px 16px;
+    background:transparent;gap:2px}
+  .fl-list .fl-card:hover{background:rgba(56,139,253,.06);border-color:var(--line)}
+  .fl-list .fl-card.on{background:rgba(56,139,253,.1);border-color:var(--line);box-shadow:inset 2px 0 0 var(--accent)}
   .fl-card .title{font-size:14px;font-weight:600;display:flex;flex-wrap:wrap;gap:8px;align-items:baseline;
     min-width:0;max-width:100%;overflow-wrap:anywhere;word-break:break-word}
   .fl-card .meta{font-size:12px;color:var(--muted);display:flex;flex-wrap:wrap;gap:8px;
@@ -110,15 +117,21 @@ class Fleet extends React.Component {
       shipHits: [],
       newFleetName: 'My fleet',
       presence: null,
-      presenceRoster: {}
+      presenceRoster: {},
+      browseGroupIds: []
     };
     this._fileRef = React.createRef();
     this._searchTimer = null;
     this._presenceTimer = null;
+    this._pendingSelectId = null;
   }
 
   componentDidMount () {
-    this.reload();
+    this._onHash = () => this.applyHashSelection();
+    if (typeof window !== 'undefined') {
+      window.addEventListener('hashchange', this._onHash);
+    }
+    this.reload().then(() => this.applyHashSelection());
     this.searchShips('');
     this._presenceTimer = setInterval(() => this.loadPresence(), 30000);
   }
@@ -126,17 +139,37 @@ class Fleet extends React.Component {
   componentWillUnmount () {
     if (this._searchTimer) clearTimeout(this._searchTimer);
     if (this._presenceTimer) clearInterval(this._presenceTimer);
+    if (this._onHash && typeof window !== 'undefined') {
+      window.removeEventListener('hashchange', this._onHash);
+    }
+  }
+
+  /** Deep link `#fleet?id=<fleetId>` (and legacy `#fleets?id=`). */
+  applyHashSelection () {
+    const { path, query } = readAppHash();
+    if (path !== 'fleet') return;
+    const id = query.id || null;
+    if (!id || id === this.state.selected) return;
+    const row = (this.state.fleets || []).find((f) => f.id === id);
+    if (row) {
+      this._pendingSelectId = null;
+      this.selectFleet(row);
+      return;
+    }
+    // List may still be loading / filtered — try direct fetch.
+    this._pendingSelectId = id;
+    this.selectFleet({ id });
   }
 
   async loadPresence () {
     try {
       const [localRes, rosterRes] = await Promise.all([
-        fetch(`${BASE}/presence`).then((r) => (r.ok ? r.json() : null)).catch(() => null),
-        fetch(`${BASE}/presence/roster`).then((r) => (r.ok ? r.json() : null)).catch(() => null)
+        fetchPresence(),
+        fetchPresenceRoster()
       ]);
       this.setState({
-        presence: localRes && localRes.data ? localRes.data : null,
-        presenceRoster: (rosterRes && rosterRes.data) || {}
+        presence: localRes && localRes.ok ? localRes.data : null,
+        presenceRoster: (rosterRes && rosterRes.ok && rosterRes.data) || {}
       });
     } catch (_) { /* ignore */ }
   }
@@ -333,7 +366,11 @@ class Fleet extends React.Component {
 
   async share () {
     if (!this.state.selected) return;
-    this.setState({ busy: true, error: null, notice: null });
+    if (this.state.visibility === 'groups' && !(this.state.groupIds || []).length) {
+      this.setState({ error: 'Select at least one group to share into' });
+      return;
+    }
+    this.setState({ busy: true, error: null, notice: null, browseGroupIds: [] });
     try {
       const patchRes = await fetch(`${BASE}/fleets/${encodeURIComponent(this.state.selected)}`, {
         method: 'PATCH',
@@ -362,18 +399,26 @@ class Fleet extends React.Component {
       const bits = [];
       if (p && p.peers) bits.push('peers');
       if (p && p.public) bits.push('public');
-      if (p && p.groups && p.groups.length) bits.push(`${p.groups.length} group(s)`);
+      const publishedGroups = (p && Array.isArray(p.groups)) ? p.groups.slice() : [];
+      if (publishedGroups.length) bits.push(`${publishedGroups.length} group(s)`);
       this.setState({
         busy: false,
         notice: bits.length
           ? `Shared to ${bits.join(' · ')}`
           : (this.state.visibility === 'private' ? 'Saved as private (not published)' : 'Share recorded'),
+        browseGroupIds: publishedGroups,
         detail: (j.data && j.data.fleet) || patchJ.data || this.state.detail
       });
       await this.reload();
     } catch (e) {
       this.setState({ busy: false, error: e.message });
     }
+  }
+
+  /** Jump to Groups → Fleets for a group that just received this share. */
+  browseSharedGroup (groupId) {
+    if (!groupId) return;
+    setAppHash('groups', { id: groupId, tab: 'fleets' });
   }
 
   async remove () {
@@ -548,10 +593,12 @@ class Fleet extends React.Component {
           (this.state.visibility === 'groups' || this.state.visibility === 'public')
             ? React.createElement('div', null,
               React.createElement('div', { className: 'fl-hint', style: { marginBottom: 6 } },
-                'Share into these groups (you must be a member):'),
+                this.state.visibility === 'groups'
+                  ? 'Pick one or more groups to journal this FleetShare (you must be a member).'
+                  : 'Optional: also journal into these groups (you must be a member):'),
               React.createElement('div', { className: 'fl-groups' },
                 !(this.state.groups || []).length
-                  ? React.createElement('span', { className: 'fl-hint' }, 'No groups yet')
+                  ? React.createElement('span', { className: 'fl-hint' }, 'No groups yet — create one under Groups')
                   : this.state.groups.map((g) => React.createElement('label', { key: g.id },
                     React.createElement('input', {
                       type: 'checkbox',
@@ -569,7 +616,10 @@ class Fleet extends React.Component {
               onClick: () => this.saveMeta()
             }, 'Save'),
             React.createElement('button', {
-              type: 'button', className: 'fl-btn', disabled: this.state.busy,
+              type: 'button',
+              className: 'fl-btn',
+              disabled: this.state.busy ||
+                (this.state.visibility === 'groups' && !(this.state.groupIds || []).length),
               onClick: () => this.share()
             }, this.state.visibility === 'private' ? 'Save private' : 'Share now'),
             React.createElement('button', {
@@ -648,7 +698,31 @@ class Fleet extends React.Component {
         React.createElement('div', { className: 'body' },
           this.renderPresence(),
           this.state.error ? React.createElement('div', { className: 'fl-err' }, this.state.error) : null,
-          this.state.notice ? React.createElement('div', { className: 'fl-ok' }, this.state.notice) : null,
+          this.state.notice
+            ? React.createElement('div', { className: 'fl-ok' },
+              this.state.notice,
+              (this.state.browseGroupIds || []).length
+                ? React.createElement('div', {
+                  className: 'fl-bar',
+                  style: { marginTop: 8, marginBottom: 0 }
+                },
+                ...(this.state.browseGroupIds.slice(0, 3).map((gid) => {
+                  const g = (this.state.groups || []).find((x) => x.id === gid);
+                  return React.createElement('button', {
+                    key: gid,
+                    type: 'button',
+                    className: 'fl-btn ghost mini',
+                    onClick: () => this.browseSharedGroup(gid)
+                  }, `Browse ${g && g.name ? g.name : 'group'} fleets`);
+                })),
+                this.state.browseGroupIds.length > 3
+                  ? React.createElement('span', { className: 'fl-hint', style: { margin: 0 } },
+                    `+${this.state.browseGroupIds.length - 3} more`)
+                  : null
+                )
+                : null
+            )
+            : null,
           React.createElement('div', { className: 'fl-bar', style: { marginBottom: this.state.samples.length ? 8 : 0 } },
             React.createElement('input', {
               type: 'text',

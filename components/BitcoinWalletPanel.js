@@ -6,6 +6,7 @@
  */
 
 const React = require('react');
+const { constructHref } = require('../functions/transactionConstruct');
 
 const BASE = '/services/star-citizen/bitcoin';
 
@@ -21,6 +22,8 @@ const CSS = `
   .bwp-err{color:var(--bad,#f85149);font-size:12.5px;line-height:1.5}
   .bwp-ok{color:var(--good);font-size:12.5px;line-height:1.5}
   .bwp-note{color:var(--muted);font-size:12px;line-height:1.55;margin:0}
+  .bwp-link{color:var(--accent);font-size:12.5px;font-weight:600;text-decoration:none}
+  .bwp-link:hover{text-decoration:underline}
 `;
 
 const SATS = (n) => {
@@ -62,6 +65,7 @@ class BitcoinWalletPanel extends React.Component {
       txs: [],
       faucet: null,
       faucetAmountSats: '10000',
+      sendOpen: false,
       to: '',
       amountSats: '10000',
       memo: '',
@@ -238,6 +242,62 @@ class BitcoinWalletPanel extends React.Component {
     }
   }
 
+  renderSend () {
+    if (!this.state.sendOpen) {
+      return React.createElement('div', {
+        className: 'bwp-actions',
+        style: { marginTop: 16, paddingTop: 12, borderTop: '1px solid var(--line)' }
+      },
+        React.createElement('button', {
+          className: 'wa-btn',
+          type: 'button',
+          onClick: () => this.setState({ sendOpen: true, error: null, notice: null })
+        }, 'Send')
+      );
+    }
+    return React.createElement('div', { className: 'bwp-form', style: { marginTop: 16 } },
+      React.createElement('label', null, 'Send to',
+        React.createElement('input', {
+          value: this.state.to,
+          placeholder: 'bcrt1…',
+          onChange: (e) => this.setState({ to: e.target.value })
+        })
+      ),
+      React.createElement('label', null, 'Amount (sats)',
+        React.createElement('input', {
+          value: this.state.amountSats,
+          onChange: (e) => this.setState({ amountSats: e.target.value })
+        })
+      ),
+      React.createElement('label', null, 'Memo (optional)',
+        React.createElement('input', {
+          value: this.state.memo,
+          onChange: (e) => this.setState({ memo: e.target.value })
+        })
+      ),
+      React.createElement('div', { className: 'bwp-actions' },
+        React.createElement('button', {
+          className: 'wa-btn',
+          disabled: this.state.loading,
+          onClick: () => this.send()
+        }, 'Send'),
+        React.createElement('button', {
+          className: 'wa-btn',
+          type: 'button',
+          onClick: () => this.setState({ sendOpen: false })
+        }, 'Cancel'),
+        React.createElement('a', {
+          className: 'bwp-link',
+          href: constructHref({
+            to: this.state.to,
+            amountSats: this.state.amountSats,
+            memo: this.state.memo
+          })
+        }, 'Advanced constructor')
+      )
+    );
+  }
+
   renderLocked () {
     return React.createElement('div', { className: 'wa-body' },
       React.createElement('p', { className: 'bwp-note' },
@@ -332,34 +392,7 @@ class BitcoinWalletPanel extends React.Component {
               )
             )
             : null,
-          React.createElement('div', { className: 'bwp-form', style: { marginTop: 16 } },
-            React.createElement('label', null, 'Send to',
-              React.createElement('input', {
-                value: this.state.to,
-                placeholder: 'bcrt1…',
-                onChange: (e) => this.setState({ to: e.target.value })
-              })
-            ),
-            React.createElement('label', null, 'Amount (sats)',
-              React.createElement('input', {
-                value: this.state.amountSats,
-                onChange: (e) => this.setState({ amountSats: e.target.value })
-              })
-            ),
-            React.createElement('label', null, 'Memo (optional)',
-              React.createElement('input', {
-                value: this.state.memo,
-                onChange: (e) => this.setState({ memo: e.target.value })
-              })
-            ),
-            React.createElement('div', { className: 'bwp-actions' },
-              React.createElement('button', {
-                className: 'wa-btn',
-                disabled: this.state.loading,
-                onClick: () => this.send()
-              }, 'Send')
-            )
-          ),
+          this.renderSend(),
           React.createElement('h3', {
             style: { fontSize: 12, margin: '18px 0 8px', color: 'var(--muted)' }
           }, 'Recent activity'),

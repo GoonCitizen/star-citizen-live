@@ -20,6 +20,7 @@ const FEED_CATEGORIES = Object.freeze([
   ['player', 'Players'],
   ['quantum', 'Quantum'],
   ['broadcast', 'Broadcasts'],
+  ['note', 'Notes'],
   ['notify', 'HUD'],
   ['log', 'Other']
 ]);
@@ -48,7 +49,18 @@ function categoryForKind (kind) {
   const k = String(kind || '');
   if (k === 'ChatMessage' || k === 'chat') return 'chat';
   if (k === 'MissionBroadcast' || k === 'broadcast') return 'broadcast';
+  if (k === 'NoteShare' || k === 'NoteUpdate' || k === 'IdentityNote' || k === 'IdentityNoteUpdate') {
+    return 'note';
+  }
+  if (k.indexOf('LocalGroup') === 0) return 'note';
   if (k.indexOf('mission:') === 0) return 'mission';
+  if (k.indexOf('Mission') === 0) return 'mission';
+  if (k === 'GroupChange' || k === 'GroupOffer' || k === 'GroupCreated' || k === 'GroupIngest' ||
+      k === 'GroupApplication' || k === 'GroupApplicationDecision' ||
+      k === 'FederationInvite' || k === 'FederationInviteDecision' ||
+      k === 'GroupChangeProposal' || k === 'GroupChangeVote') {
+    return 'broadcast';
+  }
   if (k === 'kill' || k === 'player:death' || k === 'player:incap' || k === 'vehicle:destroy') {
     return 'combat';
   }
@@ -334,7 +346,7 @@ function itemFromChat (m) {
     label: 'chat',
     who,
     body: m.body || '',
-    meta: ch === 'global' ? 'Global chat' : ch,
+    meta: ch === 'global' ? 'Public shoutbox' : ch,
     chatMessageId: m.id || null,
     wireHash: m.wireHash || null,
     contractId: (delivery && delivery.contractId) || m.contractId || null,
@@ -345,6 +357,52 @@ function itemFromChat (m) {
       groupName && String(ch).indexOf('group:') === 0
         ? badge('mission', groupName, 'group')
         : null
+    ),
+    raw: null
+  };
+}
+
+/** Inbox kinds already represented by chat / mission-broadcast collections. */
+const INBOX_SKIP_KINDS = new Set(['MissionBroadcast', 'ChatMessage']);
+
+function inboxLabel (kind, category) {
+  if (String(kind).indexOf('LocalGroup') === 0) return 'tag';
+  if (category === 'note') return 'note';
+  if (category === 'mission') return 'mission';
+  if (category === 'broadcast') return 'group';
+  return 'event';
+}
+
+function itemFromInbox (row) {
+  if (!row || !row.kind || INBOX_SKIP_KINDS.has(row.kind)) return null;
+  const kind = String(row.kind);
+  const category = categoryForKind(kind);
+  const refs = row.refs || {};
+  const localTag = kind.indexOf('LocalGroup') === 0 || kind === 'IdentityNote' || kind === 'IdentityNoteUpdate';
+  let source = 'local';
+  if (!localTag) {
+    source = sourceKind(row.source, {
+      scope: refs.scope === 'group' || refs.groupId ? 'group' : '',
+      channel: refs.channel || null
+    });
+  }
+  const who = row.handle || shortKey(row.source) || null;
+  return {
+    id: 'inbox:' + row.id,
+    ts: row.ts || null,
+    category,
+    source,
+    sourceId: row.source || null,
+    kind,
+    label: inboxLabel(kind, category),
+    who,
+    body: row.body || row.title || kind,
+    meta: row.title && row.title !== row.body ? row.title : null,
+    badges: badges(
+      badge('status', row.status, 'status'),
+      badge('player', row.handle, 'player'),
+      badge('channel', refs.localGroupId ? 'local-tag' : (refs.groupId ? 'group' : null), 'channel'),
+      badge('mission', refs.localGroupId || refs.groupId, refs.localGroupId ? 'tag' : 'group')
     ),
     raw: null
   };
@@ -647,6 +705,7 @@ function buildLiveFeed (inputs = {}, opts = {}) {
   for (const m of inputs.missionlog || []) pushItem(out, seen, itemFromMission(m), ctx);
   for (const n of inputs.notifications || []) pushItem(out, seen, itemFromNotification(n), ctx);
   for (const l of inputs.logins || []) pushItem(out, seen, itemFromLogin(l), ctx);
+  for (const row of inputs.inbox || []) pushItem(out, seen, itemFromInbox(row), ctx);
 
   for (const ev of inputs.recent || []) {
     if (!ev) continue;
@@ -707,6 +766,8 @@ module.exports = {
   summarizeRecent,
   missionFriendlyBody,
   killFriendlyBody,
+  itemFromInbox,
+  INBOX_SKIP_KINDS,
   buildLiveFeed,
   filterLiveFeed
 };

@@ -1,0 +1,46 @@
+# Caddy reverse proxy for a public GoonCitizen LiveRelay.
+# Install: merge into /etc/caddy/Caddyfile && systemctl reload caddy
+#
+# HTTPS → loopback LiveRelay (:3041). Fabric Peer (:7777) is TCP/NOISE on the
+# public NIC — do not reverse-proxy it. See docs/PRODUCTION.md.
+#
+# If goon.vc still fronts a Fabric Hub on 127.0.0.1:8080, keep that hostname
+# on Hub. Only point relay.goon.vc here when this process is the public origin.
+
+relay.goon.vc {
+	encode gzip
+
+	# Optional static ops notes (document root on the host). Must be before
+	# the catch-all LiveRelay reverse_proxy.
+	handle /downstream.agents.md {
+		root * /var/www/goon.vc/html
+		header Content-Type "text/markdown"
+		header Content-Disposition "attachment; filename=\"downstream.agents.md\""
+		file_server
+	}
+	handle /patches* {
+		root * /var/www/goon.vc/html
+		file_server browse
+	}
+	# Agent probe JSON (npm run probes:publish with SC_AGENT_STATIC_ROOT).
+	handle /probes* {
+		root * /var/www/goon.vc/html
+		header Content-Type application/json
+		header Cache-Control "public, max-age=60"
+		file_server browse
+	}
+
+	handle {
+		reverse_proxy 127.0.0.1:3041
+	}
+
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "DENY"
+	}
+
+	log {
+		output file /var/log/caddy/relay.goon.vc.log
+	}
+}

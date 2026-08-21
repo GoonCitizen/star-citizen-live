@@ -228,6 +228,11 @@ test('group page: public/private, custom slug, apply to join, SPA shell', async 
     assert.strictEqual(bySlug.body.data.role, 'visitor');
     assert.strictEqual(bySlug.body.data.canApply, true);
     assert.strictEqual(bySlug.body.data.memberCount, 2);
+    assert.strictEqual(bySlug.body.data.signerCount, 2);
+    assert.ok(Array.isArray(bySlug.body.data.validators), 'public summary includes the signing set');
+    assert.strictEqual(bySlug.body.data.validators.length, 2);
+    assert.ok(bySlug.body.data.creator);
+    assert.ok(bySlug.body.data.contractId);
     assert.ok(!bySlug.body.data.members, 'public summary omits member list');
 
     // Unauthenticated GET of a public group is allowed.

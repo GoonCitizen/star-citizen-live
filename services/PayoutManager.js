@@ -161,6 +161,37 @@ class PayoutManager extends EventEmitter {
   }
 
   /**
+   * Scan an arbitrary address for UTXOs (scantxoutset — no wallet import).
+   * @param {string} address
+   * @returns {Object} `{ balanceSats, utxos, history }` plus optional `note`
+   */
+  async scanAddress (address) {
+    const addr = String(address || '').trim();
+    if (!addr) throw new Error('address required');
+    if (this.mode === 'ledger') {
+      return { balanceSats: 0, utxos: [], history: [], note: 'ledger mode' };
+    }
+    const scan = await this.settings.rpc('scantxoutset', ['start', [`addr(${addr})`]]);
+    const utxos = ((scan && scan.unspents) || []).map((u) => ({
+      txid: u.txid,
+      vout: u.vout,
+      amountSats: Math.round((Number(u.amount) || 0) * SATS_PER_BTC),
+      height: u.height != null ? Number(u.height) : null,
+      scriptPubKey: u.scriptPubKey || null
+    }));
+    const balanceSats = Math.round(((scan && scan.total_amount) || 0) * SATS_PER_BTC);
+    // scantxoutset has no spent history — surface UTXOs as receive history.
+    const history = utxos.map((u) => ({
+      txid: u.txid,
+      vout: u.vout,
+      amountSats: u.amountSats,
+      height: u.height,
+      status: 'unspent'
+    }));
+    return { balanceSats, utxos, history };
+  }
+
+  /**
    * Check whether the escrow address holds at least the escrow amount.
    * Uses scantxoutset (no wallet import needed).
    * @returns {{ funded, totalSats, utxos }}
@@ -168,9 +199,9 @@ class PayoutManager extends EventEmitter {
   async checkFunding (escrow) {
     if (this.mode === 'ledger') return { funded: false, totalSats: 0, utxos: [], note: 'ledger mode' };
     if (!escrow || !escrow.address) throw new Error('escrow has no address');
-    const scan = await this.settings.rpc('scantxoutset', ['start', [`addr(${escrow.address})`]]);
-    const utxos = (scan && scan.unspents) || [];
-    const totalSats = Math.round(((scan && scan.total_amount) || 0) * SATS_PER_BTC);
+    const scan = await this.scanAddress(escrow.address);
+    const utxos = scan.utxos || [];
+    const totalSats = scan.balanceSats || 0;
     const funded = totalSats >= (escrow.amountSats || 0) && totalSats > 0;
     if (funded && escrow.status === 'unfunded') {
       escrow.status = 'funded';

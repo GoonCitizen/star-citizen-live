@@ -8,6 +8,9 @@
  *   - CONTRACT_MESSAGE     — GoonCitizen app types + per-Group Federation types
  *   - CONTRACT_PUBLISH     — GoonCitizen genesis + per-Group Federation genesis
  *
+ * Durable outbound frames set AMP `parent` to the previous signed `Message.id`
+ * (D-020). Ping / session / peering stay genesis zeros.
+ *
  * Lazy-requires Peer/Message so memory-only unit tests stay light.
  */
 
@@ -23,6 +26,7 @@ const {
   GROUP_MESSAGE_TYPES
 } = require('../contracts/gooncitizenGroup');
 const { OUTER, CONTRACT_BODY_TYPES } = require('../contracts/applicationMessageTypes');
+const groupVoice = require('../functions/groupVoice');
 const { PEER_PROFILE_TYPE, peeringAddressesFromObject } = require('../functions/peerProfile');
 const { FLEET_SHARE_TYPE } = require('../functions/starjumpFleet');
 const { PRESENCE_TYPE } = require('../functions/presence');
@@ -32,7 +36,9 @@ const {
 const {
   createFabricMessageLog,
   summarizeMessage,
-  summarizeBuffer
+  summarizeBuffer,
+  logFabricPeer,
+  logFabricWire
 } = require('../functions/fabricMessageLog');
 
 let peerHost;
@@ -47,6 +53,30 @@ const DEFAULT_SEEDS = peerHost.DEFAULT_NETWORK_HUB_SEEDS;
 const DEFAULT_SEED = DEFAULT_SEEDS[0];
 /** Default TCP peer cap (matches @fabric/core MAX_PEERS soft default for slot fill). */
 const DEFAULT_MAX_PEERS = peerHost.DEFAULT_MAX_PEERS;
+
+/**
+ * Session / slot-fill frames keep genesis parent (zeros). Durable application
+ * frames chain {@link Message#parent} to this node's previous signed frame id.
+ */
+const PARENT_CHAIN_SKIP = new Set([
+  'P2P_PING',
+  'P2P_PONG',
+  'Ping',
+  'Pong',
+  'P2P_SESSION_OFFER',
+  'P2P_SESSION_OPEN',
+  'P2P_SESSION_ACK',
+  'SessionOffer',
+  'SessionOpen',
+  'P2P_PEERING_OFFER',
+  'PeeringOffer',
+  'P2P_PEER_GOSSIP',
+  'PeerGossip',
+  'P2P_PEER_ANNOUNCE',
+  'PeerAnnounce',
+  'P2P_MESSAGE_RECEIPT',
+  'MessageReceipt'
+]);
 const {
   isNetworkHubAddress,
   isLoopbackFabricAddress,
@@ -54,13 +84,20 @@ const {
   hostnameResolvesToOwn,
   isSelfFabricAddress,
   isFabricAddress,
-  normalizeFabricAddress
+  normalizeFabricAddress,
+  splitFabricHostPort
 } = peerHost;
+
+const localPeerHost = require('../functions/fabricPeerHostLocal');
+// Local canonicalize includes dedicated-NIC IP aliases (http pin may lag).
+const canonicalizeFabricPeerDial = localPeerHost.canonicalizeFabricPeerDial;
 
 /** App `type` values under GoonCitizen / Group CONTRACT_MESSAGE (ingest catalog). */
 const APP_RELAY_TYPES = new Set([
   CONTRACT_BODY_TYPES.MissionCreated,
   CONTRACT_BODY_TYPES.MissionBroadcast,
+  CONTRACT_BODY_TYPES.MissionClaim || 'MissionClaim',
+  CONTRACT_BODY_TYPES.MissionClaimDecision || 'MissionClaimDecision',
   CONTRACT_BODY_TYPES.SCEventBatch,
   CONTRACT_BODY_TYPES.GameStateSnapshot,
   PEER_PROFILE_TYPE,
@@ -80,7 +117,20 @@ const APP_RELAY_TYPES = new Set([
   CONTRACT_BODY_TYPES.FederationContractInviteResponse,
   CONTRACT_BODY_TYPES.DiscordRequest || 'DiscordRequest',
   CONTRACT_BODY_TYPES.DiscordClaim || 'DiscordClaim',
-  CONTRACT_BODY_TYPES.DiscordResponse || 'DiscordResponse'
+  CONTRACT_BODY_TYPES.DiscordResponse || 'DiscordResponse',
+  CONTRACT_BODY_TYPES.LookupRequest || 'LookupRequest',
+  CONTRACT_BODY_TYPES.LookupClaim || 'LookupClaim',
+  CONTRACT_BODY_TYPES.LookupResponse || 'LookupResponse',
+  CONTRACT_BODY_TYPES.NoteShare || 'NoteShare',
+  CONTRACT_BODY_TYPES.NoteUpdate || 'NoteUpdate',
+  CONTRACT_BODY_TYPES.GroupDataShare || 'GroupDataShare',
+  CONTRACT_BODY_TYPES.DiscordCatalogShare || 'DiscordCatalogShare',
+  CONTRACT_BODY_TYPES.IdentityCrossSign || 'IdentityCrossSign',
+  CONTRACT_BODY_TYPES.IdentityCrossSignRevoke || 'IdentityCrossSignRevoke',
+  CONTRACT_BODY_TYPES.DeviceDataShare || 'DeviceDataShare',
+  CONTRACT_BODY_TYPES.GroupVoiceJoin || 'GroupVoiceJoin',
+  CONTRACT_BODY_TYPES.GroupVoiceLeave || 'GroupVoiceLeave',
+  CONTRACT_BODY_TYPES.GroupVoiceSpeaking || 'GroupVoiceSpeaking'
 ]);
 
 /** True when `appType` is a known GoonCitizen / Group contract body type. */
@@ -170,6 +220,12 @@ function attachAppHandlers (peer, handlers = {}, _opts = {}) {
           handlers.onMissionCreated(object, signer, meta);
         } else if (appType === CONTRACT_BODY_TYPES.MissionBroadcast && typeof handlers.onMissionBroadcast === 'function') {
           handlers.onMissionBroadcast(object, signer, meta);
+        } else if ((appType === CONTRACT_BODY_TYPES.MissionClaim || appType === 'MissionClaim') &&
+          typeof handlers.onMissionClaim === 'function') {
+          handlers.onMissionClaim(object, signer, meta);
+        } else if ((appType === CONTRACT_BODY_TYPES.MissionClaimDecision || appType === 'MissionClaimDecision') &&
+          typeof handlers.onMissionClaimDecision === 'function') {
+          handlers.onMissionClaimDecision(object, signer, meta);
         } else if (appType === CONTRACT_BODY_TYPES.SCEventBatch && typeof handlers.onEventBatch === 'function') {
           handlers.onEventBatch(object, signer, meta);
         } else if (appType === CONTRACT_BODY_TYPES.GameStateSnapshot && typeof handlers.onGameStateSnapshot === 'function') {
@@ -200,16 +256,53 @@ function attachAppHandlers (peer, handlers = {}, _opts = {}) {
         } else if ((appType === CONTRACT_BODY_TYPES.DiscordResponse || appType === 'DiscordResponse') &&
           typeof handlers.onDiscordResponse === 'function') {
           handlers.onDiscordResponse(object, signer, meta);
+        } else if ((appType === CONTRACT_BODY_TYPES.LookupRequest || appType === 'LookupRequest') &&
+          typeof handlers.onLookupRequest === 'function') {
+          handlers.onLookupRequest(object, signer, meta);
+        } else if ((appType === CONTRACT_BODY_TYPES.LookupClaim || appType === 'LookupClaim') &&
+          typeof handlers.onLookupClaim === 'function') {
+          handlers.onLookupClaim(object, signer, meta);
+        } else if ((appType === CONTRACT_BODY_TYPES.LookupResponse || appType === 'LookupResponse') &&
+          typeof handlers.onLookupResponse === 'function') {
+          handlers.onLookupResponse(object, signer, meta);
+        } else if ((appType === CONTRACT_BODY_TYPES.NoteShare || appType === 'NoteShare') &&
+          typeof handlers.onNoteShare === 'function') {
+          handlers.onNoteShare(object, signer, meta);
+        } else if ((appType === CONTRACT_BODY_TYPES.NoteUpdate || appType === 'NoteUpdate') &&
+          typeof handlers.onNoteUpdate === 'function') {
+          handlers.onNoteUpdate(object, signer, meta);
+        } else if ((appType === CONTRACT_BODY_TYPES.GroupDataShare || appType === 'GroupDataShare') &&
+          typeof handlers.onGroupDataShare === 'function') {
+          handlers.onGroupDataShare(object, signer, meta);
+        } else if ((appType === CONTRACT_BODY_TYPES.DiscordCatalogShare || appType === 'DiscordCatalogShare') &&
+          typeof handlers.onDiscordCatalogShare === 'function') {
+          handlers.onDiscordCatalogShare(object, signer, meta);
+        } else if ((appType === CONTRACT_BODY_TYPES.IdentityCrossSign || appType === 'IdentityCrossSign' ||
+          appType === CONTRACT_BODY_TYPES.IdentityCrossSignRevoke || appType === 'IdentityCrossSignRevoke') &&
+          typeof handlers.onIdentityCrossSign === 'function') {
+          handlers.onIdentityCrossSign(object, signer, meta);
+        } else if ((appType === CONTRACT_BODY_TYPES.DeviceDataShare || appType === 'DeviceDataShare') &&
+          typeof handlers.onDeviceDataShare === 'function') {
+          handlers.onDeviceDataShare(object, signer, meta);
         }
+        return;
+      }
+
+      if ((appType === CONTRACT_BODY_TYPES.IdentityCrossSign || appType === 'IdentityCrossSign' ||
+        appType === CONTRACT_BODY_TYPES.IdentityCrossSignRevoke || appType === 'IdentityCrossSignRevoke') &&
+        typeof handlers.onIdentityCrossSign === 'function') {
+        handlers.onIdentityCrossSign(object, signer, meta);
         return;
       }
 
       const knownGroup = typeof handlers.isKnownGroupContract === 'function'
         ? handlers.isKnownGroupContract(contract)
         : false;
-      if (!knownGroup && !isGroupMessageType(appType)) return;
+      if (!knownGroup && !isGroupMessageType(appType) && !groupVoice.isVoiceType(appType)) return;
 
-      if (appType === CONTRACT_BODY_TYPES.GroupChat && typeof handlers.onGroupChat === 'function') {
+      if (groupVoice.isVoiceType(appType) && typeof handlers.onGroupVoice === 'function') {
+        handlers.onGroupVoice(appType, object, signer, meta);
+      } else if (appType === CONTRACT_BODY_TYPES.GroupChat && typeof handlers.onGroupChat === 'function') {
         handlers.onGroupChat(object, signer, meta);
       } else if ((appType === CONTRACT_BODY_TYPES.MessageReceipt || appType === 'MessageReceipt') &&
         typeof handlers.onMessageReceipt === 'function') {
@@ -242,6 +335,12 @@ function attachAppHandlers (peer, handlers = {}, _opts = {}) {
         handlers.onFederationInvite(object, signer, meta);
       } else if (appType === CONTRACT_BODY_TYPES.FederationContractInviteResponse && typeof handlers.onFederationInviteResponse === 'function') {
         handlers.onFederationInviteResponse(object, signer, meta);
+      } else if ((appType === CONTRACT_BODY_TYPES.GroupDataShare || appType === 'GroupDataShare') &&
+        typeof handlers.onGroupDataShare === 'function') {
+        handlers.onGroupDataShare(object, signer, meta);
+      } else if ((appType === CONTRACT_BODY_TYPES.DiscordCatalogShare || appType === 'DiscordCatalogShare') &&
+        typeof handlers.onDiscordCatalogShare === 'function') {
+        handlers.onDiscordCatalogShare(object, signer, meta);
       }
     } catch (e) {
       peer.emit('warning', `[FABRIC:GOON] contract message handler error (${appType}): ${(e && e.message) || e}`);
@@ -255,6 +354,33 @@ function attachAppHandlers (peer, handlers = {}, _opts = {}) {
       handlers.onProposal(ev.payload, ev.signer || null, { origin: ev.origin });
     } catch (e) {
       peer.emit('warning', `[FABRIC:GOON] contract proposal handler error: ${(e && e.message) || e}`);
+    }
+  });
+
+  peer.on('inventory', (ev) => {
+    if (typeof handlers.onInventoryRequest !== 'function') return;
+    try {
+      handlers.onInventoryRequest(Object.assign({}, ev || {}, { peer }));
+    } catch (e) {
+      peer.emit('warning', `[FABRIC:GOON] inventory request handler error: ${(e && e.message) || e}`);
+    }
+  });
+
+  peer.on('inventoryResponse', (ev) => {
+    if (typeof handlers.onInventoryResponse !== 'function') return;
+    try {
+      handlers.onInventoryResponse(Object.assign({}, ev || {}, { peer }));
+    } catch (e) {
+      peer.emit('warning', `[FABRIC:GOON] inventory response handler error: ${(e && e.message) || e}`);
+    }
+  });
+
+  peer.on('documentReceived', (ev) => {
+    if (typeof handlers.onDocumentReceived !== 'function') return;
+    try {
+      handlers.onDocumentReceived(Object.assign({}, ev || {}, { peer }));
+    } catch (e) {
+      peer.emit('warning', `[FABRIC:GOON] documentReceived handler error: ${(e && e.message) || e}`);
     }
   });
 
@@ -280,6 +406,7 @@ class FabricNetwork extends EventEmitter {
       listenPortAttempts: 20,
       maxPeers: DEFAULT_MAX_PEERS,
       advertiseHost: null,
+      ownHosts: null,
       broadcastPeering: false,
       messageLog: null,
       messageLogCapacity: undefined
@@ -293,6 +420,7 @@ class FabricNetwork extends EventEmitter {
     this._groupContractIds = new Set();
     this._slotFillTimer = null;
     this._lastPeeringOfferAt = 0;
+    this._outboundMessageTip = null;
     this._messageLog = settings.messageLog || createFabricMessageLog({
       capacity: settings.messageLogCapacity
     });
@@ -304,6 +432,9 @@ class FabricNetwork extends EventEmitter {
   static isLoopbackFabricAddress (v) { return isLoopbackFabricAddress(v); }
   static isSelfFabricAddress (v, listenPort, opts) { return isSelfFabricAddress(v, listenPort, opts); }
   static collectOwnFabricHosts (opts) { return collectOwnFabricHosts(opts); }
+  static canonicalizeFabricPeerDial (v, listenPort, opts) {
+    return canonicalizeFabricPeerDial(v, listenPort, opts);
+  }
   static isFabricAddress (v) { return isFabricAddress(v); }
   static normalizeFabricAddress (v, opts) { return normalizeFabricAddress(v, opts); }
   static attachAppHandlers (peer, handlers, opts) { return attachAppHandlers(peer, handlers, opts); }
@@ -417,6 +548,7 @@ class FabricNetwork extends EventEmitter {
         ? summarizeBuffer(messageOrBuffer, { direction, peer: meta.peer || null, via: meta.via || null })
         : summarizeMessage(messageOrBuffer, { direction, peer: meta.peer || null, via: meta.via || null });
       if (!summary) return null;
+      logFabricWire(summary);
       return this._messageLog.append(summary);
     } catch (_) {
       return null;
@@ -466,7 +598,17 @@ class FabricNetwork extends EventEmitter {
       || (this._identity ? keyFromIdentity(this._identity) : null);
     if (!key) throw new Error('signing key required (unlock identity)');
     const wireBody = typeof body === 'string' ? body : JSON.stringify(body);
-    return Message.fromVector([vectorType, wireBody]).signWithKey(key);
+    const msg = Message.fromVector([vectorType, wireBody]);
+    const parentLib = require('../functions/fabricMessageParent');
+    const skip = opts.chain === false || FabricNetwork.skipsParentChain(vectorType);
+    let parent = opts.parent;
+    if (parent == null && !skip) {
+      parent = this._outboundMessageTip || parentLib.ZERO_PARENT;
+    }
+    if (parent != null) parentLib.setMessageParent(msg, parent);
+    msg.signWithKey(key);
+    if (!skip) this._outboundMessageTip = msg.id;
+    return msg;
   }
 
   /**
@@ -529,19 +671,62 @@ class FabricNetwork extends EventEmitter {
   }
 
   /**
-   * Encode a signed Message as opaque fabric:&lt;hex&gt; or fabric:base64,… for copy-paste.
+   * Relay an already-signed AMP Message (same bytes as a clipboard `fabric:` clip).
+   * Does not re-sign. Used so mesh GroupOffer / FederationContractInvite frames
+   * are bit-identical to Import… paste.
+   * @param {object} message Fabric Message
+   * @param {Object} [opts]
+   * @param {string[]} [opts.to]
+   * @param {boolean} [opts.relay]
+   * @param {boolean} [opts.record] When false, skip a second message-log row
+   * @returns {object} message
+   */
+  relaySignedMessage (message, opts = {}) {
+    if (!message || typeof message.toBuffer !== 'function') {
+      throw new Error('Fabric Message required');
+    }
+    const shouldRelay = opts.relay !== false;
+    if (opts.record !== false) {
+      this.recordMessage('out', message, {
+        via: shouldRelay && this.ready ? 'relay' : 'local',
+        peer: Array.isArray(opts.to) && opts.to.length ? opts.to.join(',') : null
+      });
+    }
+    if (!shouldRelay) return message;
+    if (!this.ready) {
+      if (opts.requireReady) this._requireReady();
+      return message;
+    }
+    const peer = this._peer;
+    const buf = message.toBuffer();
+    const targets = Array.isArray(opts.to) ? opts.to.map((a) => String(a).trim()).filter(Boolean) : null;
+    if (!targets || !targets.length) {
+      peer.relayFrom(null, message);
+      return message;
+    }
+    for (const id of Object.keys(peer.connections || {})) {
+      const hit = targets.some((addr) => FabricNetwork.connectionMatchesAddress(id, addr));
+      if (hit && peer.connections[id] && typeof peer.connections[id]._writeFabric === 'function') {
+        peer.connections[id]._writeFabric(buf);
+      }
+    }
+    return message;
+  }
+
+  /**
+   * Encode a signed Message as opaque fabric:&lt;payload&gt; (base64 body by default, or hex).
    * @param {object} message
    * @param {Object} [opts]
-   * @param {string} [opts.encoding] `'hex'` (default) or `'base64'`
-   * @returns {{ message: object, buffer: Buffer, messageHex: string, messageBase64: string, protocolUrl: string, protocolUrlBase64: string }}
+   * @param {string} [opts.encoding] `'base64'` (default) or `'hex'`
+   * @returns {{ message: object, buffer: Buffer, messageHex: string, messageBase64: string, protocolUrl: string, protocolUrlHex: string, protocolUrlBase64: string }}
    */
   encodeOpaqueMessage (message, opts = {}) {
-    const { buildOpaqueFabricUrl } = require('../functions/groupShareMessage');
+    const { buildOpaqueFabricUrl, normalizeOpaqueShareEncoding } = require('../functions/groupShareMessage');
     if (!message || typeof message.toBuffer !== 'function') {
       throw new Error('Fabric Message required');
     }
     const buffer = message.toBuffer();
-    const encoding = opts.encoding === 'base64' ? 'base64' : 'hex';
+    const encoding = normalizeOpaqueShareEncoding(opts.encoding);
     return {
       message,
       buffer,
@@ -571,8 +756,9 @@ class FabricNetwork extends EventEmitter {
 
   async _startInner () {
     const Peer = require('@fabric/core/types/peer');
-    const { keyFromIdentity } = require('../functions/identity');
-    const key = keyFromIdentity(this._identity);
+    const { masterKeyFromIdentity } = require('../functions/identity');
+    // Peer derives FABRIC_KEY_DERIVATION_PATH from the HD master xprv.
+    const master = masterKeyFromIdentity(this._identity);
 
     const peersDb = this.settings.peersDb != null
       ? this.settings.peersDb
@@ -590,19 +776,31 @@ class FabricNetwork extends EventEmitter {
       networking: this.settings.networking !== false,
       reconnectToKnownPeers: this.settings.reconnectToKnownPeers === true,
       listenPortAttempts: this.settings.listenPortAttempts || 20,
-      key: { xprv: key.xprv },
+      key: { xprv: master.xprv },
       upnp: false,
       constraints: {
         peers: { max: maxPeers }
       }
     });
+    this._wrapPeeringCandidateEnqueue(peer);
+    this._wrapPeerConnect(peer);
 
     peer.on('error', (e) => this.emit('error', e));
     peer.on('warning', (m) => this.emit('warning', m));
     peer.on('log', (m) => this.emit('log', m));
     peer.on('ready', (info) => this.emit('ready', info));
-    peer.on('connections:open', (ev) => this.emit('connections:open', ev));
-    peer.on('connections:close', (ev) => this.emit('connections:close', ev));
+    peer.on('connections:open', (ev) => {
+      this.emit('connections:open', ev);
+      const n = Object.keys((this._peer && this._peer.connections) || {}).length;
+      const addr = ev && (ev.address || ev.id);
+      logFabricPeer('open', (addr || '') + ` (${n} connected)`);
+    });
+    peer.on('connections:close', (ev) => {
+      this.emit('connections:close', ev);
+      const n = Object.keys((this._peer && this._peer.connections) || {}).length;
+      const addr = ev && (ev.address || ev.id);
+      logFabricPeer('close', (addr || '') + ` (${n} connected)`);
+    });
     peer.on('peer:self', (ev) => {
       this.emit('peer:self', ev);
       const addr = ev && ev.address;
@@ -633,6 +831,14 @@ class FabricNetwork extends EventEmitter {
       onMissionBroadcast: (object, source, meta) => {
         this.emit('missionBroadcast', { object, source, meta });
         this._forward('onMissionBroadcast', object, source, meta);
+      },
+      onMissionClaim: (object, source, meta) => {
+        this.emit('missionClaim', { object, source, meta });
+        this._forward('onMissionClaim', object, source, meta);
+      },
+      onMissionClaimDecision: (object, source, meta) => {
+        this.emit('missionClaimDecision', { object, source, meta });
+        this._forward('onMissionClaimDecision', object, source, meta);
       },
       onEventBatch: (object, source, meta) => {
         this.emit('eventBatch', { object, source, meta });
@@ -675,6 +881,10 @@ class FabricNetwork extends EventEmitter {
       onGroupChat: (object, source, meta) => {
         this.emit('groupChat', { object, source, meta });
         this._forward('onGroupChat', object, source, meta);
+      },
+      onGroupVoice: (type, object, source, meta) => {
+        this.emit('groupVoice', { type, object, source, meta });
+        this._forward('onGroupVoice', type, object, source, meta);
       },
       onMessageReceipt: (object, source, meta) => {
         this.emit('messageReceipt', { object, source, meta });
@@ -719,12 +929,33 @@ class FabricNetwork extends EventEmitter {
       onFederationInviteResponse: (object, source, meta) => {
         this.emit('federationInviteResponse', { object, source, meta });
         this._forward('onFederationInviteResponse', object, source, meta);
+      },
+      onIdentityCrossSign: (object, source, meta) => {
+        this.emit('identityCrossSign', { object, source, meta });
+        this._forward('onIdentityCrossSign', object, source, meta);
+      },
+      onDeviceDataShare: (object, source, meta) => {
+        this.emit('deviceDataShare', { object, source, meta });
+        this._forward('onDeviceDataShare', object, source, meta);
+      },
+      onInventoryRequest: (ev) => {
+        this.emit('inventoryRequest', ev);
+        this._forward('onInventoryRequest', ev);
+      },
+      onInventoryResponse: (ev) => {
+        this.emit('inventoryResponse', ev);
+        this._forward('onInventoryResponse', ev);
+      },
+      onDocumentReceived: (ev) => {
+        this.emit('documentReceived', ev);
+        this._forward('onDocumentReceived', ev);
       }
     });
 
     peer.on('connections:open', () => {
       try { this.publishContract(); } catch (_) { /* not ready / no peers yet */ }
       this.fillPeerSlots();
+      this.emit('connections:open');
     });
     peer.on('connections:close', () => {
       this.fillPeerSlots();
@@ -742,8 +973,10 @@ class FabricNetwork extends EventEmitter {
 
     await peer.start();
     this._peer = peer;
+    this._sanitizePeerCandidates(peer);
     this._startSlotFillTimer();
     console.log(`[STAR-CITIZEN] fabric peer listening on ${peer.settings.port} (id ${String(peer.key.pubkey).slice(0, 12)}…)`);
+    logFabricPeer('listen', `port=${peer.settings.port} id=${String(peer.key.pubkey).slice(0, 12)}`);
     try { this.publishContract(); } catch (_) { /* best-effort */ }
     this.fillPeerSlots();
     // Opt-in only: do not force on start (broadcastPeering must be on).
@@ -768,6 +1001,90 @@ class FabricNetwork extends EventEmitter {
     if (this._slotFillTimer) {
       clearInterval(this._slotFillTimer);
       this._slotFillTimer = null;
+    }
+  }
+
+  _peerDialOpts () {
+    return {
+      listenPort: Number(this.settings.port) || 7777,
+      advertiseHost: this.settings.advertiseHost || null,
+      ownHosts: this.settings.ownHosts
+    };
+  }
+
+  _canonicalizeDial (address) {
+    return canonicalizeFabricPeerDial(address, this._peerDialOpts());
+  }
+
+  /**
+   * Core `Peer.start` / `_fillPeerSlots` call `_connect` with registry keys.
+   * Canonicalize so `65.21.231.149:7778` cannot TCP-dial a closed port.
+   * @param {object} peer
+   * @returns {void}
+   */
+  _wrapPeerConnect (peer) {
+    if (!peer || typeof peer._connect !== 'function') return;
+    if (peer._fabricCanonicalConnect) return;
+    const orig = peer._connect.bind(peer);
+    const self = this;
+    peer._connect = function (target) {
+      const next = self._canonicalizeDial(target);
+      if (!next) return;
+      return orig(next);
+    };
+    peer._fabricCanonicalConnect = true;
+  }
+
+  /**
+   * Core Peer enqueues gossip itself; wrap so stale `:7778` hubs and self IPs never queue.
+   * @param {object} peer
+   * @returns {void}
+   */
+  _wrapPeeringCandidateEnqueue (peer) {
+    if (!peer || typeof peer._enqueuePeeringCandidate !== 'function') return;
+    if (peer._fabricCanonicalEnqueue) return;
+    const orig = peer._enqueuePeeringCandidate.bind(peer);
+    const self = this;
+    peer._enqueuePeeringCandidate = function (host, port, meta) {
+      const next = self._canonicalizeDial(`${host}:${port}`);
+      if (!next) return;
+      const parts = splitFabricHostPort(next);
+      return orig(parts.host, parts.port, meta);
+    };
+    peer._fabricCanonicalEnqueue = true;
+  }
+
+  /**
+   * Drop or rewrite candidates already sitting in the Peer queue (peersDb / gossip).
+   * @param {object} peer
+   * @returns {void}
+   */
+  _sanitizePeerCandidates (peer) {
+    if (!peer || !Array.isArray(peer.candidates)) return;
+    const kept = [];
+    const keys = new Set();
+    for (const c of peer.candidates) {
+      const host = c && (c.object ? c.object.host : c.host);
+      const port = c && (c.object ? c.object.port : c.port);
+      const next = this._canonicalizeDial(`${host}:${port}`);
+      if (!next) continue;
+      const parts = splitFabricHostPort(next);
+      const key = `${parts.host}:${parts.port}`;
+      if (keys.has(key)) continue;
+      keys.add(key);
+      if (c.object) {
+        c.object.host = parts.host;
+        c.object.port = parts.port;
+      } else {
+        c.host = parts.host;
+        c.port = parts.port;
+      }
+      kept.push(c);
+    }
+    peer.candidates = kept;
+    if (peer._candidateKeys && typeof peer._candidateKeys.clear === 'function') {
+      peer._candidateKeys.clear();
+      for (const k of keys) peer._candidateKeys.add(k);
     }
   }
 
@@ -801,24 +1118,24 @@ class FabricNetwork extends EventEmitter {
       });
       return;
     }
-    const addrs = peeringAddressesFromObject(object).filter((addr) => {
-      if (isSelfFabricAddress(addr, this.settings.port, {
-        advertiseHost: this.settings.advertiseHost,
-        ownHosts: this.settings.ownHosts
-      })) return false;
+    const addrs = peeringAddressesFromObject(object).map((addr) => {
+      return this._canonicalizeDial(addr);
+    }).filter(Boolean).filter((addr) => {
       if (isLoopbackFabricAddress(addr) && !this.settings.allowLoopbackDiscovery) return false;
       return true;
     });
     for (const addr of addrs) {
-      const [host, port] = String(addr).split(':');
+      const parts = splitFabricHostPort(addr);
+      if (!parts.host || parts.port == null) continue;
       if (this._peer && typeof this._peer._enqueuePeeringCandidate === 'function') {
         try {
-          this._peer._enqueuePeeringCandidate(host, Number(port), { pubkey: offerPubkey });
+          this._peer._enqueuePeeringCandidate(parts.host, parts.port, { pubkey: offerPubkey });
         } catch (_) { /* ignore */ }
       }
     }
     this.fillPeerSlots();
     if (addrs.length) {
+      logFabricPeer(kind, addrs.join(', '));
       const payload = {
         addresses: addrs,
         kind,
@@ -838,10 +1155,57 @@ class FabricNetwork extends EventEmitter {
   fillPeerSlots () {
     const peer = this._peer;
     if (!peer || typeof peer._fillPeerSlots !== 'function') return 0;
+    this._sanitizePeerCandidates(peer);
     try { peer._fillPeerSlots(); } catch (e) {
       this.emit('warning', `fillPeerSlots: ${(e && e.message) || e}`);
     }
     return Array.isArray(peer.candidates) ? peer.candidates.length : 0;
+  }
+
+  /**
+   * TCP-dial cluster siblings from `account.peers` (LAN / advertise). Skips
+   * self, loopback (unless allowed), and network hubs. WebRTC is a browser
+   * Bridge path — this Node Peer does not signal Hub WebRTC.
+   * @param {string[]} addresses
+   * @param {Object} [meta]
+   * @param {string} [meta.pubkey]
+   * @param {boolean} [meta.allowLoopback]
+   * @returns {string[]} queued `host:port`
+   */
+  dialClusterCandidates (addresses, meta = {}) {
+    if (!this._peer || typeof this._peer._enqueuePeeringCandidate !== 'function') {
+      return [];
+    }
+    const allowLoopback = meta.allowLoopback === true ||
+      this.settings.allowLoopbackDiscovery === true;
+    const queued = [];
+    const seen = new Set();
+    for (const raw of addresses || []) {
+      const address = this._canonicalizeDial(raw);
+      if (!address || seen.has(address)) continue;
+      if (isLoopbackFabricAddress(address) && !allowLoopback) continue;
+      if (isNetworkHubAddress(address)) continue;
+      const parts = splitFabricHostPort(address);
+      if (!parts.host || parts.port == null) continue;
+      try {
+        this._peer._enqueuePeeringCandidate(parts.host, parts.port, {
+          pubkey: meta.pubkey || null,
+          cluster: true
+        });
+        seen.add(address);
+        queued.push(address);
+      } catch (_) { /* ignore one */ }
+    }
+    this.fillPeerSlots();
+    if (queued.length) {
+      this.emit('cluster:dial', {
+        addresses: queued,
+        pubkey: meta.pubkey || null
+      });
+      const pk = meta.pubkey ? String(meta.pubkey).slice(0, 12) : '';
+      logFabricPeer('dial', queued.join(', ') + (pk ? ` pubkey=${pk}` : ''));
+    }
+    return queued;
   }
 
   /**
@@ -1045,6 +1409,76 @@ class FabricNetwork extends EventEmitter {
   }
 
   /**
+   * Publish an identity note share or update under the GoonCitizen namespace.
+   * @param {Object} payload NoteShare / NoteUpdate fields
+   */
+  publishNoteShare (payload) {
+    const type = (payload && (payload.type || payload['@type'])) ||
+      CONTRACT_BODY_TYPES.NoteShare || 'NoteShare';
+    return this._publishContractMessage(gooncitizenContractId(), type, Object.assign({}, payload));
+  }
+
+  /**
+   * Gossip an IdentityCrossSign / IdentityCrossSignRevoke under GoonCitizen.
+   * @param {Object} payload verified-ready body from signCrossSign
+   */
+  publishIdentityCrossSign (payload) {
+    const type = (payload && (payload.type || payload['@type'])) ||
+      CONTRACT_BODY_TYPES.IdentityCrossSign || 'IdentityCrossSign';
+    return this._publishContractMessage(gooncitizenContractId(), type, Object.assign({}, payload));
+  }
+
+  /**
+   * Gossip a cluster-gated account snapshot after device-link.
+   * @param {Object} payload DeviceDataShare fields
+   */
+  publishDeviceDataShare (payload) {
+    const type = CONTRACT_BODY_TYPES.DeviceDataShare || 'DeviceDataShare';
+    return this._publishContractMessage(gooncitizenContractId(), type, Object.assign({
+      type,
+      '@type': type
+    }, payload || {}));
+  }
+
+  /**
+   * Publish pack-typed group data on a Federation contract (chat catalogs /
+   * messages, opt-in play times; unknown packs are dropped by receivers).
+   * @param {string} contractId
+   * @param {Object} payload GroupDataShare fields
+   */
+  publishGroupDataShare (contractId, payload) {
+    const type = CONTRACT_BODY_TYPES.GroupDataShare || 'GroupDataShare';
+    return this._publishContractMessage(contractId, type, Object.assign({
+      type,
+      '@type': type
+    }, payload || {}));
+  }
+
+  /**
+   * Publish a compact Discord guild catalog under a Group Federation contract.
+   * Wraps into GroupDataShare (legacy DiscordCatalogShare type is still ingested).
+   * @param {string} contractId
+   * @param {Object} payload DiscordCatalogShare or GroupDataShare fields
+   */
+  publishDiscordCatalogShare (contractId, payload) {
+    const groupDataSync = require('../functions/groupDataSync');
+    const wrapped = groupDataSync.sanitizeShare(payload) ||
+      groupDataSync.buildShare({
+        groupId: payload && payload.groupId,
+        sourceAppId: payload && payload.sourceAppId,
+        observedAt: payload && payload.observedAt,
+        truncated: payload && payload.truncated,
+        packs: [{
+          pack: groupDataSync.PACK_DISCORD_CATALOG,
+          truncated: payload && payload.truncated,
+          payload: { guilds: (payload && payload.guilds) || [] }
+        }]
+      });
+    if (!wrapped) return null;
+    return this.publishGroupDataShare(contractId, wrapped);
+  }
+
+  /**
    * Look up a peer registry entry by Fabric address (best-effort).
    * @param {string} address
    * @returns {{ id: string|null, alias: string|null, nickname: string|null, address: string|null }|null}
@@ -1085,6 +1519,16 @@ class FabricNetwork extends EventEmitter {
     return this._publishContractMessage(gooncitizenContractId(), 'MissionBroadcast', Object.assign({}, payload));
   }
 
+  publishMissionClaim (payload) {
+    const type = CONTRACT_BODY_TYPES.MissionClaim || 'MissionClaim';
+    return this._publishContractMessage(gooncitizenContractId(), type, Object.assign({}, payload));
+  }
+
+  publishMissionClaimDecision (payload) {
+    const type = CONTRACT_BODY_TYPES.MissionClaimDecision || 'MissionClaimDecision';
+    return this._publishContractMessage(gooncitizenContractId(), type, Object.assign({}, payload));
+  }
+
   /**
    * Discord bot coordination — inbound user request (GoonCitizen namespace).
    * @param {Object} payload DiscordRequest object
@@ -1112,6 +1556,33 @@ class FabricNetwork extends EventEmitter {
     return this._publishContractMessage(gooncitizenContractId(), type, Object.assign({}, payload));
   }
 
+  /**
+   * Chat `/lookup` coordination — public listing query (GoonCitizen namespace).
+   * @param {Object} payload LookupRequest object
+   */
+  publishLookupRequest (payload) {
+    const type = CONTRACT_BODY_TYPES.LookupRequest || 'LookupRequest';
+    return this._publishContractMessage(gooncitizenContractId(), type, Object.assign({}, payload));
+  }
+
+  /**
+   * Chat `/lookup` — exclusive claim (first-wins).
+   * @param {Object} payload LookupClaim object
+   */
+  publishLookupClaim (payload) {
+    const type = CONTRACT_BODY_TYPES.LookupClaim || 'LookupClaim';
+    return this._publishContractMessage(gooncitizenContractId(), type, Object.assign({}, payload));
+  }
+
+  /**
+   * Chat `/lookup` — winner's reply payload.
+   * @param {Object} payload LookupResponse object
+   */
+  publishLookupResponse (payload) {
+    const type = CONTRACT_BODY_TYPES.LookupResponse || 'LookupResponse';
+    return this._publishContractMessage(gooncitizenContractId(), type, Object.assign({}, payload));
+  }
+
   publishEventBatch (events, sentAt = new Date().toISOString(), opts = {}) {
     if (!Array.isArray(events) || !events.length) return null;
     return this._publishContractMessage(gooncitizenContractId(), 'SCEventBatch', { events, sentAt }, opts);
@@ -1134,6 +1605,18 @@ class FabricNetwork extends EventEmitter {
    */
   publishGroupChat (contractId, payload) {
     return this._publishContractMessage(contractId, 'GroupChat', Object.assign({}, payload));
+  }
+
+  /**
+   * Ephemeral group voice presence (Join / Leave / Speaking). Not journaled.
+   * @param {string} contractId
+   * @param {string} type GroupVoiceJoin | GroupVoiceLeave | GroupVoiceSpeaking
+   * @param {Object} payload
+   */
+  publishGroupVoice (contractId, type, payload) {
+    const name = String(type || groupVoice.JOIN);
+    if (!groupVoice.isVoiceType(name)) throw new Error('unknown group voice type');
+    return this._publishContractMessage(contractId, name, Object.assign({ type: name, '@type': name }, payload || {}));
   }
 
   /**
@@ -1300,6 +1783,105 @@ class FabricNetwork extends EventEmitter {
     return this._signAndRelay(OUTER.CONTRACT_PROPOSAL, payload);
   }
 
+  /**
+   * Ask every connected Fabric peer for their published document catalog.
+   * Replies arrive as `inventoryResponse` / handler `onInventoryResponse`.
+   * @returns {{ requested: number, peers: string[] }}
+   */
+  requestPeerInventories () {
+    const documentOffers = require('../functions/documentOffers');
+    return documentOffers.requestConnectedInventories(this._peer);
+  }
+
+  /**
+   * Reply to `P2P_INVENTORY_REQUEST` with this node's published catalog items.
+   * @param {string} originName
+   * @param {object[]} items
+   * @returns {boolean}
+   */
+  replyDocumentInventory (originName, items) {
+    const documentOffers = require('../functions/documentOffers');
+    return documentOffers.replyInventory(this._peer, originName, items);
+  }
+
+  _connectionForAddress (peerAddress) {
+    const peer = this._peer;
+    if (!peer || !peer.connections) return null;
+    const want = String(peerAddress || '').trim();
+    if (!want) return null;
+    const direct = peer.connections[want];
+    if (direct && typeof direct._writeFabric === 'function') {
+      return { id: want, conn: direct };
+    }
+    for (const id of Object.keys(peer.connections)) {
+      const conn = peer.connections[id];
+      if (conn && typeof conn._writeFabric === 'function' &&
+        FabricNetwork.connectionMatchesAddress(id, want)) {
+        return { id, conn };
+      }
+    }
+    return null;
+  }
+
+  /**
+   * Push a catalog blob as AMP-sized `P2P_FILE_SEND` frames to one TCP peer.
+   * @param {string} peerAddress
+   * @param {Buffer} buffer
+   * @param {Object} [opts]
+   * @param {string} [opts.documentId]
+   * @returns {number} frames written
+   */
+  sendCatalogFile (peerAddress, buffer, opts = {}) {
+    const hit = this._connectionForAddress(peerAddress);
+    if (!hit) return 0;
+    const buf = Buffer.isBuffer(buffer) ? buffer : Buffer.from(buffer == null ? '' : buffer);
+    if (!buf.length) return 0;
+    const documentId = String(opts.documentId || '').trim().toLowerCase();
+    if (!/^[0-9a-f]{64}$/.test(documentId)) return 0;
+    const manifest = require('@fabric/core/functions/documentBlobManifest');
+    const key = this._peer && this._peer.key;
+    if (!key) return 0;
+    const split = manifest.splitBlobs(buf, opts.chunkBytes, documentId);
+    let wrote = 0;
+    for (const b of split.blobs) {
+      const fileObj = {
+        name: documentId,
+        body: b.bytes.toString('base64'),
+        blobIndex: b.index,
+        blobTotal: b.total,
+        blobHashHex: b.blobHashHex,
+        merkleRootHex: split.merkleRootHex,
+        contentSha256: split.contentSha256,
+        chunkBytes: split.chunkBytes,
+        clusterSync: true
+      };
+      const msg = this._signMessage('P2P_FILE_SEND', JSON.stringify(fileObj), { key });
+      this.recordMessage('out', msg, { via: 'local', peer: String(peerAddress) });
+      hit.conn._writeFabric(msg.toBuffer());
+      wrote += 1;
+    }
+    return wrote;
+  }
+
+  /**
+   * Send a catalog blob to every currently connected address in `addresses`.
+   * @param {string[]} addresses
+   * @param {Buffer} buffer
+   * @param {Object} [opts]
+   * @returns {number}
+   */
+  sendCatalogFileToAddresses (addresses, buffer, opts = {}) {
+    let wrote = 0;
+    const seen = new Set();
+    for (const addr of addresses || []) {
+      const key = String(addr || '').trim();
+      if (!key || seen.has(key)) continue;
+      seen.add(key);
+      wrote += this.sendCatalogFile(key, buffer, opts);
+    }
+    return wrote;
+  }
+
   _publishContractMessage (contractId, type, object, opts = {}) {
     const pubkey = this._identity && this._identity.pubkey;
     if (!pubkey) throw new Error('identity required');
@@ -1320,6 +1902,10 @@ class FabricNetwork extends EventEmitter {
 }
 
 FabricNetwork.APP_RELAY_TYPES = APP_RELAY_TYPES;
+FabricNetwork.PARENT_CHAIN_SKIP = PARENT_CHAIN_SKIP;
+FabricNetwork.skipsParentChain = function skipsParentChain (type) {
+  return PARENT_CHAIN_SKIP.has(String(type || ''));
+};
 FabricNetwork.isKnownAppRelayType = isKnownAppRelayType;
 FabricNetwork.GROUP_MESSAGE_TYPES = GROUP_MESSAGE_TYPES;
 FabricNetwork.peersDbPath = function peersDbPath (settingsDir) {

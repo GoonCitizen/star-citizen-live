@@ -71,4 +71,21 @@ describe('GoonCitizen Store ↔ Fabric Store', () => {
     await store.stop();
     fs.rmSync(dir, { recursive: true, force: true });
   });
+
+  it('persists collections as JSON when json: true', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'sc-store-json-'));
+    const registerDir = path.join(dir, 'register');
+    const store = new Store({ path: registerDir, json: true });
+    await store.start();
+    assert.equal(store.fabric, null);
+    store.put('groups', 'g1', { id: 'g1', name: 'Wing' });
+    await store.flush();
+    await store.stop();
+
+    const reopened = new Store({ path: registerDir, json: true });
+    await reopened.start();
+    assert.equal(reopened.get('groups', 'g1').name, 'Wing');
+    await reopened.stop();
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
 });

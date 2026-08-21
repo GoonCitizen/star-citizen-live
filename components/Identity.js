@@ -1,24 +1,40 @@
 'use strict';
 
 /**
- * Identity — key management modal (Hub IdentityManager brought forward).
+ * Identity — key management (Hub IdentityManager brought forward).
+ * Desktop uses the overlay modal; Android and desktop `#devices` use
+ * `layout: 'page'` on `#keys` / `#devices` / `#security` / `#privacy`
+ * (`components/Account.js`).
  *
  * Adapts hub.fabric.pub's identity safety model to the GoonCitizen desktop
- * shell (plain React + IPC bridge instead of Semantic UI + localStorage):
+ * and Android shells (plain React + IPC / Capacitor bridge):
  *   - lock / unlock with the encryption password; idle auto-lock timer
+ *   - **Add a device** (peer-equivalent initiator or responder): QR `fabric://link`
+ *     + HTTPS Passport landing; Android, desktop, and Passport can each create or accept
+ *   - **Linked devices / Revoke** publishes IdentityCrossSignRevoke (BIP340 Fabric Message)
  *   - reveal recovery phrase / xprv only after re-entering the password
  *     (even while unlocked), hidden by default, copy gated on reveal
  *   - encrypted backup export + import (password-sealed JSON file)
  *   - forget requires an explicit typed confirmation
  *
  * The plaintext key never enters the renderer: all operations go through
- * `window.electronAPI.identity` and secrets live only in main-process
- * memory while unlocked.
+ * `window.electronAPI.identity` (Electron main, or the Android WebView polyfill).
  */
 
 const React = require('react');
-const ActivityHeatmap = require('./ActivityHeatmap');
 const ShipPicker = require('./ShipPicker');
+const LocationPicker = require('./LocationPicker');
+const BitcoinWalletPanel = require('./BitcoinWalletPanel');
+const { isAndroidCompanion, androidSurface } = require('../functions/androidSurface');
+const { setAndroidSecureFlag } = require('../functions/androidSecureScreen');
+const { fetchPresence, putPresence, putPresenceShip } = require('../functions/presenceClient');
+const LinkedDevices = require('./LinkedDevices');
+const PubkeyEmoji = require('./PubkeyEmoji');
+const {
+  DEVICE_LINK_OFFER_TTL_MS,
+  isStaleDeviceLinkError,
+  isDeviceLinkLockedError
+} = require('../functions/deviceLinkLifecycle');
 
 const CSS = `
   .id-overlay{position:fixed;inset:0;z-index:45;background:rgba(8,10,14,.75);
@@ -62,6 +78,15 @@ const CSS = `
     color:var(--text);border-radius:7px;padding:8px 10px;font-size:13px;box-sizing:border-box}
   .id-groups{display:flex;flex-wrap:wrap;gap:8px}
   .id-groups label{display:flex;align-items:center;gap:6px;font-size:12px;color:var(--text);cursor:pointer}
+  .id-qr{display:block;width:min(220px,72vw);height:auto;margin:10px auto;background:#fff;padding:10px;border-radius:8px}
+  .id-link{font-family:'Cascadia Code',Consolas,monospace;font-size:11px;word-break:break-all;
+    background:var(--bg);border:1px solid var(--line);border-radius:7px;padding:8px 10px;margin:6px 0}
+  .id-page{width:100%}
+  .id-page .id-overlay{position:static;inset:auto;background:none;padding:0;display:block;
+    backdrop-filter:none;align-items:stretch;justify-content:stretch}
+  .id-page .id-card{width:100%;max-width:none;max-height:none;border:1px solid var(--line);
+    border-radius:12px;overflow:visible}
+  .id-page .id-head{position:static}
 `;
 
 const AUTOLOCK_OPTIONS = [
@@ -113,15 +138,28 @@ class Identity extends React.Component {
       presenceOnline: false,
       detectedShip: null,
       shipOverride: null,
+      locationOverride: null,
+      detectedLocation: null,
+      destinationOverride: null,
+      detectedDestination: null,
       groups: [],
       presenceBusy: false,
       presenceAvailability: 'auto',
       presenceStatusText: '',
       statusDraft: '',
-      showKeyTools: false
+      showKeyTools: this.props.section === 'keys',
+      linkOffer: null,
+      linkBusy: false,
+      createPassword: '',
+      createPassword2: '',
+      createdMnemonic: null,
+      createdAck: false,
+      linkedDevices: [],
+      linkPaste: ''
     };
     this._unsub = null;
     this._presenceTimer = null;
+    this._linkTimer = null;
   }
 
   componentDidMount () {
@@ -131,7 +169,22 @@ class Identity extends React.Component {
     this._presenceTimer = setInterval(() => this.loadPresence(), 15000);
     const b = bridge();
     if (b && b.onChanged) {
-      this._unsub = b.onChanged((summary) => this.setState({ info: summary, revealed: null }));
+      this._unsub = b.onChanged((summary) => {
+        const next = { info: summary, revealed: null };
+        if (summary && summary.pendingDeviceLinkOffer && summary.pendingDeviceLinkOffer.sessionId &&
+          !this.state.linkOffer) {
+          next.linkOffer = summary.pendingDeviceLinkOffer;
+        }
+        this.setState(next);
+      });
+    }
+    this.syncSeedSecureFlag();
+  }
+
+  componentDidUpdate (_prevProps, prevState) {
+    if (!!prevState.revealed !== !!this.state.revealed ||
+      !!prevState.createdMnemonic !== !!this.state.createdMnemonic) {
+      this.syncSeedSecureFlag();
     }
   }
 
@@ -142,7 +195,10 @@ class Identity extends React.Component {
       this.setState({
         nickname: (res.settings && res.settings.nickname) || '',
         bio: profile.bio || '',
-        scHandle: profile.scHandle || ''
+        scHandle: profile.scHandle || '',
+        linkedDevices: Array.isArray(res.settings && res.settings.linkedDevices)
+          ? res.settings.linkedDevices
+          : []
       });
     } catch (_) { /* settings unavailable */ }
   }
@@ -161,7 +217,11 @@ class Identity extends React.Component {
       statusDraft: statusText || '',
       presenceOnline: pd.online === true,
       detectedShip: pd.detectedShip || null,
-      shipOverride: pd.shipOverride || null
+      shipOverride: pd.shipOverride || null,
+      locationOverride: pd.locationOverride || null,
+      detectedLocation: pd.detectedLocation || null,
+      destinationOverride: pd.destinationOverride || null,
+      detectedDestination: pd.detectedDestination || null
     };
     this.setState(next);
     if (typeof this.props.onPresenceChange === 'function') {
@@ -171,8 +231,14 @@ class Identity extends React.Component {
         availability: next.presenceAvailability,
         statusText: next.presenceStatusText || null,
         ship: (pd.presence && pd.presence.ship) || null,
+        location: (pd.presence && pd.presence.location) || null,
+        destination: (pd.presence && pd.presence.destination) || null,
         detectedShip: next.detectedShip,
-        shipOverride: next.shipOverride
+        shipOverride: next.shipOverride,
+        locationOverride: next.locationOverride,
+        detectedLocation: next.detectedLocation,
+        destinationOverride: next.destinationOverride,
+        detectedDestination: next.detectedDestination
       });
     }
   }
@@ -180,27 +246,22 @@ class Identity extends React.Component {
   async loadPresence () {
     try {
       const [presenceRes, groupsRes] = await Promise.all([
-        fetch('/services/star-citizen/presence').then((r) => (r.ok ? r.json() : null)).catch(() => null),
+        fetchPresence(),
         fetch('/services/star-citizen/groups').then((r) => (r.ok ? r.json() : { data: [] })).catch(() => ({ data: [] }))
       ]);
       const groups = Array.isArray(groupsRes.data) ? groupsRes.data : (Array.isArray(groupsRes) ? groupsRes : []);
       this.setState({ groups });
-      if (presenceRes && presenceRes.data) this.applyPresenceData(presenceRes.data);
+      if (presenceRes && presenceRes.ok && presenceRes.data) this.applyPresenceData(presenceRes.data);
     } catch (_) { /* ignore */ }
   }
 
   async putPresence (patch) {
     this.setState({ presenceBusy: true, error: null, notice: null });
     try {
-      const res = await fetch('/services/star-citizen/presence', {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(patch)
-      });
-      const j = await res.json();
-      if (!res.ok) throw new Error(j.error || res.statusText);
+      const posted = await putPresence(patch);
+      if (!posted.ok) throw new Error(posted.error || 'presence update failed');
       this.setState({ presenceBusy: false });
-      this.applyPresenceData(j.data || {});
+      this.applyPresenceData(posted.data || {});
     } catch (e) {
       this.setState({ presenceBusy: false, error: e.message });
     }
@@ -227,15 +288,23 @@ class Identity extends React.Component {
       const body = autodetect
         ? { autodetect: true }
         : (clearing ? { clear: true } : { slug });
-      const res = await fetch('/services/star-citizen/presence/ship', {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body)
-      });
-      const j = await res.json();
-      if (!res.ok) throw new Error(j.error || res.statusText);
+      const posted = await putPresenceShip(body);
+      if (!posted.ok) throw new Error(posted.error || 'ship update failed');
       this.setState({ presenceBusy: false });
-      this.applyPresenceData(j.data || {});
+      this.applyPresenceData(posted.data || {});
+    } catch (e) {
+      this.setState({ presenceBusy: false, error: e.message });
+    }
+  }
+
+  async setPublishedPlace (field, slug) {
+    const key = field === 'destination' ? 'destinationOverrideSlug' : 'locationOverrideSlug';
+    this.setState({ presenceBusy: true, error: null, notice: null });
+    try {
+      const posted = await putPresence({ [key]: slug === undefined ? null : slug });
+      if (!posted.ok) throw new Error(posted.error || 'location update failed');
+      this.setState({ presenceBusy: false });
+      this.applyPresenceData(posted.data || {});
     } catch (e) {
       this.setState({ presenceBusy: false, error: e.message });
     }
@@ -280,16 +349,31 @@ class Identity extends React.Component {
   }
 
   componentWillUnmount () {
+    setAndroidSecureFlag(false);
     if (this._unsub) this._unsub();
     if (this._presenceTimer) clearInterval(this._presenceTimer);
+    this.stopLinkPoll();
     // Never keep secrets in component state after close.
-    this.setState({ revealed: null, revealPassword: '', unlockPassword: '', backupPassword: '' });
+    this.setState({ revealed: null, revealPassword: '', unlockPassword: '', backupPassword: '', createdMnemonic: null });
+  }
+
+  syncSeedSecureFlag () {
+    setAndroidSecureFlag(!!(this.state.revealed || this.state.createdMnemonic));
   }
 
   async load () {
     const b = bridge();
     if (!b) { this.setState({ info: null }); return; }
-    try { this.setState({ info: await b.get() }); } catch (_) { /* bridge gone */ }
+    try {
+      const info = await b.get();
+      const pending = info && info.pendingDeviceLinkOffer;
+      const next = { info };
+      if (pending && pending.sessionId && !this.state.linkOffer) {
+        next.linkOffer = pending;
+      }
+      this.setState(next);
+      if (pending && pending.sessionId) this.startLinkPoll();
+    } catch (_) { /* bridge gone */ }
   }
 
   async unlock () {
@@ -299,6 +383,7 @@ class Identity extends React.Component {
     if (res.error) return this.setState({ busy: false, error: res.error });
     this.setState({ busy: false, unlockPassword: '', notice: 'Unlocked — signing enabled.' });
     this.load();
+    if (this.state.linkOffer) this.startLinkPoll();
   }
 
   async lock () {
@@ -369,13 +454,368 @@ class Identity extends React.Component {
     if (this.state.forgetText !== 'forget') return;
     const res = await bridge().forget(true);
     if (res && res.error) return this.setState({ error: res.error });
-    this.setState({ confirmForget: false, forgetText: '', revealed: null, notice: 'Identity deleted from this machine.' });
+    this.setState({
+      confirmForget: false,
+      forgetText: '',
+      revealed: null,
+      notice: isAndroidCompanion()
+        ? 'Identity deleted from this device.'
+        : 'Identity deleted from this machine.'
+    });
     this.load();
     if (this.props.onForget) this.props.onForget();
   }
 
   copy (text) {
     try { navigator.clipboard.writeText(text); this.setState({ notice: 'Copied.' }); } catch (_) { /* clipboard unavailable */ }
+  }
+
+  stopLinkPoll () {
+    if (this._linkTimer) {
+      clearInterval(this._linkTimer);
+      this._linkTimer = null;
+    }
+  }
+
+  startLinkPoll () {
+    this.stopLinkPoll();
+    this._linkTimer = setInterval(() => { void this.tickAddDevice(); }, 2000);
+  }
+
+  async createOnDevice () {
+    const p = this.state.createPassword;
+    if (!p || p.length < 8 || p !== this.state.createPassword2 || this.state.busy) return;
+    const b = bridge();
+    if (!b || typeof b.create !== 'function') return;
+    this.setState({ busy: true, error: null, notice: null });
+    const res = await b.create(p);
+    if (res.error) return this.setState({ busy: false, error: res.error });
+    this.setState({
+      busy: false,
+      createPassword: '',
+      createPassword2: '',
+      createdMnemonic: res.mnemonic || null,
+      createdAck: false,
+      notice: 'Identity created on this device — write down the recovery phrase. This seed stays here; linking other devices does not copy it.'
+    });
+    this.load();
+  }
+
+  async startAddDevice () {
+    const b = bridge();
+    if (!b || typeof b.startDeviceLinkOffer !== 'function') {
+      this.setState({ error: 'This shell cannot create a device-link offer.' });
+      return;
+    }
+    if (this.state.linkBusy) return;
+    this.setState({ linkBusy: true, error: null, notice: null });
+    this.stopLinkPoll();
+    if (this.state.linkOffer && typeof b.cancelDeviceLinkOffer === 'function') {
+      try { await b.cancelDeviceLinkOffer(); } catch (_) { /* replace with a fresh offer */ }
+    }
+    const res = await b.startDeviceLinkOffer({
+      label: isAndroidCompanion() ? 'GoonCitizen Android' : 'GoonCitizen desktop'
+    });
+    if (res.error || !res.ok) {
+      this.setState({
+        linkBusy: false,
+        linkOffer: null,
+        error: res.error || 'Could not create device-link offer'
+      });
+      return;
+    }
+    this.setState({
+      linkBusy: false,
+      linkOffer: res,
+      notice: 'Waiting for the other device to approve. This QR expires in 10 minutes.'
+    });
+    this.startLinkPoll();
+  }
+
+  async tickAddDevice () {
+    const b = bridge();
+    if (!b || typeof b.tickDeviceLinkOffer !== 'function' || !this.state.linkOffer) return;
+    let res;
+    try {
+      res = await b.tickDeviceLinkOffer();
+    } catch (e) {
+      this.stopLinkPoll();
+      this.setState({
+        linkBusy: false,
+        error: (e && e.message) ? String(e.message) : 'Could not check the device-link offer.'
+      });
+      return;
+    }
+    if (isDeviceLinkLockedError(res)) {
+      this.setState({
+        error: 'Unlock this identity — the add-device QR is still waiting. Unlock, and this desktop will keep polling even if you leave this page.'
+      });
+      return;
+    }
+    if (!res || res.error || res.expired) {
+      if (isStaleDeviceLinkError(res) || (res && res.expired) || (res && /no pending device-link/i.test(String(res.error || '')))) {
+        this.stopLinkPoll();
+        this.setState({
+          linkOffer: null,
+          linkBusy: false,
+          error: 'That add-device offer expired or was cancelled. Start a new one.'
+        });
+      }
+      return;
+    }
+    if (res.status === 'linked') {
+      this.stopLinkPoll();
+      this.setState({
+        linkOffer: null,
+        linkBusy: false,
+        notice: 'Device linked. Both sides publish IdentityCrossSign and replay account data over Fabric (groups, notes, profile, chat). Sync continues on the mesh.'
+      });
+    }
+  }
+
+  async cancelAddDevice () {
+    this.stopLinkPoll();
+    const b = bridge();
+    if (b && typeof b.cancelDeviceLinkOffer === 'function') {
+      try { await b.cancelDeviceLinkOffer(); } catch (_) { /* ignore */ }
+    }
+    this.setState({ linkOffer: null, linkBusy: false, notice: 'Device-link offer cancelled.' });
+  }
+
+  async openPastedDeviceLink () {
+    const raw = String(this.state.linkPaste || '').trim();
+    if (!raw) return;
+    const b = bridge();
+    if (!b || typeof b.openProtocolUrl !== 'function') {
+      this.setState({ error: 'This shell cannot open a fabric://link. Scan the QR or open it in GoonCitizen.' });
+      return;
+    }
+    if (this.state.linkBusy) return;
+    this.setState({ linkBusy: true, error: null, notice: null });
+    try {
+      const res = await b.openProtocolUrl(raw);
+      if (res && res.error) {
+        this.setState({ linkBusy: false, error: res.error });
+        return;
+      }
+      this.setState({
+        linkBusy: false,
+        linkPaste: '',
+        notice: 'Opening device-link — approve the card if this is your other device.'
+      });
+    } catch (e) {
+      this.setState({ linkBusy: false, error: (e && e.message) ? e.message : String(e) });
+    }
+  }
+
+  async revokeLinkedDevice (target) {
+    const row = target && typeof target === 'object' ? target : null;
+    const id = String(
+      (row && (row.pubkey || row.peerFabricId || row.peerPubkey || row.id)) ||
+      target ||
+      ''
+    );
+    if (!id) return;
+    const match = (this.state.linkedDevices || []).find((d) => {
+      const pid = d && (d.peerFabricId || d.pubkey || d.id || d.peerPubkey);
+      return String(pid || '') === id ||
+        (row && row.xonly && String(d.peerPubkey || '').toLowerCase().indexOf(String(row.xonly).toLowerCase()) >= 0);
+    });
+    const next = (this.state.linkedDevices || []).filter((d) => {
+      const pid = d && (d.peerFabricId || d.pubkey || d.id || d.peerPubkey);
+      if (String(pid || '') === id) return false;
+      if (row && row.xonly && String(d.peerPubkey || '').toLowerCase().indexOf(String(row.xonly).toLowerCase()) >= 0) {
+        return false;
+      }
+      return true;
+    });
+    const nonce = (match && match.nonce) || (row && row.nonce) || null;
+    const peerPubkey = (match && (match.peerPubkey || match.pubkey)) || id;
+    this.setState({ busy: true, error: null, notice: null });
+    try {
+      if (nonce) {
+        const { postIdentityCrossSign } = require('../functions/identityCrossSignClient');
+        const posted = await postIdentityCrossSign(window.location.origin, {
+          type: 'IdentityCrossSignRevoke',
+          peerPubkey,
+          nonce
+        });
+        if (!posted.ok) throw new Error(posted.error || 'Could not publish IdentityCrossSignRevoke');
+      }
+      await fetch('/settings/linkedDevices', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ value: next })
+      });
+      this.setState({
+        busy: false,
+        linkedDevices: next,
+        notice: nonce
+          ? 'Device revoked — IdentityCrossSignRevoke published as a Fabric Message.'
+          : 'Removed the local pairing row. Scan a fresh QR to cluster again.'
+      });
+    } catch (e) {
+      this.setState({ busy: false, error: e.message });
+    }
+  }
+
+  renderCreateIdentity () {
+    const words = (this.state.createdMnemonic || '').trim().split(/\s+/).filter(Boolean);
+    return React.createElement('div', { className: 'id-sec' },
+      React.createElement('h3', null, 'Create identity on this device'),
+      React.createElement('div', { className: 'd' },
+        isAndroidCompanion()
+          ? 'This device gets its own seed. Restore a phrase or backup if you already have one — then link desktop or Passport from Security. Do not copy the mnemonic onto them.'
+          : 'This device gets its own seed. Link desktop and Passport afterwards — do not copy the mnemonic onto them.'),
+      words.length
+        ? React.createElement(React.Fragment, null,
+          React.createElement('div', { className: 'id-warn' },
+            'Write these words down once. Anyone with them can impersonate you.'),
+          React.createElement('div', { className: 'id-secret' }, this.state.createdMnemonic),
+          React.createElement('label', { className: 'id-groups', style: { marginTop: 8 } },
+            React.createElement('input', {
+              type: 'checkbox',
+              checked: this.state.createdAck === true,
+              onChange: (e) => this.setState({ createdAck: e.target.checked })
+            }),
+            'I wrote down the recovery phrase'),
+          React.createElement('div', { className: 'id-row' },
+            React.createElement('button', {
+              className: 'id-btn',
+              disabled: !this.state.createdAck,
+              onClick: () => this.setState({ createdMnemonic: null, createdAck: false })
+            }, 'Done')
+          )
+        )
+        : React.createElement(React.Fragment, null,
+          React.createElement('div', { className: 'id-row' },
+            React.createElement('input', {
+              className: 'id-input', type: 'password', placeholder: 'password (8+ characters)',
+              value: this.state.createPassword,
+              onChange: (e) => this.setState({ createPassword: e.target.value })
+            })
+          ),
+          React.createElement('div', { className: 'id-row' },
+            React.createElement('input', {
+              className: 'id-input', type: 'password', placeholder: 'confirm password',
+              value: this.state.createPassword2,
+              onChange: (e) => this.setState({ createPassword2: e.target.value }),
+              onKeyDown: (e) => { if (e.key === 'Enter') this.createOnDevice(); }
+            }),
+            React.createElement('button', {
+              className: 'id-btn',
+              disabled: this.state.busy ||
+                !this.state.createPassword ||
+                this.state.createPassword.length < 8 ||
+                this.state.createPassword !== this.state.createPassword2,
+              onClick: () => this.createOnDevice()
+            }, this.state.busy ? '…' : 'Create identity')
+          )
+        )
+    );
+  }
+
+  renderAddDevice () {
+    const info = this.state.info;
+    const offer = this.state.linkOffer;
+    const b = bridge();
+    const canOffer = !!(b && typeof b.startDeviceLinkOffer === 'function');
+    if (!info) return null;
+    if (!info.unlocked) {
+      return React.createElement('div', { className: 'id-sec' },
+        React.createElement('h3', null, 'Add a device'),
+        React.createElement('div', { className: 'd' },
+          'Unlock this identity to show a QR. Phone / desktop scan fabric://link; Passport opens the HTTPS landing. Website login is a different card (fabric://login).')
+      );
+    }
+    return React.createElement('div', { className: 'id-sec' },
+      React.createElement('h3', null, 'Add a device'),
+        React.createElement('div', { className: 'd' },
+          'Show a QR for Android, Passport, or another desktop. On the other device tap the header QR (or paste fabric://link). Matching emoji on that confirm modal is enough to approve the link. Each app keeps its own seed. Website sign-in uses fabric://login, not this QR.'),
+      React.createElement('div', { className: 'd' },
+        'If the camera does not open fabric://link, paste it here (desktop Identity → Copy fabric://link).'),
+      React.createElement('div', { className: 'id-row' },
+        React.createElement('input', {
+          className: 'id-input',
+          type: 'text',
+          placeholder: 'fabric://link?sessionId=…&hub=…',
+          value: this.state.linkPaste || '',
+          onChange: (e) => this.setState({ linkPaste: e.target.value }),
+          onKeyDown: (e) => { if (e.key === 'Enter') this.openPastedDeviceLink(); }
+        }),
+        React.createElement('button', {
+          className: 'id-btn ghost',
+          disabled: this.state.linkBusy || !String(this.state.linkPaste || '').trim(),
+          onClick: () => this.openPastedDeviceLink()
+        }, 'Open link')
+      ),
+      !offer
+        ? React.createElement('div', { className: 'id-row' },
+          React.createElement('button', {
+            className: 'id-btn',
+            disabled: this.state.linkBusy || !canOffer,
+            onClick: () => this.startAddDevice()
+          }, this.state.linkBusy ? 'Creating offer…' : 'Add a device')
+        )
+        : React.createElement(React.Fragment, null,
+          offer.qrDataUrl
+            ? React.createElement('img', {
+              className: 'id-qr',
+              src: offer.qrDataUrl,
+              alt: 'Scan fabric://link to join this identity cluster'
+            })
+            : null,
+          React.createElement(PubkeyEmoji, {
+            source: offer.initiatorId,
+            label: 'The phone modal must show these same emoji after it scans this QR. They fingerprint this device’s Fabric key — not a seed.'
+          }),
+          React.createElement('div', { className: 'd' }, 'GoonCitizen desktop / Android'),
+          React.createElement('div', { className: 'id-link' }, offer.protocolUrl || ''),
+          React.createElement('div', { className: 'd' }, 'Passport (open on relay.goon.vc)'),
+          React.createElement('div', { className: 'id-link' }, offer.httpsUrl || ''),
+          React.createElement('div', { className: 'd' },
+            'Expires in ' + Math.round(DEVICE_LINK_OFFER_TTL_MS / 60000) +
+            ' minutes. Cancel and start again if the other device never sees this QR.'),
+          React.createElement('div', { className: 'id-row' },
+            React.createElement('button', {
+              className: 'id-btn ghost',
+              onClick: () => this.copy(offer.protocolUrl)
+            }, 'Copy fabric://link'),
+            React.createElement('button', {
+              className: 'id-btn ghost',
+              onClick: () => this.copy(offer.httpsUrl)
+            }, 'Copy HTTPS landing'),
+            React.createElement('button', {
+              className: 'id-btn ghost',
+              onClick: () => this.cancelAddDevice()
+            }, 'Cancel')
+          )
+        )
+    );
+  }
+
+  renderLinkedDevices (opts = {}) {
+    const info = this.state.info || {};
+    const page = opts.page === true;
+    return React.createElement('div', { className: 'id-sec' },
+      page ? null : React.createElement('h3', null, 'Linked devices'),
+      React.createElement(LinkedDevices, {
+        variant: page ? 'page' : 'embed',
+        localPubkey: info.pubkey || '',
+        linkedDevices: this.state.linkedDevices || [],
+        addDevice: page ? this.renderAddDevice() : null,
+        onRevoke: (pk) => this.revokeLinkedDevice(pk),
+        onAddDevice: page ? null : () => this.startAddDevice()
+      }),
+      !page && typeof this.props.onOpenDevices === 'function'
+        ? React.createElement('button', {
+          type: 'button',
+          className: 'id-btn ghost',
+          style: { marginTop: 8 },
+          onClick: () => this.props.onOpenDevices()
+        }, 'Open device manager')
+        : null
+    );
   }
 
   renderUnlockBanner () {
@@ -505,14 +945,18 @@ class Identity extends React.Component {
   }
 
   renderProfileActivity () {
-    const show = this.props.showProfileActivity !== false &&
-      ActivityHeatmap.readShowProfileActivity();
-    if (!show) return null;
-    return React.createElement(ActivityHeatmap, {
-      title: 'When you fly',
-      subtitle: 'Same cumulative heatmap as Home → When you fly (this machine’s logs).',
-      analytics: this.props.analytics || null
-    });
+    if (!androidSurface('heatmap')) return null;
+    const pk = this.state.info && this.state.info.pubkey;
+    return React.createElement('div', { style: { marginTop: 12 } },
+      pk
+        ? React.createElement('div', { className: 'd' },
+          'When you fly lives on ',
+          React.createElement('a', { href: '/profiles/' + encodeURIComponent(pk) }, 'your profile'),
+          ' (identity chip → My profile). Publish a weekday × hour grid to Federation groups from there.')
+        : null,
+      React.createElement('div', { className: 'd', style: { marginTop: 12, marginBottom: 0 } },
+        'Pin files to this profile with 📌 on each file page. Installers pinned here are how other org leaders run this desktop from your identity — names, sizes, and prices, not the bytes.')
+    );
   }
 
   renderPresence () {
@@ -530,7 +974,7 @@ class Identity extends React.Component {
           this.state.presenceOnline ? 'online' : 'offline')),
       React.createElement('div', { className: 'd' },
         'Opt-in presence for peers, groups, and fleets. Auto uses Game.log activity (last 10 minutes); Online/Offline force the published state. ',
-        'Ship is detected from quantum travel and vehicle-control lines.'),
+        'Ship is detected from quantum travel and vehicle-control lines. Location and destination follow QT select / route / arrive (or set them here).'),
       React.createElement('div', { className: 'id-field' },
         React.createElement('label', null, 'Availability'),
         React.createElement('select', {
@@ -630,6 +1074,26 @@ class Identity extends React.Component {
           detectedShip: this.state.detectedShip,
           onSelect: (slug) => this.setPublishedShip(slug)
         })
+      ),
+      React.createElement('div', { className: 'id-field' },
+        React.createElement(LocationPicker, {
+          label: 'Published location',
+          noun: 'Location',
+          disabled: busy,
+          overridePlace: this.state.locationOverride,
+          detectedPlace: this.state.detectedLocation,
+          onSelect: (slug) => this.setPublishedPlace('location', slug)
+        })
+      ),
+      React.createElement('div', { className: 'id-field', style: { marginBottom: 0 } },
+        React.createElement(LocationPicker, {
+          label: 'Published destination',
+          noun: 'Destination',
+          disabled: busy,
+          overridePlace: this.state.destinationOverride,
+          detectedPlace: this.state.detectedDestination,
+          onSelect: (slug) => this.setPublishedPlace('destination', slug)
+        })
       )
     );
   }
@@ -688,7 +1152,9 @@ class Identity extends React.Component {
       React.createElement('h3', { style: { margin: '0 0 4px', fontSize: 13 } }, 'Encrypted backup'),
       React.createElement('div', { className: 'd' },
         'Download a password-sealed backup file (the key material stays encrypted with your password). ',
-        'Restore it on another machine via "Import backup".'),
+        isAndroidCompanion()
+          ? 'Restore it here, or on desktop / another device, via Import backup.'
+          : 'Restore it on another machine via "Import backup".'),
       React.createElement('div', { className: 'id-row' },
         React.createElement('input', {
           className: 'id-input', type: 'password', placeholder: 'password',
@@ -730,10 +1196,13 @@ class Identity extends React.Component {
     return React.createElement('div', { style: { marginTop: 14 } },
       React.createElement('h3', { style: { margin: '0 0 4px', fontSize: 13 } }, 'Danger zone'),
       !this.state.confirmForget
-        ? React.createElement('button', { className: 'id-btn danger', onClick: () => this.setState({ confirmForget: true, forgetText: '' }) }, 'Forget identity on this machine…')
+        ? React.createElement('button', { className: 'id-btn danger', onClick: () => this.setState({ confirmForget: true, forgetText: '' }) },
+          isAndroidCompanion() ? 'Forget identity on this device…' : 'Forget identity on this machine…')
         : React.createElement(React.Fragment, null,
           React.createElement('div', { className: 'id-warn' },
-            React.createElement('b', null, 'This deletes the encrypted key file from this machine. '),
+            React.createElement('b', null, isAndroidCompanion()
+              ? 'This deletes the encrypted key from this device. '
+              : 'This deletes the encrypted key file from this machine. '),
             'The only way back is your seed phrase or a backup file. If you have neither, this identity — and your standing attached to it — is gone forever.'),
           React.createElement('div', { className: 'id-row' },
             React.createElement('input', {
@@ -751,36 +1220,162 @@ class Identity extends React.Component {
     );
   }
 
-  render () {
+  renderKeySummary () {
     const info = this.state.info;
-    return React.createElement('div', { className: 'id-overlay', onClick: (e) => { if (e.target === e.currentTarget) this.props.onClose(); } },
-      React.createElement('div', { className: 'id-card' },
-        React.createElement('div', { className: 'id-head' },
-          React.createElement('h2', null, '🔑 Identity'),
-          React.createElement('button', { className: 'id-x', title: 'Close', onClick: () => this.props.onClose() }, '✕')
-        ),
-        !bridge()
-          ? React.createElement('div', { className: 'id-sec' },
-            React.createElement('div', { className: 'd' }, 'Identity management runs in the desktop app — browser sessions are read-only.'))
-          : !info
-            ? React.createElement('div', { className: 'id-sec' }, 'loading…')
-            : !info.exists
-              ? React.createElement('div', { className: 'id-sec' },
-                React.createElement('div', { className: 'd' }, 'No identity on this machine yet — restart the app to run onboarding, or import a backup below.'),
-                this.renderBackup())
-              : React.createElement(React.Fragment, null,
-                this.renderUnlockBanner(),
-                this.renderProfile(),
-                this.renderPresence(),
-                this.renderKeyTools()
-              ),
-        this.state.error ? React.createElement('div', { className: 'id-sec' }, React.createElement('div', { className: 'id-err' }, this.state.error)) : null,
-        this.state.notice ? React.createElement('div', { className: 'id-sec' }, React.createElement('div', { className: 'id-ok' }, this.state.notice)) : null
+    if (!info) return null;
+    return React.createElement('div', { className: 'id-sec' },
+      React.createElement('h3', null, 'This device’s key'),
+      React.createElement('div', { className: 'd' },
+        'Pubkey is the actor id on the mesh. xpub is watch-only for associated funds.'),
+      React.createElement('div', { className: 'id-kv' },
+        React.createElement('b', null, 'pubkey (actor id) '), React.createElement('br'), info.pubkey || '—'),
+      info.xpub
+        ? React.createElement('div', { className: 'id-kv' },
+          React.createElement('b', null, 'xpub (watch-only) '), React.createElement('br'), info.xpub)
+        : null,
+      React.createElement('div', { className: 'id-row' },
+        React.createElement('button', { className: 'id-btn ghost', onClick: () => this.copy(info.pubkey) }, 'Copy pubkey'),
+        info.unlocked
+          ? React.createElement('span', { className: 'id-tag on' }, 'unlocked')
+          : React.createElement('span', { className: 'id-tag off' }, 'locked')
       )
     );
   }
+
+  renderFunds () {
+    if (!androidSurface('associatedFunds')) return null;
+    const info = this.state.info;
+    return React.createElement('div', { className: 'id-sec' },
+      React.createElement('h3', null, 'Associated funds'),
+      React.createElement('div', { className: 'd' },
+        'Balance, receive, and history for this identity’s xpub (Hub Bitcoin proxy). Unlock to refresh.'),
+      React.createElement(BitcoinWalletPanel, {
+        identityPubkey: info && info.pubkey,
+        identityLocked: !(info && info.unlocked),
+        bitcoinEnable: true
+      })
+    );
+  }
+
+  renderLockRow () {
+    const info = this.state.info;
+    if (!info) return null;
+    return React.createElement('div', { className: 'id-sec' },
+      React.createElement('h3', null, 'Lock'),
+      React.createElement('div', { className: 'd' },
+        'Password encrypts the seed on this device. Auto-lock clears the unlocked session after idle time.'),
+      React.createElement('div', { className: 'id-row', style: { marginTop: 0 } },
+        info.unlocked
+          ? React.createElement('button', { className: 'id-btn ghost', onClick: () => this.lock() }, '🔒 Lock now')
+          : null,
+        React.createElement('span', { style: { fontSize: 12, color: 'var(--muted)' } }, 'Auto-lock after idle'),
+        React.createElement('select', {
+          className: 'id-select',
+          value: info.autoLockMinutes != null ? info.autoLockMinutes : 30,
+          onChange: (e) => this.setAutoLock(Number(e.target.value))
+        }, AUTOLOCK_OPTIONS.map(([v, label]) => React.createElement('option', { key: v, value: v }, label)))
+      )
+    );
+  }
+
+  renderBody () {
+    const info = this.state.info;
+    const section = this.props.section || 'all';
+    if (!bridge()) {
+      return React.createElement('div', { className: 'id-sec' },
+        React.createElement('div', { className: 'd' },
+          'Identity management runs in the GoonCitizen app — browser sessions without a local node are read-only.'));
+    }
+    if (!info) return React.createElement('div', { className: 'id-sec' }, 'loading…');
+    if (!info.exists) {
+      return React.createElement(React.Fragment, null,
+        this.renderCreateIdentity(),
+        React.createElement('div', { className: 'id-sec' }, this.renderBackup()));
+    }
+    if (section === 'keys') {
+      return React.createElement(React.Fragment, null,
+        this.renderUnlockBanner(),
+        this.renderKeySummary(),
+        this.renderFunds(),
+        React.createElement('div', { className: 'id-sec' },
+          React.createElement('h3', null, 'Recovery'),
+          React.createElement('div', { className: 'd' },
+            'Reveal the seed only after re-entering your password. Export an encrypted backup, or restore one here.'),
+          this.renderReveal(),
+          this.renderBackup()
+        ),
+        isAndroidCompanion()
+          ? React.createElement('div', { className: 'id-sec' }, this.renderForget())
+          : null
+      );
+    }
+    if (section === 'devices') {
+      return React.createElement(React.Fragment, null,
+        this.renderUnlockBanner(),
+        this.renderLinkedDevices({ page: true })
+      );
+    }
+    if (section === 'security') {
+      return React.createElement(React.Fragment, null,
+        this.renderUnlockBanner(),
+        this.renderLockRow(),
+        this.renderAddDevice(),
+        this.renderLinkedDevices(),
+        React.createElement('div', { className: 'id-sec' }, this.renderForget())
+      );
+    }
+    if (section === 'privacy') {
+      return React.createElement(React.Fragment, null,
+        this.renderUnlockBanner(),
+        this.renderProfile(),
+        this.renderPresence()
+      );
+    }
+    return React.createElement(React.Fragment, null,
+      this.renderUnlockBanner(),
+      this.renderAddDevice(),
+      this.renderLinkedDevices(),
+      this.renderProfile(),
+      this.renderPresence(),
+      this.renderKeyTools()
+    );
+  }
+
+  render () {
+    const page = this.props.layout === 'page';
+    const section = this.props.section || 'all';
+    const titles = {
+      keys: '🔑 Keys',
+      devices: '📱 Devices',
+      security: '🛡️ Security',
+      privacy: '🔒 Privacy',
+      all: '🔑 Identity'
+    };
+    const inner = React.createElement('div', { className: 'id-card' },
+      page
+        ? null
+        : React.createElement('div', { className: 'id-head' },
+          React.createElement('h2', null, titles[section] || titles.all),
+          React.createElement('button', {
+            className: 'id-x',
+            title: 'Close',
+            onClick: () => this.props.onClose && this.props.onClose()
+          }, '✕')
+        ),
+      this.renderBody(),
+      this.state.error ? React.createElement('div', { className: 'id-sec' }, React.createElement('div', { className: 'id-err' }, this.state.error)) : null,
+      this.state.notice ? React.createElement('div', { className: 'id-sec' }, React.createElement('div', { className: 'id-ok' }, this.state.notice)) : null
+    );
+    if (page) return React.createElement('div', { className: 'id-page' }, inner);
+    return React.createElement('div', {
+      className: 'id-overlay',
+      onClick: (e) => {
+        if (e.target === e.currentTarget && this.props.onClose) this.props.onClose();
+      }
+    }, inner);
+  }
 }
 
-Identity.CSS = CSS;
+Identity.CSS = CSS + '\n' + (BitcoinWalletPanel.CSS || '') + '\n' + (LinkedDevices.CSS || '');
 
 module.exports = Identity;

@@ -135,7 +135,7 @@ function resolveDiscordConfig (opts = {}) {
     return !!localDefault;
   };
 
-  return normalizeDiscordSettings({
+  const normalized = normalizeDiscordSettings({
     enable: enableFlag && !!(token || webhook),
     token,
     webhook,
@@ -148,6 +148,9 @@ function resolveDiscordConfig (opts = {}) {
     announceCombat: announce('announceCombat', !!local.announceCombat),
     announceIncaps: announce('announceIncaps', !!local.announceIncaps)
   });
+  // @fabric/discord treats a token/webhook as enable=true; honor the Store flag.
+  normalized.enable = enableFlag && !!(normalized.token || normalized.webhook);
+  return normalized;
 }
 
 module.exports = {

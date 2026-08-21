@@ -4,6 +4,10 @@ tooling** we can draw on for this project's goals (log relay → Discord/API, mi
 register + officer validation, mission-type classification, player-down/combat
 signals, metrics, cross-platform packaging, friendly-name enrichment).
 
+To run or fork **this** tree (G00N SQUAD, PERMAFLEET, other orgs), start at
+[`DEVELOPERS.md`](DEVELOPERS.md). This catalog is for borrowing ideas, not a
+second product.
+
 > **Verify before you borrow.** Licences below are unconfirmed unless noted — check
 > each repo's LICENSE before copying code (MIT/Apache/BSD = reusable with notice;
 > GPL/AGPL = copyleft, treat as *ideas only*; none = ideas only). Also check the last

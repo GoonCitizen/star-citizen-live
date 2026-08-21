@@ -12,7 +12,34 @@
 
 const React = require('react');
 const Chat = require('./Chat');
+const { JoinVoiceButton } = require('./ActiveVoicePanel');
 const GroupFabricInspector = require('./GroupFabricInspector');
+const LocalGroups = require('./LocalGroups');
+const GroupBitcoinPanel = require('./GroupBitcoinPanel');
+const { readAppHash, setAppHash } = require('../functions/appHash');
+const {
+  sanitizePinnedChannels
+} = require('../functions/groupPinnedChannels');
+const {
+  shareClipboardText,
+  shareNotice,
+  createdNotice
+} = require('../functions/groupJoinFlow');
+const { formatInviteExpiryLabel } = require('../functions/inviteExpiry');
+const {
+  readPinnedGroupIds,
+  writePinnedGroupIds,
+  togglePinnedGroupId,
+  orderGroupsWithPins
+} = require('../functions/groupSidebarPins');
+const { fabricMessageHref } = require('../functions/collectionRecords');
+const { fetchPresenceRoster } = require('../functions/presenceClient');
+const groupPresence = require('../functions/groupPresence');
+const GroupComposition = require('./GroupComposition');
+const GroupContractSummary = require('./GroupContractSummary');
+const { pubkeysMatch } = require('@fabric/http/functions/fabricPubkey');
+const StarMap = require('./StarMap');
+const { profileHref } = require('../functions/identityActor');
 
 const BASE = '/services/star-citizen';
 const PUBKEY_RE = /^0[23][0-9a-f]{64}$/;
@@ -50,6 +77,25 @@ const CSS = `
   .gp-row.on{background:var(--panel2);box-shadow:inset 2px 0 0 var(--accent)}
   .gp-row .n{font-weight:600;flex:1}
   .gp-row .d{color:var(--muted);font-size:11.5px;white-space:nowrap}
+  .gp-row .pin{background:none;border:none;color:var(--muted);cursor:pointer;padding:0 4px;font-size:13px;line-height:1}
+  .gp-row .pin.on{color:#f7931a}
+  .gp-row .pin:hover{color:#f7931a}
+  .gp-chat-tools{padding:10px 14px;display:grid;gap:10px;border-bottom:1px solid var(--line);
+    background:rgba(59,130,246,.05)}
+  .gp-chat-tools h4{margin:0;font-size:11px;text-transform:uppercase;letter-spacing:.4px;color:var(--muted)}
+  .gp-chat-tools .hint{font-size:11.5px;color:var(--muted);line-height:1.45}
+  .gp-log{padding:4px 0 12px}
+  .gp-log-row{padding:8px 14px;border-bottom:1px solid #20262f;display:grid;gap:6px}
+  .gp-log-row.open{background:rgba(56,139,253,.05)}
+  .gp-log-row .t{font-size:12.5px;font-weight:600}
+  .gp-log-row .m{font-size:11.5px;color:var(--muted)}
+  .gp-log-head{display:flex;align-items:flex-start;gap:8px}
+  .gp-log-copy{flex:1;min-width:0;display:grid;gap:2px}
+  .gp-log-actions{display:flex;gap:6px;flex-shrink:0}
+  .gp-log-actions .gp-btn{padding:2px 9px;font-size:11px;justify-self:auto;text-decoration:none}
+  .gp-log-json{margin:0;padding:10px;background:var(--bg);border:1px solid var(--line);border-radius:7px;
+    font-family:'Cascadia Code',Consolas,monospace;font-size:11px;overflow:auto;max-height:280px;
+    white-space:pre-wrap;word-break:break-all}
   .gp-form{padding:12px 14px;display:grid;gap:10px}
   .gp-form label{font-size:12px;color:var(--muted)}
   .gp-form input,.gp-form textarea{width:100%;background:var(--bg);border:1px solid var(--line);
@@ -65,14 +111,25 @@ const CSS = `
   .gp-ok{background:rgba(63,185,80,.12);color:var(--good);border-radius:7px;padding:8px 11px;font-size:12.5px;margin:0 14px 10px}
   .gp-member{display:flex;gap:10px;align-items:center;padding:7px 14px;border-bottom:1px solid #20262f}
   .gp-member code{font-family:'Cascadia Code',Consolas,monospace;font-size:11px;word-break:break-all;flex:1}
+  .gp-member a{color:var(--accent);text-decoration:none}
+  .gp-member a:hover{text-decoration:underline}
   .gp-tag{font-size:10px;font-weight:700;padding:1px 7px;border-radius:5px;white-space:nowrap}
   .gp-tag.creator{background:rgba(59,130,246,.18);color:var(--accent)}
   .gp-tag.you{background:rgba(63,185,80,.15);color:var(--good)}
-  .gp-meta{padding:10px 14px;color:var(--muted);font-size:12px;display:flex;gap:16px;flex-wrap:wrap}
-  .gp-meta b{color:var(--text)}
+  .gp-meta{padding:10px 14px;color:var(--muted);font-size:12px;display:block;border-bottom:1px solid var(--line)}
+  .gp-meta .gcs{width:100%}
+  .gp-meta-tags{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px;align-items:center}
   .gp-add{display:flex;gap:8px;padding:10px 14px;border-top:1px solid var(--line)}
   .gp-add input{flex:1;background:var(--bg);border:1px solid var(--line);color:var(--text);
     border-radius:7px;padding:7px 10px;font-size:12px;font-family:'Cascadia Code',Consolas,monospace}
+  .gp-invite{display:flex;gap:8px;padding:10px 14px;border-top:1px solid var(--line);flex-wrap:wrap}
+  .gp-invite input{flex:1;min-width:180px;background:var(--bg);border:1px solid var(--line);color:var(--text);
+    border-radius:7px;padding:7px 10px;font-size:12px;font-family:'Cascadia Code',Consolas,monospace}
+  .gp-share{padding:12px 14px;display:grid;gap:8px;border-top:1px solid var(--line);
+    background:rgba(59,130,246,.07)}
+  .gp-share .hint{font-size:12.5px;line-height:1.5;color:var(--text)}
+  .gp-toggle{display:flex;gap:8px;align-items:center;font-size:13px;color:var(--text)}
+  .gp-toggle input{accent-color:var(--accent)}
   .gp-hint{color:var(--muted);padding:20px 14px;font-size:13px;line-height:1.6}
   .gp-tag.primary{background:rgba(59,130,246,.2);color:var(--accent)}
   .gp-tag.public{background:rgba(63,185,80,.15);color:var(--good)}
@@ -88,21 +145,52 @@ const CSS = `
   .gp-wallet .addr{font-family:'Cascadia Code',Consolas,monospace;font-size:11px;word-break:break-all;color:var(--text)}
   .gp-prop{display:flex;gap:10px;align-items:center;flex-wrap:wrap;padding:8px 14px;border-bottom:1px solid #20262f}
   .gp-app{display:grid;gap:6px;padding:10px 14px;border-bottom:1px solid #20262f}
-  .gp-chat{border-top:1px solid var(--line)}
+  .gp-detail-wrap{position:relative;overflow:hidden;min-height:480px}
+  .gp-detail{display:flex;flex-direction:column;min-height:480px}
+  .gp-head{display:flex;align-items:center;gap:10px;padding:12px 16px;border-bottom:1px solid var(--line);
+    flex:none;position:relative;z-index:7;background:var(--panel)}
+  .gp-head h2{margin:0;font-size:16px;font-weight:650;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .gp-head .sub{color:var(--muted);font-weight:400;font-size:12px}
+  .gp-cog{margin-left:auto;background:var(--panel2);border:1px solid var(--line);color:var(--text);
+    border-radius:8px;width:34px;height:34px;flex:none;cursor:pointer;font-size:15px;line-height:1;
+    display:inline-flex;align-items:center;justify-content:center}
+  .gp-cog:hover,.gp-cog.on{border-color:var(--accent);background:rgba(56,139,253,.1)}
+  .gp-body-wrap{position:relative;flex:1 1 auto;min-height:360px}
+  .gp-settings{position:relative;inset:auto;z-index:auto;background:var(--panel);border-left:none;
+    box-shadow:none;display:flex;flex-direction:column;overflow:auto;flex:1;min-height:480px;width:auto;max-width:none}
+  @media(min-width:720px){
+    .gp-settings{left:auto;width:auto}
+  }
+  .gp-settings-head{display:flex;align-items:center;gap:8px;padding:12px 14px;border-bottom:1px solid var(--line);flex:none}
+  .gp-settings-head h3{margin:0;flex:1;font-size:14px;font-weight:650}
+  .gp-settings-body{padding:12px 14px 20px;display:grid;gap:14px}
+  .gp-set-sec{display:grid;gap:8px}
+  .gp-set-sec h4{margin:0;font-size:11px;text-transform:uppercase;letter-spacing:.4px;color:var(--muted)}
+  .gp-set-sec .hint{font-size:11.5px;color:var(--muted);line-height:1.45}
+  .gp-set-actions{display:flex;flex-wrap:wrap;gap:8px}
+  .gp-settings .gp-form{padding:0}
+  .gp-chat{border-top:none}
   .gp-chat h3{font-size:12px;color:var(--muted);margin:0;padding:12px 14px 6px;text-transform:uppercase;letter-spacing:.4px}
   .gp-chat .chat-wrap{border-radius:0}
+  .gp-mode{display:flex;gap:6px;padding:8px 14px;border-bottom:1px solid var(--line)}
+  .gp-mode button{flex:1;background:var(--panel2);border:1px solid var(--line);color:var(--text);
+    border-radius:7px;padding:5px 10px;font-size:12px;font-weight:600;cursor:pointer}
+  .gp-mode button.on{background:rgba(59,130,246,.16);border-color:var(--accent);color:var(--accent)}
 `;
 
 const SIDEBAR_KEY = 'gooncitizen.groups.sidebarCollapsed';
+const ROSTER_KEY = 'gooncitizen.groups.rosterMode';
 const DETAIL_TABS = [
+  ['chat', 'Chat'],
   ['members', 'Members'],
+  ['log', 'Log'],
   ['fleets', 'Fleets'],
   ['wallet', 'Wallet'],
   ['proposals', 'Proposals'],
   ['applications', 'Applications'],
-  ['chat', 'Chat'],
   ['fabric', 'Fabric']
 ];
+const DETAIL_TAB_IDS = new Set(DETAIL_TABS.map(([id]) => id));
 
 function readSidebarCollapsed () {
   try {
@@ -120,12 +208,60 @@ function writeSidebarCollapsed (collapsed) {
   } catch (_) { /* ignore */ }
 }
 
+function readRosterMode () {
+  try {
+    const v = (typeof localStorage !== 'undefined') && localStorage.getItem(ROSTER_KEY);
+    return v === 'local' ? 'local' : 'federation';
+  } catch (_) {
+    return 'federation';
+  }
+}
+
+function writeRosterMode (mode) {
+  try {
+    if (typeof localStorage !== 'undefined') {
+      localStorage.setItem(ROSTER_KEY, mode === 'local' ? 'local' : 'federation');
+    }
+  } catch (_) { /* ignore */ }
+}
+
 function identityBridge () {
   return (typeof window !== 'undefined' && window.electronAPI && window.electronAPI.identity) || null;
 }
 
 function shortKey (pubkey) {
   return pubkey ? pubkey.slice(0, 10) + '…' + pubkey.slice(-6) : '—';
+}
+
+function journalEntryLabel (entry) {
+  const type = String((entry && entry.type) || '');
+  const msg = (entry && entry.message) || {};
+  if (type === 'FleetShare') {
+    return 'Fleet shared' + (msg.name ? ': ' + msg.name : '');
+  }
+  if (type === 'GroupChange') {
+    const action = String(msg.action || '');
+    const patch = msg.patch && typeof msg.patch === 'object' ? msg.patch : null;
+    if (action === 'update' && patch && Object.prototype.hasOwnProperty.call(patch, 'pinnedMessages')) {
+      const n = Array.isArray(patch.pinnedMessages) ? patch.pinnedMessages.length : 0;
+      return n ? ('Pinned messages updated (' + n + ')') : 'Pinned messages cleared';
+    }
+    if (action === 'update' && patch && Object.prototype.hasOwnProperty.call(patch, 'pinnedChannels')) {
+      const n = Array.isArray(patch.pinnedChannels) ? patch.pinnedChannels.length : 0;
+      return n ? ('Pinned chats updated (' + n + ')') : 'Pinned chats cleared';
+    }
+    if (action === 'update') return 'Group settings updated';
+    if (action === 'member.add') return 'Member added';
+    if (action === 'member.remove') return 'Member removed';
+    return 'Group change';
+  }
+  if (type === 'GroupChangeProposal') return 'Proposal opened';
+  if (type === 'GroupChangeVote') return 'Proposal vote';
+  if (type === 'GroupApplication') return 'Join application';
+  if (type === 'GroupApplicationDecision') return 'Application decided';
+  if (type === 'GroupActivityTree') return 'Activity tree published';
+  if (type === 'FederationContractInviteResponse') return 'Invite response';
+  return type || 'Event';
 }
 
 class Groups extends React.Component {
@@ -145,29 +281,99 @@ class Groups extends React.Component {
       membersText: '',
       threshold: 1,
       parentId: '',
+      visibility: 'private',
+      showCreateMembers: false,
       creating: false,
       showCreate: false,
+      createKind: 'group',
+      inviteKey: '',
+      lastShare: null,
       // manage
       addKey: '',
       busy: false,
       sidebarCollapsed: readSidebarCollapsed(),
-      detailTab: 'members',
+      rosterMode: readRosterMode(),
+      detailTab: 'chat',
       groupWallet: null,
       proposals: [],
       applications: [],
       groupFleets: [],
+      groupJournal: [],
+      localFleets: [],
+      presenceRoster: {},
+      shareFleetId: '',
+      newFleetName: '',
+      pinnedGroupIds: readPinnedGroupIds(),
       detailLoading: false,
-      colorEdit: '#3b82f6'
+      colorEdit: '#3b82f6',
+      settingsOpen: false,
+      settingsView: 'main',
+      logOpenId: null
     };
   }
 
   componentDidMount () {
+    this._onHash = () => this.applyHashSelection();
+    if (typeof window !== 'undefined') {
+      window.addEventListener('hashchange', this._onHash);
+    }
     this.connect();
+    if (typeof window !== 'undefined') {
+      window.addEventListener('gooncitizen:group-imported', this._onImported);
+    }
   }
+
+  componentWillUnmount () {
+    if (this._onHash && typeof window !== 'undefined') {
+      window.removeEventListener('hashchange', this._onHash);
+    }
+    if (typeof window !== 'undefined') {
+      window.removeEventListener('gooncitizen:group-imported', this._onImported);
+    }
+  }
+
+  _onImported = () => {
+    this.refresh().catch(() => {});
+  };
 
   componentDidUpdate (prev) {
     if (prev.identityPubkey !== this.props.identityPubkey && this.props.identityPubkey) {
       this.setState({ pubkey: this.props.identityPubkey, token: null }, () => this.connect());
+    }
+  }
+
+  /** Deep link `#groups?id=<groupId>&tab=fleets` (from Fleet share browse). */
+  applyHashSelection () {
+    const { path, query } = readAppHash();
+    if (path !== 'groups') return;
+    const groups = this.state.groups || [];
+    if (!groups.length) return;
+    const id = query.id || null;
+    let tab = query.tab || null;
+    if (tab === 'fleet') tab = 'fleets';
+    const settings = tab === 'settings';
+    if (tab && !DETAIL_TAB_IDS.has(tab) && !settings) tab = null;
+    if (tab === 'fabric' && !this.props.advancedMode) tab = null;
+    if (id && groups.some((g) => g.id === id)) {
+      if (id !== this.state.selectedId) {
+        this.selectGroup(id, {
+          detailTab: settings ? (this.state.detailTab || 'chat') : (tab || this.state.detailTab || 'chat'),
+          skipHash: true,
+          settingsOpen: settings
+        });
+      } else {
+        const patch = {};
+        if (settings !== !!this.state.settingsOpen) {
+          patch.settingsOpen = settings;
+          if (!settings) patch.settingsView = 'main';
+        }
+        if (!settings && tab && tab !== this.state.detailTab) patch.detailTab = tab;
+        if (Object.keys(patch).length) this.setState(patch);
+      }
+      return;
+    }
+    if (tab && tab !== this.state.detailTab && this.state.selectedId) {
+      this.setState({ detailTab: tab });
     }
   }
 
@@ -220,15 +426,25 @@ class Groups extends React.Component {
         || (settingsRes && settingsRes.runtime && settingsRes.runtime.primaryGroupId)
         || null;
       let nextId = null;
+      let hashTab = null;
       this.setState((s) => {
-        nextId = s.selectedId && groups.some((g) => g.id === s.selectedId)
-          ? s.selectedId
-          : (groups[0] && groups[0].id) || null;
+        const { path, query } = readAppHash();
+        const hashId = (path === 'groups' && query.id) || null;
+        hashTab = (path === 'groups' && query.tab) || null;
+        if (hashTab === 'fleet') hashTab = 'fleets';
+        if (hashTab && !DETAIL_TAB_IDS.has(hashTab)) hashTab = null;
+        if (hashTab === 'fabric' && !this.props.advancedMode) hashTab = null;
+        nextId = (hashId && groups.some((g) => g.id === hashId))
+          ? hashId
+          : (s.selectedId && groups.some((g) => g.id === s.selectedId)
+            ? s.selectedId
+            : (groups[0] && groups[0].id) || null);
         return {
           groups,
           primaryGroupId,
           loading: false,
-          selectedId: nextId
+          selectedId: nextId,
+          detailTab: hashTab || s.detailTab || 'chat'
         };
       }, () => {
         if (nextId) this.loadGroupExtras(nextId);
@@ -293,14 +509,36 @@ class Groups extends React.Component {
           members: this.parseMembers(),
           threshold: Number(this.state.threshold) || 1,
           parentId: this.state.parentId || undefined,
+          visibility: this.state.visibility === 'public' ? 'public' : 'private',
           creator: this.state.pubkey // local relay fallback; ignored when a session exists
         })
       });
       const json = await res.json();
       if (!res.ok) throw new Error(json.error || `HTTP ${res.status}`);
+      const created = json.data || json;
+      const parentId = this.state.parentId || '';
+      const asChannel = this.state.createKind === 'channel';
+      if (asChannel && parentId && created && created.id && this.state.pubkey) {
+        const parent = (this.state.groups || []).find((g) => g.id === parentId);
+        if (parent && parent.creator === this.state.pubkey) {
+          const next = sanitizePinnedChannels(parent.pinnedChannels).concat(['group:' + created.id]);
+          await fetch(`${BASE}/groups/${encodeURIComponent(parentId)}`, {
+            method: 'PUT',
+            headers: this.headers(),
+            body: JSON.stringify({ pinnedChannels: next })
+          }).catch(() => null);
+        }
+      }
       this.setState({
         creating: false, showCreate: false, name: '', membersText: '', threshold: 1, parentId: '',
-        notice: `Group "${json.data.name}" created.`, selectedId: json.data.id
+        visibility: 'private', showCreateMembers: false, createKind: 'group',
+        settingsView: 'main',
+        settingsOpen: false,
+        notice: asChannel
+          ? ('Channel created — it is a Federation group with its own chat and log.')
+          : createdNotice(created),
+        selectedId: created.id,
+        detailTab: 'chat'
       });
       await this.refresh();
     } catch (e) {
@@ -332,47 +570,43 @@ class Groups extends React.Component {
   }
 
   async share (g) {
-    this.setState({ busy: true, error: null, notice: null });
+    this.setState({ busy: true, error: null, notice: null, lastShare: null });
     try {
-      const res = await fetch(`${BASE}/groups/${encodeURIComponent(g.id)}/share`, {
+      const publicShare = g.visibility === 'public';
+      const path = publicShare
+        ? `${BASE}/groups/${encodeURIComponent(g.id)}/share`
+        : `${BASE}/groups/${encodeURIComponent(g.id)}/invites`;
+      const body = publicShare
+        ? { relay: true }
+        : { relay: false, note: `Join ${g.name}` };
+      const res = await fetch(path, {
         method: 'POST',
         headers: this.headers(),
-        body: JSON.stringify({ relay: true })
+        body: JSON.stringify(body)
       });
       const json = await res.json();
       if (!res.ok) throw new Error(json.error || `HTTP ${res.status}`);
-      const data = json.data || {};
-      const url = data.protocolUrl || '';
+      const data = Object.assign({ visibility: g.visibility }, json.data || {});
+      const url = shareClipboardText(data);
       if (!url) throw new Error('no protocolUrl in share response');
-      const messageId = data.messageId || null;
-      const mesh = data.relayed
-        ? `Broadcast to network (${data.peers || 0} peer connection(s)). `
-        : (`Mesh broadcast failed` + (data.relayError ? `: ${data.relayError}` : '') + '. ');
-      // Prefer copying the AMP message id when present — paste into Settings /
-      // settings/local.js as defaultGroupMessageId. Full fabric:<hex> remains available.
-      const clipboard = messageId || url;
+      const page = this.shareUrl(g);
       try {
-        await navigator.clipboard.writeText(clipboard);
+        await navigator.clipboard.writeText(url);
         this.setState({
           busy: false,
-          lastShare: data,
-          notice: mesh +
-            (messageId
-              ? ('Fabric message id copied — paste into Settings → Primary group, or settings/local.js as defaultGroupMessageId. ')
-              : 'fabric:<hex> offer copied. ') +
-            'Page: ' + this.shareUrl(g),
-          error: data.relayed ? null : (data.relayError || 'Share copied locally but not broadcast')
+          lastShare: Object.assign({}, data, { pageUrl: page }),
+          notice: shareNotice(data, page),
+          error: data.relayed || !publicShare ? null : (data.relayError || null)
         });
       } catch (_) {
         this.setState({
           busy: false,
-          lastShare: data,
-          notice: mesh + clipboard,
-          error: data.relayed ? null : (data.relayError || null)
+          lastShare: Object.assign({}, data, { pageUrl: page }),
+          notice: shareNotice(data, page) + ' (copy the invite below)',
+          error: data.relayed || !publicShare ? null : (data.relayError || null)
         });
       }
     } catch (e) {
-      // Fallback to HTTP page URL if Fabric share fails entirely
       const url = this.shareUrl(g);
       try {
         await navigator.clipboard.writeText(url);
@@ -380,6 +614,37 @@ class Groups extends React.Component {
       } catch (_) {
         this.setState({ busy: false, error: e.message, notice: url });
       }
+    }
+  }
+
+  async inviteMember (g) {
+    const pubkey = this.state.inviteKey.trim();
+    if (!g || !PUBKEY_RE.test(pubkey) || this.state.busy) return;
+    this.setState({ busy: true, error: null, notice: null });
+    try {
+      const res = await fetch(`${BASE}/groups/${encodeURIComponent(g.id)}/invites`, {
+        method: 'POST',
+        headers: this.headers(),
+        body: JSON.stringify({
+          inviteePubkey: pubkey,
+          note: `You're invited to join ${g.name}`
+        })
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error || `HTTP ${res.status}`);
+      const data = json.data || {};
+      const url = shareClipboardText(data);
+      if (url) {
+        try { await navigator.clipboard.writeText(url); } catch (_) { /* ignore */ }
+      }
+      this.setState({
+        busy: false,
+        inviteKey: '',
+        lastShare: data,
+        notice: shareNotice(Object.assign({ visibility: 'private' }, data), null)
+      });
+    } catch (e) {
+      this.setState({ busy: false, error: e.message });
     }
   }
 
@@ -400,7 +665,7 @@ class Groups extends React.Component {
       });
       const json = await res.json();
       if (!res.ok) throw new Error(json.error || `HTTP ${res.status}`);
-      this.setState({ busy: false, notice: next === 'public' ? 'Group is now public — share the link so others can apply.' : 'Group is now private.' });
+      this.setState({ busy: false, notice: next === 'public' ? 'Group is now public — Share so others can apply. Join requests land in Notifications.' : 'Group is now private — Share copies a join invite.' });
       await this.refresh();
     } catch (e) {
       this.setState({ busy: false, error: e.message });
@@ -411,23 +676,106 @@ class Groups extends React.Component {
     try { navigator.clipboard.writeText(text); this.setState({ notice: 'Copied to clipboard.' }); } catch (_) { /* ignore */ }
   }
 
+  renderSharePanel () {
+    const data = this.state.lastShare;
+    const clip = shareClipboardText(data);
+    if (!data || !clip) return null;
+    const page = data.pageUrl || null;
+    const expiry = formatInviteExpiryLabel(data);
+    return React.createElement('div', { className: 'gp-share' },
+      React.createElement('div', { className: 'hint' },
+        (data.kind === 'FederationContractInvite' || data.visibility === 'private'
+          ? 'Send this invite privately. They open GoonCitizen → Import…, paste, and Join from Notifications.'
+          : 'They paste this via Import… to apply. You will see the join request in Notifications.') +
+        (expiry ? ' ' + expiry + '.' : '')
+      ),
+      React.createElement('div', { style: { display: 'flex', gap: 8, flexWrap: 'wrap' } },
+        React.createElement('button', {
+          className: 'gp-btn',
+          type: 'button',
+          onClick: () => this.copy(clip)
+        }, 'Copy invite again'),
+        page
+          ? React.createElement('button', {
+            className: 'gp-btn ghost',
+            type: 'button',
+            onClick: () => this.copy(page)
+          }, 'Copy page link')
+          : null,
+        React.createElement('button', {
+          className: 'gp-btn ghost',
+          type: 'button',
+          onClick: () => this.setState({ lastShare: null })
+        }, 'Done')
+      )
+    );
+  }
+
   setSidebarCollapsed (collapsed) {
     writeSidebarCollapsed(!!collapsed);
     this.setState({ sidebarCollapsed: !!collapsed });
   }
 
-  selectGroup (id) {
+  setRosterMode (mode) {
+    const next = mode === 'local' ? 'local' : 'federation';
+    writeRosterMode(next);
+    this.setState({ rosterMode: next, error: null, notice: null });
+  }
+
+  renderRosterToggle () {
+    const mode = this.state.rosterMode === 'local' ? 'local' : 'federation';
+    return React.createElement('div', { className: 'gp-mode' },
+      React.createElement('button', {
+        type: 'button',
+        className: mode === 'federation' ? 'on' : '',
+        onClick: () => this.setRosterMode('federation')
+      }, 'Federation'),
+      React.createElement('button', {
+        type: 'button',
+        className: mode === 'local' ? 'on' : '',
+        onClick: () => this.setRosterMode('local')
+      }, 'Local tags')
+    );
+  }
+
+  selectGroup (id, opts = {}) {
     const g = (this.state.groups || []).find((x) => x.id === id);
+    const detailTab = opts.detailTab && DETAIL_TAB_IDS.has(opts.detailTab)
+      ? opts.detailTab
+      : 'chat';
+    const settingsOpen = opts.settingsOpen === true;
     this.setState({
       selectedId: id,
-      detailTab: 'members',
+      detailTab,
       groupWallet: null,
       proposals: [],
       applications: [],
       groupFleets: [],
+      groupJournal: [],
       colorEdit: (g && g.primaryColor) || '#3b82f6',
+      settingsOpen,
+      settingsView: 'main',
       error: null
-    }, () => this.loadGroupExtras(id));
+    }, () => {
+      this.loadGroupExtras(id);
+      if (!opts.skipHash) this.syncGroupHash();
+    });
+  }
+
+  setDetailTab (tab) {
+    if (!DETAIL_TAB_IDS.has(tab)) return;
+    if (tab === 'fabric' && !this.props.advancedMode) return;
+    this.setState({ detailTab: tab, settingsOpen: false, settingsView: 'main' }, () => {
+      this.syncGroupHash();
+    });
+  }
+
+  syncGroupHash () {
+    if (!this.state.selectedId) return;
+    const query = { id: this.state.selectedId };
+    if (this.state.settingsOpen) query.tab = 'settings';
+    else if (this.state.detailTab && this.state.detailTab !== 'chat') query.tab = this.state.detailTab;
+    setAppHash('groups', query);
   }
 
   async savePrimaryColor (g) {
@@ -459,6 +807,75 @@ class Groups extends React.Component {
     }
   }
 
+  togglePinnedGroup (groupId, ev) {
+    if (ev && typeof ev.stopPropagation === 'function') ev.stopPropagation();
+    const next = writePinnedGroupIds(togglePinnedGroupId(this.state.pinnedGroupIds, groupId));
+    this.setState({ pinnedGroupIds: next });
+  }
+
+  async shareFleetToGroup (g) {
+    if (!g || this.state.busy) return;
+    const fleetId = String(this.state.shareFleetId || '').trim();
+    if (!fleetId) return;
+    this.setState({ busy: true, error: null, notice: null });
+    try {
+      const res = await fetch(`${BASE}/fleets/${encodeURIComponent(fleetId)}/share`, {
+        method: 'POST',
+        headers: this.headers(),
+        body: JSON.stringify({ visibility: 'groups', groupIds: [g.id], includeExport: true })
+      });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error((json && json.error) || `HTTP ${res.status}`);
+      this.setState({
+        busy: false,
+        notice: 'Fleet shared to this group — members see it in Fleets and the group log.'
+      });
+      await this.loadGroupExtras(g.id);
+    } catch (e) {
+      this.setState({ busy: false, error: e.message });
+    }
+  }
+
+  async createFleetOnGroup (g) {
+    if (!g || this.state.busy) return;
+    const name = String(this.state.newFleetName || '').trim() || (g.name + ' fleet');
+    this.setState({ busy: true, error: null, notice: null });
+    try {
+      const created = await fetch(`${BASE}/fleets`, {
+        method: 'POST',
+        headers: this.headers(),
+        body: JSON.stringify({
+          custom: true,
+          name,
+          ships: [],
+          visibility: 'groups',
+          groupIds: [g.id]
+        })
+      });
+      const cj = await created.json().catch(() => ({}));
+      if (!created.ok) throw new Error((cj && cj.error) || `HTTP ${created.status}`);
+      const fleetId = cj.data && (cj.data.id || cj.data.fleetId);
+      if (fleetId) {
+        const shared = await fetch(`${BASE}/fleets/${encodeURIComponent(fleetId)}/share`, {
+          method: 'POST',
+          headers: this.headers(),
+          body: JSON.stringify({ visibility: 'groups', groupIds: [g.id], includeExport: true })
+        });
+        const sj = await shared.json().catch(() => ({}));
+        if (!shared.ok) throw new Error((sj && sj.error) || `HTTP ${shared.status}`);
+      }
+      this.setState({
+        busy: false,
+        newFleetName: '',
+        notice: 'Created “' + ((cj.data && cj.data.name) || name) +
+          '” on this group — members see it in Fleets and the group log.'
+      });
+      await this.loadGroupExtras(g.id);
+    } catch (e) {
+      this.setState({ busy: false, error: e.message });
+    }
+  }
+
   async loadGroupExtras (groupId) {
     const id = groupId || this.state.selectedId;
     if (!id) return;
@@ -468,6 +885,9 @@ class Groups extends React.Component {
     let proposals = [];
     let applications = [];
     let groupFleets = [];
+    let groupJournal = [];
+    let localFleets = [];
+    let presenceRoster = {};
     try {
       const wr = await fetch(`${BASE}/groups/${encodeURIComponent(id)}/wallet`, { headers });
       const wj = await wr.json().catch(() => ({}));
@@ -489,8 +909,26 @@ class Groups extends React.Component {
       const fr = await fetch(`${BASE}/groups/${encodeURIComponent(id)}/fleets`, { headers });
       if (fr.ok) groupFleets = ((await fr.json()).data) || [];
     } catch (_) { /* optional */ }
+    try {
+      const jr = await fetch(`${BASE}/groups/${encodeURIComponent(id)}/statechain?limit=80`, { headers });
+      if (jr.ok) {
+        const body = await jr.json();
+        const data = (body && body.data) || body || {};
+        groupJournal = ((data.journal && data.journal.entries) || []).slice();
+      }
+    } catch (_) { /* optional */ }
+    try {
+      const lf = await fetch(`${BASE}/fleets?scope=mine`, { headers });
+      if (lf.ok) localFleets = ((await lf.json()).data) || [];
+    } catch (_) { /* optional */ }
+    try {
+      const pr = await fetchPresenceRoster();
+      if (pr.ok) presenceRoster = pr.data || {};
+    } catch (_) { /* optional */ }
     if (this.state.selectedId !== id) return;
-    this.setState({ groupWallet, proposals, applications, groupFleets, detailLoading: false });
+    this.setState({
+      groupWallet, proposals, applications, groupFleets, groupJournal, localFleets, presenceRoster, detailLoading: false
+    });
   }
 
   async voteProposal (proposalId) {
@@ -568,55 +1006,106 @@ class Groups extends React.Component {
     }
   }
 
-  renderCreate () {
+  renderCreate (opts = {}) {
     const extras = this.parseMembers();
     const badKey = extras.find((k) => !PUBKEY_RE.test(k));
     const total = new Set([this.state.pubkey].concat(extras)).size;
+    const asChannel = this.state.createKind === 'channel';
+    const nestGroup = opts.nestGroup || null;
+    const inSettings = !!opts.inSettings;
     return React.createElement('div', { className: 'gp-form' },
+      React.createElement('div', {
+        className: 'hint',
+        style: { fontSize: 12, color: 'var(--muted)', lineHeight: 1.45 }
+      }, asChannel
+        ? (nestGroup
+          ? ('Nested under ' + (nestGroup.name || 'this group') +
+            ' — a Federation group with its own chat and log.')
+          : 'A chat channel is a Federation group — members get a shared log, pins, and the same Chat thread.')
+        : null),
       React.createElement('div', null,
-        React.createElement('label', null, 'Group name'),
+        React.createElement('label', null, asChannel ? 'Channel name' : 'Group name'),
         React.createElement('input', {
-          type: 'text', value: this.state.name, placeholder: 'e.g. Salvage Wing',
+          type: 'text', value: this.state.name,
+          placeholder: asChannel ? 'e.g. ops-bridge' : 'e.g. Salvage Wing',
           onChange: (e) => this.setState({ name: e.target.value })
         })
       ),
-      React.createElement('div', null,
-        React.createElement('label', null, 'Member pubkeys (one per line — you are included automatically)'),
-        React.createElement('textarea', {
-          value: this.state.membersText,
-          placeholder: '02ab…\n03cd…',
-          onChange: (e) => this.setState({ membersText: e.target.value })
-        })
-      ),
-      badKey ? React.createElement('div', { className: 'gp-err', style: { margin: 0 } }, 'Not a valid compressed pubkey: ' + badKey) : null,
-      React.createElement('div', null,
-        React.createElement('label', null, `Signatures required for group decisions (1–${total})`),
+      React.createElement('label', { className: 'gp-toggle' },
         React.createElement('input', {
-          type: 'number', min: 1, max: total, value: this.state.threshold,
-          style: { width: 90 },
-          onChange: (e) => this.setState({ threshold: e.target.value })
-        })
+          type: 'checkbox',
+          checked: this.state.visibility === 'public',
+          onChange: (e) => this.setState({ visibility: e.target.checked ? 'public' : 'private' })
+        }),
+        this.state.visibility === 'public'
+          ? 'Public — anyone with the share or page can apply to join'
+          : 'Private — join by invite (Share copies a join invite)'
       ),
-      React.createElement('div', null,
-        React.createElement('label', null, 'Parent group (optional — nest as a subgroup)'),
-        React.createElement('select', {
-          value: this.state.parentId,
-          onChange: (e) => this.setState({ parentId: e.target.value })
-        },
-          React.createElement('option', { value: '' }, '— none (top-level) —'),
-          this.state.groups
-            .filter((g) => Array.isArray(g.members) && this.state.pubkey && g.members.includes(this.state.pubkey))
-            .map((g) => React.createElement('option', { key: g.id, value: g.id }, g.name))
+      React.createElement('button', {
+        type: 'button',
+        className: 'gp-btn ghost',
+        style: { justifySelf: 'start', padding: '4px 10px' },
+        onClick: () => this.setState({ showCreateMembers: !this.state.showCreateMembers })
+      }, this.state.showCreateMembers ? 'Hide extra signers' : 'Add signers now (optional)'),
+      this.state.showCreateMembers
+        ? React.createElement(React.Fragment, null,
+          React.createElement('div', null,
+            React.createElement('label', null, 'Member pubkeys (one per line — you are included automatically)'),
+            React.createElement('textarea', {
+              value: this.state.membersText,
+              placeholder: '02ab…\n03cd…',
+              onChange: (e) => this.setState({ membersText: e.target.value })
+            })
+          ),
+          badKey ? React.createElement('div', { className: 'gp-err', style: { margin: 0 } }, 'Not a valid compressed pubkey: ' + badKey) : null,
+          React.createElement('div', null,
+            React.createElement('label', null, `Signatures required for group decisions (1–${total})`),
+            React.createElement('input', {
+              type: 'number', min: 1, max: total, value: this.state.threshold,
+              style: { width: 90 },
+              onChange: (e) => this.setState({ threshold: e.target.value })
+            })
+          )
         )
-      ),
+        : null,
+      nestGroup
+        ? null
+        : React.createElement('div', null,
+          React.createElement('label', null, asChannel
+            ? 'Parent group (optional — nest this channel)'
+            : 'Parent group (optional — nest as a subgroup)'),
+          React.createElement('select', {
+            value: this.state.parentId,
+            onChange: (e) => this.setState({ parentId: e.target.value })
+          },
+            React.createElement('option', { value: '' }, '— none (top-level) —'),
+            this.state.groups
+              .filter((g) => Array.isArray(g.members) && this.state.pubkey && g.members.includes(this.state.pubkey))
+              .map((g) => React.createElement('option', { key: g.id, value: g.id }, g.name))
+          )
+        ),
       React.createElement('div', { style: { display: 'flex', gap: 8 } },
         React.createElement('button', {
           className: 'gp-btn', disabled: !this.createValid() || this.state.creating,
           onClick: () => this.create()
-        }, this.state.creating ? 'Creating…' : 'Create group'),
+        }, this.state.creating
+          ? 'Creating…'
+          : (asChannel ? 'Create channel' : 'Create group')),
         React.createElement('button', {
           className: 'gp-btn ghost',
-          onClick: () => this.setState({ showCreate: false, error: null, parentId: '' })
+          onClick: () => {
+            if (inSettings) {
+              this.setState({
+                settingsView: 'main', error: null, name: '', membersText: '',
+                showCreateMembers: false, createKind: 'group'
+              });
+              return;
+            }
+            this.setState({
+              showCreate: false, error: null, parentId: '', visibility: 'private',
+              showCreateMembers: false, createKind: 'group'
+            });
+          }
         }, 'Cancel')
       )
     );
@@ -625,20 +1114,46 @@ class Groups extends React.Component {
   renderMembersTab (g, me, isCreator, canManage) {
     const addValid = PUBKEY_RE.test(this.state.addKey.trim()) && canManage && !g.members.includes(this.state.addKey.trim());
     const memberList = Array.isArray(g.members) ? g.members : null;
+    const roster = this.state.presenceRoster || {};
+    const owner = isCreator || groupPresence.isGroupOwner(g, me);
+    const composition = owner && memberList
+      ? groupPresence.summarizeOnlineMembers(memberList, roster)
+      : null;
     return React.createElement('div', { className: 'gp-section' },
+      composition
+        ? React.createElement(GroupComposition, { composition, showMap: true })
+        : null,
       memberList
         ? React.createElement('div', null,
-          memberList.map((m) => React.createElement('div', { className: 'gp-member', key: m },
-            React.createElement('code', null, m),
-            m === g.creator ? React.createElement('span', { className: 'gp-tag creator' }, 'creator') : null,
-            m === me ? React.createElement('span', { className: 'gp-tag you' }, 'you') : null,
-            (isCreator && m !== g.creator)
-              ? React.createElement('button', {
-                className: 'gp-btn danger', disabled: this.state.busy,
-                onClick: () => this.member(g.id, m, true)
-              }, 'remove')
-              : null
-          ))
+          memberList.map((m) => {
+            const p = groupPresence.presenceFor(roster, m);
+            const chip = groupPresence.presenceChipLabel(p);
+            const isSigner = GroupContractSummary.isSignerKey(g, m);
+            const href = profileHref(m) || ('/profiles/' + encodeURIComponent(m));
+            return React.createElement('div', { className: 'gp-member', key: m },
+              React.createElement('code', null,
+                React.createElement('a', { href, title: m }, m)
+              ),
+              p && p.nickname
+                ? React.createElement('span', { className: 'gp-tag you' }, p.nickname)
+                : null,
+              React.createElement('span', {
+                className: 'gp-tag ' + (p && p.online ? 'public' : 'private'),
+                title: p && p.lastEventAt || ''
+              }, chip),
+              React.createElement('span', {
+                className: 'gp-tag ' + (isSigner ? 'public' : 'private')
+              }, isSigner ? 'signer' : 'reader'),
+              m === g.creator ? React.createElement('span', { className: 'gp-tag creator' }, 'creator') : null,
+              m === me ? React.createElement('span', { className: 'gp-tag you' }, 'you') : null,
+              (isCreator && m !== g.creator)
+                ? React.createElement('button', {
+                  className: 'gp-btn danger', disabled: this.state.busy,
+                  onClick: () => this.member(g.id, m, true)
+                }, 'remove')
+                : null
+            );
+          })
         )
         : React.createElement('div', { className: 'gp-hint' },
           'Public group — open the page to apply to join.'
@@ -656,20 +1171,98 @@ class Groups extends React.Component {
         )
         : (memberList
           ? React.createElement('div', { className: 'gp-hint' }, 'Only members can manage this group.')
-          : null)
+          : null),
+      canManage
+        ? React.createElement('div', { className: 'gp-invite' },
+          React.createElement('input', {
+            type: 'text',
+            value: this.state.inviteKey,
+            placeholder: 'Invite — paste their compressed pubkey (02…/03…)',
+            onChange: (e) => this.setState({ inviteKey: e.target.value })
+          }),
+          React.createElement('button', {
+            className: 'gp-btn',
+            disabled: this.state.busy || !PUBKEY_RE.test(this.state.inviteKey.trim()),
+            onClick: () => this.inviteMember(g)
+          }, 'Send invite')
+        )
+        : null
     );
   }
 
   renderFleetsTab () {
+    const g = this.state.groups.find((x) => x.id === this.state.selectedId);
     const list = this.state.groupFleets || [];
+    const mine = this.state.localFleets || [];
+    const shareBox = g
+      ? React.createElement('div', {
+        className: 'gp-chat-tools',
+        style: { borderBottom: list.length ? '1px solid var(--line)' : 'none' }
+      },
+        React.createElement('h4', null, 'Create a fleet'),
+        React.createElement('div', { className: 'hint' },
+          'Makes an empty roster on this group (FleetShare). Open it to add ships.'),
+        React.createElement('div', { style: { display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 10 } },
+          React.createElement('input', {
+            type: 'text',
+            value: this.state.newFleetName,
+            placeholder: 'New fleet name',
+            style: {
+              flex: 1, minWidth: 140, background: 'var(--bg)', border: '1px solid var(--line)',
+              color: 'var(--text)', borderRadius: 7, padding: '6px 8px', fontSize: 12
+            },
+            onChange: (e) => this.setState({ newFleetName: e.target.value }),
+            onKeyDown: (e) => { if (e.key === 'Enter') void this.createFleetOnGroup(g); }
+          }),
+          React.createElement('button', {
+            type: 'button',
+            className: 'gp-btn',
+            disabled: this.state.busy,
+            onClick: () => this.createFleetOnGroup(g)
+          }, 'Create fleet')
+        ),
+        mine.length
+          ? React.createElement(React.Fragment, null,
+            React.createElement('h4', null, 'Share a fleet'),
+            React.createElement('div', { className: 'hint' },
+              'Publishes a FleetShare into this group’s log so every member’s Fleets view updates.'),
+            React.createElement('div', { style: { display: 'flex', gap: 8, flexWrap: 'wrap' } },
+              React.createElement('select', {
+                value: this.state.shareFleetId,
+                onChange: (e) => this.setState({ shareFleetId: e.target.value }),
+                style: {
+                  flex: 1, minWidth: 160, background: 'var(--bg)', border: '1px solid var(--line)',
+                  color: 'var(--text)', borderRadius: 7, padding: '6px 8px', fontSize: 12
+                }
+              },
+                React.createElement('option', { value: '' }, 'Choose a fleet…'),
+                mine.map((f) => React.createElement('option', {
+                  key: f.id, value: f.id
+                }, (f.name || f.id) + ' · ' + (Number(f.shipCount) || 0) + ' ships'))
+              ),
+              React.createElement('button', {
+                type: 'button',
+                className: 'gp-btn',
+                disabled: this.state.busy || !this.state.shareFleetId,
+                onClick: () => this.shareFleetToGroup(g)
+              }, 'Share to group')
+            )
+          )
+          : null
+      )
+      : null;
     if (this.state.detailLoading && !list.length) {
       return React.createElement('div', { className: 'gp-hint' }, 'Loading fleets…');
     }
     if (!list.length) {
-      return React.createElement('div', { className: 'gp-hint' },
-        'No fleets shared to this group yet. From Fleets, share with visibility “groups”.');
+      return React.createElement('div', null,
+        shareBox,
+        React.createElement('div', { className: 'gp-hint' },
+          'No fleets in this group log yet. Create one above, share an existing roster, or open Fleets and pick this group.')
+      );
     }
     return React.createElement('div', null,
+      shareBox,
       list.map((f) => React.createElement('div', {
         key: f.fleetId || f.id,
         className: 'gp-member',
@@ -686,9 +1279,7 @@ class Groups extends React.Component {
           style: { padding: '4px 10px' },
           onClick: () => {
             const id = f.fleetId || f.id;
-            if (typeof window !== 'undefined') {
-              window.location.hash = id ? `fleets?id=${encodeURIComponent(id)}` : 'fleets';
-            }
+            setAppHash('fleet', id ? { id } : {});
           }
         }, 'Open')
       ))
@@ -703,45 +1294,16 @@ class Groups extends React.Component {
     if (!gw) {
       return React.createElement('div', { className: 'gp-hint' }, 'Wallet unavailable.');
     }
-    if (gw.error) {
-      return React.createElement('div', { className: 'gp-err', style: { margin: '10px 14px' } }, gw.error);
-    }
-    const nSigners = (g.validators || g.members || []).length;
     return React.createElement('div', { className: 'gp-wallet' },
-      React.createElement('div', { className: 'gp-meta', style: { padding: 0 } },
-        React.createElement('span', null, 'mode ', React.createElement('b', null, gw.mode || '—')),
-        React.createElement('span', null, 'signers ', React.createElement('b', null, `${g.threshold}-of-${nSigners || 'n'}`))
-      ),
-      gw.address
-        ? React.createElement(React.Fragment, null,
-          React.createElement('div', { className: 'addr', title: gw.address }, gw.address),
-          React.createElement('div', { style: { display: 'flex', gap: 8, flexWrap: 'wrap' } },
-            React.createElement('button', {
-              className: 'gp-btn ghost',
-              onClick: () => this.copy(gw.address)
-            }, 'Copy address'),
-            isCreator
-              ? React.createElement('button', {
-                className: 'gp-btn',
-                disabled: this.state.busy,
-                title: 'Propose publisher withdrawal (active non-expired tier)',
-                onClick: () => this.proposeWithdraw()
-              }, this.state.busy ? 'Working…' : 'Propose withdraw')
-              : null
-          )
-        )
-        : React.createElement('div', { className: 'gp-hint', style: { padding: 0 } },
-          'No Taproot address yet — group needs signer keys.'
-        ),
-      Array.isArray(gw.leaves) && gw.leaves.length
-        ? React.createElement('div', { style: { color: 'var(--muted)', fontSize: 12, lineHeight: 1.5 } },
-          gw.leaves.map((leaf, i) => React.createElement('div', { key: i },
-            (leaf.id || leaf.script || 'leaf') +
-            (leaf.threshold != null ? ` · ${leaf.threshold}-of-n` : '') +
-            (leaf.locktime != null ? ` · lock ${leaf.locktime}` : '')
-          ))
-        )
-        : null
+      React.createElement(GroupBitcoinPanel, {
+        wallet: gw,
+        bitcoinEnable: this.props.bitcoinEnable,
+        isCreator,
+        busy: this.state.busy,
+        onCopy: (addr) => this.copy(addr),
+        onProposeWithdraw: () => this.proposeWithdraw(),
+        onRefresh: () => this.loadGroupExtras(g.id)
+      })
     );
   }
 
@@ -829,24 +1391,231 @@ class Groups extends React.Component {
     });
   }
 
+  toggleSettings () {
+    this.setState((s) => ({
+      settingsOpen: !s.settingsOpen,
+      settingsView: 'main'
+    }), () => this.syncGroupHash());
+  }
+
+  closeSettings () {
+    this.setState({ settingsOpen: false, settingsView: 'main' }, () => this.syncGroupHash());
+  }
+
+  openNestedChannel (g) {
+    if (!g) return;
+    this.setState({
+      settingsOpen: true,
+      settingsView: 'nested',
+      showCreate: false,
+      createKind: 'channel',
+      parentId: g.id,
+      visibility: 'private',
+      name: '',
+      membersText: '',
+      threshold: 1,
+      showCreateMembers: false,
+      error: null,
+      notice: null
+    });
+  }
+
+  renderGroupSettings (g, canManage, isCreator) {
+    if (!g || !this.state.settingsOpen) return null;
+    const nested = this.state.settingsView === 'nested';
+    const mine = this.state.localFleets || [];
+    const close = () => this.closeSettings();
+    return React.createElement('div', {
+      className: 'gp-settings',
+      role: 'region',
+      'aria-label': nested ? 'Create nested channel' : 'Group settings'
+    },
+      React.createElement('div', { className: 'gp-settings-head' },
+        nested
+          ? React.createElement('button', {
+            type: 'button',
+            className: 'gp-btn ghost',
+            style: { padding: '4px 10px' },
+            onClick: () => this.setState({
+              settingsView: 'main', createKind: 'group', name: '',
+              showCreateMembers: false, error: null
+            })
+          }, '← Back')
+          : React.createElement('button', {
+            type: 'button',
+            className: 'gp-btn ghost',
+            style: { padding: '4px 10px' },
+            title: 'Close settings',
+            'aria-label': 'Back to group',
+            onClick: close
+          }, '← Back to group'),
+        React.createElement('h3', null, nested ? 'Nested channel' : 'Group settings'),
+        nested
+          ? React.createElement('button', {
+            type: 'button',
+            className: 'gp-btn ghost',
+            style: { padding: '4px 10px' },
+            title: 'Close settings',
+            'aria-label': 'Back to group',
+            onClick: close
+          }, '← Back to group')
+          : null
+      ),
+      React.createElement('div', { className: 'gp-settings-body' },
+        nested
+          ? this.renderCreate({ inSettings: true, nestGroup: g })
+          : React.createElement(React.Fragment, null,
+            React.createElement('div', { className: 'gp-set-sec' },
+              React.createElement('h4', null, 'Channel & share'),
+              React.createElement('div', { className: 'hint' },
+                'Nested channels are Federation groups under this one. Share copies a join invite or public offer.'),
+              React.createElement('div', { className: 'gp-set-actions' },
+                React.createElement('button', {
+                  type: 'button',
+                  className: 'gp-btn ghost',
+                  disabled: !canManage,
+                  onClick: () => this.openNestedChannel(g)
+                }, '+ Nested channel'),
+                React.createElement('button', {
+                  type: 'button',
+                  className: 'gp-btn ghost',
+                  disabled: this.state.busy || !canManage,
+                  title: g.visibility === 'public'
+                    ? 'Copy a share others paste via Import… to apply'
+                    : 'Copy a join invite — they paste Import… and Accept',
+                  onClick: () => this.share(g)
+                }, 'Share this group'),
+                React.createElement('button', {
+                  type: 'button',
+                  className: 'gp-btn ghost',
+                  onClick: () => this.openPage(g)
+                }, 'Open page')
+              )
+            ),
+            mine.length
+              ? React.createElement('div', { className: 'gp-set-sec' },
+                React.createElement('h4', null, 'Share a fleet'),
+                React.createElement('div', { className: 'hint' },
+                  'Writes a FleetShare into this group’s log so members see it on Fleets.'),
+                React.createElement('div', { className: 'gp-set-actions' },
+                  React.createElement('select', {
+                    value: this.state.shareFleetId,
+                    onChange: (e) => this.setState({ shareFleetId: e.target.value }),
+                    style: {
+                      flex: 1, minWidth: 160, background: 'var(--bg)', border: '1px solid var(--line)',
+                      color: 'var(--text)', borderRadius: 7, padding: '6px 8px', fontSize: 12
+                    }
+                  },
+                    React.createElement('option', { value: '' }, 'Choose a fleet…'),
+                    mine.map((f) => React.createElement('option', {
+                      key: f.id, value: f.id
+                    }, f.name || f.id))
+                  ),
+                  React.createElement('button', {
+                    type: 'button',
+                    className: 'gp-btn',
+                    disabled: this.state.busy || !this.state.shareFleetId || !canManage,
+                    onClick: () => this.shareFleetToGroup(g)
+                  }, 'Share fleet')
+                )
+              )
+              : null,
+            canManage
+              ? React.createElement('div', { className: 'gp-set-sec' },
+                React.createElement('h4', null, 'This node'),
+                React.createElement('div', { className: 'hint' },
+                  'Primary group themes the dashboard and can pin members & ships on the desktop overlay.'),
+                React.createElement('div', { className: 'gp-set-actions' },
+                  React.createElement('button', {
+                    type: 'button',
+                    className: 'gp-btn ghost',
+                    disabled: this.state.busy,
+                    title: this.state.primaryGroupId === g.id
+                      ? 'Clear primary group'
+                      : 'Use this group for the desktop member/ship overlay',
+                    onClick: () => this.setPrimaryGroup(g.id)
+                  }, this.state.primaryGroupId === g.id ? 'Clear primary' : 'Set as primary')
+                )
+              )
+              : null,
+            isCreator
+              ? React.createElement('div', { className: 'gp-set-sec' },
+                React.createElement('h4', null, 'Visibility'),
+                React.createElement('div', { className: 'gp-set-actions' },
+                  React.createElement('button', {
+                    type: 'button',
+                    className: 'gp-btn ghost',
+                    disabled: this.state.busy,
+                    onClick: () => this.toggleVisibility(g)
+                  }, g.visibility === 'public' ? 'Make private' : 'Make public')
+                )
+              )
+              : null,
+            isCreator
+              ? React.createElement('div', { className: 'gp-set-sec' },
+                React.createElement('h4', null, 'Primary color'),
+                React.createElement('div', { className: 'hint' },
+                  'Brand accent for members who set this as their primary group.'),
+                React.createElement('label', {
+                  style: { display: 'inline-flex', gap: 8, alignItems: 'center', fontSize: 12, color: 'var(--muted)' }
+                },
+                  React.createElement('input', {
+                    type: 'color',
+                    value: /^#[0-9a-fA-F]{6}$/.test(this.state.colorEdit) ? this.state.colorEdit : '#3b82f6',
+                    disabled: this.state.busy,
+                    title: 'Brand accent for members who set this as their primary group',
+                    onChange: (e) => this.setState({ colorEdit: e.target.value })
+                  }),
+                  React.createElement('code', { style: { fontSize: 11 } }, this.state.colorEdit || '—')
+                ),
+                React.createElement('div', { className: 'gp-set-actions' },
+                  React.createElement('button', {
+                    type: 'button',
+                    className: 'gp-btn ghost',
+                    disabled: this.state.busy,
+                    onClick: () => this.savePrimaryColor(g)
+                  }, 'Save color'),
+                  g.primaryColor
+                    ? React.createElement('button', {
+                      type: 'button',
+                      className: 'gp-btn ghost',
+                      disabled: this.state.busy,
+                      onClick: () => this.setState({ colorEdit: '' }, () => this.savePrimaryColor(g))
+                    }, 'Clear color')
+                    : null
+                )
+              )
+              : (g.primaryColor
+                ? React.createElement('div', { className: 'gp-set-sec' },
+                  React.createElement('h4', null, 'Accent'),
+                  React.createElement('span', null,
+                    React.createElement('b', { style: { color: g.primaryColor } }, g.primaryColor)))
+                : null)
+          )
+      )
+    );
+  }
+
   renderDetail () {
     const g = this.state.groups.find((x) => x.id === this.state.selectedId);
     if (!g) {
       return React.createElement('div', { className: 'gp-hint' },
         this.state.groups.length
           ? 'Select a group to manage it.'
-          : 'No groups yet — create one to share missions with a squad. Make it public and Share the page so others can apply to join.');
+          : 'No groups yet — create one to share missions with a squad, or Import… a join invite.');
     }
     const me = this.state.pubkey;
-    const isCreator = me && g.creator === me;
-    const canManage = me && Array.isArray(g.members) && g.members.includes(me);
-    const memberList = Array.isArray(g.members) ? g.members : null;
-    const tab = this.state.detailTab || 'members';
+    const isCreator = !!(me && g.creator && pubkeysMatch(g.creator, me));
+    const canManage = !!(me && Array.isArray(g.members) && (
+      g.members.some((m) => pubkeysMatch(m, me)) || isCreator
+    ));
+    const tab = this.state.detailTab || 'chat';
     const tabs = DETAIL_TABS.filter(([id]) => id !== 'fabric' || this.props.advancedMode);
     const tabCounts = {
       fleets: (this.state.groupFleets || []).length,
       proposals: (this.state.proposals || []).length,
-      applications: (this.state.applications || []).length
+      applications: (this.state.applications || []).length,
+      log: (this.state.groupJournal || []).length
     };
 
     let body = null;
@@ -855,94 +1624,131 @@ class Groups extends React.Component {
     else if (tab === 'proposals') body = this.renderProposalsTab(canManage);
     else if (tab === 'applications') body = this.renderApplicationsTab(isCreator);
     else if (tab === 'chat') body = this.renderChat(g, canManage);
+    else if (tab === 'log') body = this.renderLogTab();
     else if (tab === 'fabric') body = this.renderFabricTab(g);
     else body = this.renderMembersTab(g, me, isCreator, canManage);
 
-    return React.createElement(React.Fragment, null,
-      React.createElement('div', { className: 'gp-meta' },
-        React.createElement('span', null, 'decisions ', React.createElement('b', null, `${g.threshold}-of-${memberList ? memberList.length : 'n'}`)),
-        React.createElement('span', null, 'created ', React.createElement('b', null, String(g.createdAt || '').slice(0, 10))),
-        React.createElement('span', { className: 'gp-tag ' + (g.visibility === 'public' ? 'public' : 'private') }, g.visibility || 'private'),
-        g.id === this.state.primaryGroupId
-          ? React.createElement('span', { className: 'gp-tag primary' }, 'primary')
-          : null,
-        g.parentId
-          ? React.createElement('span', null, 'subgroup of ', React.createElement('b', null,
-            (this.state.groups.find((x) => x.id === g.parentId) || {}).name || g.parentId.slice(0, 8) + '…'))
-          : null,
-        React.createElement('span', { title: g.path }, 'page ', React.createElement('b', null, g.path || `/groups/${g.id}`))
-      ),
-      React.createElement('div', { className: 'gp-actions' },
-        React.createElement('button', { className: 'gp-btn', onClick: () => this.openPage(g) }, 'Open page'),
-        React.createElement('button', { className: 'gp-btn ghost', onClick: () => this.share(g) }, 'Share'),
+    if (this.state.settingsOpen) {
+      return React.createElement('div', { className: 'gp-detail' },
+        this.renderGroupSettings(g, canManage, isCreator)
+      );
+    }
+
+    return React.createElement('div', { className: 'gp-detail' },
+      React.createElement('div', { className: 'gp-head' },
+        React.createElement('h2', { title: g.name }, g.name,
+          React.createElement('span', { className: 'sub' },
+            ' · ' + (g.visibility || 'private'))
+        ),
         canManage
-          ? React.createElement('button', {
-            className: 'gp-btn ghost',
-            disabled: this.state.busy,
-            title: this.state.primaryGroupId === g.id
-              ? 'Clear primary group'
-              : 'Use this group for the desktop member/ship overlay',
-            onClick: () => this.setPrimaryGroup(g.id)
-          }, this.state.primaryGroupId === g.id ? 'Clear primary' : 'Set as primary')
+          ? React.createElement(JoinVoiceButton, {
+            className: 'gp-voice',
+            groupId: g.id,
+            handle: this.props.nickname || null,
+            identityPubkey: me,
+            authToken: this.state.token,
+            disabled: !me
+          })
           : null,
-        isCreator
-          ? React.createElement('button', {
-            className: 'gp-btn ghost', disabled: this.state.busy,
-            onClick: () => this.toggleVisibility(g)
-          }, g.visibility === 'public' ? 'Make private' : 'Make public')
-          : null
+        React.createElement('button', {
+          type: 'button',
+          className: 'gp-cog' + (this.state.settingsOpen ? ' on' : ''),
+          title: 'Group settings',
+          'aria-label': 'Group settings',
+          'aria-pressed': this.state.settingsOpen,
+          onClick: () => this.toggleSettings()
+        }, '⚙️')
       ),
-      isCreator
-        ? React.createElement('div', {
-          className: 'gp-actions',
-          style: { alignItems: 'center', marginTop: -4 }
+      React.createElement('div', { className: 'gp-body-wrap' },
+        React.createElement('div', { className: 'gp-meta' },
+          GroupContractSummary({
+            group: g,
+            presenceRoster: this.state.presenceRoster,
+            viewerPubkey: me
+          }),
+          React.createElement('div', { className: 'gp-meta-tags' },
+            React.createElement('span', { className: 'gp-tag ' + (g.visibility === 'public' ? 'public' : 'private') }, g.visibility || 'private'),
+            g.id === this.state.primaryGroupId
+              ? React.createElement('span', { className: 'gp-tag primary' }, 'primary')
+              : null,
+            g.parentId
+              ? React.createElement('span', null, 'subgroup of ', React.createElement('b', null,
+                (this.state.groups.find((x) => x.id === g.parentId) || {}).name || g.parentId.slice(0, 8) + '…'))
+              : null
+          )
+        ),
+        React.createElement('div', { className: 'gp-tabs', role: 'tablist' },
+          tabs.map(([id, label]) => {
+            const count = tabCounts[id];
+            const text = count ? `${label} (${count})` : label;
+            return React.createElement('button', {
+              key: id,
+              type: 'button',
+              role: 'tab',
+              className: 'gp-tab' + (tab === id ? ' on' : ''),
+              'aria-selected': tab === id,
+              onClick: () => this.setDetailTab(id)
+            }, text);
+          })
+        ),
+        body
+      )
+    );
+  }
+
+  renderLogTab () {
+    const list = this.state.groupJournal || [];
+    if (this.state.detailLoading && !list.length) {
+      return React.createElement('div', { className: 'gp-hint' }, 'Loading group log…');
+    }
+    if (!list.length) {
+      return React.createElement('div', { className: 'gp-hint' },
+        'No synchronized events yet. Pin a message in Chat, share a fleet, or change membership — those GroupChange / FleetShare rows land here for every member.');
+    }
+    return React.createElement('div', { className: 'gp-log' },
+      list.map((entry, i) => {
+        const key = (entry && entry.id) || ('j' + i);
+        const open = this.state.logOpenId === key;
+        const hash = entry && entry.fabricMessage && entry.fabricMessage.hash;
+        const fabricHref = fabricMessageHref(hash);
+        return React.createElement('div', {
+          key,
+          className: 'gp-log-row' + (open ? ' open' : '')
         },
-          React.createElement('label', {
-            style: { display: 'inline-flex', gap: 8, alignItems: 'center', fontSize: 12, color: 'var(--muted)' }
-          },
-            'Primary color',
-            React.createElement('input', {
-              type: 'color',
-              value: /^#[0-9a-fA-F]{6}$/.test(this.state.colorEdit) ? this.state.colorEdit : '#3b82f6',
-              disabled: this.state.busy,
-              title: 'Brand accent for members who set this as their primary group',
-              onChange: (e) => this.setState({ colorEdit: e.target.value })
-            }),
-            React.createElement('code', { style: { fontSize: 11 } }, this.state.colorEdit || '—')
+          React.createElement('div', { className: 'gp-log-head' },
+            React.createElement('div', { className: 'gp-log-copy' },
+              React.createElement('span', { className: 't' }, journalEntryLabel(entry)),
+              React.createElement('span', { className: 'm' },
+                [entry && entry.type, entry && (entry.acceptedAt || entry.ts)]
+                  .filter(Boolean).join(' · '))
+            ),
+            React.createElement('div', { className: 'gp-log-actions' },
+              React.createElement('button', {
+                type: 'button',
+                className: 'gp-btn ghost',
+                title: 'Show the journal payload for this row',
+                onClick: () => this.setState({ logOpenId: open ? null : key })
+              }, open ? 'Hide' : 'Data'),
+              fabricHref
+                ? React.createElement('a', {
+                  className: 'gp-btn ghost',
+                  href: fabricHref,
+                  title: 'Open the corresponding Fabric AMP message'
+                }, 'Fabric')
+                : React.createElement('button', {
+                  type: 'button',
+                  className: 'gp-btn ghost',
+                  disabled: true,
+                  title: 'No Fabric message hash on this journal row yet'
+                }, 'Fabric')
+            )
           ),
-          React.createElement('button', {
-            className: 'gp-btn ghost',
-            disabled: this.state.busy,
-            onClick: () => this.savePrimaryColor(g)
-          }, 'Save color'),
-          g.primaryColor
-            ? React.createElement('button', {
-              className: 'gp-btn ghost',
-              disabled: this.state.busy,
-              onClick: () => this.setState({ colorEdit: '' }, () => this.savePrimaryColor(g))
-            }, 'Clear color')
+          open
+            ? React.createElement('pre', { className: 'gp-log-json' },
+              JSON.stringify(entry, null, 2))
             : null
-        )
-        : (g.primaryColor
-          ? React.createElement('div', { className: 'gp-meta' },
-            React.createElement('span', null, 'accent ',
-              React.createElement('b', { style: { color: g.primaryColor } }, g.primaryColor)))
-          : null),
-      React.createElement('div', { className: 'gp-tabs', role: 'tablist' },
-        tabs.map(([id, label]) => {
-          const count = tabCounts[id];
-          const text = count ? `${label} (${count})` : label;
-          return React.createElement('button', {
-            key: id,
-            type: 'button',
-            role: 'tab',
-            className: 'gp-tab' + (tab === id ? ' on' : ''),
-            'aria-selected': tab === id,
-            onClick: () => this.setState({ detailTab: id })
-          }, text);
-        })
-      ),
-      body
+        );
+      })
     );
   }
 
@@ -950,25 +1756,37 @@ class Groups extends React.Component {
     if (!g) return null;
     if (!canManage) {
       return React.createElement('div', { className: 'gp-chat' },
-        React.createElement('h3', null, 'Chat'),
         React.createElement('div', { className: 'gp-hint' },
           'Group chat is for members. Join the group to read and post here.')
       );
     }
     return React.createElement('div', { className: 'gp-chat' },
-      React.createElement('h3', null, 'Chat'),
       React.createElement(Chat, {
         key: g.id,
         groupId: g.id,
         embedded: true,
         identityPubkey: this.state.pubkey || this.props.identityPubkey || null,
-        nickname: this.props.nickname || null
+        nickname: this.props.nickname || null,
+        authToken: this.state.token
       })
     );
   }
 
   render () {
     const me = this.state.pubkey;
+    if (this.state.rosterMode === 'local') {
+      return React.createElement('main', null,
+        React.createElement(LocalGroups, {
+          identityPubkey: me || this.props.identityPubkey,
+          nickname: this.props.nickname,
+          authToken: this.state.token,
+          shareGroups: this.state.groups || [],
+          rosterToggle: this.renderRosterToggle(),
+          sidebarCollapsed: this.state.sidebarCollapsed,
+          setSidebarCollapsed: (v) => this.setSidebarCollapsed(v)
+        })
+      );
+    }
     const collapsed = !!this.state.sidebarCollapsed;
     return React.createElement('main', null,
       React.createElement('div', {
@@ -986,8 +1804,8 @@ class Groups extends React.Component {
           ),
           React.createElement('div', { className: 'gp-side-body' },
             React.createElement('div', { className: 'gp-side-head' },
-              React.createElement('h2', null, '👥 Your groups ',
-                React.createElement('span', { className: 'sub' }, '— k-of-n multisig squads & subgroups')
+              React.createElement('h2', null, '👥 Groups ',
+                React.createElement('span', { className: 'sub' }, '— chat, pins, and shared logs')
               ),
               React.createElement('button', {
                 type: 'button',
@@ -999,9 +1817,37 @@ class Groups extends React.Component {
                 className: 'btn', type: 'button',
                 disabled: !me,
                 title: me ? 'Create a new group' : 'Unlock your identity to create groups',
-                onClick: () => this.setState({ showCreate: !this.state.showCreate, error: null, notice: null })
-              }, this.state.showCreate ? 'Close' : '+ New group')
+                onClick: () => this.setState({
+                  showCreate: !this.state.showCreate || this.state.createKind !== 'group',
+                  createKind: 'group',
+                  error: null,
+                  notice: null
+                })
+              }, this.state.showCreate && this.state.createKind === 'group' ? 'Close' : '+ New group'),
+              React.createElement('button', {
+                className: 'btn', type: 'button',
+                disabled: !me,
+                title: me
+                  ? 'Create a chat channel (a Federation group)'
+                  : 'Unlock your identity to create a channel',
+                onClick: () => this.setState({
+                  showCreate: true,
+                  createKind: 'channel',
+                  parentId: this.state.selectedId || this.state.parentId || '',
+                  visibility: 'private',
+                  error: null,
+                  notice: null
+                })
+              }, '+ Channel'),
+              React.createElement('button', {
+                className: 'btn', type: 'button',
+                title: 'Paste a fabric: join invite or group share',
+                onClick: () => {
+                  if (typeof this.props.onRequestImport === 'function') this.props.onRequestImport();
+                }
+              }, 'Import…')
             ),
+            this.renderRosterToggle(),
             React.createElement('div', { className: 'gp-me' },
               React.createElement('span', null, 'you:'),
               me
@@ -1018,39 +1864,47 @@ class Groups extends React.Component {
             this.state.loading
               ? React.createElement('div', { className: 'empty' }, 'loading…')
               : (this.state.groups.length
-                ? this.state.groups.map((g) => React.createElement('div', {
-                  className: 'gp-row' + (g.id === this.state.selectedId ? ' on' : ''),
-                  key: g.id,
-                  onClick: () => this.selectGroup(g.id),
-                  onDoubleClick: () => this.openPage(g)
-                },
-                  React.createElement('span', { className: 'n', style: g.parentId ? { paddingLeft: 14 } : null },
-                    g.parentId ? '↳ ' : '',
-                    g.name,
-                    React.createElement('span', {
-                      className: 'gp-tag ' + (g.visibility === 'public' ? 'public' : 'private'),
-                      style: { marginLeft: 8 }
-                    }, g.visibility || 'private'),
-                    g.id === this.state.primaryGroupId
-                      ? React.createElement('span', { className: 'gp-tag primary', style: { marginLeft: 6 } }, 'primary')
-                      : null,
-                    g.parentId
-                      ? React.createElement('span', { className: 'gp-tag', style: { marginLeft: 6 } }, 'subgroup')
-                      : null
-                  ),
-                  React.createElement('span', { className: 'd' },
-                    (g.members ? `${g.members.length} member${g.members.length === 1 ? '' : 's'}` : `${g.memberCount || 0} members`) +
-                    ` · ${g.threshold}-of-${g.members ? g.members.length : 'n'}`)
-                ))
-                : React.createElement('div', { className: 'empty' }, 'no groups yet'))
+                ? orderGroupsWithPins(this.state.groups, this.state.pinnedGroupIds).map((g) => {
+                  const pinned = (this.state.pinnedGroupIds || []).includes(g.id);
+                  return React.createElement('div', {
+                    className: 'gp-row' + (g.id === this.state.selectedId ? ' on' : ''),
+                    key: g.id,
+                    onClick: () => this.selectGroup(g.id),
+                    onDoubleClick: () => this.openPage(g)
+                  },
+                    React.createElement('button', {
+                      type: 'button',
+                      className: 'pin' + (pinned ? ' on' : ''),
+                      title: pinned ? 'Unpin from your list' : 'Pin this group in your list',
+                      onClick: (e) => this.togglePinnedGroup(g.id, e)
+                    }, '📌'),
+                    React.createElement('span', { className: 'n', style: g.parentId ? { paddingLeft: 8 } : null },
+                      g.parentId ? '↳ ' : '',
+                      g.name,
+                      React.createElement('span', {
+                        className: 'gp-tag ' + (g.visibility === 'public' ? 'public' : 'private'),
+                        style: { marginLeft: 8 }
+                      }, g.visibility || 'private'),
+                      g.id === this.state.primaryGroupId
+                        ? React.createElement('span', { className: 'gp-tag primary', style: { marginLeft: 6 } }, 'primary')
+                        : null,
+                      g.parentId
+                        ? React.createElement('span', { className: 'gp-tag', style: { marginLeft: 6 } }, 'channel')
+                        : null
+                    ),
+                    React.createElement('span', { className: 'd' },
+                      (g.members ? `${g.members.length} member${g.members.length === 1 ? '' : 's'}` : `${g.memberCount || 0} members`) +
+                      ` · ${GroupContractSummary.thresholdLabel(g)}`)
+                  );
+                })
+                : React.createElement('div', { className: 'empty' },
+                  'No groups yet. Create a group or + Channel, or Import… a join invite.'))
           )
         ),
-        React.createElement('section', { className: 'panel' },
-          React.createElement('h2', null, '🛠️ Manage ',
-            React.createElement('span', { className: 'sub' }, '— members, wallet, proposals, chat & Fabric')
-          ),
+        React.createElement('section', { className: 'panel gp-detail-wrap' },
           this.state.error ? React.createElement('div', { className: 'gp-err' }, this.state.error) : null,
           this.state.notice ? React.createElement('div', { className: 'gp-ok' }, this.state.notice) : null,
+          this.renderSharePanel(),
           this.renderDetail()
         )
       )
@@ -1058,6 +1912,8 @@ class Groups extends React.Component {
   }
 }
 
-Groups.CSS = CSS;
+Groups.CSS = CSS + '\n' + (LocalGroups.CSS || '') + '\n' + (GroupBitcoinPanel.CSS || '') +
+  '\n' + (GroupComposition.CSS || '') + '\n' + (StarMap.CSS || '') + '\n' +
+  (GroupContractSummary.CSS || '');
 
 module.exports = Groups;

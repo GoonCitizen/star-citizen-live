@@ -4,6 +4,10 @@ in plain English, just like in Cowork. The difference: Claude Code works directl
 on **your own computer**, so it can install, run, test, and (later) deploy this
 project for real.
 
+> **Current clone:** [GoonCitizen/star-citizen-live](https://github.com/GoonCitizen/star-citizen-live),
+> branch **`feature/rsi`**. What runs: [`AGENTS.md`](AGENTS.md) §3 (`npm start` →
+> LiveRelay). Contributor / org call: [`DEVELOPERS.md`](DEVELOPERS.md).
+
 Goal of your first session: **get the service running on your machine and open it
 in your browser.** That's it — no coding, no deploy. ~15 minutes.
 
@@ -35,17 +39,17 @@ You don't need to understand these — they're just the toolbox Claude Code uses
 Copy everything in the box and send it as your first message to Claude Code:
 
 ```
-I'm a non-developer learning the ropes. This project is my GitHub fork:
-https://github.com/Neorion/star-citizen-live  (branch: feature/fabric-free-m1)
+I'm a non-developer learning the ropes. This project is:
+https://github.com/GoonCitizen/star-citizen-live  (branch: feature/rsi)
 
 Please walk me through it one step at a time, explaining each step in plain
 English BEFORE you run it:
 
-1. Clone the feature/fabric-free-m1 branch into this folder.
-2. Read CONTINUE.md, PROGRESS.md and DECISIONS.md so you understand the project.
-3. Run: npm install
-4. Run: npm test   (the suite should pass — currently 45 tests)
-5. Run: npm start   to start the service.
+1. Clone the feature/rsi branch into this folder.
+2. Read DEVELOPERS.md and AGENTS.md §3–§4 so you understand what runs.
+3. Use Node.js 24.15.0 (see .nvmrc). Run: npm i
+4. Run: npm test
+5. Run: npm start   to start LiveRelay.
 6. Tell me the exact web address to open in my browser, and explain what I'm
    looking at when I open it.
 
@@ -56,17 +60,16 @@ Keep it beginner-friendly and pause if anything needs my decision.
 
 - Claude Code will **ask permission** before running commands. Read what it says,
   then approve — that's normal and how it keeps you in control.
-- It will download the project, run the tests (expect the full suite to **pass** —
-  currently 45), and start the service. (No install step is needed — the service
-  has zero dependencies.)
-- It'll give you a link like **http://localhost:3041/services/star-citizen**.
-  Open that in your browser.
+- It will download the project, run `npm i` (Fabric git pins — not zero-dep),
+  run `npm test`, and start LiveRelay.
+- It'll give you a link like **http://localhost:3041/** (dashboard). Status JSON
+  is at **http://localhost:3041/services/star-citizen**.
 
 ## Step 5 — How you know it worked
 
-Your browser shows a small block of text (JSON) with `"status": "STARTED"` and
-some counts. **That's the service running live on your computer** — the moment we
-couldn't fully reach inside Cowork. 🎉
+Your browser shows the GoonCitizen dashboard (or JSON at `/services/star-citizen`
+with a started status and some counts). **That's LiveRelay running on your
+computer.**
 
 To stop it later, just tell Claude Code "stop the service" (or close its window).
 

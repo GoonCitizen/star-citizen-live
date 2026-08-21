@@ -23,16 +23,24 @@ function request (port, method, reqPath, payload) {
   });
 }
 
-/** Minimal fake bitcoind for multisig derivation. */
-function fakeRpc () {
-  return async (method, params) => {
+/** Minimal fake bitcoind for multisig derivation + address scans. */
+function fakeRpc (state = {}) {
+  state.utxos = state.utxos || [];
+  const rpc = async (method, params) => {
     if (method === 'createmultisig') {
       const [threshold, keys] = params;
       return { address: `bcrt1q-fake-${threshold}of${keys.length}-${keys[0].slice(0, 8)}`, redeemScript: 'aa'.repeat(20) };
     }
-    if (method === 'scantxoutset') return { unspents: [], total_amount: 0 };
+    if (method === 'scantxoutset') {
+      return {
+        unspents: state.utxos,
+        total_amount: state.utxos.reduce((s, u) => s + (Number(u.amount) || 0), 0)
+      };
+    }
     throw new Error(`unexpected rpc: ${method}`);
   };
+  rpc.state = state;
+  return rpc;
 }
 
 test('default peers: hub.fabric.pub and relay.goon.vc are seeded on first boot; removal is respected', async () => {
@@ -164,11 +172,13 @@ test('shareLogs consent gates the event uplink but not chat', async () => {
 
 test('group wallet: deterministic k-of-n Taproot (+ legacy P2WSH) from the group roster', async () => {
   const a = createIdentity(); const b = createIdentity(); const c = createIdentity();
+  const rpc = fakeRpc();
   const svc = new LiveRelay({
     port: 0,
     missions: { enable: true },
     peers: [],
-    payouts: { enable: true, rpc: fakeRpc(), network: 'regtest' }
+    payouts: { enable: true, rpc, network: 'regtest' },
+    bitcoin: { enable: true, hub: 'http://127.0.0.1:9' }
   });
   await svc.start();
   const port = svc.server.address().port;
@@ -184,6 +194,15 @@ test('group wallet: deterministic k-of-n Taproot (+ legacy P2WSH) from the group
     assert.ok(res.body.data.address, 'Taproot deposit address');
     assert.ok(res.body.data.legacyP2wsh, 'legacy P2WSH retained for transition');
     assert.ok(String(res.body.data.legacyP2wsh.address || '').startsWith('bcrt1q-fake-2of3-'));
+    assert.strictEqual(res.body.data.bitcoinEnable, true);
+    assert.strictEqual(res.body.data.balanceSats, 0);
+    assert.strictEqual(res.body.data.balanceSource, 'payouts-rpc');
+
+    rpc.state.utxos = [{ txid: 'ab'.repeat(32), vout: 0, amount: 0.00042, height: 101 }];
+    const funded = await request(port, 'GET', `${BASE}/groups/${group.id}/wallet`);
+    assert.strictEqual(funded.body.data.balanceSats, 42000);
+    assert.strictEqual(funded.body.data.history.length, 1);
+    assert.strictEqual(funded.body.data.history[0].amountSats, 42000);
 
     // Wallet summary endpoint reports the backend.
     const wallet = await request(port, 'GET', `${BASE}/wallet`);

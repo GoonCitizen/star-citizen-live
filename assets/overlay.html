@@ -6,13 +6,14 @@
   <title>Primary group</title>
   <style>
     :root {
-      --bg: rgba(12, 14, 18, 0.78);
-      --line: rgba(255, 255, 255, 0.08);
+      --bg: rgba(8, 10, 14, 0.22);
+      --line: rgba(255, 255, 255, 0.05);
       --text: #e8edf5;
       --muted: #9aa3b2;
       --good: #3fb950;
       --offline: #6e7681;
       --accent: #3b82f6;
+      --warn: #d29922;
     }
     * { box-sizing: border-box; }
     html, body {
@@ -31,8 +32,8 @@
       border-radius: 10px;
       background: var(--bg);
       border: 1px solid var(--line);
-      backdrop-filter: blur(10px);
-      -webkit-backdrop-filter: blur(10px);
+      backdrop-filter: blur(3px);
+      -webkit-backdrop-filter: blur(3px);
       max-height: calc(100vh - 16px);
       overflow: hidden;
       display: flex;
@@ -55,8 +56,24 @@
       white-space: nowrap;
       overflow: hidden;
       text-overflow: ellipsis;
+      flex: 1;
+      min-width: 0;
     }
     .head .meta { color: var(--muted); font-size: 11px; white-space: nowrap; }
+    .head .off {
+      flex: none;
+      margin-left: 4px;
+      background: rgba(255,255,255,0.08);
+      border: 1px solid var(--line);
+      color: var(--text);
+      border-radius: 6px;
+      width: 22px;
+      height: 22px;
+      font-size: 13px;
+      line-height: 1;
+      cursor: pointer;
+      pointer-events: auto;
+    }
     .list { overflow: auto; display: flex; flex-direction: column; gap: 2px; }
     .row {
       display: grid;
@@ -74,13 +91,49 @@
     .dot.on { background: var(--good); box-shadow: 0 0 0 2px rgba(63, 185, 80, 0.18); }
     .name { font-weight: 600; font-size: 12.5px; }
     .ship { color: var(--muted); font-size: 11px; margin-top: 1px; }
-    .empty, .err {
+    .ship .type { color: var(--accent); }
+    .loc { color: var(--muted); font-size: 10.5px; margin-top: 1px; }
+    .comp {
+      font-size: 11px;
+      color: var(--muted);
+      border-bottom: 1px solid var(--line);
+      padding-bottom: 6px;
+      display: grid;
+      gap: 2px;
+    }
+    .comp b { color: var(--text); font-weight: 650; }
+    .map {
+      width: 100%;
+      height: 110px;
+      display: block;
+      border-radius: 8px;
+      background: rgba(11, 14, 20, 0.35);
+      border: 1px solid var(--line);
+    }
+    .voice {
+      font-size: 11.5px;
+      line-height: 1.4;
+      padding: 6px 8px;
+      border-radius: 8px;
+      border: 1px solid var(--line);
+      color: var(--muted);
+      background: rgba(255, 255, 255, 0.03);
+    }
+    .voice.on {
+      color: var(--text);
+      border-color: rgba(63, 185, 80, 0.28);
+      background: rgba(63, 185, 80, 0.10);
+    }
+    .voice .ttl { font-weight: 650; }
+    .voice .sub { color: var(--muted); font-size: 11px; margin-top: 2px; }
+    .empty, .err, .warn {
       color: var(--muted);
       font-size: 12px;
       padding: 8px 2px;
       line-height: 1.45;
     }
     .err { color: #f85149; }
+    .warn { color: var(--warn); padding-top: 0; padding-bottom: 4px; font-size: 11px; }
   </style>
 </head>
 <body>
@@ -88,7 +141,11 @@
     <div class="head">
       <h1 id="title">Primary group</h1>
       <span class="meta" id="meta"></span>
+      <button type="button" class="off" id="overlay-off" title="Turn overlay off">×</button>
     </div>
+    <div class="voice idle" id="voice">Voice · not joined</div>
+    <div id="comp"></div>
+    <svg class="map" id="map" viewBox="0 0 100 100" preserveAspectRatio="xMidYMid meet" hidden></svg>
     <div class="list" id="list">
       <div class="empty">Loading…</div>
     </div>
@@ -98,6 +155,31 @@
     const titleEl = document.getElementById('title');
     const metaEl = document.getElementById('meta');
     const listEl = document.getElementById('list');
+    const compEl = document.getElementById('comp');
+    const mapEl = document.getElementById('map');
+    const offBtn = document.getElementById('overlay-off');
+    const voiceEl = document.getElementById('voice');
+
+    function overlayApi () {
+      try { return window.overlayAPI || null; } catch (_) { return null; }
+    }
+
+    function bindOffButton () {
+      if (!offBtn) return;
+      offBtn.addEventListener('mouseenter', () => {
+        const api = overlayApi();
+        if (api && typeof api.setIgnoreMouse === 'function') api.setIgnoreMouse(false);
+      });
+      offBtn.addEventListener('mouseleave', () => {
+        const api = overlayApi();
+        if (api && typeof api.setIgnoreMouse === 'function') api.setIgnoreMouse(true);
+      });
+      offBtn.addEventListener('click', (e) => {
+        e.preventDefault();
+        const api = overlayApi();
+        if (api && typeof api.setEnabled === 'function') api.setEnabled(false);
+      });
+    }
 
     function shortName (m) {
       if (m.nickname) return m.nickname;
@@ -107,22 +189,113 @@
 
     function shipLabel (m) {
       if (!m.online) return 'offline';
-      const ship = m.ship && (m.ship.name || m.ship.slug);
-      if (ship) return ship;
+      const ship = m.ship;
+      const name = ship && (ship.name || ship.slug);
+      const type = (ship && ship.type) || m.shipType || null;
+      if (name && type) return name + ' · ' + type;
+      if (name) return name;
+      if (type) return type;
       if (m.statusText) return m.statusText;
       return 'online';
+    }
+
+    function locLabel (m) {
+      if (!m.online) return '';
+      const loc = m.location && (m.location.name || m.location.slug);
+      const dest = m.destination && (m.destination.name || m.destination.slug);
+      if (loc && dest) return loc + ' → ' + dest;
+      if (loc) return loc;
+      if (dest) return '→ ' + dest;
+      return '';
+    }
+
+    function pct (n) {
+      const v = Number(n);
+      if (!Number.isFinite(v)) return 50;
+      return Math.min(96, Math.max(4, v * 100));
+    }
+
+    function renderMap (data) {
+      if (!mapEl) return;
+      const layout = data && data.map;
+      const owner = data && data.owner;
+      if (!owner || !layout || !Array.isArray(layout.bodies)) {
+        mapEl.setAttribute('hidden', '');
+        mapEl.innerHTML = '';
+        return;
+      }
+      mapEl.removeAttribute('hidden');
+      let html = '<rect x="0" y="0" width="100" height="100" fill="#0b0e14" opacity="0.35"></rect>';
+      (layout.bodies || []).forEach((b) => {
+        html += '<circle cx="' + pct(b.nx) + '" cy="' + pct(b.ny) + '" r="1.6" fill="' +
+          (b.type === 'STAR' ? '#f5d76e' : '#6ea8fe') + '" opacity="0.85"></circle>';
+      });
+      (layout.hotspots || []).forEach((p) => {
+        html += '<circle cx="' + pct(p.nx) + '" cy="' + pct(p.ny) + '" r="1.1" fill="#d29922"></circle>';
+      });
+      (layout.members || []).forEach((p) => {
+        html += '<circle cx="' + pct(p.nx) + '" cy="' + pct(p.ny) + '" r="1.8" fill="#f78166"></circle>';
+      });
+      mapEl.innerHTML = html;
+    }
+
+    function renderComp (data) {
+      if (!compEl) return;
+      const c = data && data.owner ? data.composition : null;
+      if (!c) {
+        compEl.innerHTML = '';
+        return;
+      }
+      const ships = (c.ships || []).slice(0, 4).map((r) => r.n + ' ×' + r.c).join(' · ');
+      const locs = (c.locations || []).slice(0, 4).map((r) => r.n + ' ×' + r.c).join(' · ');
+      let html = '<div class="comp"><b>Composition</b> · ' + c.online + '/' + c.total + ' online';
+      if (ships) html += '<div>' + ships + '</div>';
+      if (locs) html += '<div>' + locs + '</div>';
+      html += '</div>';
+      compEl.innerHTML = html;
+    }
+
+    function renderVoice (data) {
+      if (!voiceEl) return;
+      const v = data && data.voice;
+      if (!v || !v.joined) {
+        voiceEl.className = 'voice idle';
+        voiceEl.textContent = 'Voice · not joined';
+        return;
+      }
+      voiceEl.className = 'voice on';
+      voiceEl.textContent = '';
+      const ttl = document.createElement('div');
+      ttl.className = 'ttl';
+      ttl.textContent = 'In voice · ' + (v.groupName || 'group') +
+        ' · ' + (v.memberCount || 0) + '/' + (v.cap || 8);
+      voiceEl.appendChild(ttl);
+      const sub = document.createElement('div');
+      sub.className = 'sub';
+      const talking = Array.isArray(v.talking) ? v.talking.filter(Boolean) : [];
+      const mode = v.mode === 'vad' ? 'Voice activity' : ('PTT ' + (v.pttLabel || 'Shift+Tab'));
+      sub.textContent = talking.length
+        ? mode + ' · talking: ' + talking.slice(0, 4).join(', ')
+        : mode;
+      voiceEl.appendChild(sub);
     }
 
     function render (data) {
       if (!data || !data.groupId) {
         titleEl.textContent = 'No primary group';
         metaEl.textContent = '';
+        renderComp(null);
+        renderMap(null);
+        renderVoice(data);
         listEl.innerHTML = '<div class="empty">Pick a primary group in the Groups tab. Enable the overlay in Settings.</div>';
         return;
       }
-      if (data.error) {
+      if (data.error && !Array.isArray(data.members)) {
         titleEl.textContent = data.name || 'Primary group';
         metaEl.textContent = '';
+        renderComp(null);
+        renderMap(null);
+        renderVoice(data);
         listEl.innerHTML = '<div class="err">' + String(data.error) + '</div>';
         return;
       }
@@ -130,21 +303,51 @@
       const online = members.filter((m) => m.online).length;
       titleEl.textContent = data.name || 'Primary group';
       metaEl.textContent = online + '/' + members.length + ' online';
+      renderComp(data);
+      renderMap(data);
+      renderVoice(data);
+
+      let html = '';
+      if (data.warning) {
+        html += '<div class="warn"></div>';
+      }
       if (!members.length) {
-        listEl.innerHTML = '<div class="empty">No members yet.</div>';
+        html += '<div class="empty">No members yet.</div>';
+        listEl.innerHTML = html;
+        if (data.warning) listEl.querySelector('.warn').textContent = String(data.warning);
         return;
       }
-      listEl.innerHTML = members.map((m) => {
-        const on = m.online ? 'on' : '';
-        return '<div class="row"><span class="dot ' + on + '"></span><div>' +
-          '<div class="name"></div><div class="ship"></div></div></div>';
+      html += members.map(() => {
+        return '<div class="row"><span class="dot"></span><div>' +
+          '<div class="name"></div><div class="ship"></div><div class="loc"></div></div></div>';
       }).join('');
+      listEl.innerHTML = html;
+      if (data.warning) {
+        listEl.querySelector('.warn').textContent = String(data.warning);
+      }
       const rows = listEl.querySelectorAll('.row');
       members.forEach((m, i) => {
         const row = rows[i];
         if (!row) return;
+        const dot = row.querySelector('.dot');
+        if (m.online) dot.classList.add('on');
         row.querySelector('.name').textContent = shortName(m);
-        row.querySelector('.ship').textContent = shipLabel(m);
+        const shipEl = row.querySelector('.ship');
+        const label = shipLabel(m);
+        const type = (m.ship && m.ship.type) || m.shipType;
+        const name = m.ship && (m.ship.name || m.ship.slug);
+        if (m.online && name && type) {
+          shipEl.textContent = '';
+          shipEl.appendChild(document.createTextNode(name + ' · '));
+          const span = document.createElement('span');
+          span.className = 'type';
+          span.textContent = type;
+          shipEl.appendChild(span);
+        } else {
+          shipEl.textContent = label;
+        }
+        const locEl = row.querySelector('.loc');
+        locEl.textContent = locLabel(m);
       });
     }
 
@@ -158,8 +361,9 @@
       }
     }
 
+    bindOffButton();
     tick();
-    setInterval(tick, 4000);
+    setInterval(tick, 2500);
   </script>
 </body>
 </html>

@@ -86,13 +86,15 @@ test('GET overlay/primary-group returns members + ships for primary group', asyn
 
     // Seed peer presence for bob (x-only key as wire authors often are).
     const xBob = pubkeyXOnly(bob.pubkey);
-    svc._peerPresenceByPubkey[xBob] = {
+    svc._indexPeerPresence(xBob, {
       online: true,
       nickname: 'BobPilot',
-      ship: { name: 'Aurora MR', slug: 'aurora-mr' },
+      ship: { name: 'Aurora MR', slug: 'aurora-mr', type: 'Starter' },
+      location: { name: 'Area18', slug: 'area18', system: 'Stanton' },
+      destination: { name: 'CRU-L1 Ambitious Dream Station', slug: 'cru-l1-ambitious-dream-station' },
       lastEventAt: new Date().toISOString(),
       updatedAt: new Date().toISOString()
-    };
+    });
 
     const overlay = await request(port, 'GET', '/services/star-citizen/overlay/primary-group');
     assert.strictEqual(overlay.status, 200);
@@ -105,10 +107,72 @@ test('GET overlay/primary-group returns members + ships for primary group', asyn
     assert.ok(bobRow, 'bob should appear in overlay roster');
     assert.strictEqual(bobRow.online, true);
     assert.strictEqual(bobRow.ship.name, 'Aurora MR');
+    assert.ok(bobRow.ship.type || bobRow.shipType, 'ship type should be present');
+    assert.ok(bobRow.location && /Area18/i.test(bobRow.location.name), 'member location');
+    assert.equal(overlay.body.data.owner, true);
+    assert.ok(overlay.body.data.voice);
+    assert.equal(overlay.body.data.voice.joined, false);
+    assert.ok(overlay.body.data.composition);
+    assert.ok(overlay.body.data.composition.ships.some((r) => r.n === 'Aurora MR'));
+    assert.ok(overlay.body.data.map && Array.isArray(overlay.body.data.map.bodies));
 
     const html = await request(port, 'GET', '/overlay');
     assert.strictEqual(html.status, 200);
     assert.match(String(html.headers['content-type'] || ''), /text\/html/);
+    assert.match(String(html.body), /shipType|ship\.type|\.type/);
+    assert.match(String(html.body), /overlay-off/);
+    assert.match(String(html.body), /Composition|composition/);
+    assert.match(String(html.body), /id="voice"|Voice · not joined/);
+  } finally {
+    await svc.stop();
+  }
+});
+
+test('overlay primary-group is not hard-gated on membership', async () => {
+  const alice = createIdentity();
+  const bob = createIdentity();
+  const outsider = createIdentity();
+  const dir = tmpDir();
+  const svc = new LiveRelay({
+    port: 0,
+    settingsDir: dir,
+    missions: { enable: true, officers: [alice.pubkey] },
+    peers: [],
+    fabric: { enable: false }
+  });
+  await svc.start();
+  const port = svc.server.address().port;
+
+  try {
+    const created = await svc.groupManager.createGroup({
+      name: 'Closed Wing',
+      members: [bob.pubkey],
+      threshold: 1
+    }, alice.pubkey);
+    await request(port, 'PUT', '/settings/primaryGroupId', { value: created.id });
+    await request(port, 'PUT', '/settings/groupOverlay', { value: true });
+
+    // Local identity is not a member — HUD must still list the roster.
+    svc.setIdentity(outsider);
+    svc._indexPeerPresence(bob.pubkey, {
+      online: true,
+      nickname: 'BobPilot',
+      ship: { name: 'Cutlass Black', slug: 'cutlass-black' },
+      updatedAt: new Date().toISOString()
+    });
+
+    const overlay = await request(port, 'GET', '/services/star-citizen/overlay/primary-group');
+    assert.strictEqual(overlay.status, 200);
+    assert.strictEqual(overlay.body.data.groupId, created.id);
+    assert.ok(Array.isArray(overlay.body.data.members));
+    assert.ok(overlay.body.data.members.length >= 2, 'roster should not be blanked');
+    assert.notStrictEqual(overlay.body.data.error, 'you are not a member of the primary group');
+    assert.strictEqual(overlay.body.data.memberOfPrimary, false);
+    assert.match(String(overlay.body.data.warning || ''), /not listed/i);
+    const bobRow = overlay.body.data.members.find((m) => m.nickname === 'BobPilot' || m.pubkey === bob.pubkey);
+    assert.ok(bobRow);
+    assert.strictEqual(bobRow.online, true);
+    assert.ok(bobRow.ship && bobRow.ship.name);
   } finally {
     await svc.stop();
   }

@@ -16,12 +16,12 @@ const FIXTURE_SEEDS = Object.freeze({
   hub: 'myth claw rebuild blind cotton kid sample doctor betray waste box surface'
 });
 
-/** Expected compressed pubkeys for the fixtures above (assert in tests if drifted). */
+/** Expected Fabric-protocol compressed pubkeys (Identity path, not HD master). */
 const FIXTURE_PUBKEYS = Object.freeze({
-  alice: '0248dfb2941f5c815a40ebff9a980f675a8dd96b993c1d97f7a28ab83af44d73d9',
-  bob: '023475805c577db507a58a1559b8081bd0c7cba07b6a69b58fd0d331ae56954578',
-  carol: '03f4e445d03086d25c61fec8ee55f40cc7e4fe4ff04a1b4edcfcd0f7a0c53dea44',
-  hub: '02baeac87ad39114eebf84059e31a51a8f9a0ef3110b56d085b645f397fd86f282'
+  alice: '0303c3a8590fae22877856063ddcf9202bcf0c36e42acc30aaa5d122c77f123f0b',
+  bob: '0347e7a5449ad0238e5148987609d70b7a93d518b2e598db1be03e6fcdb9f97710',
+  carol: '0322210f70c00a16f8c7f92c605cd43ee8988b0c0f51b6fe7174fd4885a145f46d',
+  hub: '031c7e95d402f58468a854c5df39fff9e324df95bca149aeb906fac6f37312b94f'
 });
 
 /**

@@ -7,6 +7,13 @@
  */
 
 const React = require('react');
+const {
+  notificationTarget,
+  applyNotificationTarget,
+  offerVisibility,
+  isSelfSourced
+} = require('../functions/groupJoinFlow');
+const { isInviteExpired, formatInviteExpiryLabel } = require('../functions/inviteExpiry');
 
 const BASE = '/services/star-citizen';
 
@@ -75,9 +82,9 @@ function kindLabel (kind) {
     MissionApplication: 'mission apply',
     MissionClaim: 'completion',
     MissionClaimDecision: 'completion decision',
-    GroupApplication: 'group apply',
-    GroupApplicationDecision: 'group decision',
-    GroupOffer: 'group offer',
+    GroupApplication: 'join request',
+    GroupApplicationDecision: 'join decision',
+    GroupOffer: 'group share',
     FederationInvite: 'group invite',
     FederationInviteDecision: 'invite response',
     MultisigWalletInvite: 'multisig invite',
@@ -90,25 +97,7 @@ function kindLabel (kind) {
 }
 
 function openTarget (item) {
-  const refs = item.refs || {};
-  if (refs.missionId && String(item.kind || '').indexOf('Wallet') !== 0) {
-    window.location.href = `/missions/${encodeURIComponent(refs.missionId)}`;
-    return;
-  }
-  if (refs.groupId) {
-    window.location.href = `/groups/${encodeURIComponent(refs.groupId)}`;
-    return;
-  }
-  if (item.kind && String(item.kind).indexOf('Wallet') === 0) {
-    window.location.hash = 'wallet';
-    return;
-  }
-  if (item.kind && (item.kind.indexOf('Group') === 0 || item.kind === 'FederationInvite' ||
-      item.kind === 'FederationInviteDecision' || item.kind === 'MultisigWalletInvite')) {
-    window.location.hash = 'groups';
-    return;
-  }
-  window.location.hash = 'missions';
+  applyNotificationTarget(notificationTarget(item));
 }
 
 class Notifications extends React.Component {
@@ -121,6 +110,7 @@ class Notifications extends React.Component {
       busyId: null,
       error: null,
       token: null,
+      pubkey: null,
       pending: 0
     };
     this._timer = null;
@@ -129,11 +119,23 @@ class Notifications extends React.Component {
   componentDidMount () {
     this.ensureSession().then(() => this.refresh());
     this._timer = setInterval(() => this.refresh(), 5000);
+    if (typeof window !== 'undefined') {
+      window.addEventListener('gooncitizen:inbox', this._onInbox);
+      window.addEventListener('gooncitizen:group-imported', this._onInbox);
+    }
   }
 
   componentWillUnmount () {
     if (this._timer) clearInterval(this._timer);
+    if (typeof window !== 'undefined') {
+      window.removeEventListener('gooncitizen:inbox', this._onInbox);
+      window.removeEventListener('gooncitizen:group-imported', this._onInbox);
+    }
   }
+
+  _onInbox = () => {
+    this.refresh();
+  };
 
   headers () {
     const h = { 'Content-Type': 'application/json' };
@@ -143,21 +145,42 @@ class Notifications extends React.Component {
 
   async ensureSession () {
     const b = (typeof window !== 'undefined' && window.electronAPI && window.electronAPI.identity) || null;
-    if (!b) return;
+    if (b) {
+      try {
+        const info = await b.get();
+        if (info && info.unlocked && b.signEnvelope) {
+          const envelope = await b.signEnvelope({ intent: 'login', ts: new Date().toISOString() });
+          if (envelope && !envelope.error) {
+            const res = await fetch(`${BASE}/auth`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(envelope)
+            });
+            if (res.ok) {
+              const json = await res.json();
+              const token = json.data && json.data.token;
+              const pubkey = json.data && json.data.pubkey;
+              this.setState({ token, pubkey });
+              return { token, pubkey };
+            }
+          }
+        }
+      } catch (_) { /* fall through */ }
+    }
     try {
-      const info = await b.get();
-      if (!info || !info.unlocked || !b.signEnvelope) return;
-      const envelope = await b.signEnvelope({ intent: 'login', ts: new Date().toISOString() });
-      if (!envelope || envelope.error) return;
-      const res = await fetch(`${BASE}/auth`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(envelope)
-      });
-      if (!res.ok) return;
-      const json = await res.json();
-      this.setState({ token: json.data.token });
-    } catch (_) { /* locked */ }
+      const raw = typeof window !== 'undefined' && window.localStorage &&
+        window.localStorage.getItem('fabric.delegation');
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        const token = parsed && (parsed.token || parsed.delegationToken);
+        if (token) {
+          const pubkey = (parsed && parsed.pubkey) || this.state.pubkey;
+          this.setState({ token, pubkey });
+          return { token, pubkey };
+        }
+      }
+    } catch (_) { /* ignore */ }
+    return { token: this.state.token, pubkey: this.state.pubkey };
   }
 
   async refresh () {
@@ -230,9 +253,9 @@ class Notifications extends React.Component {
     if (this.state.busyId) return;
     const refs = item.refs || {};
     const inviteId = refs.inviteId;
-    const groupId = refs.groupId;
-    if (!inviteId || !groupId) {
-      this.setState({ error: 'Invite is missing group or invite id' });
+    const groupId = refs.groupId || refs.contractId || 'invite';
+    if (!inviteId) {
+      this.setState({ error: 'Invite is missing an invite id' });
       return;
     }
     this.setState({ busyId: item.id, error: null });
@@ -248,6 +271,75 @@ class Notifications extends React.Component {
       await this.refresh();
       if (accept && typeof window !== 'undefined') {
         window.location.href = `/groups/${encodeURIComponent(groupId)}`;
+      }
+    } catch (e) {
+      this.setState({ busyId: null, error: e.message });
+    }
+  }
+
+  async actGroupOffer (item, apply) {
+    const groupId = item.refs && item.refs.groupId;
+    if (!groupId) {
+      this.setState({ error: 'Share is missing a group id' });
+      return;
+    }
+    if (!apply) return this.dismiss(item);
+    if (this.state.busyId) return;
+    this.setState({ busyId: item.id, error: null });
+    try {
+      if (!this.state.token) await this.ensureSession();
+      const res = await fetch(`${BASE}/groups/${encodeURIComponent(groupId)}/applications`, {
+        method: 'POST',
+        headers: this.headers(),
+        body: JSON.stringify({ message: 'Applied from Notifications' })
+      });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        const msg = json.error || `HTTP ${res.status}`;
+        if (/already a member/i.test(msg)) {
+          this.setState({ busyId: null });
+          openTarget(item);
+          return;
+        }
+        if (/only public groups/i.test(msg) || res.status === 403) {
+          this.setState({ busyId: null });
+          openTarget(item);
+          return;
+        }
+        throw new Error(msg);
+      }
+      this.setState({ busyId: null });
+      await this.refresh();
+      openTarget(item);
+    } catch (e) {
+      this.setState({ busyId: null, error: e.message });
+    }
+  }
+
+  async actGroupApplication (item, decision) {
+    const applicationId = item.refs && item.refs.applicationId;
+    if (!applicationId) {
+      this.setState({ error: 'Join request is missing an application id' });
+      return;
+    }
+    if (this.state.busyId) return;
+    this.setState({ busyId: item.id, error: null });
+    try {
+      if (!this.state.token) await this.ensureSession();
+      const res = await fetch(
+        `${BASE}/group-applications/${encodeURIComponent(applicationId)}/decision`,
+        {
+          method: 'POST',
+          headers: this.headers(),
+          body: JSON.stringify({ decision })
+        }
+      );
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(json.error || `HTTP ${res.status}`);
+      this.setState({ busyId: null });
+      await this.refresh();
+      if (decision === 'accept' && item.refs && item.refs.groupId) {
+        applyNotificationTarget({ hash: `groups?id=${encodeURIComponent(item.refs.groupId)}&tab=members` });
       }
     } catch (e) {
       this.setState({ busyId: null, error: e.message });
@@ -273,16 +365,70 @@ class Notifications extends React.Component {
         }, 'Open')
       );
     }
-    if ((item.kind === 'FederationInvite' || item.kind === 'MultisigWalletInvite') && item.status === 'pending') {
+    if (item.kind === 'GroupOffer' && item.status === 'pending') {
+      const vis = offerVisibility(item);
+      const canApply = vis !== 'private';
+      const expired = isInviteExpired(item);
+      return React.createElement('div', { className: 'nt-row' },
+        canApply
+          ? React.createElement('button', {
+            className: 'nt-btn good',
+            disabled: expired || this.state.busyId === item.id || !(item.refs && item.refs.groupId),
+            onClick: () => this.actGroupOffer(item, true)
+          }, this.state.busyId === item.id ? '…' : (expired ? 'Expired' : 'Apply to join'))
+          : null,
+        React.createElement('button', {
+          className: 'nt-btn ghost',
+          disabled: this.state.busyId === item.id,
+          onClick: () => this.actGroupOffer(item, false)
+        }, 'Ignore'),
+        React.createElement('button', {
+          className: 'nt-btn ghost',
+          onClick: () => openTarget(item)
+        }, 'Open group')
+      );
+    }
+    if (item.kind === 'GroupApplication' && item.status === 'pending') {
+      const mine = isSelfSourced(item, this.state.pubkey);
+      if (mine) {
+        return React.createElement('div', { className: 'nt-row' },
+          React.createElement('span', { className: 'nt-meta' }, 'Waiting for the creator to accept.'),
+          React.createElement('button', {
+            className: 'nt-btn ghost',
+            onClick: () => openTarget(item)
+          }, 'Open group')
+        );
+      }
       return React.createElement('div', { className: 'nt-row' },
         React.createElement('button', {
           className: 'nt-btn good',
-          disabled: this.state.busyId === item.id || !(item.refs && item.refs.inviteId && item.refs.groupId),
-          onClick: () => this.actFederationInvite(item, true)
-        }, this.state.busyId === item.id ? '…' : (item.kind === 'MultisigWalletInvite' ? 'Join wallet' : 'Accept')),
+          disabled: this.state.busyId === item.id || !(item.refs && item.refs.applicationId),
+          onClick: () => this.actGroupApplication(item, 'accept')
+        }, this.state.busyId === item.id ? '…' : 'Accept'),
         React.createElement('button', {
           className: 'nt-btn ghost',
-          disabled: this.state.busyId === item.id || !(item.refs && item.refs.inviteId && item.refs.groupId),
+          disabled: this.state.busyId === item.id || !(item.refs && item.refs.applicationId),
+          onClick: () => this.actGroupApplication(item, 'reject')
+        }, 'Reject'),
+        React.createElement('button', {
+          className: 'nt-btn ghost',
+          onClick: () => openTarget(item)
+        }, 'Open group')
+      );
+    }
+    if ((item.kind === 'FederationInvite' || item.kind === 'MultisigWalletInvite') && item.status === 'pending') {
+      const expired = isInviteExpired(item);
+      return React.createElement('div', { className: 'nt-row' },
+        React.createElement('button', {
+          className: 'nt-btn good',
+          disabled: expired || this.state.busyId === item.id || !(item.refs && item.refs.inviteId),
+          onClick: () => this.actFederationInvite(item, true)
+        }, this.state.busyId === item.id ? '…' : (expired
+          ? 'Expired'
+          : (item.kind === 'MultisigWalletInvite' ? 'Join wallet' : 'Accept'))),
+        React.createElement('button', {
+          className: 'nt-btn ghost',
+          disabled: this.state.busyId === item.id || !(item.refs && item.refs.inviteId),
           onClick: () => this.actFederationInvite(item, false)
         }, 'Decline'),
         React.createElement('button', {
@@ -314,6 +460,7 @@ class Notifications extends React.Component {
   }
 
   renderItem (item) {
+    const expiryLabel = formatInviteExpiryLabel(item);
     return React.createElement('div', {
       className: 'nt-item' + (item.status === 'pending' ? ' pending' : ''),
       key: item.id
@@ -338,7 +485,8 @@ class Notifications extends React.Component {
       fmtTime(item.ts) +
       (item.handle || item.source ? ' · ' + (item.handle || shortKey(item.source)) : '') +
       (item.source && item.handle ? ' · ' + shortKey(item.source) : '') +
-      (item.resolvedAt ? ' · resolved ' + fmtTime(item.resolvedAt) : '')
+      (item.resolvedAt ? ' · resolved ' + fmtTime(item.resolvedAt) : '') +
+      (expiryLabel ? ' · ' + expiryLabel.toLowerCase() : '')
     ),
     this.renderActions(item)
     );
@@ -353,8 +501,8 @@ class Notifications extends React.Component {
         React.createElement('h2', null, '🔔 Notifications',
           React.createElement('span', { className: 'sub' },
             pending
-              ? `${pending} pending · invites, join requests, wallet events`
-              : 'Invites, join decisions, multisig wallet offers, and wallet events')
+              ? `${pending} pending · group shares, join requests, invites`
+              : 'Group shares, join requests, invites, and wallet events')
         ),
         React.createElement('div', { className: 'nt-filters' },
           [['pending', 'Pending'], ['all', 'All'], ['resolved', 'Resolved']].map(([key, label]) =>
@@ -374,7 +522,7 @@ class Notifications extends React.Component {
             : React.createElement('div', { className: 'nt-empty' },
               this.state.filter === 'pending'
                 ? 'No pending notifications.'
-                : 'No notifications yet — group/multisig invites, join decisions, and wallet events show up here.')
+                : 'No notifications yet — group shares, join requests, invites, and wallet events show up here.')
       )
     );
   }

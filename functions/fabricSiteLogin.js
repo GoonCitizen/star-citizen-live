@@ -7,7 +7,7 @@
 const crypto = require('crypto');
 const siteLogin = require('@fabric/http/functions/fabricSiteLogin');
 
-const BEARER_TTL_MS = 24 * 60 * 60 * 1000;
+const BEARER_TTL_MS = 8 * 60 * 60 * 1000;
 
 async function tryHandleSiteLogin (relay, req, res, pathname, readBody) {
   if (!pathname.startsWith('/sessions')) return false;
@@ -78,6 +78,7 @@ async function tryHandleSiteLogin (relay, req, res, pathname, readBody) {
 
 module.exports = {
   SESSION_TTL_MS: siteLogin.SESSION_TTL_MS,
+  BEARER_TTL_MS,
   createSiteLoginStore: siteLogin.createSiteLoginStore,
   createSession: siteLogin.createSession,
   getSession: siteLogin.getSession,

@@ -1,11 +1,15 @@
 'use strict';
 
 /**
- * Modal for opaque fabric:<hex> GroupOffer / FederationContractInvite —
+ * Modal for opaque fabric: GroupOffer / FederationContractInvite —
  * desktop protocol prompts and manual paste Import….
  */
 
 const React = require('react');
+const {
+  dispatchGroupImported,
+  dispatchInboxRefresh
+} = require('../functions/groupJoinFlow');
 
 const BASE = '/services/star-citizen';
 
@@ -57,7 +61,9 @@ class GroupOfferModal extends React.Component {
       notice: null,
       pasteText: '',
       token: null,
-      pubkey: null
+      pubkey: null,
+      lastImport: null,
+      pendingJoin: null
     };
     this._unsub = null;
   }
@@ -86,7 +92,7 @@ class GroupOfferModal extends React.Component {
 
   componentDidUpdate (prevProps) {
     if (this.props.pasteOpen && !prevProps.pasteOpen) {
-      this.setState({ pasteText: '', error: null, notice: null });
+      this.setState({ pasteText: '', error: null, notice: null, pendingJoin: null });
       this.ensureSession().catch(() => {});
     }
   }
@@ -145,11 +151,11 @@ class GroupOfferModal extends React.Component {
 
   closePaste () {
     if (typeof this.props.onPasteClose === 'function') this.props.onPasteClose();
-    this.setState({ pasteText: '', error: null });
+    this.setState({ pasteText: '', error: null, pendingJoin: null });
   }
 
   async dismiss () {
-    this.setState({ prompt: null, error: null, notice: null, busy: false });
+    this.setState({ prompt: null, error: null, notice: null, busy: false, pendingJoin: null });
     if (window.electronAPI && window.electronAPI.groupShare) {
       try { await window.electronAPI.groupShare.resolve({ dismiss: true }); } catch (_) { /* ignore */ }
     }
@@ -158,7 +164,7 @@ class GroupOfferModal extends React.Component {
   async ingestEncoded (raw) {
     await this.ensureSession();
     const text = String(raw || '').trim();
-    if (!text) throw new Error('Paste a fabric: hex or base64 message');
+    if (!text) throw new Error('Paste a fabric: message');
     const cleaned = text.replace(/\s+/g, '');
     let body;
     if (/^fabric:/i.test(text)) {
@@ -178,6 +184,12 @@ class GroupOfferModal extends React.Component {
     return json.data || {};
   }
 
+  afterIngest (data) {
+    dispatchInboxRefresh(data);
+    dispatchGroupImported(data);
+    return data;
+  }
+
   async handleIngestResult (data) {
     await this.ensureSession();
     const applicantId = this.state.pubkey || undefined;
@@ -194,9 +206,9 @@ class GroupOfferModal extends React.Component {
         });
         const aj = await apply.json();
         if (!apply.ok) throw new Error(aj.error || `HTTP ${apply.status}`);
-        return `Applied to “${data.group.name || data.group.id}”.`;
+        return `Applied to “${data.group.name || data.group.id}”. The creator will get a notification to accept.`;
       }
-      return `Group “${data.group.name || data.group.id}” imported (private — membership requires an invite).`;
+      return `“${data.group.name || data.group.id}” is private — ask them to Share a join invite, then paste it here and Accept.`;
     }
 
     if (data.kind === 'FederationContractInvite' && data.invite) {
@@ -214,8 +226,8 @@ class GroupOfferModal extends React.Component {
       if (!r.ok) throw new Error(rj.error || `HTTP ${r.status}`);
       const g = (rj.data && rj.data.group) || data.group;
       return g
-        ? `Joined “${g.name || g.id}”.`
-        : 'Invite accepted — you are a local member.';
+        ? `Joined “${g.name || g.id}”. Open Groups to chat and manage.`
+        : 'Invite accepted — you are a member.';
     }
 
     if (data.kind === 'GroupPublish' && data.group) {
@@ -225,15 +237,30 @@ class GroupOfferModal extends React.Component {
     return 'Fabric message ingested.';
   }
 
+  finishImport (data, notice) {
+    dispatchGroupImported(data);
+    dispatchInboxRefresh(data);
+    if (typeof this.props.onImported === 'function') this.props.onImported(data);
+    this.setState({
+      busy: false,
+      notice,
+      prompt: null,
+      pasteText: '',
+      pendingJoin: null,
+      lastImport: data || null
+    });
+    if (typeof this.props.onPasteClose === 'function') this.props.onPasteClose();
+  }
+
   async accept () {
     const p = this.state.prompt;
     if (!p || this.state.busy) return;
     this.setState({ busy: true, error: null });
     try {
       if (p.protocolUrl || p.messageHex) {
-        const data = await this.ingestEncoded(p.protocolUrl || p.messageHex);
+        const data = this.afterIngest(await this.ingestEncoded(p.protocolUrl || p.messageHex));
         const notice = await this.handleIngestResult(data);
-        this.setState({ busy: false, notice, prompt: null });
+        this.finishImport(data, notice);
       }
       if (window.electronAPI && window.electronAPI.groupShare) {
         try { await window.electronAPI.groupShare.resolve({ approve: true }); } catch (_) { /* ignore */ }
@@ -247,11 +274,27 @@ class GroupOfferModal extends React.Component {
     if (this.state.busy) return;
     this.setState({ busy: true, error: null });
     try {
-      const data = await this.ingestEncoded(this.state.pasteText);
-      const notice = await this.handleIngestResult(data);
-      this.setState({ busy: false, notice, pasteText: '' });
-      if (typeof this.props.onPasteClose === 'function') this.props.onPasteClose();
-      if (typeof this.props.onImported === 'function') this.props.onImported(data);
+      const data = this.afterIngest(await this.ingestEncoded(this.state.pasteText));
+      if (data.kind === 'GroupPublish' && data.group) {
+        this.finishImport(data, `Group “${data.group.name || data.group.id}” imported.`);
+        return;
+      }
+      if (data.kind === 'FederationContractInvite' && data.skipped) {
+        throw new Error(
+          data.skipped === 'identity-locked'
+            ? 'Unlock your identity, then import this invite again.'
+            : 'This invite is not for this identity.'
+        );
+      }
+      if (!data.group && !(data.invite && data.invite.inviteId)) {
+        throw new Error('That Fabric message did not include a group you can join.');
+      }
+      this.setState({
+        busy: false,
+        pendingJoin: data,
+        pasteText: '',
+        error: null
+      });
     } catch (e) {
       this.setState({ busy: false, error: e.message || String(e) });
     }
@@ -263,16 +306,14 @@ class GroupOfferModal extends React.Component {
       onClick: (e) => { if (e.target === e.currentTarget && !this.state.busy) this.closePaste(); }
     },
       React.createElement('div', { className: 'group-offer-modal', onClick: (e) => e.stopPropagation() },
-        React.createElement('h2', null, 'Import Fabric message'),
+        React.createElement('h2', null, 'Join a group'),
         React.createElement('p', null,
-          'Paste an encoded Fabric message (',
-          React.createElement('code', null, 'fabric:<hex>'),
-          ' or ',
-          React.createElement('code', null, 'fabric:base64,…'),
-          '). Public group offers apply with your publishing identity; federation invites join locally.'),
+          'Paste the invite someone shared (',
+          React.createElement('code', null, 'fabric:…'),
+          '). Import sniffs hex vs base64 from the body, then Join or Apply from Notifications.'),
         React.createElement('textarea', {
           value: this.state.pasteText,
-          placeholder: 'fabric:<hex> or fabric:base64,…',
+          placeholder: 'fabric:… join invite or group share',
           spellCheck: false,
           autoFocus: true,
           onChange: (e) => this.setState({ pasteText: e.target.value }),
@@ -296,27 +337,118 @@ class GroupOfferModal extends React.Component {
     );
   }
 
+  pendingJoinLabel (data) {
+    if (!data) return 'Group';
+    return (data.group && (data.group.name || data.group.id)) ||
+      (data.invite && data.invite.groupName) ||
+      data.groupId ||
+      'Group';
+  }
+
+  async confirmPendingJoin () {
+    const data = this.state.pendingJoin;
+    if (!data || this.state.busy) return;
+    this.setState({ busy: true, error: null });
+    try {
+      const notice = await this.handleIngestResult(data);
+      this.finishImport(data, notice);
+    } catch (e) {
+      this.setState({ busy: false, error: e.message || String(e) });
+    }
+  }
+
+  viewPendingNotifications () {
+    const data = this.state.pendingJoin;
+    dispatchInboxRefresh(data);
+    dispatchGroupImported(data);
+    this.setState({ pendingJoin: null, pasteText: '', error: null });
+    if (typeof this.props.onPasteClose === 'function') this.props.onPasteClose();
+    if (typeof window !== 'undefined') {
+      try {
+        const { setAppHash } = require('../functions/appHash');
+        setAppHash('notifications');
+      } catch (_) {
+        window.location.hash = 'notifications';
+      }
+    }
+  }
+
+  renderPendingJoin () {
+    const data = this.state.pendingJoin || {};
+    const name = this.pendingJoinLabel(data);
+    const isInvite = data.kind === 'FederationContractInvite';
+    const isPrivateOffer = data.kind === 'GroupOffer' && data.group && data.group.visibility === 'private';
+    const canJoin = isInvite || (data.kind === 'GroupOffer' && !isPrivateOffer);
+    const body = isInvite
+      ? `“${name}” is in Notifications. Join now, or Accept from the bell.`
+      : (isPrivateOffer
+        ? `“${name}” is private — ask them to Share a join invite.`
+        : `“${name}” is in Notifications. Apply to join, or do it later from the bell.`);
+    return React.createElement('div', {
+      className: 'group-offer-modal-backdrop',
+      onClick: (e) => { if (e.target === e.currentTarget && !this.state.busy) this.closePaste(); }
+    },
+      React.createElement('div', { className: 'group-offer-modal', onClick: (e) => e.stopPropagation() },
+        React.createElement('h2', null, isInvite ? 'Group invite' : 'Group share'),
+        React.createElement('p', null, body),
+        this.state.error ? React.createElement('div', { className: 'err' }, this.state.error) : null,
+        React.createElement('div', { className: 'actions' },
+          React.createElement('button', {
+            type: 'button', disabled: this.state.busy, onClick: () => this.closePaste()
+          }, 'Later'),
+          React.createElement('button', {
+            type: 'button', disabled: this.state.busy, onClick: () => this.viewPendingNotifications()
+          }, 'View notifications'),
+          canJoin
+            ? React.createElement('button', {
+              type: 'button',
+              className: 'primary',
+              disabled: this.state.busy,
+              onClick: () => this.confirmPendingJoin()
+            }, this.state.busy ? 'Working…' : (isInvite ? 'Join group' : 'Apply to join'))
+            : null
+        )
+      )
+    );
+  }
+
+  closeNotice () {
+    const data = this.state.lastImport;
+    this.setState({ notice: null, lastImport: null });
+    const id = data && data.group && (data.group.id || data.groupId);
+    const fallback = data && data.invite && (data.invite.groupId || data.groupId);
+    const groupId = id || fallback;
+    if (groupId && typeof window !== 'undefined') {
+      window.location.hash = 'groups?id=' + encodeURIComponent(groupId);
+    }
+  }
+
   render () {
+    if (this.state.notice && !this.state.prompt) {
+      return React.createElement('div', {
+        className: 'group-offer-modal-backdrop',
+        onClick: () => this.closeNotice()
+      },
+        React.createElement('div', { className: 'group-offer-modal', onClick: (e) => e.stopPropagation() },
+          React.createElement('p', null, this.state.notice),
+          React.createElement('div', { className: 'actions' },
+            React.createElement('button', { type: 'button', onClick: () => this.closeNotice() }, 'Open group')
+          )
+        )
+      );
+    }
+
+    if (this.state.pendingJoin) {
+      return this.renderPendingJoin();
+    }
+
     if (this.props.pasteOpen && !this.state.prompt) {
       return this.renderPaste();
     }
 
     const p = this.state.prompt;
-    if (!p && !this.state.notice) return null;
-    if (!p && this.state.notice) {
-      return React.createElement('div', {
-        className: 'group-offer-modal-backdrop',
-        onClick: () => this.setState({ notice: null })
-      },
-        React.createElement('div', { className: 'group-offer-modal', onClick: (e) => e.stopPropagation() },
-          React.createElement('p', null, this.state.notice),
-          React.createElement('div', { className: 'actions' },
-            React.createElement('button', { type: 'button', onClick: () => this.setState({ notice: null }) }, 'OK')
-          )
-        )
-      );
-    }
-    const title = p.kind === 'FederationContractInvite' ? 'Federation invite' : 'Group share';
+    if (!p) return null;
+    const title = p.kind === 'FederationContractInvite' ? 'Group invite' : 'Group share';
     const name = (p.group && p.group.name) || (p.offer && p.offer.meta && p.offer.meta.name) || p.groupId || 'Group';
     const note = (p.offer && p.offer.note) || (p.invite && p.invite.note) || null;
     return React.createElement('div', { className: 'group-offer-modal-backdrop' },
@@ -333,7 +465,7 @@ class GroupOfferModal extends React.Component {
             className: 'primary',
             disabled: this.state.busy,
             onClick: () => this.accept()
-          }, this.state.busy ? 'Working…' : (p.kind === 'FederationContractInvite' ? 'Accept invite' : 'Accept / Apply'))
+          }, this.state.busy ? 'Working…' : (p.kind === 'FederationContractInvite' ? 'Join group' : 'Apply to join'))
         )
       )
     );

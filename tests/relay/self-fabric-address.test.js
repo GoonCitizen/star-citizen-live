@@ -78,6 +78,57 @@ test('_isOwnFabricPubkeyHex matches identity', async () => {
   }
 });
 
+test('canonicalizeFabricPeerDial rewrites hub :7778 and drops self', () => {
+  assert.strictEqual(
+    FabricNetwork.canonicalizeFabricPeerDial('hub.fabric.pub:7778', {
+      includeLocalInterfaces: false,
+      resolveDns: false
+    }),
+    'hub.fabric.pub:7777'
+  );
+  assert.strictEqual(
+    FabricNetwork.canonicalizeFabricPeerDial('relay.goon.vc:7778', {
+      listenPort: 7777,
+      advertiseHost: 'relay.goon.vc',
+      includeLocalInterfaces: false,
+      resolveDns: false
+    }),
+    null
+  );
+  assert.strictEqual(
+    FabricNetwork.canonicalizeFabricPeerDial('203.0.113.9:7778', {
+      listenPort: 7777,
+      includeLocalInterfaces: false,
+      resolveDns: false
+    }),
+    '203.0.113.9:7778'
+  );
+  assert.strictEqual(
+    FabricNetwork.canonicalizeFabricPeerDial('65.21.231.166:7778', {
+      includeLocalInterfaces: false,
+      resolveDns: false
+    }),
+    'hub.fabric.pub:7777'
+  );
+  assert.strictEqual(
+    FabricNetwork.canonicalizeFabricPeerDial('65.21.231.149:7778', {
+      listenPort: 7777,
+      advertiseHost: 'relay.goon.vc',
+      includeLocalInterfaces: false,
+      resolveDns: false
+    }),
+    null
+  );
+  assert.strictEqual(
+    FabricNetwork.canonicalizeFabricPeerDial('65.21.231.149:7778', {
+      listenPort: 7777,
+      includeLocalInterfaces: false,
+      resolveDns: false
+    }),
+    'relay.goon.vc:7777'
+  );
+});
+
 test('heal roster drops self hub seed when fabricAdvertiseHost matches', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'sc-self-hub-'));
   const svc = new LiveRelay({
@@ -102,6 +153,37 @@ test('heal roster drops self hub seed when fabricAdvertiseHost matches', async (
       ['hub.fabric.pub:7777']
     );
     assert.deepStrictEqual(svc._fabricPeerAddresses(), ['hub.fabric.pub:7777']);
+  } finally {
+    await svc.stop();
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('heal roster rewrites stale hub :7778 to :7777', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'sc-hub-7778-'));
+  const svc = new LiveRelay({
+    port: 0,
+    settingsDir: dir,
+    missions: { enable: false },
+    fabric: { enable: false },
+    peers: []
+  });
+  await svc.start();
+  try {
+    svc._fabricAdvertiseHost = 'relay.goon.vc';
+    svc.settings.fabric = Object.assign({}, svc.settings.fabric, { port: 7777 });
+    svc.peers = [
+      { id: 'a', address: 'hub.fabric.pub:7778', enabled: true },
+      { id: 'b', address: 'relay.goon.vc:7778', enabled: true }
+    ];
+    const healed = svc._healPeerRoster({ persist: true, dropSelf: true });
+    assert.ok((healed.rewritten || []).some((r) => /hub\.fabric\.pub:7778/.test(r)));
+    assert.ok(healed.removed.includes('relay.goon.vc:7778') ||
+      !svc.peers.some((p) => p.address === 'relay.goon.vc:7778'));
+    assert.deepStrictEqual(
+      svc.peers.map((p) => p.address).sort(),
+      ['hub.fabric.pub:7777']
+    );
   } finally {
     await svc.stop();
     fs.rmSync(dir, { recursive: true, force: true });
@@ -143,4 +225,15 @@ test('POST /peers rejects self when advertiseHost is set', async () => {
     await svc.stop();
     fs.rmSync(dir, { recursive: true, force: true });
   }
+});
+
+test('fabricPeerHostLocal strips pubkey@ so hub :7778 rewrites', () => {
+  const local = require('../../functions/fabricPeerHostLocal');
+  const pin = 'aa'.repeat(32) + '@hub.fabric.pub:7778';
+  assert.deepStrictEqual(local.splitFabricHostPort(pin), { host: 'hub.fabric.pub', port: 7778 });
+  assert.strictEqual(
+    local.canonicalizeFabricPeerDial(pin, { includeLocalInterfaces: false, resolveDns: false }),
+    'hub.fabric.pub:7777'
+  );
+  assert.deepStrictEqual(local.splitFabricHostPort('deadbeef@[::1]:7777'), { host: '::1', port: 7777 });
 });

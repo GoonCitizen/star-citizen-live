@@ -9,7 +9,11 @@
  *
  * Modes:
  *   node scripts/node.js                 local relay (log tailing + dashboard)
- *   SC_MODE=server node scripts/node.js  hosted API (signed ingest, no log)
+ *   SC_MODE=server node scripts/node.js  public relay (signed HTTP, no Game.log,
+ *                                        Fabric Peer on unless SC_FABRIC=0)
+ *   SC_MODE=android node scripts/node.js mobile local node (no Game.log; Fabric Peer on)
+ *
+ * Public-seed operators: docs/PRODUCTION.md (nvm 24.15 + pm2).
  */
 
 const fs = require('fs');
@@ -22,6 +26,8 @@ const { storeRoot, registerPath } = require('../functions/storePaths');
 const { Store } = require('../types/Store');
 const { applyFabricEnvConfig, loadRepoDotEnv } = require('../functions/fabricEnvIdentity');
 const { applyGoonCitizenEnvAliases } = require('../functions/goonCitizenEnvAliases');
+const { fabricBootBlock, fabricPeerSeeds } = require('../functions/fabricRelayBoot');
+const { buildAndroidRelaySettings } = require('../functions/androidRelaySettings');
 let resolveFabricPeerInterface;
 try {
   ({ resolveFabricPeerInterface } = require('@fabric/core/functions/fabricListenInterface'));
@@ -55,19 +61,65 @@ function resolveSettingsDir () {
   return storeRoot(path.join(__dirname, '..', 'stores'));
 }
 
-/** Build LiveRelay settings for the hosted server mode (goon.vc-style). */
-function serverSettings () {
+/**
+ * Build LiveRelay settings for a public GoonCitizen relay (`SC_MODE=server`).
+ * Signed HTTP + no Game.log; Fabric Peer stays on unless `SC_FABRIC=0`.
+ * HTTP binds loopback unless FABRIC_HUB_INTERFACE (or aliases) is set —
+ * put Caddy in front. See docs/PRODUCTION.md.
+ */
+async function serverSettings () {
   const settingsDir = resolveSettingsDir();
+  const registerDir = process.env.SC_REGISTER_DIR || registerPath(settingsDir);
+  const store = new Store({ path: registerDir });
+  await store.start();
+  console.log(`[STAR-CITIZEN] fabric store: ${registerDir}`);
+  const persisted = settingsStore.loadSettings(store);
+  const discordConfig = require('../functions/discordConfig');
+  const discord = discordConfig.resolveDiscordConfig({
+    localDiscord: localSettings.discord || {},
+    persisted,
+    settingsDir,
+    env: process.env
+  });
+  const httpHost = String(
+    process.env.FABRIC_HUB_INTERFACE ||
+    process.env.FABRIC_HTTP_INTERFACE ||
+    process.env.INTERFACE ||
+    ''
+  ).trim() || '127.0.0.1';
+  const fabricEnable = process.env.SC_FABRIC === '0' ? false : true;
+  const fabric = fabricBootBlock({
+    env: process.env,
+    localSettings,
+    listen: fabricEnable,
+    resolveInterface: resolveFabricPeerInterface
+  });
+  const peerSeeds = fabricPeerSeeds({ localSettings });
   return {
     port: process.env.PORT || 3041,
     mode: 'server',
+    httpHost,
     settingsDir,
+    historyFile: path.join(settingsDir, 'history.json'),
+    cursorsFile: path.join(settingsDir, 'log-cursors.json'),
+    store,
     missions: {
       enable: true,
-      dir: process.env.SC_REGISTER_DIR || registerPath(settingsDir),
+      dir: registerDir,
       officers: csv(process.env.SC_OFFICERS)
     },
-    ingest: { allowedKeys: csv(process.env.SC_ROSTER) }
+    ingest: { allowedKeys: csv(process.env.SC_ROSTER) },
+    discord,
+    fabric,
+    peers: peerSeeds,
+    bitcoin: Object.assign({
+      enable: false,
+      hub: process.env.SC_BITCOIN_HUB || 'http://127.0.0.1:8080',
+      network: process.env.SC_BTC_NETWORK || 'regtest'
+    }, localSettings.bitcoin || {}),
+    documents: Object.assign({
+      enable: false
+    }, localSettings.documents || {})
   };
 }
 
@@ -120,15 +172,13 @@ async function relaySettings () {
     },
     discord,
     uplink: { intervalMs: 5000 },
-    fabric: {
-      enable: process.env.SC_FABRIC === '0' ? false : true,
-      listen: true,
-      port: Number(process.env.FABRIC_PORT) || 7777,
-      interface: resolveFabricPeerInterface({
-        interface: localSettings.fabric && localSettings.fabric.interface,
-        env: process.env
-      })
-    },
+    fabric: fabricBootBlock({
+      env: process.env,
+      localSettings,
+      listen: process.env.SC_FABRIC === '0' ? false : true,
+      resolveInterface: resolveFabricPeerInterface
+    }),
+    peers: fabricPeerSeeds({ localSettings }),
     // Wallet: ledger mode by default (auditable obligations, no bitcoind);
     // supply settings.payouts.rpc for on-chain regtest/signet escrow.
     payouts: Object.assign(
@@ -153,15 +203,8 @@ async function relaySettings () {
         'http://127.0.0.1:8080'
     }),
     documents: Object.assign({
-      enable: false,
-      hub: null
-    }, localSettings.documents || {}, {
-      hub: process.env.SC_DOCUMENTS_HUB ||
-        (localSettings.documents && localSettings.documents.hub) ||
-        process.env.SC_BITCOIN_HUB ||
-        (localSettings.bitcoin && localSettings.bitcoin.hub) ||
-        'http://127.0.0.1:8080'
-    }),
+      enable: false
+    }, localSettings.documents || {}),
     // Instance default group — Fabric message id / fabric:<hex> / group id.
     // Seeds Store primaryGroupId when unset (see LiveRelay._applyDefaultGroupFromLocal).
     defaultGroupMessageId: localSettings.defaultGroupMessageId ||
@@ -183,7 +226,11 @@ async function main () {
   } else {
     console.log('[STAR-CITIZEN] no FABRIC_XPRV / FABRIC_SEED — Fabric Peer stays down until identity is unlocked');
   }
-  const settings = process.env.SC_MODE === 'server' ? serverSettings() : await relaySettings();
+  const settings = process.env.SC_MODE === 'server'
+    ? await serverSettings()
+    : process.env.SC_MODE === 'android'
+      ? await buildAndroidRelaySettings()
+      : await relaySettings();
   const service = new LiveRelay(settings);
   await service.start();
   if (identity) service.setIdentity(identity);

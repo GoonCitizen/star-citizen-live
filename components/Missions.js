@@ -17,19 +17,22 @@
 
 const React = require('react');
 const MissionOutcomesChart = require('./MissionOutcomesChart');
+const { isMissionApprover, isMyMission } = require('../functions/missionRole');
+const { topPilots } = require('../functions/missionCharts');
 
 const BASE = '/services/star-citizen';
 
 const CSS = `
-  .mi-wrap{width:100%;max-width:none;margin:0;padding:12px 14px;display:grid;gap:14px;box-sizing:border-box}
+  .mi-wrap{width:100%;max-width:none;margin:0;padding:12px 14px 72px;display:grid;gap:14px;box-sizing:border-box}
   .mi-panel{background:var(--panel);border:1px solid var(--line);border-radius:12px;overflow:hidden}
-  .mi-panel h2{font-size:13px;margin:0;padding:12px 16px;border-bottom:1px solid var(--line);font-weight:600;display:flex;gap:8px;align-items:center}
-  .mi-panel h2 .sub{color:var(--muted);font-weight:400;font-size:12px;flex:1}
+  .mi-panel h2{font-size:13px;margin:0;padding:12px 16px;border-bottom:1px solid var(--line);font-weight:600;display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+  .mi-panel h2 .sub{color:var(--muted);font-weight:400;font-size:12px;flex:1;min-width:120px}
   .mi-body{padding:14px 16px}
   .mi-btn{background:var(--accent);border:none;color:#fff;border-radius:7px;padding:7px 14px;font-size:12.5px;font-weight:600;cursor:pointer;white-space:nowrap}
   .mi-btn:disabled{opacity:.45;cursor:default}
   .mi-btn.ghost{background:var(--panel2);border:1px solid var(--line);color:var(--text)}
   .mi-btn.good{background:var(--good)}
+  .mi-btn.warn{background:transparent;border:1px solid rgba(248,81,73,.45);color:var(--kill)}
   .mi-field{display:grid;gap:4px;margin-bottom:10px}
   .mi-field label{font-size:12px;color:var(--muted)}
   .mi-field input,.mi-field select{background:var(--bg);border:1px solid var(--line);color:var(--text);border-radius:7px;padding:8px 10px;font-size:13px}
@@ -38,19 +41,30 @@ const CSS = `
   .mi-ok{background:rgba(63,185,80,.12);color:var(--good);border-radius:7px;padding:8px 11px;font-size:12.5px;margin-top:8px}
   .mi-m{border-bottom:1px solid #20262f;padding:12px 16px;display:grid;gap:8px}
   .mi-m:last-child{border-bottom:none}
+  .mi-m.cancelled{opacity:.72}
   .mi-mh{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
   .mi-title{font-weight:600;font-size:14px;flex:1;min-width:140px;cursor:pointer;color:var(--text);text-decoration:none;background:none;border:none;padding:0;font:inherit;text-align:left}
   .mi-title:hover{color:var(--accent)}
   .mi-tag{font-size:10.5px;font-weight:700;padding:2px 8px;border-radius:5px}
   .mi-tag.open{background:rgba(59,130,246,.18);color:var(--accent)}
-  .mi-tag.assigned{background:rgba(210,153,34,.18);color:var(--warn)}
+  .mi-tag.assigned,.mi-tag.in_progress{background:rgba(210,153,34,.18);color:var(--warn)}
   .mi-tag.completed{background:rgba(63,185,80,.15);color:var(--good)}
   .mi-tag.cancelled{background:rgba(110,118,129,.18);color:var(--muted)}
   .mi-tag.btc{background:rgba(247,147,26,.16);color:#f7931a}
+  .mi-tag.log{background:rgba(139,148,158,.16);color:var(--muted)}
   .mi-meta{color:var(--muted);font-size:11.5px;font-family:'Cascadia Code',Consolas,monospace;word-break:break-all}
   .mi-esc{background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:10px 12px;display:grid;gap:6px;font-size:12.5px}
   .mi-esc code{font-size:11px;word-break:break-all}
+  .mi-esc input{background:var(--bg);border:1px solid var(--line);color:var(--text);border-radius:7px;padding:7px 9px;font-size:12px}
   .mi-psbt{width:100%;min-height:64px;background:var(--bg);border:1px solid var(--line);color:var(--text);border-radius:7px;padding:8px;font-family:'Cascadia Code',Consolas,monospace;font-size:10.5px}
+  .mi-filter{display:flex;gap:8px;align-items:center;flex-wrap:wrap;padding:8px 16px;border-bottom:1px solid var(--line);font-size:12px;color:var(--muted)}
+  .mi-filter button{background:var(--panel2);border:1px solid var(--line);color:var(--text);border-radius:999px;padding:3px 10px;font-size:11.5px;cursor:pointer}
+  .mi-filter button.on{border-color:var(--accent);color:var(--accent)}
+  .mi-outcomes{display:grid;grid-template-columns:280px minmax(0,1fr);gap:8px 28px;align-items:start}
+  .mi-pilots h3{font-size:12.5px;margin:0 0 8px;font-weight:600}
+  .mi-lbr{display:grid;grid-template-columns:minmax(0,1fr) 56px 64px 48px;gap:6px;align-items:center;padding:4px 0;font-size:12px}
+  .mi-lbr.head{color:var(--muted);font-size:11px}
+  @media(max-width:720px){.mi-outcomes{grid-template-columns:1fr}}
 `;
 
 const SATS = (n) => Number(n || 0).toLocaleString() + ' sats';
@@ -86,7 +100,12 @@ class Missions extends React.Component {
       // claim form keyed by mission id
       claimGroup: {},
       claimNote: {},
-      claimOpen: {}
+      claimOpen: {},
+      reviewNote: {},
+      // Hide cancelled register rows by default — clutter from probes / abandoned drafts.
+      showCancelled: false,
+      // all | mine | posted | gamelog
+      sourceFilter: 'all'
     };
     this._timer = null;
   }
@@ -181,6 +200,10 @@ class Missions extends React.Component {
     }, 'Mission created.');
   }
 
+  me () {
+    return this.state.pubkey || this.props.identityPubkey || null;
+  }
+
   /** Approve completion: sign the canonical acceptance message (BIP340). */
   approve (mission, claim) {
     return this.act(async () => {
@@ -198,13 +221,24 @@ class Missions extends React.Component {
       await this.post(`/claims/${claim.id}/validate`, {
         decision: 'approve',
         signatures: { [signed.pubkey]: signed.signature },
-        officerId: this.state.pubkey
+        officerId: this.me(),
+        note: (this.state.reviewNote[claim.id] || '').trim() || undefined
       });
     }, 'Completion approved — reward unlocked.');
   }
 
+  reject (mission, claim) {
+    return this.act(async () => {
+      await this.post(`/claims/${claim.id}/validate`, {
+        decision: 'reject',
+        note: (this.state.reviewNote[claim.id] || '').trim() || undefined,
+        officerId: this.me()
+      });
+    }, 'Completion rejected — claimant may resubmit.');
+  }
+
   submitCompletion (mission) {
-    const me = this.state.pubkey;
+    const me = this.me();
     return this.act(async () => {
       const completionGroupId = (this.state.claimGroup[mission.id] || '').trim() || undefined;
       const note = (this.state.claimNote[mission.id] || '').trim();
@@ -233,7 +267,7 @@ class Missions extends React.Component {
   }
 
   myGroups () {
-    const me = this.state.pubkey;
+    const me = this.me();
     if (!me) return [];
     return (this.state.groups || []).filter((g) => Array.isArray(g.members) && g.members.includes(me));
   }
@@ -329,20 +363,31 @@ class Missions extends React.Component {
   }
 
   renderMission (m) {
-    const me = this.state.pubkey;
+    const me = this.me();
     const apps = this.state.applications.filter((a) => a.missionId === m.id && a.status === 'pending');
     const pendingClaims = this.state.claims.filter((c) => c.missionId === m.id && c.status === 'pending');
     const participants = Array.isArray(m.participantIds) && m.participantIds.length
       ? m.participantIds
       : (m.assigneeId ? [m.assigneeId] : []);
     const isCreator = me && m.createdBy === me;
+    const fromLog = m.source === 'gamelog';
+    // Orphan rows (createdBy null) — e.g. unauthenticated LAN creates — anyone
+    // with an unlocked local identity can cancel in bootstrap officer mode.
+    // Game.log rows are also cancellable locally (does not rewrite the log).
+    const canCancel = !!me && m.status !== 'cancelled' && m.status !== 'completed' &&
+      (isCreator || !m.createdBy || fromLog);
     const isParticipant = me && participants.includes(me);
-    const isAuthority = me && m.authorities && (m.authorities.keys || []).includes(me);
+    const isApprover = isMissionApprover(m, me);
     const applied = this.state.applications.some((a) => a.missionId === m.id && a.applicantId === me && a.status === 'pending');
-    const joinable = m.status === 'open' || m.status === 'assigned' || m.status === 'in_progress';
+    const joinable = !fromLog && (m.status === 'open' || m.status === 'assigned' || m.status === 'in_progress');
     const myPendingClaim = pendingClaims.find((c) => c.claimantId === me);
+    const canSubmit = joinable && me && !myPendingClaim && m.status !== 'completed' &&
+      (isParticipant || isCreator);
 
-    return React.createElement('div', { className: 'mi-m', key: m.id },
+    return React.createElement('div', {
+      className: 'mi-m' + (m.status === 'cancelled' ? ' cancelled' : ''),
+      key: m.id
+    },
       React.createElement('div', { className: 'mi-mh' },
         React.createElement('span', { className: 'mi-tag ' + (m.status || 'open') }, m.status),
         React.createElement('button', {
@@ -353,6 +398,23 @@ class Missions extends React.Component {
         }, m.title),
         m.reward ? React.createElement('span', { className: 'mi-tag btc' }, '₿ ' + SATS(m.reward)) : null,
         m.groupId ? React.createElement('span', { className: 'mi-tag open' }, 'group') : null,
+        fromLog
+          ? React.createElement('span', {
+            className: 'mi-tag log',
+            title: m.generator
+              ? ('Tracked from Game.log · ' + m.generator)
+              : 'Tracked from Game.log (evidence — not an officer post)'
+          }, m.outcome ? ('log · ' + m.outcome) : 'from log')
+          : null,
+        !fromLog && !m.createdBy && m.status !== 'cancelled'
+          ? React.createElement('span', {
+            className: 'mi-tag cancelled',
+            title: 'No creator on record (often from unauthenticated LAN create)'
+          }, 'orphan')
+          : null,
+        m.faction && fromLog
+          ? React.createElement('span', { style: { color: 'var(--muted)', fontSize: 11 } }, m.faction)
+          : null,
         participants.length
           ? React.createElement('span', { style: { color: 'var(--muted)', fontSize: 11 } }, `${participants.length} in`)
           : null,
@@ -363,7 +425,7 @@ class Missions extends React.Component {
         style: { cursor: 'pointer' },
         title: 'Open mission page',
         onClick: () => { window.location.href = `/missions/${encodeURIComponent(m.id)}`; }
-      }, m.id + (isParticipant ? ' · you’re in' : '')),
+      }, m.id + (isParticipant || isCreator ? ' · you’re in' : '')),
       React.createElement('div', { className: 'mi-row' },
         joinable && isCreator
           ? React.createElement(React.Fragment, { key: 'bcast' },
@@ -389,6 +451,19 @@ class Missions extends React.Component {
               : null
           )
           : null,
+        canCancel
+          ? React.createElement('button', {
+            className: 'mi-btn warn',
+            disabled: this.state.busy,
+            title: isCreator
+              ? 'Cancel this mission'
+              : 'Cancel orphan mission (no creator on record)',
+            onClick: () => this.act(
+              () => this.post(`/missions/${m.id}/cancel`, { officerId: me }),
+              'Mission cancelled.'
+            )
+          }, 'Cancel')
+          : null,
         joinable && me && !isCreator && !applied && !isParticipant
           ? React.createElement('button', {
             className: 'mi-btn ghost',
@@ -397,38 +472,68 @@ class Missions extends React.Component {
           }, 'Apply')
           : null,
         applied ? React.createElement('span', { style: { color: 'var(--muted)', fontSize: 12 } }, 'application pending') : null,
-        isParticipant && joinable
+        (isParticipant || isCreator) && joinable
           ? React.createElement('span', { style: { color: 'var(--good)', fontSize: 12 } }, 'You’re in')
           : null,
-        ...apps.map((a) => (isCreator || isAuthority)
+        ...apps.map((a) => (isCreator || isApprover)
           ? React.createElement('button', {
             className: 'mi-btn', key: a.id, disabled: this.state.busy,
             onClick: () => this.act(() => this.post(`/applications/${a.id}/decision`, { decision: 'accept', officerId: me }), 'Participant accepted.')
           }, `Accept ${a.applicantId.slice(0, 10)}…`)
           : null),
-        joinable && isParticipant && !myPendingClaim && m.status !== 'completed'
+        canSubmit
           ? React.createElement('button', {
             className: 'mi-btn',
             disabled: this.state.busy,
             onClick: () => this.setState({ claimOpen: Object.assign({}, this.state.claimOpen, { [m.id]: true }) })
           }, '✔ Submit completion')
           : null,
-        ...pendingClaims.map((c) => (isAuthority
-          ? React.createElement('button', {
-            className: 'mi-btn good',
-            key: c.id,
-            disabled: this.state.busy,
-            title: c.completionGroupId ? `group payee ${c.completionGroupId}` : 'individual payee',
-            onClick: () => this.approve(m, c)
-          }, `✓ Approve ${String(c.claimantId).slice(0, 10)}…${c.completionGroupId ? ' (group)' : ''}`)
-          : null)),
-        pendingClaims.length && !isAuthority
-          ? React.createElement('span', { style: { color: 'var(--muted)', fontSize: 12 } },
-            `${pendingClaims.length} completion(s) awaiting authority signatures`)
+        myPendingClaim
+          ? React.createElement('span', { style: { color: 'var(--warn)', fontSize: 12 } }, 'Completion submitted — awaiting review')
           : null
       ),
       this.renderClaimForm(m),
+      this.renderClaimReview(m, pendingClaims, isApprover),
       this.renderEscrow(m)
+    );
+  }
+
+  renderClaimReview (m, pendingClaims, isApprover) {
+    if (!pendingClaims || !pendingClaims.length) return null;
+    return React.createElement('div', { className: 'mi-esc', style: { marginTop: 4 } },
+      React.createElement('div', { style: { fontWeight: 600, fontSize: 12.5 } },
+        isApprover ? 'Review completions' : 'Pending completions'),
+      ...pendingClaims.map((c) => React.createElement('div', { key: c.id, style: { display: 'grid', gap: 6 } },
+        React.createElement('div', { className: 'mi-meta' },
+          String(c.claimantId).slice(0, 16) + '…' +
+          (c.completionGroupId ? ' · group payee' : '') +
+          (c.note ? (' · “' + String(c.note).slice(0, 120) + '”') : ' · (no note)')
+        ),
+        isApprover
+          ? React.createElement(React.Fragment, null,
+            React.createElement('input', {
+              value: this.state.reviewNote[c.id] || '',
+              placeholder: 'Review note (optional)',
+              onChange: (e) => this.setState({
+                reviewNote: Object.assign({}, this.state.reviewNote, { [c.id]: e.target.value })
+              })
+            }),
+            React.createElement('div', { className: 'mi-row' },
+              React.createElement('button', {
+                className: 'mi-btn good',
+                disabled: this.state.busy,
+                onClick: () => this.approve(m, c)
+              }, 'Approve'),
+              React.createElement('button', {
+                className: 'mi-btn warn',
+                disabled: this.state.busy,
+                onClick: () => this.reject(m, c)
+              }, 'Reject')
+            )
+          )
+          : React.createElement('div', { style: { color: 'var(--muted)', fontSize: 12 } },
+            'Awaiting authority review')
+      ))
     );
   }
 
@@ -465,31 +570,133 @@ class Missions extends React.Component {
     );
   }
 
+  renderTopPilots () {
+    const analytics = this.props.analytics || null;
+    const rows = topPilots(
+      analytics && analytics.missions,
+      analytics && analytics.deaths,
+      { limit: 10 }
+    );
+    return React.createElement('div', { className: 'mi-pilots' },
+      React.createElement('h3', null, '🏅 Top pilots'),
+      !analytics
+        ? React.createElement('div', { style: { color: 'var(--muted)', fontStyle: 'italic' } },
+          'Loading activity…')
+        : (!rows.length
+          ? React.createElement('div', { style: { color: 'var(--muted)', fontStyle: 'italic' } },
+            'No pilot activity yet — import logs on Home or fly to accumulate missions.')
+          : React.createElement(React.Fragment, null,
+            React.createElement('div', { className: 'mi-lbr head' },
+              React.createElement('span', null, 'pilot'),
+              React.createElement('span', { style: { textAlign: 'right' } }, 'missions'),
+              React.createElement('span', { style: { textAlign: 'right' } }, 'done'),
+              React.createElement('span', { style: { textAlign: 'right' } }, 'deaths')
+            ),
+            rows.map((r) => {
+              const pc = r.tot ? Math.round(100 * r.done / r.tot) : 0;
+              return React.createElement('div', { className: 'mi-lbr', key: r.n },
+                React.createElement('span', { style: { overflow: 'hidden', textOverflow: 'ellipsis' } }, r.n),
+                React.createElement('span', { style: { textAlign: 'right' } }, r.tot),
+                React.createElement('span', { style: { textAlign: 'right' } }, pc + '%'),
+                React.createElement('span', { style: { textAlign: 'right' } }, r.deaths)
+              );
+            })
+          ))
+    );
+  }
+
   render () {
+    const me = this.me();
+    const cancelled = (this.state.missions || []).filter((m) => m && m.status === 'cancelled');
+    const fromLog = (this.state.missions || []).filter((m) => m && m.source === 'gamelog');
+    const posted = (this.state.missions || []).filter((m) => m && m.source !== 'gamelog');
+    const mineOf = (m) => isMyMission(m, me, {
+      hasPendingApplication: (this.state.applications || []).some((a) => a.missionId === m.id && a.applicantId === me && a.status === 'pending'),
+      hasPendingClaim: (this.state.claims || []).some((c) => c.missionId === m.id && c.status === 'pending')
+    });
+    const mine = (this.state.missions || []).filter((m) => m && mineOf(m));
+    const sourceFilter = this.state.sourceFilter || 'all';
+    const visible = (this.state.missions || []).filter((m) => {
+      if (!m) return false;
+      if (m.status === 'cancelled' && !this.state.showCancelled) return false;
+      if (sourceFilter === 'gamelog' && m.source !== 'gamelog') return false;
+      if (sourceFilter === 'posted' && m.source === 'gamelog') return false;
+      if (sourceFilter === 'mine' && !mineOf(m)) return false;
+      return true;
+    });
+    const MISSION_LIST_CAP = 200;
+    const listed = visible.slice().reverse();
+    const clipped = listed.length > MISSION_LIST_CAP;
+    const shown = clipped ? listed.slice(0, MISSION_LIST_CAP) : listed;
     return React.createElement('div', { className: 'mi-wrap' },
       React.createElement('div', { className: 'mi-panel' },
         React.createElement('h2', null, '🎯 Game.log outcomes ',
           React.createElement('span', { className: 'sub' }, '— cumulative from Home → Missions stats')),
         React.createElement('div', { className: 'mi-body' },
-          React.createElement(MissionOutcomesChart, {
-            analytics: this.props.analytics || null,
-            subtitle: 'Parsed in-game mission ends (not the officer register below).'
-          })
+          React.createElement('div', { className: 'mi-outcomes' },
+            React.createElement(MissionOutcomesChart, {
+              analytics: this.props.analytics || null,
+              subtitle: 'Parsed in-game mission ends (not the officer register below).'
+            }),
+            this.renderTopPilots()
+          )
         )
       ),
       React.createElement('div', { className: 'mi-panel' },
         React.createElement('h2', null, '⭐ Mission register',
-          React.createElement('span', { className: 'sub' }, '— post work, attach a Bitcoin reward, and unlock it with authority signatures on completion'),
+          React.createElement('span', { className: 'sub' },
+            '— officer posts plus Game.log missions (log rows are evidence; rewards still need authority approval)'),
           React.createElement('button', { className: 'mi-btn', onClick: () => this.setState({ showCreate: !this.state.showCreate }) },
             this.state.showCreate ? 'Close' : '+ New mission')
+        ),
+        React.createElement('div', { className: 'mi-filter' },
+          React.createElement('button', {
+            type: 'button',
+            className: sourceFilter === 'all' ? 'on' : '',
+            onClick: () => this.setState({ sourceFilter: 'all' })
+          }, `All (${posted.length + fromLog.length})`),
+          React.createElement('button', {
+            type: 'button',
+            className: sourceFilter === 'mine' ? 'on' : '',
+            onClick: () => this.setState({ sourceFilter: 'mine' })
+          }, `My missions (${mine.length})`),
+          React.createElement('button', {
+            type: 'button',
+            className: sourceFilter === 'posted' ? 'on' : '',
+            onClick: () => this.setState({ sourceFilter: 'posted' })
+          }, `Posted (${posted.length})`),
+          React.createElement('button', {
+            type: 'button',
+            className: sourceFilter === 'gamelog' ? 'on' : '',
+            onClick: () => this.setState({ sourceFilter: 'gamelog' })
+          }, `From log (${fromLog.length})`),
+          cancelled.length
+            ? React.createElement('button', {
+              type: 'button',
+              className: this.state.showCancelled ? 'on' : '',
+              onClick: () => this.setState({ showCancelled: !this.state.showCancelled })
+            }, this.state.showCancelled
+              ? `Hide cancelled (${cancelled.length})`
+              : `Show cancelled (${cancelled.length})`)
+            : null
         ),
         this.renderCreate(),
         this.state.error ? React.createElement('div', { className: 'mi-body' }, React.createElement('div', { className: 'mi-err' }, this.state.error)) : null,
         this.state.notice ? React.createElement('div', { className: 'mi-body' }, React.createElement('div', { className: 'mi-ok' }, this.state.notice)) : null,
-        this.state.missions.length
-          ? this.state.missions.slice().reverse().map((m) => this.renderMission(m))
+        clipped
+          ? React.createElement('div', { className: 'mi-body', style: { color: 'var(--muted)', fontSize: 12 } },
+            `Showing ${shown.length} of ${listed.length} — use the filters above to narrow Game.log evidence rows.`)
+          : null,
+        shown.length
+          ? shown.map((m) => this.renderMission(m))
           : React.createElement('div', { className: 'mi-body', style: { color: 'var(--muted)', fontStyle: 'italic' } },
-            this.state.loading ? 'loading…' : 'No missions yet — post the first contract.')
+            this.state.loading
+              ? 'loading…'
+              : (cancelled.length && !this.state.showCancelled
+                ? 'No open missions — show cancelled to review closed ones.'
+                : (sourceFilter === 'mine'
+                  ? 'No missions of yours in this list — create one, apply, or wait for a completion to review.'
+                  : 'No missions yet — fly to collect Game.log missions, or post the first contract.')))
       )
     );
   }

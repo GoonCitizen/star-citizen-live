@@ -5,6 +5,11 @@
 > **Constraint:** Discord stays the **primary UI**; the federated layer runs
 > *underneath* for resilience. The VPS becomes one node/bridge, not the sole
 > source of truth.
+>
+> **What shipped instead:** D-009 / D-010 (Fabric conventions + Peer uplink).
+> Other orgs fork and stay on that mesh via [`DEVELOPERS.md`](DEVELOPERS.md).
+> This file is the older L1 sketch, not the operator runbook
+> ([`docs/PRODUCTION.md`](docs/PRODUCTION.md)).
 
 This doc explains *what* a non-central version of the project looks like and
 *how* we'd get there in small, testable milestones — written so a non-developer

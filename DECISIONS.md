@@ -2,6 +2,35 @@
 Plain-English record of the *why* behind key choices, so anyone joining later
 understands the direction. Newest at the top.
 
+Contributors (G00N SQUAD, PERMAFLEET, other orgs): [`DEVELOPERS.md`](DEVELOPERS.md).
+What runs: [`AGENTS.md`](AGENTS.md) §3–§4. D-002 removed a heavyweight *transport*;
+**D-009 / D-010** put Fabric conventions and a Peer uplink back.
+
+---
+
+## D-020 — Fabric Message parents are a hash chain
+**Date:** 2026-08-20 · **Status:** Adopted (originate now; inbound zeros still accepted)
+
+**Decision:** Treat AMP header `parent` as a previous-frame pointer, not an unused
+zero field. Parent is the previous signed `Message.id` (SHA-256 of the complete
+AMP buffer) or 32 zero bytes at genesis. It is inside the Schnorr-signed header,
+so it is set **before** `signWithKey`. GoonCitizen `FabricNetwork._signMessage`
+chains durable outbound frames (chat, contract, alias, file send, …) and leaves
+session/peering/ping on genesis zeros. Pair collections with core `Tree`
+(`sortLeaves: true`) for Bitcoin-style inclusion and adjacent-leaf non-inclusion
+proofs.
+
+**Why:** Large message stacks need an order that does not depend on clocks or
+arrival; merkle inclusion/non-inclusion needs a committed sorted leaf set.
+
+**Consequences:**
+- Do not confuse `parent` / `id` (frame) with header `hash` (body double-SHA256).
+- Do not drop inbound genesis-zero frames yet (mesh peers that have not upgraded).
+- Per-channel / per-journal tips (GroupChange parent = previous journal frame,
+  not this node's global outbound tip) are a follow-up.
+- Hub `_appendFabricMessage` and http Bridge should start the same originate
+  rule after this core pin.
+
 ---
 
 ## D-019 — Group shares as opaque Fabric Messages
@@ -11,7 +40,9 @@ understands the direction. Newest at the top.
 Message (signed `CONTRACT_MESSAGE` / `GroupShare` / `kind: GroupOffer` embedding
 the group genesis), not a legacy HTTP page URL as the primary artifact.
 `FederationContractInvite` gains the same `protocolUrl` / `messageHex` fields.
-Desktop `fabric:` opens opaque hex into an Accept/Ignore modal; ingest uses
+Shareable clips stamp **`expiresAt`** (default 7 days from issue; HTTP may pass
+`expiresInDays` / `ttlMs` / `expiresAt`). Import and Accept refuse an expired
+clip (`410`). Desktop `fabric:` opens opaque hex into an Accept/Ignore modal; ingest uses
 existing `ingestContractPublish` / invite handlers. HTTP `/groups/…` remains a
 secondary browser affordance.
 
@@ -21,6 +52,7 @@ HTTP origin; clipboard/QR portability across installs.
 **Consequences:**
 - Prefer `POST …/groups/:id/share` and invite responses’ `protocolUrl`.
 - Do not invent `fabric://group?…` query schemes — opaque Message is enough.
+- Invitation strings expire (default 7 days). Legacy clips without `expiresAt` stay valid.
 
 ---
 
@@ -189,11 +221,11 @@ meet that bar.
 ---
 
 ## D-013 — Mutual device-link attestations (separate seeds)
-**Date:** 2026-07-20 · **Status:** Adopted
+**Date:** 2026-07-20 · **Amended:** 2026-08-15 · **Status:** Adopted
 
-**Decision:** Passport, Hub browser identity, and GoonCitizen each keep **their
-own seed**. Cross-app trust is a **mutual Schnorr attestation** over a Hub
-rendezvous (`/device-links`), not a shared mnemonic.
+**Decision:** Passport, Hub browser identity, GoonCitizen desktop, and GoonCitizen Android each keep **their own seed**. Cross-app trust is a **mutual Schnorr attestation** over a Hub / LiveRelay rendezvous (`/device-links`), not a shared mnemonic.
+
+**Pairing ceremony (unchanged):**
 
 1. **Offer** — initiator signs
    `fabric:device-link:1:offer:<nonce>:<initiatorId>:<label>:<origin>` and
@@ -206,13 +238,61 @@ rendezvous (`/device-links`), not a shared mnemonic.
    `{ role: 'initiator' }` → `status: linked`. Both sides store peer
    Fabric id / xpub locally (non-secret).
 
+**Network artifact (2026-08-13):** pairing only proved intent on the two
+machines. Other peers still saw two unrelated actors. After `status: linked`,
+each device publishes **`IdentityCrossSign`** (not frozen into GoonCitizen
+genesis `messageTypes`) over
+`fabric:identity-cross-sign:1:<nonce>:<localPubkey>:<peerPubkey>`. A cluster
+is valid only when **both** directions verify and neither is revoked.
+`IdentityCrossSignRevoke` (signed by either side) splits that edge. Settings
+“Revoke” **publishes** revoke, not only deletes local `linkedDevices`.
+
+Canonical display id = lexicographically smallest x-only pubkey (no elected
+master). Wire messages stay signed by the **sending device**; authorization
+and display (chat, profile, groups, officers, missions) **resolve through the
+cluster**. A device cannot produce AMP signatures as a sibling key.
+
 **Why:** One shared seed across apps is brittle and unsafe for operators.
 Dual attestation preserves independent backups while proving both keys agreed.
+Gossiped cross-sign makes that agreement **network-visible**.
 
 **Consequences / guardrails:**
+- **Peer-equivalent initiator:** Passport, GoonCitizen Android, GoonCitizen
+  desktop, and Hub browser can each create or accept a `/device-links` offer.
+  Android **Devices → Add a device** (Security still has the same QR) is the
+  convenient mobile path; Passport Settings → Security & privacy can start the
+  same ceremony.
 - Same crypto rules as client-signed login (Identity.id from xpub, BIP340).
 - Cannot link a key to itself (initiator id === responder id rejected).
-- Session TTL / origin checks match desktop login access rules.
+- Session TTL 30 minutes. Origin: same-origin as site login, plus thin clients
+  (Capacitor / loopback WebViews, `chrome-extension:` / `moz-extension:`)
+  creating/polling an **allowlisted** hub. Possession of the session id + Schnorr
+  remain the capability.
+- Thin clients (Passport, Hub browser) submit a device-signed envelope; verifiers
+  check the **device Schnorr**, not a relay’s AMP author. Hubs may re-wrap the
+  proof as a Fabric `CONTRACT_MESSAGE` for later-relay. **Android is a local
+  GoonCitizen node** (own LiveRelay + Fabric Peer, loopback HTTP) — not a thin
+  WebView of `relay.goon.vc`.
+- A stolen device key **is** the person until another cluster member publishes
+  revoke from Identity / Security or Settings / privacy (`docs/THREAT-MODEL.md`).
+- Mnemonic restore remains an escape hatch (Passport import), not the link path.
+- **Cluster sync (2026-08-15):** after the edge lands, `DeviceDataShare` is the
+  account snapshot (profile, groups, notes, local tags, bounded chat,
+  `account.stats` counts, `account.peers`). Frames are stored/replayed as a `FabricMessageCollection`
+  (AMP hex — same helper as group journals / Discord packs). Opt-in catalog
+  files (`account.files`) list metadata only; bytes move as `P2P_FILE_SEND` after
+  the sibling TCP-dials. Siblings TCP-dial
+  advertised RFC1918 `host:port` and `fabricAdvertiseHost` (no subnet scan).
+  Hub seeds remain the NAT path. Node LiveRelay also **registers** on Hub
+  `RegisterWebRTCPeer` / `ListWebRTCPeers` (coordinator only — pubkey + LAN
+  candidates; no ICE) so phone and desktop can find each other when interfaces
+  are hidden. Hub WebRTC *signaling* remains the Passport/browser fallback
+  (`account.peers.webrtc.hubs`). Coordinator origin is `https://hub.fabric.pub`
+  (`functions/clusterMesh.js`); `relay.goon.vc` is pairing rendezvous, not JSON-RPC.
+  Dedicated UI: dashboard **Devices** (`#devices`) with per-device inventory
+  chips (notes, Game.log folds, missions, chat, files). `GET|POST /identity/cluster/sync`
+  is a session collection export/ingest (+ `{ mesh: true }` / `{ dial: [...] }`),
+  not a second pairing ceremony. Apply stays cluster-gated.
 
 ---
 
@@ -394,10 +474,17 @@ parallel bespoke stack.
 **Date:** 2026-07-19 · **Status:** Adopted (implemented; deploy pending)
 
 **Decision:** Four connected capabilities land together:
-1. **First-run identity** — the desktop app onboards each player with a BIP39
-   keypair (`functions/identity.js`, `components/Onboarding.js`). The encrypted
-   key lives in Electron `userData`; the compressed secp256k1 pubkey is the
-   player's actor id. Keys never leave the client.
+1. **First-run identity** — desktop and Android onboard each player with a BIP39
+   keypair (`functions/identity.js`, `components/Onboarding.js`), or restore from
+   a seed / xprv / encrypted backup. The encrypted key lives in Electron
+   `userData` (desktop). On Android the password-sealed blob is wrapped with
+   AES-256-GCM in the Android Keystore (StrongBox when the device has it, else
+   TEE) and stored in app-private files; Capacitor Preferences and WebView
+   `localStorage` are migration-only and then scrubbed. Google Auto Backup and
+   device-to-device transfer are off (`allowBackup=false`). The compressed
+   secp256k1 pubkey is the player's actor id. Keys never leave the client.
+   Android then uses dedicated **Keys / Security / Privacy** pages instead of
+   overlay modals (`components/Account.js`).
 2. **goon.vc hub** — the separate `goon.vc` repo (a Fabric Hub) mounts this
    project's API at `/services/star-citizen` via `LiveRelay.apiHandler()` in
    `mode: 'server'` (no log tailing, no dashboard). Installed clients push
@@ -436,6 +523,11 @@ reward mechanism whose settlement does not depend on trusting the server.
   set (backward compatible with M5).
 - Deploy artifacts live in `goon.vc/deploy/` + `goon.vc/DEPLOY.md` (systemd,
   Caddy TLS, env template). Actual VPS deployment is the remaining step.
+- Optional first-run **master seed wizard** (`components/MasterSeedWizard.js`,
+  `functions/masterSeedVault.js`) derives BIP39 passphrase-protected child
+  xprvs (Bitcoin `m/44'/0'/0'`, devices `m/44'/{7777|7778}'/N'`). Create /
+  restore / import are unchanged; the wizard only installs the first-device
+  xprv if the operator chooses.
 
 ---
 

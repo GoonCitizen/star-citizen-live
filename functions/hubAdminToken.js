@@ -7,7 +7,7 @@
  * wallet-spend APIs (`POST /payments`, `sendpayment`) so GoonCitizen inherits
  * Hub Bitcoin behavior over the same HTTP surface under Fabric constraints.
  *
- * Order: explicit settings → env → adminTokenFile → loopback playnet discover.
+ * Order: explicit settings → env → adminTokenFile → ~/.fabric/hub-admin-token → loopback playnet discover.
  */
 
 const fs = require('fs');
@@ -88,6 +88,28 @@ function resolveHubAdminToken (btc = {}, env = process.env) {
   if (file) {
     const fromFile = readTokenFile(file);
     if (fromFile) return { token: fromFile, source: 'adminTokenFile' };
+  }
+
+  try {
+    const { readHubAdminToken } = require('@fabric/core/functions/fabricHomeEnv');
+    const consultHome = env === process.env || (env && env.HOME);
+    if (consultHome) {
+      const fromHome = readHubAdminToken(env, env.HOME ? { home: env.HOME } : {});
+      if (fromHome && fromHome.token) {
+        return { token: fromHome.token, source: fromHome.source || 'home' };
+      }
+    }
+  } catch (_) {
+    const consultHome = env === process.env || (env && env.HOME);
+    if (consultHome) {
+      const homeToken = path.join(
+        env.HOME || require('os').homedir(),
+        '.fabric',
+        'hub-admin-token'
+      );
+      const fromHome = readTokenFile(homeToken);
+      if (fromHome) return { token: fromHome, source: 'home' };
+    }
   }
 
   const hub = (btc && btc.hub) || '';

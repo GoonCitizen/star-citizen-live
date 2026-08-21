@@ -17,6 +17,9 @@ const crypto = require('crypto');
 const readline = require('readline');
 const { parseLine, missionType, missionFaction } = require('./parser');
 
+/** Pause readline this often so HTTP / IPC can run during a large first ingest. */
+const INGEST_YIELD_EVERY = 4000;
+
 function idFor (content) {
   return crypto.createHash('sha256').update(String(content)).digest('hex').slice(0, 32);
 }
@@ -137,6 +140,34 @@ function ensurePlayer (history, handle) {
 }
 
 /**
+ * Provenance on a compact history row.
+ * Missing `source` is treated as this node's Game.log (legacy history.json).
+ * @param {*} ctx
+ * @returns {string}
+ */
+function historySource (ctx) {
+  if (ctx && ctx.source != null && String(ctx.source).trim() !== '') {
+    return String(ctx.source);
+  }
+  return 'local';
+}
+
+/**
+ * @param {object} row
+ * @returns {boolean}
+ */
+function isLocalHistoryRecord (row) {
+  if (!row || typeof row !== 'object') return false;
+  const s = row.source;
+  return s == null || s === '' || s === 'local';
+}
+
+function stampRecord (obj, ctx) {
+  obj.source = historySource(ctx);
+  return obj;
+}
+
+/**
  * Apply one parsed event into compact history. Idempotent via content ids.
  * @returns {Boolean} true when something new was recorded
  */
@@ -164,7 +195,9 @@ function applyEvent (history, index, ev, ctx = {}) {
     const id = idFor(['death', player, ev.timestamp || '', ev.bodyId || ''].join('|'));
     if (!index.deaths.has(id)) {
       index.deaths.add(id);
-      history.deaths.push({ id, player, ts: ev.timestamp, bodyId: ev.bodyId || null });
+      history.deaths.push(stampRecord({
+        id, player, ts: ev.timestamp, bodyId: ev.bodyId || null
+      }, ctx));
       ensurePlayer(history, player === 'unknown' ? null : player);
       changed = true;
     }
@@ -176,7 +209,9 @@ function applyEvent (history, index, ev, ctx = {}) {
     if (!index.incap.has(id)) {
       index.incap.add(id);
       history.incap = history.incap || [];
-      history.incap.push({ id, player, ts: ev.timestamp, text: ev.text || null });
+      history.incap.push(stampRecord({
+        id, player, ts: ev.timestamp, text: ev.text || null
+      }, ctx));
       ensurePlayer(history, player === 'unknown' ? null : player);
       changed = true;
     }
@@ -188,13 +223,13 @@ function applyEvent (history, index, ev, ctx = {}) {
     if (!index.crimestat.has(id)) {
       index.crimestat.add(id);
       history.crimestat = history.crimestat || [];
-      history.crimestat.push({
+      history.crimestat.push(stampRecord({
         id,
         player,
         ts: ev.timestamp,
         rating: ev.rating != null ? Number(ev.rating) : null,
         delta: ev.delta != null ? Number(ev.delta) : null
-      });
+      }, ctx));
       ensurePlayer(history, player === 'unknown' ? null : player);
       changed = true;
     }
@@ -207,14 +242,14 @@ function applyEvent (history, index, ev, ctx = {}) {
     if (!index.quantum.has(id)) {
       index.quantum.add(id);
       history.quantum = history.quantum || [];
-      history.quantum.push({
+      history.quantum.push(stampRecord({
         id,
         phase,
         player,
         ts: ev.timestamp,
         destination: ev.destination || null,
         vehicle: ev.vehicle || null
-      });
+      }, ctx));
       ensurePlayer(history, player === 'unknown' ? null : player);
       changed = true;
     }
@@ -227,7 +262,7 @@ function applyEvent (history, index, ev, ctx = {}) {
     const id = idFor(['mission', player, ev.timestamp || '', ev.completionType || '', ev.missionId || '', type].join('|'));
     if (!index.missions.has(id)) {
       index.missions.add(id);
-      history.missions.push({
+      history.missions.push(stampRecord({
         id,
         type,
         faction,
@@ -235,7 +270,7 @@ function applyEvent (history, index, ev, ctx = {}) {
         player,
         ts: ev.timestamp,
         missionId: ev.missionId || null
-      });
+      }, ctx));
       ensurePlayer(history, player === 'unknown' ? null : player);
       changed = true;
     }
@@ -282,7 +317,13 @@ function ingestFile (file, history, index, cursors, opts = {}) {
       if (ev.kind === 'player:login') handle = ev.handle;
       if (ev.kind === 'session:start' && !sessionTs) sessionTs = ev.timestamp;
       if (ev.kind === 'mission:marker' && ev.missionId) generators[ev.missionId] = ev.generator;
-      if (applyEvent(history, index, ev, { handle, generators, countHeat: true })) changed = true;
+      if (applyEvent(history, index, ev, {
+        handle, generators, countHeat: true, source: 'local'
+      })) changed = true;
+      if (lines % INGEST_YIELD_EVERY === 0) {
+        rl.pause();
+        setImmediate(() => rl.resume());
+      }
     });
 
     rl.on('close', () => {
@@ -291,7 +332,7 @@ function ingestFile (file, history, index, cursors, opts = {}) {
         const id = idFor(['session', key, sessionTs || '', player].join('|'));
         if (!index.sessions.has(id)) {
           index.sessions.add(id);
-          history.sessions.push({ id, player, ts: sessionTs });
+          history.sessions.push(stampRecord({ id, player, ts: sessionTs }, { source: 'local' }));
           ensurePlayer(history, handle);
           changed = true;
         }
@@ -426,7 +467,10 @@ module.exports = {
   ingestFile,
   syncFiles,
   cumulativeCounts,
+  historySource,
+  isLocalHistoryRecord,
   historyLeaves,
   historyPath,
-  cursorsPath
+  cursorsPath,
+  INGEST_YIELD_EVERY
 };

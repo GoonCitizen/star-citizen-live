@@ -1,0 +1,39 @@
+name: Other org / operator
+description: Running a fork or public seed for an org that is not G00N SQUAD.
+title: "[org] "
+labels:
+  - help wanted
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Forks and other orgs are welcome. You do not join G00N by opening this.
+        Stay compatible: Fabric Peer, opt-in log share, Game.log read-only.
+        Guide: [DEVELOPERS.md](https://github.com/GoonCitizen/star-citizen-live/blob/feature/rsi/DEVELOPERS.md).
+        Why this tree: [docs/APPLICATION.md](https://github.com/GoonCitizen/star-citizen-live/blob/feature/rsi/docs/APPLICATION.md).
+        Intel desk / `local.js`: [docs/INTELLIGENCE.md](https://github.com/GoonCitizen/star-citizen-live/blob/feature/rsi/docs/INTELLIGENCE.md).
+        Public seed: [docs/PRODUCTION.md](https://github.com/GoonCitizen/star-citizen-live/blob/feature/rsi/docs/PRODUCTION.md).
+  - type: input
+    id: org
+    attributes:
+      label: Org / fork name
+      placeholder: e.g. an RSI org, a rebranded fork
+  - type: dropdown
+    id: kind
+    attributes:
+      label: What is this about?
+      options:
+        - Running a local / desktop node
+        - Hosting a public Fabric seed
+        - Protocol / compatibility (Groups, fabric: shares, peering)
+        - Parser / Game.log
+        - Something else
+    validations:
+      required: true
+  - type: textarea
+    id: what
+    attributes:
+      label: What did you run, and what happened?
+      description: OS, Node version, SC channel, commands, unexpected result. Do not paste tokens or seeds.
+    validations:
+      required: true

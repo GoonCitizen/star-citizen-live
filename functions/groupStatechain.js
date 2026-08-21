@@ -10,9 +10,10 @@
  * Collection `groupsidechains` — one record per contract id:
  * `{ id, version, clock, content, journal: { entries }, name?, parentContractId? }`
  *
- * Each journal row may carry `fabricMessage: { hash, hex, type }` — the signed
- * AMP CONTRACT_MESSAGE that introduced it — so a newly connected peer can
- * request a {@link GroupJournalBatch} and replay bit-identical Fabric frames.
+ * Each journal row may carry `fabricMessage: { hash, id, parent, hex, type }` —
+ * the signed AMP CONTRACT_MESSAGE that introduced it (`id` = frame SHA-256,
+ * `parent` = previous frame id, `hash` = body double-SHA256). A newly connected
+ * peer can request a {@link GroupJournalBatch} and replay bit-identical Fabric frames.
  *
  * Peers that apply the same genesis definition and accepted journal entries
  * converge on the same GoonCitizenGroupState (and thus stateDigest).
@@ -400,6 +401,8 @@ function appendAccepted (store, contractId, entry, definition, meta = {}) {
   if (entry.fabricMessage && typeof entry.fabricMessage === 'object') {
     row.fabricMessage = {
       hash: entry.fabricMessage.hash != null ? String(entry.fabricMessage.hash) : null,
+      id: entry.fabricMessage.id != null ? String(entry.fabricMessage.id) : null,
+      parent: entry.fabricMessage.parent != null ? String(entry.fabricMessage.parent) : null,
       hex: entry.fabricMessage.hex != null ? String(entry.fabricMessage.hex) : null,
       type: entry.fabricMessage.type != null ? String(entry.fabricMessage.type) : row.type
     };
@@ -467,6 +470,8 @@ function attachFabricMessage (store, contractId, entryId, fabricMessage) {
   if (!row) return null;
   row.fabricMessage = {
     hash: fabricMessage.hash != null ? String(fabricMessage.hash) : (row.fabricMessage && row.fabricMessage.hash) || null,
+    id: fabricMessage.id != null ? String(fabricMessage.id) : (row.fabricMessage && row.fabricMessage.id) || null,
+    parent: fabricMessage.parent != null ? String(fabricMessage.parent) : (row.fabricMessage && row.fabricMessage.parent) || null,
     hex: fabricMessage.hex != null ? String(fabricMessage.hex) : (row.fabricMessage && row.fabricMessage.hex) || null,
     type: fabricMessage.type != null
       ? String(fabricMessage.type)
