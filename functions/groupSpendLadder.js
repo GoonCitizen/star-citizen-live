@@ -38,6 +38,11 @@ function groupTaprootWallet (group, opts = {}) {
     validators: (group && group.validators) || (group && group.proposedPolicy && group.proposedPolicy.validators) || [],
     members: (group && group.members) || [],
     mode: 'taproot',
+    treasury: {
+      role: 'alliance-treasury',
+      surface: 'group-taproot',
+      custody: 'org-node'
+    },
     policy,
     leaves: built.leaves,
     internalPubkeyHex: built.internalPubkeyHex

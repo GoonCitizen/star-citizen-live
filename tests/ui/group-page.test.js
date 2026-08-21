@@ -7,7 +7,9 @@ require('../helpers/installReactStub');
 const { textOf, findType, findByClass } = require('../helpers/reactTree');
 const GroupPage = require('../../components/GroupPage');
 const GroupComposition = require('../../components/GroupComposition');
+const StarMap = require('../../components/StarMap');
 const Chat = require('../../components/Chat');
+const { JoinVoiceButton } = require('../../components/ActiveVoicePanel');
 
 const ME = '02' + 'ab'.repeat(32);
 const OTHER = '03' + 'cd'.repeat(32);
@@ -71,6 +73,7 @@ describe('GroupPage dedicated share/join page', () => {
     assert.match(text, /3 members/);
     assert.doesNotMatch(text, /Current validators/);
     assert.doesNotMatch(text, /Create fleet/);
+    assert.strictEqual(findType(tree, JoinVoiceButton).length, 0);
   });
 
   it('shows creator settings and dashboard manage on the dedicated page', () => {
@@ -99,6 +102,10 @@ describe('GroupPage dedicated share/join page', () => {
       'expected Chat people rail');
     assert.match(text, /you are a creator/);
     assert.match(text, /Manage in dashboard/);
+    const join = findType(tree, JoinVoiceButton);
+    assert.ok(join.length >= 1);
+    assert.strictEqual(join[0].props.groupId, 'group-1');
+    assert.match(textOf(new JoinVoiceButton(join[0].props).render()), /Join voice/);
     assert.match(text, /Group settings/);
     assert.match(text, /Custom URL/);
     assert.match(text, /Create fleet/);
@@ -141,6 +148,44 @@ describe('GroupPage dedicated share/join page', () => {
     assert.match(text, /Online composition/);
     assert.match(text, /Gladius/);
     assert.match(text, /Area18/);
+  });
+
+  it('summarizes online players per system next to Hotspots', () => {
+    const CARA = '02' + 'ef'.repeat(32);
+    const page = new GroupPage({ pathKey: 'group-1' });
+    page.state.loading = false;
+    page.state.pubkey = ME;
+    page.state.group = {
+      id: 'group-1',
+      name: 'Salvage Wing',
+      visibility: 'public',
+      role: 'creator',
+      creator: ME,
+      members: [ME, CARA],
+      memberCount: 2,
+      threshold: 1
+    };
+    page.state.presenceRoster = {
+      [ME]: {
+        online: true,
+        nickname: 'Neorion',
+        ship: { name: 'Gladius', type: 'Fighter' },
+        location: { name: 'Area18', system: 'Stanton' }
+      },
+      [CARA]: {
+        online: true,
+        nickname: 'Cara',
+        location: { name: 'Ruin Station', system: 'Pyro' }
+      }
+    };
+    const comps = findType(page.render(), GroupComposition);
+    assert.ok(comps.length, 'expected GroupComposition');
+    const inner = new GroupComposition(Object.assign({}, comps[0].props, { showMap: true })).render();
+    const maps = findType(inner, StarMap);
+    assert.ok(maps.length, 'expected StarMap on composition');
+    const mapText = textOf(new StarMap(maps[0].props).render());
+    assert.match(mapText, /Hotspots/);
+    assert.match(mapText, /1 Stanton · 1 Pyro/);
   });
 
   it('member hover card offers Message, Profile, and Invite', () => {

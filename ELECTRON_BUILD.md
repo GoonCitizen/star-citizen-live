@@ -67,6 +67,8 @@ npm run build:installer:deb
 
 Output: `dist/gooncitizen_x.x.x_amd64.deb` (name may vary by electron-builder version)
 
+Root `desktopName` (`vc.goon.desktop`) plus `linux.syncDesktopName` keep Linux `WM_CLASS` aligned with the `.desktop` launcher.
+
 ### All platforms (Windows x64 + Debian x64 + macOS)
 
 ```bash
@@ -115,7 +117,9 @@ menu (or Cmd+Q on macOS).
 Dev runs (`npm run start:desktop`) do **not** enable open-at-login unless you
 set `openAtLogin: true` or `SC_OPEN_AT_LOGIN=1`.
 
-Icons: `assets/icon.png` (window), `assets/tray.png` / `trayTemplate.png` (menu bar).
+Icons: suite lettermark `assets/icon.png` (window / Linux), `assets/icon.icns` /
+`assets/icon.ico` (installers), `assets/tray.png` / `trayTemplate.png` (menu bar).
+Regenerate from `@fabric/http` `npm run make:icons`.
 
 ## Application Structure
 
@@ -158,10 +162,13 @@ Your shell has `ELECTRON_RUN_AS_NODE=1`. Use `npm run start:desktop` (via
 
 ## Adding Icons
 
-Defaults ship under `assets/` (`icon.png`, `tray.png`, `trayTemplate.png`).
+Defaults ship under `assets/` (`icon.png`, `icon.ico`, `icon.icns`, `tray.png`,
+`trayTemplate.png`). Do not redraw the mark here — run `@fabric/http`
+`npm run make:icons` (serif **f** on `#4C1D95`).
 To replace them:
-1. `assets/icon.png` (256×256+) for the window / Linux / macOS
-2. `assets/icon.ico` for Windows (optional; falls back to PNG)
-3. `assets/tray.png` and macOS `trayTemplate.png` (+ `@2x`) for the tray
-4. Point `package.json` → `build` icon fields at custom paths if needed
+1. `assets/icon.png` (512×512) for the window / Linux
+2. `assets/icon.ico` for Windows
+3. `assets/icon.icns` for macOS
+4. `assets/tray.png` and macOS `trayTemplate.png` (+ `@2x`) for the tray
+5. Point `package.json` → `build` icon fields at custom paths if needed
 

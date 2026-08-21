@@ -31,6 +31,23 @@ test('summarizeOnlineMembers counts ships and locations of online members', () =
   assert.equal(groupPresence.presenceChipLabel(roster[BOB]), 'offline');
 });
 
+test('countBySystem summarizes online players per star system', () => {
+  const members = [
+    { online: true, location: { system: 'Stanton' } },
+    { online: true, location: { system: 'STANTON' } },
+    { online: true, location: { system: 'Pyro' } },
+    { online: false, location: { system: 'Nyx' } },
+    { online: true, location: { name: 'Area18' } }
+  ];
+  const rows = groupPresence.countBySystem(members);
+  assert.deepEqual(rows.map((r) => ({ n: r.n, c: r.c })), [
+    { n: 'Stanton', c: 2 },
+    { n: 'Pyro', c: 1 }
+  ]);
+  assert.equal(groupPresence.formatSystemCounts(members), '2 Stanton · 1 Pyro');
+  assert.equal(groupPresence.majoritySystem(members), 'STANTON');
+});
+
 test('isGroupOwner matches creator pubkey or role', () => {
   assert.equal(groupPresence.isGroupOwner({ role: 'creator' }, ALICE), true);
   assert.equal(groupPresence.isGroupOwner({ creator: ALICE }, ALICE), true);

@@ -50,6 +50,25 @@ function isPinnedRow (row) {
   return !!(row && (row.profilePinned === true || row.pinned === true));
 }
 
+const APPLICATION_EXT = /\.(dmg|pkg|exe|msi|appimage|deb|rpm|apk|aab)$/i;
+const APPLICATION_ZIP = /(setup|installer|desktop|gooncitizen|win64|macos|linux|arm64).*\.zip$/i;
+
+/**
+ * Classify a profile listing as a desktop/mobile application vs a generic file.
+ * Used so publisher profiles can list org-leader desktops without a second catalog.
+ * @param {object|string} [row]
+ * @returns {'application'|'file'}
+ */
+function classifyProfileFileKind (row) {
+  const name = sanitizeName(typeof row === 'string' ? row : (row && row.name));
+  if (APPLICATION_EXT.test(name) || APPLICATION_ZIP.test(name)) return 'application';
+  if (row && typeof row === 'object') {
+    const existing = String(row.kind || '').trim().toLowerCase();
+    if (existing === 'application' || existing === 'file') return existing;
+  }
+  return 'file';
+}
+
 function compactFileRow (row) {
   if (!row || typeof row !== 'object') return null;
   if (row.published === false) return null;
@@ -63,6 +82,7 @@ function compactFileRow (row) {
     mime: String(row.mime || 'application/octet-stream').slice(0, 128),
     size,
     href: fileHref(id),
+    kind: classifyProfileFileKind(row),
     purchasePriceSats: Math.max(0, Math.floor(Number(row.purchasePriceSats) || 0))
   };
   if (row.rateSats != null) out.rateSats = Math.max(0, Math.floor(Number(row.rateSats) || 0));
@@ -235,6 +255,7 @@ module.exports = {
   filesRecordId,
   fileHref,
   isPinnedRow,
+  classifyProfileFileKind,
   compactFileRow,
   compactFilesPayload,
   sanitizeFilesPayload,

@@ -9,6 +9,97 @@ next. Each milestone closes with a short retro. Newest at the top.
 
 ---
 
+## When you fly on own profile
+**Date:** 2026-08-21 · branch `feature/rsi`
+
+The Home **When you fly** heatmap is now on the operator’s own profile
+(identity chip → **My profile**), visible only when viewing yourself. A
+**Publish when I fly** checkbox (`sharePlaytimes`, still default off) gossips
+the compact weekday×hour grid to Federation groups. Other profiles still show
+only a pack they opted to share. Identity / Peers inspect cards point at that
+profile instead of embedding the local heatmap.
+
+---
+
+## Group voice PTT rebind + overlay
+**Date:** 2026-08-21 · branch `feature/rsi`
+
+Chat ⚙ now has a **Voice** tab: enable/disable push-to-talk, rebind the hold
+key (default **Shift+Tab**). Desktop polls OS key state so PTT hold works while
+Star Citizen is focused. The primary-group overlay shows joined voice status
+and uses a more transparent panel so it does not cover the game.
+
+---
+
+## Group voice join (unlocked wallet vs FABRIC_XPRV)
+**Date:** 2026-08-21 · branch `feature/rsi`
+
+Join voice was 403 `forbidden: members only` for groups created from the
+dashboard whenever `FABRIC_XPRV` owned LiveRelay `_identity`. Create/Share use
+the unlocked wallet Bearer session (or `d.creator`); voice join used only the
+process key and skipped `Authorization`. Join now tries the session, the
+unlocked wallet pubkey, and the publishing identity (identity-cluster aware)
+and the Join control sends the same Bearer token as Groups/Chat.
+
+---
+
+## Group invitations (same Fabric message + destination key)
+**Date:** 2026-08-21 · branch `feature/rsi`
+
+Network GroupOffer / FederationContractInvite frames are the same signed AMP
+bytes as the clipboard `fabric:` clip (sign once, relay that Message). Direct
+invites set `inviteePubkey`: only that identity can ingest or Accept. Accept
+adds the member locally, publishes GroupChange (`via: FederationContractInvite`),
+and the inviter applies that change when they hold the matching outbound invite
+so roster + Statechain converge.
+
+---
+
+## Group voice (PTT + Hub WebRTC)
+**Date:** 2026-08-21 · branch `feature/rsi`
+
+Opt-in per Federation group (not the shoutbox). Join from Chat / Groups /
+the group page. Bottom-left **active voice** bar (mute, Shift+Tab PTT,
+deafen, leave) while joined. Presence is `GroupVoiceJoin` / `Leave` /
+`Speaking` on the group contract — not genesis, not Statechain. ICE/SDP goes
+to public Hub `https://hub.fabric.pub` (`RegisterWebRTCPeer` /
+`SendWebRTCSignal`, `fabric-webrtc-v2`). Audio is renderer `RTCPeerConnection`
+(Opus). LiveRelay does not host ICE. Discord voice remains a later bridge.
+
+---
+
+## Fabric Message parents (D-020)
+**Date:** 2026-08-20 · branch `feature/rsi`
+
+Durable outbound AMP frames now set header `parent` to the previous signed
+`Message.id` (`FabricNetwork._signMessage`). Ping, session, and peering stay
+genesis zeros. Inbound zeros still accepted. Log summaries expose `frameId` /
+`parent`; group journals store the same. Core `Tree` (`sortLeaves: true`) plus
+collection `merkleRoot` / `walkParentChain` give Bitcoin-style inclusion and
+adjacent-leaf non-inclusion proofs. Follow-up: per-journal tips, Hub/http
+originate, then fail-closed ingest once the mesh emits parents.
+
+---
+
+## Downstream intel desk (Groups as orgs, local.js)
+**Date:** 2026-08-16 · branch `feature/rsi`
+
+[`docs/INTELLIGENCE.md`](docs/INTELLIGENCE.md) — Federation Groups are the org;
+`settings/local.js` (`defaultGroupMessageId`, `name`, Discord as *your* bot,
+`fabric.peers`) is the whitelabel. Copy [`settings/example.js`](settings/example.js).
+
+---
+
+## Application basis doc (LiveRelay vs Hub)
+**Date:** 2026-08-16 · branch `feature/rsi`
+
+[`docs/APPLICATION.md`](docs/APPLICATION.md) catalogs the reusable artifacts
+(frozen genesis, Group Federation contracts, LiveRelay composition, login /
+device-link, packaging) so a second app or competing org starts here instead of
+subclassing Hub or a blank Peer. Linked from `DEVELOPERS.md`.
+
+---
+
 ## Per-device sync inventory chips ✅
 **Date:** 2026-08-15 · branch `feature/rsi`
 

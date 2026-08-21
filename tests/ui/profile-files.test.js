@@ -40,9 +40,10 @@ describe('profile files UI', () => {
       shared: true
     };
     const selfText = textOf(page.render());
-    assert.match(selfText, /Pinned files/);
+    assert.match(selfText, /Desktop applications/);
     assert.match(selfText, /build\.dmg/);
     assert.match(selfText, /1 pinned file/);
+    assert.match(selfText, /1 desktop app/);
 
     page.state.detail = {
       self: false,
@@ -65,9 +66,37 @@ describe('profile files UI', () => {
     page.state.detail.playtimes = { cells: [{ d: 0, h: 20, n: 3 }], sampleCount: 12 };
     const sharedText = textOf(page.render());
     assert.match(sharedText, /alice\.apk/);
+    assert.match(sharedText, /Desktop applications/);
     assert.match(sharedText, /connection/);
     assert.match(sharedText, /play times \(12 samples\)/);
     assert.match(sharedText, /1 pinned file/);
+    assert.match(sharedText, /1 desktop app/);
+  });
+
+  it('splits installers from other pinned files on the profile', () => {
+    const page = new ProfilePage({});
+    page.state.loading = false;
+    page.state.error = null;
+    page.state.detail = {
+      self: true,
+      pubkey: PEER_PK,
+      profile: { nickname: 'Me' },
+      peering: { string: '' },
+      files: {
+        files: [
+          { id: FILE_ID, name: 'org-desktop.dmg', size: 4096, href: '/files/' + FILE_ID },
+          { id: 'dd'.repeat(32), name: 'standing-orders.txt', size: 80, href: '/files/notes' }
+        ],
+        shared: true
+      }
+    };
+    const text = textOf(page.render());
+    assert.match(text, /Desktop applications/);
+    assert.match(text, /org-desktop\.dmg/);
+    assert.match(text, /Pinned files/);
+    assert.match(text, /standing-orders\.txt/);
+    assert.match(text, /2 pinned files/);
+    assert.match(text, /1 desktop app/);
   });
 
   it('does not paint this node’s catalog onto another peer inspect card', () => {

@@ -57,8 +57,11 @@ const hubBitcoinProxy = require('../functions/hubBitcoinProxy');
 const discordConfig = require('../functions/discordConfig');
 const discordContract = require('../functions/discordContract');
 const discordGuildCatalog = require('../functions/discordGuildCatalog');
+const discordBotAuthorize = require('../functions/discordBotAuthorize');
 const discordCatalogAccumulate = require('../functions/discordCatalogAccumulate');
 const groupDataSync = require('../functions/groupDataSync');
+const groupVoiceHttp = require('../functions/groupVoiceHttp');
+const groupVoiceSettings = require('../functions/groupVoiceSettings');
 const profilePlaytimes = require('../functions/profilePlaytimes');
 const profileFiles = require('../functions/profileFiles');
 const profileNotes = require('../functions/profileNotes');
@@ -350,6 +353,8 @@ class StarCitizenService extends EventEmitter {
     this._fabricEnsureInflight = null;
     this._seq = 0;
     this._shareLogsGlobal = false;
+    this._voiceSettings = groupVoiceSettings.defaultVoiceSettings();
+    groupVoiceHttp.ensureState(this);
     /** Seal outbound GroupChat with tip-bound AES-GCM (default off; plaintext still accepted). */
     this._groupChatSeal = false;
     /** Drop inbound GroupChat that lacks a decryptable seal. */
@@ -362,6 +367,8 @@ class StarCitizenService extends EventEmitter {
     this._pollTimer = null;
     this.server = null;
     this._identity = null;      // decrypted player identity (uplink signing)
+    /** Unlocked wallet pubkey when `_identity` is FABRIC_XPRV (desktop). */
+    this._unlockedPubkey = null;
     this._uplinkQueue = [];     // events awaiting signed push to the uplink
     this._uplinkTimer = null;
     this._uplinkWired = false;
@@ -401,7 +408,7 @@ class StarCitizenService extends EventEmitter {
     // An already-started Store may be injected (Electron main / scripts/node.js).
     if (this.settings.store) {
       this.registerStore = this.settings.store;
-      this._loadPersistedSettings(); // injected store is already started
+      if (this.registerStore._started) this._loadPersistedSettings();
     } else {
       const registerDir = this._resolveRegisterPath();
       this.registerStore = new Store({
@@ -679,6 +686,7 @@ class StarCitizenService extends EventEmitter {
       botReady,
       botUser: runtime.botUser || null,
       botUserId: runtime.botUserId || this._localDiscordBotUserId(),
+      appId: this._discordSourceAppId(),
       selectedChannelId,
       sync,
       memberLimit: discordGuildCatalog.DEFAULT_MEMBER_LIMIT
@@ -705,6 +713,54 @@ class StarCitizenService extends EventEmitter {
     const discord = this.settings && this.settings.discord;
     const id = (discord && discord.app && discord.app.id) || (discord && discord.appId) || null;
     return id != null && String(id).trim() ? String(id).trim() : null;
+  }
+
+  /**
+   * Guild id for a catalog channel, when known.
+   * @param {string} channelId
+   * @returns {string|null}
+   */
+  _discordGuildIdForChannel (channelId) {
+    const id = channelId != null ? String(channelId).trim() : '';
+    if (!id) return null;
+    const cat = this._discordCatalogCache && this._discordCatalogCache.data;
+    const guilds = cat && Array.isArray(cat.guilds) ? cat.guilds : [];
+    for (const g of guilds) {
+      if (!g) continue;
+      const channels = Array.isArray(g.channels) ? g.channels : [];
+      if (channels.some((c) => c && String(c.id) === id)) {
+        return g.id != null ? String(g.id) : null;
+      }
+    }
+    return null;
+  }
+
+  /**
+   * Map a Discord bridge failure to HTTP status, error, and optional authorizeUrl.
+   * @param {*} err
+   * @param {Object} [extra]
+   * @param {string} [extra.appId]
+   * @param {string} [extra.guildId]
+   * @param {boolean} [extra.skipAuthorize]
+   * @returns {Object}
+   */
+  _mapDiscordBridgeError (err, extra = {}) {
+    return discordGuildCatalog.formatDiscordBridgeError(err, {
+      appId: extra.appId != null ? extra.appId : this._discordSourceAppId(),
+      guildId: extra.guildId,
+      skipAuthorize: extra.skipAuthorize === true
+    });
+  }
+
+  /**
+   * @param {Function} send
+   * @param {Object} mapped
+   * @param {number} mapped.status
+   * @param {string} mapped.error
+   * @param {string} [mapped.authorizeUrl]
+   */
+  _sendDiscordBridgeError (send, mapped) {
+    return send(mapped.status, discordBotAuthorize.httpErrorBody(mapped));
   }
 
   /** @returns {boolean} */
@@ -2522,6 +2578,7 @@ class StarCitizenService extends EventEmitter {
     }
     // Sharing parsed log events: default OFF (explicit authorize on Peers / Settings).
     this._shareLogsGlobal = persisted.shareLogsGlobal === true;
+    this._voiceSettings = groupVoiceSettings.sanitizeVoiceSettings(persisted.voice);
     this._groupChatSeal = persisted.groupChatSeal === true;
     this._requireSealedGroupChat = persisted.requireSealedGroupChat === true;
     // Dashboard HTTP: loopback by default; LAN requires httpSharedMode (or server mode / env).
@@ -4775,9 +4832,12 @@ class StarCitizenService extends EventEmitter {
         content: discordIdentityLink.formatOutboundDiscordContent(handle, text)
       });
     } catch (discordErr) {
-      const mapped = discordGuildCatalog.formatDiscordBridgeError(discordErr);
+      const mapped = this._mapDiscordBridgeError(discordErr, {
+        guildId: this._discordGuildIdForChannel(discordChannelId)
+      });
       const err = new Error(mapped.error);
       err.status = mapped.status;
+      if (mapped.authorizeUrl) err.authorizeUrl = mapped.authorizeUrl;
       throw err;
     }
   }
@@ -5114,7 +5174,8 @@ class StarCitizenService extends EventEmitter {
     const changed = cumulativeHistory.applyLiveEvent(this.history, this._historyIndex, ev, {
       handle: extra.handle || this._sessionHandle,
       generators: this._historyGenerators,
-      countHeat: extra.countHeat !== false
+      countHeat: extra.countHeat !== false,
+      source: extra.source || 'local'
     });
     if (changed) {
       this._markHistoryDirty();
@@ -5584,7 +5645,7 @@ class StarCitizenService extends EventEmitter {
             completionType: data.completionType || data.outcome,
             missionId: data.missionId,
             generator: data.generator
-          }, { countHeat: false, force: true, handle: data.player || null });
+          }, { countHeat: false, force: true, handle: data.player || null, source: source || 'peer' });
           this.emit('history:updated', { via: 'ingest', collection });
         }
       }
@@ -6576,12 +6637,15 @@ class StarCitizenService extends EventEmitter {
     try {
       const groupStatechain = require('../functions/groupStatechain');
       const buf = typeof msg.toBuffer === 'function' ? msg.toBuffer() : null;
-      const hash = msg.id
-        || msg.hash
-        || (buf && require('crypto').createHash('sha256').update(buf).digest('hex'))
-        || null;
+      const bodyHash = (msg.raw && msg.raw.hash)
+        ? (Buffer.isBuffer(msg.raw.hash) ? msg.raw.hash.toString('hex') : String(msg.raw.hash))
+        : null;
+      const frameId = typeof msg.id === 'string' ? msg.id : null;
+      const parent = typeof msg.parent === 'string' ? msg.parent : null;
       groupStatechain.attachFabricMessage(this.registerStore, contractId, entryId, {
-        hash: hash ? String(hash) : null,
+        hash: bodyHash || frameId || null,
+        id: frameId,
+        parent,
         hex: buf ? buf.toString('hex') : null,
         type: type || 'GroupChange'
       });
@@ -7425,6 +7489,10 @@ class StarCitizenService extends EventEmitter {
               requiresRestart = false;
             }
             if (sMatch[1] === 'notifyMissionBroadcasts') { this._notifyMissionBroadcasts = updated.notifyMissionBroadcasts !== false; requiresRestart = false; }
+            if (sMatch[1] === 'voice') {
+              this._voiceSettings = groupVoiceSettings.sanitizeVoiceSettings(updated.voice);
+              requiresRestart = false;
+            }
             if (sMatch[1] === 'primaryGroupId') {
               this._primaryGroupId = settingsStore.sanitizePrimaryGroupId(updated.primaryGroupId);
               requiresRestart = false;
@@ -8414,6 +8482,11 @@ class StarCitizenService extends EventEmitter {
         return send(code, { error: e.message || String(e) });
       };
 
+      const voiceHandled = await groupVoiceHttp.tryHandleGroupVoice(this, {
+        base, pathname, req, send, body, requireAuth, viewer, gm, remoteAuth
+      });
+      if (voiceHandled) return;
+
       // ---- Local tags (operator-local Discord / Fabric identity groups) ----
       if (pathname === `${base}/local-groups`) {
         if (req.method === 'GET') {
@@ -8670,8 +8743,9 @@ class StarCitizenService extends EventEmitter {
                         content: discordIdentityLink.formatOutboundDiscordContent(handle, discordText)
                       });
                     } catch (discordErr) {
-                      const mapped = discordGuildCatalog.formatDiscordBridgeError(discordErr);
-                      return send(mapped.status, { error: mapped.error });
+                      return this._sendDiscordBridgeError(send, this._mapDiscordBridgeError(discordErr, {
+                        skipAuthorize: true
+                      }));
                     }
                     record = cm.post({
                       channel: d.channel,
@@ -8687,9 +8761,9 @@ class StarCitizenService extends EventEmitter {
                     });
                   }
                 } catch (e) {
-                  const mapped = discordGuildCatalog.formatDiscordBridgeError(e);
+                  const mapped = this._mapDiscordBridgeError(e, { skipAuthorize: true });
                   if (/Missing Permissions|Missing Access|unknown channel/i.test(mapped.error)) {
-                    return send(mapped.status, { error: mapped.error });
+                    return this._sendDiscordBridgeError(send, mapped);
                   }
                   return send(400, { error: e.message || String(e) });
                 }
@@ -8702,7 +8776,16 @@ class StarCitizenService extends EventEmitter {
                 try {
                   sent = await this._postDiscordBridgeText(discordChannelId, handle, discordText);
                 } catch (discordErr) {
-                  return send(discordErr.status || 400, { error: discordErr.message || String(discordErr) });
+                  const mapped = discordErr && discordErr.status
+                    ? {
+                      status: discordErr.status,
+                      error: discordErr.message || String(discordErr),
+                      authorizeUrl: discordErr.authorizeUrl || null
+                    }
+                    : this._mapDiscordBridgeError(discordErr, {
+                      guildId: this._discordGuildIdForChannel(discordChannelId)
+                    });
+                  return this._sendDiscordBridgeError(send, mapped);
                 }
                 if (bridge.bridged && bridge.fabricKey) {
                   record = cm.post({
@@ -8885,10 +8968,19 @@ class StarCitizenService extends EventEmitter {
         if (!actor || !group.includes(actor)) return send(403, { error: 'forbidden: members only' });
         const d = req.method === 'POST' ? await body() : {};
         try {
-          const data = await this.createGroupShare(group.id, actor, { note: d.note, relay: d.relay !== false });
+          const data = await this.createGroupShare(group.id, actor, {
+            note: d.note,
+            relay: d.relay !== false,
+            expiresAt: d.expiresAt,
+            ttlMs: d.ttlMs,
+            expiresInMs: d.expiresInMs,
+            expiresInSeconds: d.expiresInSeconds,
+            expiresInDays: d.expiresInDays
+          });
           return send(200, { type: 'GroupShare', data });
         } catch (e) {
-          return send(e.code === 'FORBIDDEN' ? 403 : 400, { error: e.message });
+          const { inviteHttpStatus, inviteHttpBody } = require('../functions/inviteExpiry');
+          return send(inviteHttpStatus(e), inviteHttpBody(e));
         }
       }
       if (pathname === `${base}/groups/share/ingest` && req.method === 'POST') {
@@ -8901,7 +8993,8 @@ class StarCitizenService extends EventEmitter {
           );
           return send(200, { type: 'GroupShareIngest', data });
         } catch (e) {
-          return send(e.code === 'FORBIDDEN' ? 403 : 400, { error: e.message });
+          const { inviteHttpStatus, inviteHttpBody } = require('../functions/inviteExpiry');
+          return send(inviteHttpStatus(e), inviteHttpBody(e));
         }
       }
       // FederationContractInvite — Hub-shaped join / co-signer invite under a group contract.
@@ -8919,11 +9012,17 @@ class StarCitizenService extends EventEmitter {
             inviteId: d.inviteId,
             inviteePubkey: d.inviteePubkey || d.invitee || d.pubkey || null,
             role: d.role || 'signer',
-            relay: d.relay !== false
+            relay: d.relay !== false,
+            expiresAt: d.expiresAt,
+            ttlMs: d.ttlMs,
+            expiresInMs: d.expiresInMs,
+            expiresInSeconds: d.expiresInSeconds,
+            expiresInDays: d.expiresInDays
           });
           return send(200, { type: 'FederationContractInvite', data });
         } catch (e) {
-          return send(e.code === 'FORBIDDEN' ? 403 : 400, { error: e.message });
+          const { inviteHttpStatus, inviteHttpBody } = require('../functions/inviteExpiry');
+          return send(inviteHttpStatus(e), inviteHttpBody(e));
         }
       }
       if ((gmatch = pathname.match(new RegExp(`^${base}/groups/([^/]+)/invites/([^/]+)/(accept|reject)$`))) && req.method === 'POST') {
@@ -8935,7 +9034,8 @@ class StarCitizenService extends EventEmitter {
           const data = await this.respondToGroupFederationInvite(gmatch[1], gmatch[2], actor, gmatch[3] === 'accept');
           return send(200, { type: 'FederationContractInviteResponse', data });
         } catch (e) {
-          return send(e.code === 'FORBIDDEN' ? 403 : /not found/i.test(e.message) ? 404 : 400, { error: e.message });
+          const { inviteHttpStatus, inviteHttpBody } = require('../functions/inviteExpiry');
+          return send(inviteHttpStatus(e), inviteHttpBody(e));
         }
       }
       if ((gmatch = pathname.match(new RegExp(`^${base}/groups/([^/]+)$`)))) {
@@ -10190,12 +10290,24 @@ class StarCitizenService extends EventEmitter {
    * Fabric Peer is started and log events are published as SCEventBatch.
    * Called by the Electron main process after unlock.
    * @param {Object|null} identity Decrypted identity ({ xprv, pubkey, … }) or null to lock.
+   * @param {Object} [extras]
+   * @param {string|null} [extras.unlockedPubkey] Wallet pubkey when `identity` is the env publisher.
    */
-  setIdentity (identity) {
+  setIdentity (identity, extras) {
+    const prevIdentity = this._identity;
     this._identity = identity || null;
+    if (extras && typeof extras === 'object' &&
+        Object.prototype.hasOwnProperty.call(extras, 'unlockedPubkey')) {
+      this._unlockedPubkey = extras.unlockedPubkey || null;
+    } else {
+      this._unlockedPubkey = (this._identity && this._identity.pubkey) || null;
+    }
+    if (prevIdentity && !this._identity) {
+      groupVoiceHttp.localLeave(this, prevIdentity.pubkey, { silent: true }).catch(() => {});
+    }
     // Serialize refresh/stop so stop() can await any in-flight transition.
-    const prev = this._fabricTransition || Promise.resolve();
-    this._fabricTransition = prev
+    const prevTransition = this._fabricTransition || Promise.resolve();
+    this._fabricTransition = prevTransition
       .then(() => (this._identity ? this._refreshFabric() : this._stopFabric()))
       .catch((e) => this.emit('error', e));
     if (this._identity) {
@@ -10393,7 +10505,32 @@ class StarCitizenService extends EventEmitter {
         // Only keep DMs addressed to this node (or authored here).
         if (me && this.chatManager && !this.chatManager.canAccess(channel, me, { enforceMembership: true })) return;
         // Group invites also ride DirectChat so spoke↔spoke via a shared hub
-        // still lands when CONTRACT_MESSAGE fan-out is flaky / peer offline briefly.
+        // still lands. The payload is the same AMP bytes as the clipboard
+        // `fabric:` clip (`messageHex` / `protocolUrl`), not a rebuilt invite JSON.
+        const opaqueClip = object.messageHex || object.protocolUrl || null;
+        if (opaqueClip) {
+          try {
+            const {
+              parseOpaqueFabricMessage,
+              classifyGroupShareMessage
+            } = require('../functions/groupShareMessage');
+            const parsed = parseOpaqueFabricMessage(opaqueClip);
+            if (parsed.ok) {
+              const classified = classifyGroupShareMessage(parsed.message);
+              if (classified.kind === 'FederationContractInvite') {
+                this._ingestFederationInvite(classified.object, author, Object.assign({}, meta || {}, {
+                  contract: classified.contractId,
+                  messageHex: parsed.hex
+                }));
+              } else if (classified.kind === 'GroupOffer') {
+                this._ingestGroupOffer(classified.object, author, Object.assign({}, meta || {}, {
+                  contract: classified.contractId,
+                  messageHex: parsed.hex
+                }));
+              }
+            }
+          } catch (e) { this.emit('error', e); }
+        }
         const embedded = object.invite
           || (() => {
             try {
@@ -10401,7 +10538,7 @@ class StarCitizenService extends EventEmitter {
               return (p && p.type === 'FederationContractInvite') ? p : null;
             } catch (_) { return null; }
           })();
-        if (embedded && embedded.type === 'FederationContractInvite') {
+        if (!opaqueClip && embedded && embedded.type === 'FederationContractInvite') {
           try {
             this._ingestFederationInvite(embedded, author, meta || {});
           } catch (e) { this.emit('error', e); }
@@ -10502,6 +10639,11 @@ class StarCitizenService extends EventEmitter {
         if (contractId) {
           this._accumulateContractMessageWire(contractId, meta || {}, (meta && meta.origin) || 'mesh');
         }
+      },
+      onGroupVoice: (type, object, source, meta) => {
+        try {
+          groupVoiceHttp.ingest(this, type, object, resolveSignerPubkey(source) || source, meta);
+        } catch (e) { this.emit('error', e); }
       },
       onMessageReceipt: (object, source, meta) => {
         this._applyRemoteDeliveryAck(object, source, meta, 'MessageReceipt');
@@ -11237,6 +11379,35 @@ class StarCitizenService extends EventEmitter {
   }
 
   /**
+   * Compact voice snapshot for the always-on-top overlay HUD.
+   * @returns {object}
+   */
+  getOverlayVoice () {
+    const groupVoice = require('../functions/groupVoice');
+    const groupVoiceHub = require('../functions/groupVoiceHub');
+    const settings = this._voiceSettings || groupVoiceSettings.defaultVoiceSettings();
+    const state = this._voiceState || groupVoice.emptyRooms();
+    const snap = groupVoice.snapshot(state, {
+      hubOrigin: groupVoiceHub.coordinatorOrigin(process.env)
+    });
+    const talking = (snap.members || []).filter((m) => m && m.speaking);
+    return {
+      joined: !!snap.joined,
+      groupId: snap.groupId || null,
+      groupName: snap.groupName || null,
+      memberCount: snap.memberCount || 0,
+      cap: snap.cap || groupVoice.ROOM_CAP,
+      mode: settings.mode,
+      pttLabel: groupVoiceSettings.pttBindLabel(settings.pttKey),
+      talking: talking.map((m) => m.handle || (m.pubkey && m.pubkey.slice(0, 8)) || 'member'),
+      members: (snap.members || []).map((m) => ({
+        handle: m.handle || null,
+        speaking: !!m.speaking
+      }))
+    };
+  }
+
+  /**
    * Primary-group overlay payload: members + PeerPresence ships for the HUD.
    * Local desktop HUD — always returns the roster for the configured primary
    * group (no membership hard-gate). Optional warning when the unlocked
@@ -11247,11 +11418,11 @@ class StarCitizenService extends EventEmitter {
     const groupId = this._primaryGroupId || null;
     const overlayEnabled = this._groupOverlay === true;
     if (!groupId || !this.groupManager) {
-      return { groupId: null, name: null, members: [], overlayEnabled };
+      return { groupId: null, name: null, members: [], overlayEnabled, voice: this.getOverlayVoice() };
     }
     const group = this.groupManager.getGroup(groupId);
     if (!group) {
-      return { groupId, name: null, members: [], overlayEnabled, error: 'primary group not found' };
+      return { groupId, name: null, members: [], overlayEnabled, error: 'primary group not found', voice: this.getOverlayVoice() };
     }
 
     const { pubkeysMatch, pubkeyXOnly } = identityLib();
@@ -11367,7 +11538,8 @@ class StarCitizenService extends EventEmitter {
       owner,
       composition,
       map,
-      warning: warning || undefined
+      warning: warning || undefined,
+      voice: this.getOverlayVoice()
     };
   }
 
@@ -11665,6 +11837,7 @@ class StarCitizenService extends EventEmitter {
       clearInterval(this._hubObserveTimer);
       this._hubObserveTimer = null;
     }
+    groupVoiceHttp.closeHubSession(this);
     if (this.fabricNetwork) {
       await this.fabricNetwork.stop();
       this.fabricNetwork = null;
@@ -11846,6 +12019,46 @@ class StarCitizenService extends EventEmitter {
   }
 
   /**
+   * Encode a signed AMP Message as opaque `fabric:` and optionally relay those
+   * same bytes on the Fabric mesh (no re-sign).
+   * @param {object} msg Fabric Message
+   * @param {Object} [opts]
+   * @returns {{ encoded: object, relayed: boolean, relayError: string|null, peers: number }}
+   */
+  _clipboardAndRelay (msg, opts = {}) {
+    if (!this.fabricNetwork) {
+      throw new Error('Fabric network is not available');
+    }
+    const encoded = this.fabricNetwork.encodeOpaqueMessage(msg, {
+      encoding: this._opaqueShareEncoding(opts.encoding)
+    });
+    let relayed = false;
+    let relayError = null;
+    if (opts.relay !== false) {
+      try {
+        if (!(this.fabricNetwork.status().fabricConnected > 0)) {
+          this.fabricNetwork.setPeers(this._fabricPeerAddresses());
+        }
+        if (!this.fabricNetwork.ready) {
+          throw new Error('Fabric peer not ready — unlock identity and wait for peering');
+        }
+        this.fabricNetwork.relaySignedMessage(msg, { record: false });
+        relayed = true;
+      } catch (e) {
+        relayError = e && e.message ? e.message : String(e);
+        this.emit('error', e);
+      }
+    }
+    const st = this.fabricNetwork.status();
+    return {
+      encoded,
+      relayed,
+      relayError,
+      peers: st.fabricConnected || 0
+    };
+  }
+
+  /**
    * Sign a GroupOffer CONTRACT_MESSAGE for copy-paste (`fabric:` + raw bytes, base64 by default).
    * Optionally relays on the mesh when the peer is ready.
    */
@@ -11865,11 +12078,23 @@ class StarCitizenService extends EventEmitter {
       buildGroupOfferBody,
       GROUP_SHARE_KIND_OFFER
     } = require('../functions/groupShareMessage');
+    const {
+      resolveShareExpiresAtMs,
+      assertExpiresAtInFuture
+    } = require('../functions/inviteExpiry');
+    const expiresAtMs = assertExpiresAtInFuture(resolveShareExpiresAtMs({
+      expiresAt: opts.expiresAt,
+      ttlMs: opts.ttlMs,
+      expiresInMs: opts.expiresInMs,
+      expiresInSeconds: opts.expiresInSeconds,
+      expiresInDays: opts.expiresInDays
+    }));
     const offer = buildGroupOfferBody({
       group: g,
       definition,
       actor,
-      note: opts.note
+      note: opts.note,
+      expiresAt: expiresAtMs
     });
 
     await this._ensureFabric().catch(() => null);
@@ -11888,31 +12113,11 @@ class StarCitizenService extends EventEmitter {
       await this._ensureFabric().catch(() => null);
     }
     const msg = this.fabricNetwork.signContractMessage(contractId, 'GroupShare', offer, { relay: false });
-    let relayed = false;
-    let relayError = null;
-    if (opts.relay !== false) {
-      try {
-        if (!(this.fabricNetwork.status().fabricConnected > 0)) {
-          this.fabricNetwork.setPeers(this._fabricPeerAddresses());
-        }
-        if (!this.fabricNetwork.ready) {
-          throw new Error('Fabric peer not ready — unlock identity and wait for peering');
-        }
-        // Group namespace (members / known contracts) + GoonCitizen genesis
-        // so peers who have never seen this group still receive the offer.
-        this.fabricNetwork.publishGroupShare(contractId, offer);
-        const { gooncitizenContractId } = require('../contracts/gooncitizen');
-        this.fabricNetwork.publishGroupShare(gooncitizenContractId(), offer);
-        relayed = true;
-      } catch (e) {
-        relayError = e && e.message ? e.message : String(e);
-        this.emit('error', e);
-      }
-    }
-    const encoded = this.fabricNetwork.encodeOpaqueMessage(msg, {
-      encoding: this._opaqueShareEncoding(opts.encoding)
-    });
-    const st = this.fabricNetwork.status();
+    const sent = this._clipboardAndRelay(msg, opts);
+    const encoded = sent.encoded;
+    const relayed = sent.relayed;
+    const relayError = sent.relayError;
+    const stPeers = sent.peers;
     const messageId = (msg && (msg.id || msg.hash))
       ? String(msg.id || msg.hash).toLowerCase()
       : null;
@@ -11922,6 +12127,7 @@ class StarCitizenService extends EventEmitter {
       groupId: g.id,
       contractId,
       messageId,
+      expiresAt: offer.expiresAt,
       protocolUrl: encoded.protocolUrl,
       protocolUrlHex: encoded.protocolUrlHex || encoded.protocolUrl,
       protocolUrlBase64: encoded.protocolUrlBase64,
@@ -11931,7 +12137,7 @@ class StarCitizenService extends EventEmitter {
       visibility: g.visibility,
       relayed,
       relayError,
-      peers: st.fabricConnected || 0,
+      peers: stPeers,
       localJsSnippet: messageId
         ? require('../functions/defaultGroupMessage').localJsSnippetFor(messageId)
         : require('../functions/defaultGroupMessage').localJsSnippetFor(encoded.protocolUrl)
@@ -11999,21 +12205,44 @@ class StarCitizenService extends EventEmitter {
       const result = this.groupManager.ingestContractPublish(classified.object, 'opaque-share');
       return { kind: 'GroupPublish', ...result };
     }
+    const {
+      assertInviteNotExpired
+    } = require('../functions/inviteExpiry');
+    const shareMeta = {
+      contract: classified.contractId,
+      messageHex: parsed.hex,
+      messageBase64: parsed.base64 || null,
+      protocolUrl: protocolUrlOrHex
+    };
     if (classified.kind === 'GroupOffer') {
-      return this._ingestGroupOffer(classified.object, 'opaque-share', {
-        contract: classified.contractId
-      });
+      assertInviteNotExpired(classified.object);
+      return this._ingestGroupOffer(classified.object, 'opaque-share', shareMeta);
     }
     if (classified.kind === 'FederationContractInvite') {
-      return this._ingestFederationInvite(classified.object, 'opaque-share', {
-        contract: classified.contractId
-      });
+      assertInviteNotExpired(classified.object);
+      const result = this._ingestFederationInvite(classified.object, 'opaque-share', shareMeta);
+      if (result && result.skipped === 'not-invitee') {
+        const e = new Error('this invite is addressed to another identity');
+        e.code = 'FORBIDDEN';
+        throw e;
+      }
+      return result;
     }
     throw new Error(`unsupported share kind: ${classified.kind || 'unknown'} (expected ${GROUP_SHARE_KIND_OFFER})`);
   }
 
   _ingestGroupOffer (object, source, meta = {}) {
     if (!object || object.kind !== 'GroupOffer') return null;
+    const { isInviteExpired } = require('../functions/inviteExpiry');
+    if (isInviteExpired(object)) {
+      return {
+        kind: 'GroupOffer',
+        offer: object,
+        pending: false,
+        skipped: 'expired',
+        expired: true
+      };
+    }
     const definition = object.definition;
     let group = null;
     let created = false;
@@ -12088,16 +12317,28 @@ class StarCitizenService extends EventEmitter {
     }
     const { buildFederationContractInvite } = require('../functions/federationContractInvite');
     const { normalizeProposedPolicy } = require('../contracts/gooncitizenGroup');
-    const { gooncitizenContractId } = require('../contracts/gooncitizen');
+    const {
+      resolveShareExpiresAtMs,
+      assertExpiresAtInFuture
+    } = require('../functions/inviteExpiry');
+    const expiresAtMs = assertExpiresAtInFuture(resolveShareExpiresAtMs({
+      expiresAt: opts.expiresAt,
+      ttlMs: opts.ttlMs,
+      expiresInMs: opts.expiresInMs,
+      expiresInSeconds: opts.expiresInSeconds,
+      expiresInDays: opts.expiresInDays
+    }));
     const role = String(opts.role || 'signer').toLowerCase() === 'reader' ? 'reader' : 'signer';
     let capabilityToken = null;
     try {
       const { issueContractCapability, roleToCapability } = require('@fabric/core/functions/contractCapability');
+      const expiresInSeconds = Math.max(1, Math.ceil((expiresAtMs - Date.now()) / 1000));
       capabilityToken = issueContractCapability({
         issuerKey: require('../functions/identity').keyFromIdentity(this._identity),
         subject: invitee || actor,
         contractId,
-        capability: roleToCapability(role)
+        capability: roleToCapability(role),
+        expiresInSeconds
       });
     } catch (_) { /* token optional if key path fails */ }
     const inviteId = opts.inviteId || idFor(`invite:${groupId}:${Date.now()}:${actor}:${invitee || ''}`);
@@ -12112,11 +12353,13 @@ class StarCitizenService extends EventEmitter {
       groupName: group.name,
       role,
       capabilityToken: capabilityToken || undefined,
+      expiresAt: expiresAtMs,
       proposedPolicy: normalizeProposedPolicy({
         validators: signers,
         threshold: group.threshold
       })
     });
+    if (invite.expiresAt == null) invite.expiresAt = expiresAtMs;
     await this._ensureFabric().catch(() => null);
     if (!this.fabricNetwork) {
       this.fabricNetwork = new FabricNetwork({
@@ -12132,49 +12375,33 @@ class StarCitizenService extends EventEmitter {
     if (!this.fabricNetwork.ready) {
       await this._ensureFabric().catch(() => null);
     }
-    // Sign for clipboard even if peer is not ready; relay when possible.
+    // Sign once for clipboard; relay those same AMP bytes when the peer is up.
     const msg = this.fabricNetwork.signContractMessage(contractId, 'FederationContractInvite', invite, { relay: false });
-    let relayed = false;
-    let relayError = null;
-    if (opts.relay !== false && this.fabricNetwork.ready) {
+    const sent = this._clipboardAndRelay(msg, opts);
+    const encoded = sent.encoded;
+    let relayed = sent.relayed;
+    let relayError = sent.relayError;
+    if (relayed && invitee) {
       try {
-        if (!(this.fabricNetwork.status().fabricConnected > 0)) {
-          this.fabricNetwork.setPeers(this._fabricPeerAddresses());
+        const ChatManager = require('../services/ChatManager');
+        const channel = ChatManager.dmChannelKey(actor, invitee);
+        if (channel) {
+          const dm = ChatManager.parseDmChannel(channel);
+          this.fabricNetwork.publishDirectChat({
+            id: `invite-dm:${inviteId}`,
+            channel,
+            peerA: dm.a,
+            peerB: dm.b,
+            author: actor,
+            body: `Group invite: ${group.name} — open Notifications to accept`,
+            handle: null,
+            ts: new Date().toISOString()
+          });
         }
-        this.fabricNetwork.publishFederationInvite(contractId, invite);
-        // Genesis namespace so invitees who have never seen this group still get it.
-        this.fabricNetwork.publishFederationInvite(gooncitizenContractId(), invite);
-        // Dual-path: DirectChat to the invitee (same hub flood as DMs) so
-        // spoke↔spoke delivery does not depend on group-contract awareness.
-        if (invitee) {
-          const ChatManager = require('../services/ChatManager');
-          const channel = ChatManager.dmChannelKey(actor, invitee);
-          if (channel) {
-            const dm = ChatManager.parseDmChannel(channel);
-            this.fabricNetwork.publishDirectChat({
-              id: `invite-dm:${inviteId}`,
-              channel,
-              peerA: dm.a,
-              peerB: dm.b,
-              author: actor,
-              body: `Group invite: ${group.name} — open Notifications to accept`,
-              handle: null,
-              ts: new Date().toISOString(),
-              invite
-            });
-          }
-        }
-        relayed = true;
       } catch (e) {
-        relayError = e && e.message ? e.message : String(e);
         this.emit('error', e);
       }
-    } else if (opts.relay !== false) {
-      relayError = 'Fabric peer not ready — unlock identity and wait for peering';
     }
-    const encoded = this.fabricNetwork.encodeOpaqueMessage(msg, {
-      encoding: this._opaqueShareEncoding(opts.encoding)
-    });
     const stored = Object.assign({}, invite, {
       groupId: group.id,
       groupName: group.name,
@@ -12190,7 +12417,6 @@ class StarCitizenService extends EventEmitter {
     if (this.registerStore) {
       this.registerStore.put('groupinvites', inviteId, stored);
     }
-    const st = this.fabricNetwork.status();
     return Object.assign({}, invite, {
       kind: 'FederationContractInvite',
       groupId: group.id,
@@ -12202,7 +12428,7 @@ class StarCitizenService extends EventEmitter {
       messageBase64: encoded.messageBase64,
       relayed,
       relayError,
-      peers: st.fabricConnected || 0
+      peers: sent.peers
     });
   }
 
@@ -12456,8 +12682,19 @@ class StarCitizenService extends EventEmitter {
       group = shell && shell.group;
     }
     if (!group) throw Object.assign(new Error('Group not found'), { code: 'NOT_FOUND' });
+    const { pubkeysMatch } = identityLib();
+    const invitee = stored && stored.inviteePubkey ? stored.inviteePubkey : null;
+    if (invitee && !pubkeysMatch(actor, invitee)) {
+      const e = new Error('this invite is addressed to another identity');
+      e.code = 'FORBIDDEN';
+      throw e;
+    }
     const contractId = (stored && stored.contractId) || group.contractId || await this._ensureGroupContractId(group.id);
     if (!contractId) throw new Error('group Federation contract is not ready');
+    if (accept) {
+      const { assertInviteNotExpired } = require('../functions/inviteExpiry');
+      assertInviteNotExpired(stored || { inviteId, contractId });
+    }
     const { buildFederationContractInviteResponse } = require('../functions/federationContractInvite');
     const response = buildFederationContractInviteResponse({
       inviteId,
@@ -12551,6 +12788,16 @@ class StarCitizenService extends EventEmitter {
     if (!invite || !invite.inviteId) {
       return { kind: 'FederationContractInvite', invite: null, pending: false };
     }
+    const { isInviteExpired } = require('../functions/inviteExpiry');
+    if (isInviteExpired(invite)) {
+      return {
+        kind: 'FederationContractInvite',
+        invite,
+        pending: false,
+        skipped: 'expired',
+        expired: true
+      };
+    }
     // Dedup: inviter already persisted outbound; ignore mesh echo.
     if (this.registerStore && this.registerStore.get('groupinvites', invite.inviteId)) {
       return { kind: 'FederationContractInvite', invite, pending: false, duplicate: true };
@@ -12598,7 +12845,9 @@ class StarCitizenService extends EventEmitter {
       status: 'pending',
       source: source || null,
       direction: 'inbound',
-      receivedAt: new Date().toISOString()
+      receivedAt: new Date().toISOString(),
+      messageHex: (meta && meta.messageHex) || invite.messageHex || null,
+      protocolUrl: (meta && meta.protocolUrl) || invite.protocolUrl || null
     });
     if (this.registerStore) {
       this.registerStore.put('groupinvites', invite.inviteId, storedInvite);
@@ -12649,17 +12898,26 @@ class StarCitizenService extends EventEmitter {
       if (decision) this._appendInbox(decision);
     }
     // When a peer accepts, add them as a member if we have the group locally.
-    if (response.accept && response.responderPubkey && this.groupManager && stored) {
-      const group = (stored.groupId && this.groupManager.getGroup(stored.groupId))
-        || (stored.contractId && this.groupManager.getGroupByContractId(stored.contractId));
-      if (group && group.creator && !group.includes(response.responderPubkey)) {
-        this.groupManager._appendGroupStatechain(group.id, {
-          id: `invite-resp:${response.inviteId}`,
-          type: 'FederationContractInviteResponse',
-          message: response,
-          acceptedAt: new Date().toISOString()
-        });
-        this.groupManager.addMember(group.id, response.responderPubkey, group.creator).catch((e) => this.emit('error', e));
+    // Prefer the unlocked member identity (the inviter) so GroupChange is signed
+    // by a current member; invitee self-join GroupChange is also authorized when
+    // this node holds a targeted outbound invite for that pubkey.
+    if (response.accept && response.responderPubkey && this.groupManager) {
+      const group = (stored && stored.groupId && this.groupManager.getGroup(stored.groupId))
+        || (stored && stored.contractId && this.groupManager.getGroupByContractId(stored.contractId));
+      if (group && !group.includes(response.responderPubkey)) {
+        const me = this._identity && this._identity.pubkey;
+        const actor = (me && group.includes(me)) ? me : group.creator;
+        if (actor && group.includes(actor)) {
+          this.groupManager._appendGroupStatechain(group.id, {
+            id: `invite-resp:${response.inviteId}`,
+            type: 'FederationContractInviteResponse',
+            message: response,
+            acceptedAt: new Date().toISOString()
+          });
+          this.groupManager.addMember(group.id, response.responderPubkey, actor, {
+            role: (stored && stored.role) || 'signer'
+          }).catch((e) => this.emit('error', e));
+        }
       }
     }
     this.emit('group:invite-response', response);
@@ -12734,6 +12992,12 @@ class StarCitizenService extends EventEmitter {
   // ---- Lifecycle ----
   async start () {
     this.state.status = 'STARTING';
+    const skipGameLog = this._skipGameLog();
+    // Android: bind (or emit embedded listening) before Store JSON load so
+    // the Capacitor wait screen can leave "Starting local node…". Desktop
+    // still listens after managers and before Game.log ingest.
+    const listenEarly = this._isAndroidMode();
+    if (listenEarly) await this._listenHttp();
     if (this.registerStore) {
       try {
         await this.registerStore.start();
@@ -12752,10 +13016,7 @@ class StarCitizenService extends EventEmitter {
     if (this.missionManager) await this.missionManager.start();
     if (this.groupManager) await this.groupManager.start();
     this._applyDefaultGroupFromLocal();
-    const skipGameLog = this._skipGameLog();
-    // HTTP first so the desktop window / dashboard can load while Game.log
-    // ingest runs cooperatively on the same thread.
-    await this._listenHttp();
+    if (!listenEarly) await this._listenHttp();
     this.state.status = 'STARTED';
     this.state.startedAt = this.state.startedAt || new Date().toISOString();
     if (this.missionManager && this.missionManager.officers.size === 0) {

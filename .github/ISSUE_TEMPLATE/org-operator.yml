@@ -10,6 +10,8 @@ body:
         Forks and other orgs are welcome. You do not join G00N by opening this.
         Stay compatible: Fabric Peer, opt-in log share, Game.log read-only.
         Guide: [DEVELOPERS.md](https://github.com/GoonCitizen/star-citizen-live/blob/feature/rsi/DEVELOPERS.md).
+        Why this tree: [docs/APPLICATION.md](https://github.com/GoonCitizen/star-citizen-live/blob/feature/rsi/docs/APPLICATION.md).
+        Intel desk / `local.js`: [docs/INTELLIGENCE.md](https://github.com/GoonCitizen/star-citizen-live/blob/feature/rsi/docs/INTELLIGENCE.md).
         Public seed: [docs/PRODUCTION.md](https://github.com/GoonCitizen/star-citizen-live/blob/feature/rsi/docs/PRODUCTION.md).
   - type: input
     id: org

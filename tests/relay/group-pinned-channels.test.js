@@ -121,6 +121,33 @@ test('creator can update pinnedChannels via GroupManager', async () => {
     }, alice.pubkey);
     assert.strictEqual(ingested.applied, true);
     assert.deepStrictEqual(ingested.group.pinnedChannels, ['discord:666666666666666666']);
+
+    const eve = createIdentity();
+    const spoofed = svc.groupManager.ingestGroupChange({
+      id: 'chg-pins-eve',
+      groupId: created.id,
+      contractId: created.contractId,
+      action: 'update',
+      actor: alice.pubkey,
+      patch: { pinnedChannels: [] },
+      ts: new Date().toISOString()
+    }, eve.pubkey);
+    assert.strictEqual(spoofed.applied, false);
+    assert.strictEqual(spoofed.skipped, 'unauthorized');
+    assert.deepStrictEqual(spoofed.group.pinnedChannels, ['discord:666666666666666666']);
+
+    const strangerAdd = svc.groupManager.ingestGroupChange({
+      id: 'chg-add-eve',
+      groupId: created.id,
+      contractId: created.contractId,
+      action: 'member.add',
+      actor: eve.pubkey,
+      member: eve.pubkey,
+      ts: new Date().toISOString()
+    }, eve.pubkey);
+    assert.strictEqual(strangerAdd.applied, false);
+    assert.strictEqual(strangerAdd.skipped, 'unauthorized');
+    assert.ok(!strangerAdd.group.members.includes(eve.pubkey));
   } finally {
     await svc.stop();
     try { fs.rmSync(dir, { recursive: true, force: true }); } catch (_) { /* ignore */ }
@@ -160,6 +187,18 @@ test('members can patch pinnedMessages; other settings stay creator-only', async
     }
     assert.ok(denied);
     assert.match(String(denied.message || denied), /creator/i);
+
+    const pinIngest = svc.groupManager.ingestGroupChange({
+      id: 'chg-pins-bob',
+      groupId: created.id,
+      contractId: created.contractId,
+      action: 'update',
+      actor: bob.pubkey,
+      patch: { pinnedMessages: ['aabbccddeeff0011'] },
+      ts: new Date().toISOString()
+    }, bob.pubkey);
+    assert.strictEqual(pinIngest.applied, true);
+    assert.deepStrictEqual(pinIngest.group.pinnedMessages, ['aabbccddeeff0011']);
   } finally {
     await svc.stop();
     try { fs.rmSync(dir, { recursive: true, force: true }); } catch (_) { /* ignore */ }

@@ -15,6 +15,9 @@ const { showDesktopNotification, ensureNotifyPermission } = require('../function
 const { isAndroidCompanion } = require('../functions/isAndroidCompanion');
 const { postIdentityCrossSign, fetchIdentityCluster } = require('../functions/identityCrossSignClient');
 const DataSyncStatus = require('./DataSyncStatus');
+const groupVoiceSettings = require('../functions/groupVoiceSettings');
+const VoiceSettingsPanel = require('./VoiceSettingsPanel');
+const { discordBotAuthorizeUrl } = require('../functions/discordBotAuthorize');
 
 const CSS = `
   .st-overlay{position:fixed;inset:0;z-index:40;background:rgba(8,10,14,.7);
@@ -45,6 +48,7 @@ const CSS = `
   .st-runtime{color:var(--muted);font-size:11.5px;display:grid;gap:3px;
     font-family:'Cascadia Code',Consolas,monospace}
   .st-runtime b{color:var(--text);font-weight:600}
+  .st-auth-link{color:#5865F2;font-weight:650}
   .st-privacy-strip{display:flex;flex-wrap:wrap;gap:6px;margin:8px 0 12px}
   .st-chip{font-size:11px;font-weight:600;padding:3px 8px;border-radius:999px;
     border:1px solid var(--line);background:var(--panel2);color:var(--muted)}
@@ -60,7 +64,7 @@ const CSS = `
   .st-embedded{background:var(--panel);border:1px solid var(--line);border-radius:10px;
     overflow:hidden;margin:12px 18px 24px}
   .st-embedded .st-sec:last-child{border-bottom:none}
-`;
+` + (VoiceSettingsPanel.CSS || '');
 
 class Settings extends React.Component {
   constructor (props) {
@@ -117,6 +121,7 @@ class Settings extends React.Component {
       discordAnnounceIncaps: false,
       shareDiscordCatalog: false,
       discordRuntime: null,
+      voice: groupVoiceSettings.defaultVoiceSettings(),
       busy: false
     };
   }
@@ -184,6 +189,7 @@ class Settings extends React.Component {
         shareDiscordCatalog: s.shareDiscordCatalog === true ||
           !!(settingsRes.runtime && settingsRes.runtime.shareDiscordCatalog === true),
         discordRuntime: (settingsRes.runtime && settingsRes.runtime.discord) || null,
+        voice: groupVoiceSettings.sanitizeVoiceSettings(s.voice),
         discordToken: '',
         discordAppSecret: '',
         discordWebhook: ''
@@ -223,6 +229,29 @@ class Settings extends React.Component {
     } catch (e) {
       this.setState({ busy: false, error: e.message });
     }
+  }
+
+  async putVoice (patch) {
+    const next = groupVoiceSettings.sanitizeVoiceSettings(Object.assign({}, this.state.voice, patch));
+    this.setState({ voice: next, error: null });
+    groupVoiceSettings.applyElectronPttBind(next);
+    try {
+      await this.put('voice', next);
+    } catch (err) {
+      this.setState({ error: err.message });
+    }
+  }
+
+  renderVoice () {
+    const v = this.state.voice || groupVoiceSettings.defaultVoiceSettings();
+    return React.createElement('div', { className: 'st-sec', id: 'settings-voice' },
+      React.createElement('h3', null, 'Voice'),
+      React.createElement(VoiceSettingsPanel, {
+        voice: v,
+        disabled: !this.state.editable || this.state.busy,
+        onChange: (patch) => this.putVoice(patch)
+      })
+    );
   }
 
   async putNotify (key, value) {
@@ -976,10 +1005,26 @@ class Settings extends React.Component {
                 React.createElement('span', null,
                   'Share group data with Federation groups I belong to',
                   React.createElement('div', { className: 'd', style: { marginTop: 4 } },
-                    'Chat catalogs and messages are the first packs (`chat.catalog` / `chat.messages`, Discord as the first platform). This node accumulates servers, people, and messages locally so you can browse them if that platform is down, then gossips compact packs on Federation group contracts. Later bots and chat apps use the same envelope. Off = keep chat packs local. “When I play” is a separate opt-in on your profile.')
+                    'Chat catalogs and messages are the first packs (`chat.catalog` / `chat.messages`, Discord as the first platform). This node accumulates servers, people, and messages locally so you can browse them if that platform is down, then gossips compact packs on Federation group contracts. Later bots and chat apps use the same envelope. Off = keep chat packs local. “When you fly” is a separate publish opt-in on your profile.')
                 )
               ),
               this.field('Application ID', 'discordAppId', 'Discord application / client id'),
+              (() => {
+                const url = discordBotAuthorizeUrl({ appId: this.state.discordAppId });
+                if (!url) return null;
+                return React.createElement('div', {
+                  className: 'd',
+                  style: { marginTop: -6, marginBottom: 10 }
+                },
+                'A server administrator can ',
+                React.createElement('a', {
+                  className: 'st-auth-link',
+                  href: url,
+                  target: '_blank',
+                  rel: 'noopener noreferrer'
+                }, 'authorize bot permissions in Discord'),
+                ' (View Channel, Send Messages, Read Message History, Attach Files).');
+              })(),
               this.field('Announce channel ID', 'discordChannel', 'snowflake channel id for embeds'),
               React.createElement('div', { className: 'st-row', style: { marginBottom: 10 } },
                 React.createElement('button', {
@@ -1205,6 +1250,8 @@ class Settings extends React.Component {
               )
             ),
 
+            this.renderVoice(),
+
             React.createElement('div', { className: 'st-sec' },
               React.createElement('h3', null, 'Desktop notifications'),
               React.createElement('div', { className: 'd' },
@@ -1264,9 +1311,9 @@ class Settings extends React.Component {
             ),
 
             React.createElement('div', { className: 'st-sec' },
-              React.createElement('h3', null, 'When you play'),
+              React.createElement('h3', null, 'When you fly'),
               React.createElement('div', { className: 'd' },
-                'Common play times are not published unless you opt in on your own profile (Identity or Profile → “Share when I play”). That pack rides Federation GroupDataShare with other group data — it is not a local heatmap of someone else’s handle from this machine’s logs.')
+                'The weekday × hour heatmap is on your own profile (identity chip → My profile). Publishing is off until you check “Publish when I fly” there. That pack rides Federation GroupDataShare with other group data — it is not a local heatmap of someone else’s handle from this machine’s logs.')
             ),
 
             React.createElement('div', { className: 'st-sec' },

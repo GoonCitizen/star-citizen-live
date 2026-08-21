@@ -106,18 +106,61 @@ function presenceChipLabel (p) {
   return bits.join(' · ');
 }
 
-function majoritySystem (members) {
+function systemCode (value) {
+  return String(value || '').trim().replace(/\s+system$/i, '').toUpperCase();
+}
+
+const SYSTEM_ORDER = { STANTON: 0, PYRO: 1, NYX: 2 };
+
+function systemOrder (code) {
+  const n = SYSTEM_ORDER[code];
+  return n == null ? 99 : n;
+}
+
+function prettySystemName (code, systems) {
+  const key = systemCode(code);
+  if (!key) return '';
+  for (const s of systems || []) {
+    if (systemCode(s.code) === key || systemCode(s.name) === key) {
+      return s.name || s.code || key;
+    }
+  }
+  return key.charAt(0) + key.slice(1).toLowerCase();
+}
+
+/**
+ * Online members grouped by star system (Stanton / Pyro / Nyx).
+ * @param {object[]} members
+ * @param {Array<{ code?: string, name?: string }>} [systems]
+ * @returns {Array<{ n: string, c: number, code: string }>}
+ */
+function countBySystem (members, systems) {
   const counts = Object.create(null);
   for (const m of members || []) {
-    const sys = m && m.location && m.location.system;
-    if (!sys) continue;
-    const key = String(sys);
+    if (!m || m.online === false) continue;
+    const sys = m.location && m.location.system;
+    const key = systemCode(sys);
+    if (!key) continue;
     counts[key] = (counts[key] || 0) + 1;
   }
-  const keys = Object.keys(counts);
-  if (!keys.length) return 'STANTON';
-  keys.sort((a, b) => counts[b] - counts[a] || a.localeCompare(b));
-  return keys[0];
+  return Object.keys(counts)
+    .sort((a, b) => counts[b] - counts[a] || systemOrder(a) - systemOrder(b) || a.localeCompare(b))
+    .map((code) => ({
+      n: prettySystemName(code, systems),
+      c: counts[code],
+      code
+    }));
+}
+
+function formatSystemCounts (members, systems) {
+  return countBySystem(members, systems)
+    .map((r) => r.c + ' ' + r.n)
+    .join(' · ');
+}
+
+function majoritySystem (members) {
+  const top = countBySystem(members)[0];
+  return (top && top.code) || 'STANTON';
 }
 
 module.exports = {
@@ -128,5 +171,9 @@ module.exports = {
   resolvePlaceLabel,
   isGroupOwner,
   presenceChipLabel,
+  systemCode,
+  prettySystemName,
+  countBySystem,
+  formatSystemCounts,
   majoritySystem
 };

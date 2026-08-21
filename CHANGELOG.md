@@ -8,11 +8,41 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased] — Fabric-free rebuild (`feature/fabric-free-m1`)
 ### Added
+- **Group voice:** Opt-in Federation-group voice with push-to-talk (**Shift+Tab**,
+  rebindable from Chat ⚙ → Voice or Settings → Voice). Uncheck Push-to-talk for
+  voice activity. Desktop captures the bind while another app is focused (hold
+  via OS key-state poll). Overlay shows joined voice status with a lighter HUD
+  so the game stays visible. Signaling inherits Hub `https://hub.fabric.pub`
+  WebRTC RPC; RTP stays in the renderer. Active-voice bar is bottom-left on
+  `--chrome-inset`. Join uses the unlocked wallet session (and, on desktop, that
+  wallet even when `FABRIC_XPRV` is the process publishing identity) so a group
+  you created is not 403 `forbidden: members only`.
+- **Shareable invitation expiry:** Group **Share** (`GroupOffer`) and private **Invite**
+  (`FederationContractInvite`) clips stamp `expiresAt`, defaulting to **7 days**.
+  Import and Accept return **410** when the clip is past that stamp. POST
+  `/groups/:id/share` and `/groups/:id/invites` accept `expiresInDays`, `ttlMs`,
+  or `expiresAt`. Legacy clips without the field still ingest.
+- **Group invitations:** Mesh Invite / Share relays the **same signed Fabric
+  Message** as the copied `fabric:` clip (no re-sign). Direct invites gate
+  ingest and Accept to `inviteePubkey`; Accept adds the member and journals
+  GroupChange so both nodes update roster + Statechain.
+- **Linux `.desktop` association:** Root `desktopName` is `vc.goon.desktop` (same as `appId` / `WM_CLASS`) with `build.linux.syncDesktopName`.
+- **Fabric lettermark:** GoonCitizen desktop (`assets/icon.png` / `.ico` / `.icns`), tray glyphs, Android launcher, and dashboard favicons use the suite serif **f** on royal purple from `@fabric/http` `npm run make:icons`.
+- **Downstream intel desk:** `docs/INTELLIGENCE.md` — Groups as orgs;
+  `settings/local.js` whitelabel (`defaultGroupMessageId`, Discord, peers).
+- **Application basis:** `docs/APPLICATION.md` — why fork LiveRelay (contracts,
+  Groups, login, packaging) rather than Hub or a blank Peer.
 - **Files disk upload + cluster sync:** the Files create form accepts a disk
   picker (plus the UTF-8 textarea). Local catalog rows can **Sync to my devices**
   (`POST …/files/:id/cluster-sync`); `DeviceDataShare` `account.files` carries
   metadata and `P2P_FILE_SEND` copies bytes to identity-cluster siblings.
+- **Fabric Message parents (D-020):** durable outbound AMP frames chain
+  `parent` to the previous `Message.id`. Session/peering/ping stay genesis
+  zeros. Log + journal rows store `frameId` / `parent`.
 ### Changed
+- **When you fly:** the Home heatmap tab moved to the operator’s own profile
+  (identity chip → **My profile**), with a **Publish when I fly** checkbox
+  (`sharePlaytimes`) to gossip the weekday×hour grid to Federation groups.
 - **npm git deps:** pin `@fabric/core` / `@fabric/http` / `@fabric/hub` and set
   **`.npmrc` `allow-git=all`** so nested Hub→http→core git preparation works under
   npm 12+ (`allow-git=root` still refuses commit-SHA fetches).
@@ -20,7 +50,6 @@ All notable changes to this project will be documented in this file.
   Node.js service (`app/server.js`). `npm start` now runs the Fabric-free service;
   the old Fabric entry is kept as `npm run start:fabric` (deprecated). (D-002)
 ### Added
-- **Fabric Message collections:** ordered AMP `Message.toBuffer()` hex as the share format for group journals, Discord / `GroupDataShare` packs, DeviceDataShare cluster catch-up, and peer replay (`functions/fabricMessageCollection.js` re-exports core; `functions/clusterSync.js`; ring stores `hex`; `GET …/fabric/messages?format=collection`; `GET|POST …/identity/cluster/sync`).
 - **Call for developers:** `DEVELOPERS.md` / `CONTRIBUTING.md` — G00N SQUAD,
   PERMAFLEET, and other orgs invited to contribute or fork onto the Fabric
   Network (GitHub issue templates under `.github/ISSUE_TEMPLATE/`).

@@ -36,7 +36,8 @@ async function buildAndroidRelaySettings (opts = {}) {
   const settingsDir = resolveAndroidSettingsDir(opts);
   const registerDir = env.SC_REGISTER_DIR || registerPath(settingsDir);
   const store = opts.store || new Store({ path: registerDir, json: true });
-  if (typeof store.start === 'function' && !store._started) await store.start();
+  // LiveRelay.start() opens the store after loopback HTTP is bound. Starting
+  // it here would hide JSON-collection load behind the wait screen.
 
   const fabricPort = Number(env.FABRIC_PORT);
   const httpPort = Number(env.PORT);

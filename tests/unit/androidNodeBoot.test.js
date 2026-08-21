@@ -2,6 +2,7 @@
 
 const { describe, it } = require('node:test');
 const assert = require('node:assert/strict');
+const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const {
@@ -19,6 +20,15 @@ describe('androidNodeBoot', () => {
     const root = path.join(os.tmpdir(), 'gc-nodejs');
     const script = resolveAndroidNodeScript(root, fsImpl);
     assert.equal(script, path.join(root, 'app', 'scripts', 'android-node.js'));
+  });
+
+  it('binds boot HTTP before requiring LiveRelay', () => {
+    const src = fs.readFileSync(path.join(__dirname, '../../scripts/android-node.js'), 'utf8');
+    const httpIdx = src.indexOf('listenAndroidBootHttp');
+    const reqIdx = src.indexOf("require(path.join(root, 'services', 'LiveRelay.js'))");
+    assert.ok(httpIdx > -1);
+    assert.ok(reqIdx > -1);
+    assert.ok(httpIdx < reqIdx);
   });
 
   it('invokes main() even when require.main is the Capacitor index', async () => {

@@ -16,6 +16,7 @@ const {
   copyPeeringString
 } = require('../functions/peerPeeringString');
 const { androidSurface } = require('../functions/androidSurface');
+const { classifyProfileFileKind } = require('../functions/profileFiles');
 
 const BASE = '/services/star-citizen';
 const ADVANCED_MODE_KEY = 'gooncitizen.advancedMode';
@@ -80,6 +81,8 @@ const CSS = `
   .ppage-note{background:var(--bg);border:1px solid var(--line);border-radius:7px;padding:8px 10px;
     font-size:13px;line-height:1.45}
   .ppage-note .meta{color:var(--muted);font-size:11.5px;margin-top:4px}
+  .ppage-share{display:flex;gap:8px;align-items:flex-start;font-size:13px;cursor:pointer;margin-top:12px}
+  .ppage-share input{margin-top:3px}
 `;
 
 function shortKey (pubkey) {
@@ -251,28 +254,29 @@ class ProfilePage extends React.Component {
     if (!d) return null;
     if (d.self) {
       if (!androidSurface('heatmap')) return null;
-      return React.createElement('div', { style: { marginTop: 10 } },
-        React.createElement(ActivityHeatmap, {
-          title: 'When you play',
-          subtitle: 'Your local cumulative heatmap. Sharing publishes a weekday × hour grid to Federation groups — not full history.',
-          analytics: this.state.analytics
-        }),
-        React.createElement('label', {
-          style: { display: 'flex', gap: 8, alignItems: 'flex-start', fontSize: 13, cursor: 'pointer', marginTop: 10 }
-        },
-        React.createElement('input', {
-          type: 'checkbox',
-          checked: this.state.sharePlaytimes === true,
-          onChange: (e) => this.putSharePlaytimes(e.target.checked),
-          style: { marginTop: 3 }
-        }),
-        React.createElement('span', null,
-          'Share when I play with Federation groups I belong to',
-          React.createElement('div', { className: 'ppage-hint', style: { marginTop: 4 } },
-            this.state.sharePlaytimes
-              ? 'Group members can see common play times on this profile.'
-              : 'Off — play times stay on this machine.')
-        ))
+      return React.createElement('div', { className: 'ppage-panel' },
+        React.createElement('h2', null, 'When you fly'),
+        React.createElement('div', { className: 'body' },
+          React.createElement(ActivityHeatmap, {
+            title: null,
+            subtitle: 'Day & hour (local); darker = busier. Publishing shares a weekday × hour grid with Federation groups — not missions or sessions.',
+            analytics: this.state.analytics
+          }),
+          React.createElement('label', { className: 'ppage-share' },
+            React.createElement('input', {
+              type: 'checkbox',
+              checked: this.state.sharePlaytimes === true,
+              onChange: (e) => this.putSharePlaytimes(e.target.checked)
+            }),
+            React.createElement('span', null,
+              'Publish when I fly to Federation groups I belong to',
+              React.createElement('div', { className: 'ppage-hint', style: { marginTop: 4 } },
+                this.state.sharePlaytimes
+                  ? 'Group members can see this schedule on this profile.'
+                  : 'Off — this heatmap stays on this machine.')
+            )
+          )
+        )
       );
     }
     const cells = d.playtimes && Array.isArray(d.playtimes.cells) ? d.playtimes.cells : null;
@@ -280,14 +284,24 @@ class ProfilePage extends React.Component {
       const hasFabric = !!(d.actor && d.actor.platforms
         && d.actor.platforms.some((p) => p.platform === 'fabric'));
       if (!hasFabric && d.pubkey && String(d.pubkey).indexOf('discord:') === 0) return null;
-      return React.createElement('div', { className: 'ppage-hint', style: { marginTop: 10 } },
-        'This player has not shared when they play.');
+      return React.createElement('div', { className: 'ppage-panel' },
+        React.createElement('h2', null, 'When they fly'),
+        React.createElement('div', { className: 'body' },
+          React.createElement('div', { className: 'ppage-hint' },
+            'This player has not shared when they fly.')
+        )
+      );
     }
-    return React.createElement(ActivityHeatmap, {
-      title: 'When they play',
-      subtitle: 'Common play times they opted to share with a Federation group.',
-      heatcells: cells
-    });
+    return React.createElement('div', { className: 'ppage-panel' },
+      React.createElement('h2', null, 'When they fly'),
+      React.createElement('div', { className: 'body' },
+        React.createElement(ActivityHeatmap, {
+          title: null,
+          subtitle: 'Common fly times they opted to publish to a Federation group.',
+          heatcells: cells
+        })
+      )
+    );
   }
 
   renderSharedStats (d, peering) {
@@ -304,7 +318,9 @@ class ProfilePage extends React.Component {
         : 'play times');
     }
     if (files.length) {
+      const apps = files.filter((f) => classifyProfileFileKind(f) === 'application').length;
       bits.push(files.length + ' pinned file' + (files.length === 1 ? '' : 's'));
+      if (apps) bits.push(apps + ' desktop app' + (apps === 1 ? '' : 's'));
     }
     const notes = d.notes && Array.isArray(d.notes.notes) ? d.notes.notes : [];
     if (notes.length) {
@@ -340,18 +356,53 @@ class ProfilePage extends React.Component {
     );
   }
 
+  partitionPinnedFiles (files) {
+    const rows = Array.isArray(files) ? files : [];
+    const applications = [];
+    const other = [];
+    for (const f of rows) {
+      if (classifyProfileFileKind(f) === 'application') applications.push(f);
+      else other.push(f);
+    }
+    return { applications, other };
+  }
+
+  renderPinnedSections (files, opts = {}) {
+    const { applications, other } = this.partitionPinnedFiles(files);
+    const parts = [];
+    if (applications.length) {
+      parts.push(
+        React.createElement('div', { key: 'apps', style: { fontSize: 13, fontWeight: 600 } }, 'Desktop applications'),
+        React.createElement('div', { key: 'apps-hint', className: 'ppage-hint', style: { marginTop: 4 } },
+          opts.self
+            ? 'Installers you pinned so Federation groups can run this desktop from your identity — other org leaders fork and pin theirs the same way.'
+            : 'Installers they pinned for Federation groups. Fork this desktop, keep the Fabric wires, paint it your org.'),
+        this.renderFileRows(applications)
+      );
+    }
+    if (other.length) {
+      parts.push(
+        React.createElement('div', {
+          key: 'files',
+          style: { fontSize: 13, fontWeight: 600, marginTop: applications.length ? 16 : 0 }
+        }, 'Pinned files')
+      );
+      parts.push(this.renderFileRows(other));
+    }
+    return parts;
+  }
+
   renderFiles (d) {
     if (!d) return null;
     if (d.self) {
       const files = d.files && Array.isArray(d.files.files) ? d.files.files : [];
       return React.createElement('div', { style: { marginTop: 16 } },
-        React.createElement('div', { style: { fontSize: 13, fontWeight: 600 } }, 'Pinned files'),
         files.length
-          ? this.renderFileRows(files)
+          ? this.renderPinnedSections(files, { self: true })
           : React.createElement('div', { className: 'ppage-hint', style: { marginTop: 8 } },
-            'Nothing pinned yet. Open a file and use 📌 Pin to profile — that is how a local developer install lists GoonCitizen builds for Federation groups.'),
+            'Nothing pinned yet. Open an installer (or any file) and use 📌 Pin to profile — Federation groups see those listings on this identity. That is how other org leaders install this desktop without cloning git.'),
         React.createElement('div', { className: 'ppage-hint', style: { marginTop: 8 } },
-          'Listings are names, sizes, and prices — not the file bytes.')
+          'Listings are names, sizes, and prices — not the file bytes. `npm run publish:builds -- --pin` publishes installers into this catalog.')
       );
     }
     const files = d.files && Array.isArray(d.files.files) ? d.files.files : null;
@@ -363,10 +414,7 @@ class ProfilePage extends React.Component {
         'This player has not pinned files to their profile.');
     }
     return React.createElement('div', { style: { marginTop: 16 } },
-      React.createElement('div', { style: { fontSize: 13, fontWeight: 600 } }, 'Pinned files'),
-      React.createElement('div', { className: 'ppage-hint', style: { marginTop: 4 } },
-        'Files they pinned to this profile for a Federation group.'),
-      this.renderFileRows(files)
+      this.renderPinnedSections(files, { self: false })
     );
   }
 
@@ -570,11 +618,11 @@ class ProfilePage extends React.Component {
                   d.linkedDevice.members.map((pk) => String(pk).slice(0, 16) + '…').join(' · '))
                 : null)
             : null,
-          this.renderActivity(d),
           this.renderFiles(d),
           this.renderPublicNotes(d)
         )
       ),
+      this.renderActivity(d),
       this.renderMyNotes(d),
       this.state.showSettings
         ? React.createElement(Settings, {

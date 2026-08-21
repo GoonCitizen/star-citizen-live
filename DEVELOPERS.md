@@ -19,6 +19,10 @@ speaks Fabric is a node on the Fabric Network. Compatible Groups, chat, and
 (opt-in) activity still land on the same mesh. We do not need your allegiance.
 We need compatible peers.
 
+**Why this tree as the basis for another application** (not Hub, not a blank
+Peer): [`docs/APPLICATION.md`](docs/APPLICATION.md) — frozen genesis, Group
+Federation contracts, LiveRelay composition, login/device-link, packaging.
+
 Current product surface: [`AGENTS.md`](AGENTS.md) §3–§4. [`CONTINUE.md`](CONTINUE.md)
 still describes a retired Fabric-free `app/` skeleton — skip it.
 
@@ -31,6 +35,8 @@ This file is the call. The rest of the tree is the product. Route by job:
 | If you are… | Open |
 |---|---|
 | Joining to contribute (any org) | This file → [`AGENTS.md`](AGENTS.md) §3–§4 → [`PROGRESS.md`](PROGRESS.md) (newest) → [`DECISIONS.md`](DECISIONS.md) |
+| Building a Fabric app on this node (not Hub) | [`docs/APPLICATION.md`](docs/APPLICATION.md) — artifacts to copy vs replace |
+| Running an intel desk / whitelabel org | [`docs/INTELLIGENCE.md`](docs/INTELLIGENCE.md) — Groups as orgs, `settings/local.js` |
 | Running a local / desktop node | [`QUICKSTART.md`](QUICKSTART.md), [`ELECTRON_BUILD.md`](ELECTRON_BUILD.md). Skip [`CONTINUE.md`](CONTINUE.md) until it is rewritten. Second laptop: [`MOBILE-SETUP.md`](MOBILE-SETUP.md) (not the Android APK). |
 | Sideloading Android | [`ANDROID.md`](ANDROID.md) |
 | Hosting a public Fabric seed | [`docs/PRODUCTION.md`](docs/PRODUCTION.md), [`SECURITY.md`](SECURITY.md), [`docs/THREAT-MODEL.md`](docs/THREAT-MODEL.md) |
@@ -107,6 +113,14 @@ validate. Create **your** Groups. Keep **your** identity keys.
 
 This software is **MIT**. Keep the copyright notice. Change the rest.
 
+GoonCitizen is the suite’s **reference application node** (compose Peer + Store;
+do not subclass Hub). The contract files, LiveRelay, Groups, login, packaging,
+**Group Taproot treasury**, and **publisher-profile pinned desktops** are the
+basis — Star Citizen chrome is optional. Catalog:
+[`docs/APPLICATION.md`](docs/APPLICATION.md) (artifacts 9–10).
+Intel desk / Groups as orgs / `settings/local.js` whitelabel:
+[`docs/INTELLIGENCE.md`](docs/INTELLIGENCE.md).
+
 ### What you get without talking to us
 
 - A local node that tails `Game.log` (read-only) and a dashboard on
@@ -123,6 +137,10 @@ This software is **MIT**. Keep the copyright notice. Change the rest.
   application. We never need your bot token.
 - A public-seed runbook if you want to be a mesh peer, not only a leaf:
   [`docs/PRODUCTION.md`](docs/PRODUCTION.md).
+- An **alliance treasury** on each Federation Group (Taproot spend ladder on
+  **your** node — Hub is not the custodian). Pin **your** desktop installers
+  on **your** Fabric profile (`npm run publish:builds -- --pin`) so members
+  install from identity, not from git.
 
 You can fly against us in Stanton and still help the network. A compatible
 Peer is enough. You do not have to contribute patches, join G00N, or say
@@ -161,7 +179,8 @@ If you fork, please keep:
 You may rename the product, replace the dashboard chrome, drop Bitcoin, or
 ignore GoonCitizen mission types. Unknown contract namespaces must not crash
 the Peer (D-012). That is how many orgs share one mesh without sharing one
-brand.
+brand. File-level list of what to copy vs delete:
+[`docs/APPLICATION.md`](docs/APPLICATION.md).
 
 ---
 
@@ -223,6 +242,9 @@ officer-validated missions, Discord, and a Fabric Peer.
 Fork it. Rebrand it. Run it for YOUR org. You do not join G00N by using
 the code. Groups are yours. Identity keys are yours. Log share is off
 until you turn it on.
+
+This is a Fabric *application* node (not Hub). Why start here:
+https://github.com/GoonCitizen/star-citizen-live/blob/feature/rsi/docs/APPLICATION.md
 
 If your node speaks the Fabric Protocol, it is on the same network as
 everyone else who does — including people you compete with. That is

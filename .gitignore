@@ -61,3 +61,6 @@ local/cursor-agent-fabric-identity.json
 android-www/nodejs/app/
 android-www/nodejs/node_modules/
 android/app/src/main/assets/builtin_modules/
+
+# Leftover webpack dump beside assets/index.html (do not npm-pack)
+/browser.min.js

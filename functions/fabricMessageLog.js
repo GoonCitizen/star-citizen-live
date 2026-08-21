@@ -137,7 +137,7 @@ function createFabricMessageLog (opts = {}) {
       out = out.filter((e) => {
         const hay = [
           e.type, e.friendlyType, e.appType, e.contract, e.peer, e.hash, e.actor,
-          e.bodyPreview, e.summary
+          e.frameId, e.parent, e.bodyPreview, e.summary
         ].filter(Boolean).join(' ').toLowerCase();
         return hay.includes(q);
       });
@@ -158,6 +158,7 @@ function createFabricMessageLog (opts = {}) {
       const e = entries[i];
       if (!e) continue;
       if (e.hash && String(e.hash).toLowerCase() === lower) return e;
+      if (e.frameId && String(e.frameId).toLowerCase() === lower) return e;
       if (String(e.id) === s) return e;
     }
     return null;
@@ -213,14 +214,26 @@ function summarizeMessage (message, meta = {}) {
   const friendlyType = message.friendlyType || null;
   const type = wireType || friendlyType || 'Unknown';
   let hash = null;
+  let frameId = null;
+  let parent = null;
   try {
-    if (typeof message.hash === 'string') hash = message.hash;
+    if (typeof message.hash === 'string' && /^[0-9a-f]{64}$/i.test(message.hash)) hash = message.hash;
     else if (message.raw && message.raw.hash) {
       hash = Buffer.isBuffer(message.raw.hash)
         ? message.raw.hash.toString('hex')
         : String(message.raw.hash);
-    } else if (typeof message.id === 'string') hash = message.id;
+    }
+    if (typeof message.id === 'string' && /^[0-9a-f]{64}$/i.test(message.id)) {
+      frameId = String(message.id).toLowerCase();
+    }
+    if (typeof message.parent === 'string') parent = String(message.parent).toLowerCase();
+    else if (message.raw && message.raw.parent) {
+      parent = Buffer.isBuffer(message.raw.parent)
+        ? message.raw.parent.toString('hex')
+        : String(message.raw.parent);
+    }
   } catch (_) { /* ignore */ }
+  if (!hash && frameId) hash = frameId;
 
   let bodyStr = '';
   let bodyBytes = 0;
@@ -291,6 +304,9 @@ function summarizeMessage (message, meta = {}) {
     peer: meta.peer ? String(meta.peer) : null,
     via: meta.via || null,
     hash: hash ? String(hash) : null,
+    frameId: frameId ? String(frameId) : null,
+    parent: parent ? String(parent) : null,
+    genesis: parent ? /^0+$/.test(parent) : null,
     bodyBytes,
     bodyPreview,
     body: bodyJson != null ? bodyJson : (bodyPreview || null),

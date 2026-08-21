@@ -3,8 +3,9 @@
 /**
  * Wallet — Bitcoin components brought forward from the Hub, group-aware.
  * Shows the payout backend (ledger vs bitcoind, network), each group's
- * deterministic Taproot (P2TR) spend-ladder address (same on every member's
- * relay — sorted keys; legacy P2WSH kept under legacyP2wsh), and mission
+ * alliance treasury — a deterministic Taproot (P2TR) spend-ladder address
+ * on this org node (same on every member's relay — sorted keys; Hub does
+ * not hold these coins; legacy P2WSH kept under legacyP2wsh), and mission
  * escrows with status.
  */
 
@@ -115,7 +116,7 @@ class Wallet extends React.Component {
 
       React.createElement('div', { className: 'wa-panel' },
         React.createElement('h2', null, '₿ Escrow backend ',
-          React.createElement('span', { className: 'sub' }, '— mission escrow backend and group multisig'),
+          React.createElement('span', { className: 'sub' }, '— mission escrow on this node (not Hub custody)'),
           React.createElement('button', { className: 'wa-btn', onClick: () => this.load() }, 'Refresh')
         ),
         React.createElement('div', { className: 'wa-body' },
@@ -135,8 +136,8 @@ class Wallet extends React.Component {
       ),
 
       React.createElement('div', { className: 'wa-panel' },
-        React.createElement('h2', null, '👥 Group Taproot ',
-          React.createElement('span', { className: 'sub' }, '— failover ladder P2TR from signer keys (readers do not change the address)')
+        React.createElement('h2', null, '👥 Alliance treasury ',
+          React.createElement('span', { className: 'sub' }, '— Group Taproot P2TR on this node; Hub does not hold these coins. Other orgs inherit the same vault by running this desktop.')
         ),
         this.state.groups.length
           ? this.state.groups.map((g) => {
@@ -165,7 +166,7 @@ class Wallet extends React.Component {
               )
             );
           })
-          : React.createElement('div', { className: 'wa-note' }, 'No groups yet — group wallets appear here once you create or join one.')
+          : React.createElement('div', { className: 'wa-note' }, 'No groups yet — create or join a Federation group. Its Taproot address is the org treasury on this node, not on Hub.')
       ),
 
       React.createElement('div', { className: 'wa-panel' },

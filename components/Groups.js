@@ -12,6 +12,7 @@
 
 const React = require('react');
 const Chat = require('./Chat');
+const { JoinVoiceButton } = require('./ActiveVoicePanel');
 const GroupFabricInspector = require('./GroupFabricInspector');
 const LocalGroups = require('./LocalGroups');
 const GroupBitcoinPanel = require('./GroupBitcoinPanel');
@@ -24,6 +25,7 @@ const {
   shareNotice,
   createdNotice
 } = require('../functions/groupJoinFlow');
+const { formatInviteExpiryLabel } = require('../functions/inviteExpiry');
 const {
   readPinnedGroupIds,
   writePinnedGroupIds,
@@ -35,6 +37,7 @@ const { fetchPresenceRoster } = require('../functions/presenceClient');
 const groupPresence = require('../functions/groupPresence');
 const GroupComposition = require('./GroupComposition');
 const GroupContractSummary = require('./GroupContractSummary');
+const { pubkeysMatch } = require('@fabric/http/functions/fabricPubkey');
 const StarMap = require('./StarMap');
 const { profileHref } = require('../functions/identityActor');
 
@@ -634,14 +637,11 @@ class Groups extends React.Component {
       if (url) {
         try { await navigator.clipboard.writeText(url); } catch (_) { /* ignore */ }
       }
-      const mesh = data.relayed
-        ? `Invite sent to the network (${data.peers || 0} peer connection(s)).`
-        : 'Invite copied — they paste it via Import… and Accept.';
       this.setState({
         busy: false,
         inviteKey: '',
         lastShare: data,
-        notice: mesh
+        notice: shareNotice(Object.assign({ visibility: 'private' }, data), null)
       });
     } catch (e) {
       this.setState({ busy: false, error: e.message });
@@ -681,11 +681,13 @@ class Groups extends React.Component {
     const clip = shareClipboardText(data);
     if (!data || !clip) return null;
     const page = data.pageUrl || null;
+    const expiry = formatInviteExpiryLabel(data);
     return React.createElement('div', { className: 'gp-share' },
       React.createElement('div', { className: 'hint' },
-        data.kind === 'FederationContractInvite' || data.visibility === 'private'
+        (data.kind === 'FederationContractInvite' || data.visibility === 'private'
           ? 'Send this invite privately. They open GoonCitizen → Import…, paste, and Join from Notifications.'
-          : 'They paste this via Import… to apply. You will see the join request in Notifications.'
+          : 'They paste this via Import… to apply. You will see the join request in Notifications.') +
+        (expiry ? ' ' + expiry + '.' : '')
       ),
       React.createElement('div', { style: { display: 'flex', gap: 8, flexWrap: 'wrap' } },
         React.createElement('button', {
@@ -1603,8 +1605,10 @@ class Groups extends React.Component {
           : 'No groups yet — create one to share missions with a squad, or Import… a join invite.');
     }
     const me = this.state.pubkey;
-    const isCreator = me && g.creator === me;
-    const canManage = me && Array.isArray(g.members) && g.members.includes(me);
+    const isCreator = !!(me && g.creator && pubkeysMatch(g.creator, me));
+    const canManage = !!(me && Array.isArray(g.members) && (
+      g.members.some((m) => pubkeysMatch(m, me)) || isCreator
+    ));
     const tab = this.state.detailTab || 'chat';
     const tabs = DETAIL_TABS.filter(([id]) => id !== 'fabric' || this.props.advancedMode);
     const tabCounts = {
@@ -1636,6 +1640,16 @@ class Groups extends React.Component {
           React.createElement('span', { className: 'sub' },
             ' · ' + (g.visibility || 'private'))
         ),
+        canManage
+          ? React.createElement(JoinVoiceButton, {
+            className: 'gp-voice',
+            groupId: g.id,
+            handle: this.props.nickname || null,
+            identityPubkey: me,
+            authToken: this.state.token,
+            disabled: !me
+          })
+          : null,
         React.createElement('button', {
           type: 'button',
           className: 'gp-cog' + (this.state.settingsOpen ? ' on' : ''),
@@ -1752,7 +1766,8 @@ class Groups extends React.Component {
         groupId: g.id,
         embedded: true,
         identityPubkey: this.state.pubkey || this.props.identityPubkey || null,
-        nickname: this.props.nickname || null
+        nickname: this.props.nickname || null,
+        authToken: this.state.token
       })
     );
   }

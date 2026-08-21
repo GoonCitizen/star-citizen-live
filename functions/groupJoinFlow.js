@@ -4,6 +4,8 @@
  * Shared copy + navigation for group create → share → join → notifications.
  */
 
+const { formatInviteExpiryLabel } = require('./inviteExpiry');
+
 function shareClipboardText (data) {
   if (!data || typeof data !== 'object') return '';
   return String(
@@ -29,13 +31,23 @@ function shareNotice (data, pageUrl) {
     : '';
   const page = pageUrl ? (` Page: ${pageUrl}`) : '';
   const isInvite = kind === 'FederationContractInvite' || vis === 'private';
+  const expiry = formatInviteExpiryLabel(data);
+  const expiryBit = expiry ? (' ' + expiry + '.') : '';
   if (isInvite) {
+    if (data && data.relayed) {
+      return mesh +
+        'Join invite sent as the same Fabric message that was copied. They Accept in Notifications (direct invites only work for the destination pubkey), or paste via Import….' +
+        expiryBit +
+        page;
+    }
     return mesh +
       'Join invite copied — send it to the person you want in the group. They choose Import…, paste, and Accept to join.' +
+      expiryBit +
       page;
   }
   return mesh +
     'Share copied — they paste it via Import… to apply, or open the group page. You will get a notification to accept.' +
+    expiryBit +
     page;
 }
 
@@ -141,5 +153,6 @@ module.exports = {
   offerVisibility,
   isSelfSourced,
   dispatchGroupImported,
-  dispatchInboxRefresh
+  dispatchInboxRefresh,
+  formatInviteExpiryLabel
 };

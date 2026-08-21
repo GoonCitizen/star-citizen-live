@@ -45,6 +45,11 @@ describe('groupShareMessage', () => {
     assert.equal(offer.contractId, contractId);
     assert.equal(offer.definition.groupId, 'group-test-1');
     assert.equal(offer.note, 'join us');
+    assert.ok(offer.expiresAt);
+    const offered = Date.parse(offer.offeredAt);
+    const expires = Date.parse(offer.expiresAt);
+    assert.ok(Number.isFinite(offered) && Number.isFinite(expires));
+    assert.equal(expires - offered, 7 * 24 * 60 * 60 * 1000);
   });
 
   it('opaque fabric: url round-trips a signed GroupOffer Message', () => {
@@ -117,6 +122,8 @@ describe('groupShareMessage', () => {
       inviteId: 'inv-1',
       inviterHubId: key.pubkey,
       contractId,
+      groupId: 'group-test-1',
+      groupName: 'Test Wing',
       note: 'co-sign'
     });
     const body = {
@@ -129,6 +136,12 @@ describe('groupShareMessage', () => {
     const classified = classifyGroupShareMessage(msg);
     assert.equal(classified.kind, 'FederationContractInvite');
     assert.equal(classified.object.inviteId, 'inv-1');
+    assert.equal(classified.groupId, 'group-test-1');
+    assert.ok(classified.object.expiresAt);
+    assert.equal(
+      classified.object.expiresAt,
+      invite.invitedAt + (7 * 24 * 60 * 60 * 1000)
+    );
   });
 
   it('rejects garbage opaque urls', () => {

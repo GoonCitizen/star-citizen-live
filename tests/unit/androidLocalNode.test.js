@@ -69,13 +69,14 @@ describe('android local-first node', () => {
     assert.equal(settings.discord.enable, false);
   });
 
-  it('opens the register as JSON files (no native Level)', async () => {
+  it('opens the register as JSON files without starting it (LiveRelay.start does)', async () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'gc-android-json-'));
     const settings = await buildAndroidRelaySettings({
       env: { PORT: '3041' },
       settingsDir: dir
     });
     assert.equal(settings.store._json, true);
+    assert.equal(settings.store._started, false);
     if (typeof settings.store.stop === 'function') await settings.store.stop();
   });
 
@@ -119,5 +120,11 @@ describe('android-stage runtime packages', () => {
     assert.match(src, /'locations'/);
     assert.match(src, /'ships'/);
     assert.doesNotMatch(src, /COPY_DIRS = \[[^\]]*data/);
+    assert.doesNotMatch(src, /COPY_DIRS = \[[^\]]*assets/);
+    assert.doesNotMatch(src, /COPY_DIRS = \[[^\]]*scripts/);
+    assert.match(src, /android-node\.js/);
+    assert.match(src, /skipStagedDep/);
+    assert.match(src, /discord\.js/);
+    assert.match(src, /webpack/);
   });
 });

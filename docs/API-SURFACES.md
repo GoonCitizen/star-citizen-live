@@ -1,7 +1,11 @@
 # API surfaces (IPC, HTTP, Fabric, …)
 How GoonCitizen clients talk to a node — and how that node talks to the mesh.
-**Last reviewed against source:** 2026-08-15 (`LiveRelay._handle`, `preload.js`,
-`services/FabricNetwork.js`, D-010 / D-011 / D-013, `functions/clusterSync.js`).
+**Last reviewed against source:** 2026-08-21 (`LiveRelay._handle`,
+`functions/fabricSiteLogin.js`, `functions/fabricDeviceLinkRelay.js`,
+`functions/fabricDeviceLinkLocalHttp.js`, `functions/liveRelayPeeringHttp.js`,
+`functions/groupVoiceHttp.js`, `preload.js`, `services/FabricNetwork.js`).
+HTTP path inventory below is complete against those handlers. Lock:
+`tests/unit/httpPathInventory.test.js`.
 
 `API.md` is stale JSDoc from the retired Hub subclass path. Trust this file,
 `services/LiveRelay.js`, and tests over `API.md`.
@@ -12,6 +16,7 @@ This file is the *runtime* map: which wire a UI or peer should use.
 
 Contributors changing a wire still start at [`DEVELOPERS.md`](../DEVELOPERS.md)
 (PRs against `feature/rsi`, `npm test`). Product surface: [`AGENTS.md`](../AGENTS.md) §3–§4.
+Second application / fork: [`APPLICATION.md`](APPLICATION.md).
 
 ---
 
@@ -56,10 +61,11 @@ Hub or LiveRelay HTTP     LiveRelay HTTP :3041  ◄────┘
 ```
 
 LiveRelay **composes** `@fabric/core` Store + Peer. It does **not** subclass Hub
-and does **not** expose Hub JSON-RPC or Hub WebRTC *signaling*. It **is** a
-JSON-RPC *client* of Hub `RegisterWebRTCPeer` / `ListWebRTCPeers` so Node
-phone and desktop can advertise Fabric `:7777` LAN candidates (coordinator
-only — no ICE).
+and does **not** host Hub JSON-RPC or WebRTC *signaling*. It **is** a JSON-RPC
+*client* of public Hub `https://hub.fabric.pub` (`RegisterWebRTCPeer` /
+`ListWebRTCPeers` / `SendWebRTCSignal`) so Node phone and desktop can advertise
+Fabric `:7777` LAN candidates **and** Federation group-voice ICE (coordinator
+only — no RTP on Hub or LiveRelay).
 
 ---
 
@@ -86,6 +92,7 @@ Exposed as `window.electronAPI`:
 | `fabric:presence-status` / `fabric:presence-roster` / `fabric:presence-set` / `fabric:presence-ship` | Local presence + roster in-process (SPA uses `functions/presenceClient.js`) |
 | `dialog:*` | Native folder / log / fleet JSON pickers |
 | `notify:show` + `notify:action` / `notify:click` | OS notifications |
+| `voice:set-ptt-bind` / `voice:ptt` | Global PTT hold (default Shift+Tab); OS key-state poll while another app is focused |
 | `get-service-status` / `restart-service` / `set-open-at-login` / group overlay | Shell, not the register |
 
 The SPA still `fetch`es `/services/star-citizen/chat/messages`, `/groups`,
@@ -160,48 +167,238 @@ Two login contracts (do not collapse without owner go-ahead):
    Schnorr envelope `{ intent: 'login', ts }`. `_requireSession` still cites
    this path.
 
-### Hub-shaped routes on this process (not `/services/star-citizen`)
+### How paths are mounted
 
-So Passport / Hub desktop can treat `relay.goon.vc` like a Hub origin:
+Standalone `http.createServer` → `_handle` (desktop / Android / `SC_MODE=server`
+behind Caddy). `apiHandler()` (embed) only claims `/sessions*`, `GET|OPTIONS /`,
+`/services/peering*`, and `/services/star-citizen*` — root aliases such as
+`/settings` and SPA `/groups/:id` are **standalone-only**.
 
-| Path | Role |
-|------|------|
-| `POST /sessions`, `GET /sessions/:id`, `POST /sessions/:id/signatures` | Client-signed site login (D-011). LiveRelay **rejects** Hub empty-body self-sign. |
-| `POST /device-links`, poll, `POST …/signatures` | Device-link rendezvous (D-013). Public hub allowlist. |
-| `GET /services/peering`, `OPTIONS /` | Hub-compatible peering discovery + `OracleAttestation` |
-| `GET /` and SPA paths (`/groups/:id`, `/profiles/:id`, …) | Dashboard HTML |
+**Prefix:** JSON APIs live at `/services/star-citizen/…`. Rows marked **also /**
+are also mounted at HTTP root (`/peers` ≡ `/services/star-citizen/peers`) so
+the SPA can `fetch('/settings')`. Prefer the prefix in new code.
 
-### Local device-link (Android / loopback)
+**Desktop-only:** `settings.mode !== 'server'` — 404 on hosted `SC_MODE=server`.
+**Android-only:** loopback Android node. **SPA:** `assets/index.html`, not JSON.
+Unmatched paths: `404 { error, path }`. Android `OPTIONS *` → 204.
 
-`POST|GET /services/star-citizen/device-links…` — Node-side client to the
-allowlisted hub. Not the public rendezvous.
+Not this process: Hub JSON-RPC / WebRTC / payjoin; Caddy `/probes/*` (agent
+JSON, `SC_AGENT_STATIC_ROOT`); webpack `/assets/*` (inlined into the SPA
+shell LiveRelay serves).
+
+JSON shape is Fabric-ish (`{ type: 'Collection' | 'Group' | …, data }`), not
+JSON-RPC.
+
+### Hub-shaped (HTTP root)
+
+Passport / Hub desktop treat `relay.goon.vc` like a Hub origin.
+
+| Methods | Path | Notes |
+|---------|------|-------|
+| `POST` | `/sessions` | Create client-signed login (D-011). Rejects Hub empty-body self-sign. |
+| `GET` | `/sessions` | `Accept: application/json` → 404; otherwise SPA. |
+| `GET` | `/sessions/:id` | Poll session. |
+| `POST` | `/sessions/:id/signatures` | Complete → Bearer `delegationToken` (8h). |
+| `POST` | `/device-links` | Create device-link offer (D-013). Origin allowlist. |
+| `GET` | `/device-links/:id` | Poll offer. |
+| `DELETE` | `/device-links/:id` | Cancel. |
+| `POST` | `/device-links/:id/signatures` | Complete / attest. |
+| `OPTIONS` | `/` | Application resource contract (ARC). |
+| `GET` `HEAD` `OPTIONS` | `/services/peering` | PeeringCapability + inline `OracleAttestation`. |
+| `GET` `HEAD` `OPTIONS` | `/services/peering/attestation` | Attestation body only. |
+
+### SPA HTML (standalone `GET`)
+
+| Path | Notes |
+|------|-------|
+| `/` | Dashboard shell. |
+| `/services/star-citizen/ui` | Same shell. |
+| `/groups`, `/groups/:id` | |
+| `/profiles`, `/profiles/:id` | |
+| `/missions`, `/missions/:id` | |
+| `/collections`, `/collections/:kind/:id` | |
+| `/files`, `/files/:id` | |
+| `/locations` | Catalog page. `/locations/map` and `/locations/reports` are **JSON**, not SPA. |
+| `/locations/:slug` | Location page (not `map` / `reports`). |
+| `/wallet/construct` | Advanced send constructor. |
+
+Overlay HTML (not the SPA): `GET /overlay`, `GET /overlay.html`.
 
 ### Application REST (`/services/star-citizen`)
 
-Authoritative list is the `pathname` branches in `_handle`. Product groups:
+Below, paths are relative to that prefix unless **also /**. Parametric segments
+use `:id` (pubkey, hash, slug, snowflake — as implemented).
 
-| Area | Examples |
-|------|----------|
-| Status / live | `GET /`, `GET /monitor`, `GET /feed`, `GET /rules`, overlay |
-| Analytics | `GET /analytics`, `/corpus`, `/activity-tree` (+ `POST …/publish`) |
-| Settings / peers | `/settings`, `/peers`, `/peers/announce`, `/profile`; `/presence` (desktop SPA is Fabric-first) |
-| Identity cluster | `/identity/cluster` (members, edges, one-way `pending`), `/identity/cluster/sync` (collection + `mesh` Hub registry snapshot + `inventory` per-device counts; POST `{ publish }`, `{ mesh: true }`, `{ dial: [...] }`, or a `FabricMessageCollection`), `/identity/session`, `/identity/cross-sign` |
-| Chat | `/chat/channels`, `/chat/messages`, pin, `/delivery/:hash/receipt` |
-| Groups | CRUD, `/share`, `/share/ingest`, invites, fleets, statechain, wallet |
-| Missions | CRUD + apply/accept/claim/validate/broadcast; `/inbox` |
-| Notes / local tags | `/notes`, `/local-groups` |
-| Discord | `/discord/link`, `/guilds`, `/world-view` (session on hosted) |
-| Files | `/documents`, `/documents/inventory`, `/files/:id/pin`, `/files/:id/cluster-sync` |
-| Fabric AMP log | `GET /fabric/messages` (session); `?format=collection` exports `FabricMessageCollection` hex for replay. Cluster catch-up: `GET|POST /identity/cluster/sync` (same AMP hex, `DeviceDataShare` only). |
-| Bitcoin | `/bitcoin/*` **proxies Hub HTTP** (desktop) |
-| Legacy ingest | `POST /events` — leftover HTTP push; **not** the peering transport (D-010) |
+#### Always mounted (hosted + desktop)
 
-Many routes are also aliased at HTTP root (`/peers`, `/settings`, `/search`) so
-the SPA can `fetch('/settings')` without the prefix. Prefer
-`/services/star-citizen/…` in new code.
+| Methods | Path | Notes |
+|---------|------|-------|
+| `GET` | `/` (prefix) | Compact `StarCitizen` status JSON. |
+| `GET` | `/overlay/primary-group` | Session. |
+| `GET` | `/rules` | Parser regex table (public). |
+| `GET` | `/missiongroups` | Session. |
+| `GET` | `/combat` | Session. |
+| `GET` | `/analytics` | Session. |
+| `GET` | `/corpus` | Session. |
+| `POST` | `/corpus/sync` | Local-player; hosted 400. |
+| `POST` | `/corpus/import` | Local-player; hosted 400. |
+| `POST` | `/corpus/remove` | Local-player. |
+| `GET` | `/fs` | Directory listing; hosted 400. Session. |
+| `GET` | `/activity-tree` | Session. |
+| `POST` | `/activity-tree/publish` | |
+| `GET` | `/monitor` | Session. Includes `loginfo`. |
+| `GET` | `/feed` | Session. |
+| `POST` | `/auth` | Legacy Schnorr login → Bearer. |
+| `DELETE` | `/auth` | Revoke presented Bearer. |
+| `GET` | `/identity/cluster` **also /** | Session. Snapshot + `pending`. |
+| `GET` `POST` | `/identity/cluster/sync` **also /** | Collection export / ingest / `{ publish }`, `{ mesh: true }`, `{ dial }`, `{ crossSign }`. |
+| `POST` | `/identity/session` **also /** | **Android-only**, loopback: restore xprv/mnemonic or `{ lock }`. |
+| `POST` | `/identity/cross-sign` **also /** | Pre-signed body **or** unlocked local publish. |
+| `GET` `POST` `DELETE` | `/discord/link` **also /** | Per-session Discord ↔ Fabric link. |
+| `GET` | `/chat/channels` | Session. |
+| `GET` `POST` | `/chat/messages` | Session; hosted POST needs Schnorr envelope. |
+| `POST` | `/chat/messages/:id/pin` | |
+| `POST` | `/chat/messages/:id/receipt` | Delivery ACK (HTTP fallback). |
+| `GET` | `/delivery/:hash` | Delivery summary (no `_requireSession`). |
+| `POST` | `/delivery/:hash/receipt` | Desktop prefers IPC `fabric.deliveryReceipt`. |
+| `GET` `POST` | `/groups` | Hosted GET lists public (+ member) groups only. |
+| `GET` `POST` | `/groups/:id/share` | Opaque `fabric:` GroupOffer. |
+| `POST` | `/groups/share/ingest` | |
+| `GET` | `/voice` | Local group-voice snapshot (Hub signaling via hub.fabric.pub). |
+| `GET` | `/voice/signals` | Drain inbound Hub WebRTCSignal for the renderer mesh. |
+| `POST` | `/voice/leave` | Leave the current Fabric voice room. |
+| `POST` | `/voice/ptt` | Optional speaking presence while PTT is held. |
+| `GET` `POST` | `/groups/:id/voice` | Room snapshot; POST join/leave/signal/speaking on subpaths. |
+| `POST` | `/groups/:id/voice/join` | Members only. Publishes GroupVoiceJoin + Hub RegisterWebRTCPeer. |
+| `POST` | `/groups/:id/voice/leave` | |
+| `POST` | `/groups/:id/voice/signal` | Opaque SDP/ICE to Hub SendWebRTCSignal. |
+| `POST` | `/groups/:id/voice/speaking` | Ephemeral GroupVoiceSpeaking. |
+| `POST` | `/groups/:id/invites` | FederationContractInvite. Same signed AMP bytes as the `fabric:` clipboard clip; mesh relay does not re-sign. Direct invites set `inviteePubkey` (accept/ingest gated to that key). |
+| `POST` | `/groups/:id/invites/:inviteId/accept` | |
+| `POST` | `/groups/:id/invites/:inviteId/reject` | |
+| `GET` `PUT` | `/groups/:id` | |
+| `GET` | `/groups/:id/fleets` | |
+| `GET` | `/groups/:id/statechain` | |
+| `POST` | `/groups/:id/members` | Propose add/remove. |
+| `GET` | `/groups/:id/proposals` | |
+| `POST` | `/groups/:id/proposals/:id/votes` | |
+| `GET` `POST` | `/groups/:id/applications` | |
+| `POST` | `/group-applications/:id/decision` | |
+| `GET` | `/groupaudit` | Session. |
+| `GET` | `/groups/:id/wallet` | k-of-n / Taproot. |
+| `GET` `POST` | `/groups/:id/withdrawals` | |
+| `POST` | `/groups/:id/withdrawals/:id/witness` | |
+| `POST` | `/groups/:id/withdrawals/:id/finalize` | |
+| `GET` `POST` | `/notes` | Session. |
+| `POST` | `/notes/:id/share` | |
+| `POST` | `/notes/:id/pin` | |
+| `GET` `PUT` | `/notes/:id` | |
+| `GET` `POST` | `/local-groups` | Session. |
+| `POST` | `/local-groups/:id/members` | |
+| `DELETE` | `/local-groups/:id/members/:actor` | |
+| `GET` `PUT` `DELETE` | `/local-groups/:id` | |
+| `GET` `POST` | `/missions` | Hosted GET membership-filters `groupId`. |
+| `GET` | `/missions/:id` | |
+| `GET` | `/missions/:id/applications` | |
+| `POST` | `/missions/:id/cancel` | |
+| `POST` | `/missions/:id/apply` | |
+| `POST` | `/missions/:id/broadcast` | |
+| `POST` | `/missions/:id/claim` | |
+| `GET` `POST` | `/missions/:id/escrow` | |
+| `POST` | `/missions/:id/payout` | |
+| `GET` | `/missionbroadcasts` | |
+| `POST` | `/missionbroadcasts/:id/accept` | |
+| `POST` | `/missionbroadcasts/:id/ignore` | |
+| `GET` | `/inbox` | |
+| `POST` | `/inbox/:id/dismiss` | alias `ignore`; not for mission broadcasts. |
+| `GET` | `/applications` | Hosted: Bearer. |
+| `POST` | `/applications/:id/decision` | |
+| `GET` | `/claims` | Hosted: Bearer. |
+| `POST` | `/claims/:id/validate` | |
+| `GET` | `/validations` | Hosted: Bearer. |
+| `GET` | `/audit` | Hosted: Bearer. Mission register audit. |
+| `GET` | `/wallet` | Escrow summary + bitcoin runtime (no adminToken). |
+| `GET` | `/activities` `/players` `/logins` `/vehicles` `/kills` `/incaps` `/deaths` `/missionlog` `/notifications` `/messages` | Session. Gameplay collections (`/messages` ≠ chat). |
+| `POST` | same collections except `messages`, `logins`, `notifications`, `incaps`, `deaths` | Unsigned local; hosted needs `ingest.httpEnable`. |
+| `POST` | `/events` | Legacy signed batch; **403 unless** `ingest.httpEnable` / `SC_HTTP_INGEST=1`. Not peering. |
+| `GET` `POST` | `/documents` | Gated `settings.documents.enable`. Session. |
+| `POST` | `/documents/inventory` | `P2P_INVENTORY_REQUEST`. |
+| `GET` | `/documents/offers` | Session. |
+| `GET` | `/documents/:id` | Session; includes bytes when stored. |
+| `POST` | `/documents/:id/publish` | |
+| `POST` | `/documents/:id/cluster-sync` | |
+| `POST` | `/documents/:id/purchase` | **501** Hub-only. |
+| `POST` | `/documents/:id/claim` | **501** Hub-only. |
+| `GET` | `/bitcoin/status` `/bitcoin/wallet` `/bitcoin/receive` `/bitcoin/transactions` `/bitcoin/utxos` `/bitcoin/faucet` | Hub HTTP **proxy**; `settings.bitcoin.enable`. |
+| `POST` | `/bitcoin/send` `/bitcoin/faucet` | Session. Token injected server-side. |
 
-JSON shape is Fabric-ish (`{ type: 'Collection' \| 'Group' \| …, data }`), not
-JSON-RPC.
+Android local device-link client (not public rendezvous):
+
+| Methods | Path |
+|---------|------|
+| `POST` | `/device-links/offer` |
+| `GET` | `/device-links/current` |
+| `POST` | `/device-links/tick` |
+| `POST` | `/device-links/cancel` |
+| `GET` | `/device-links/pending` |
+| `POST` | `/device-links/accept` |
+
+#### Desktop-only (`mode !== 'server'`)
+
+First block: settings / peers / presence / Fabric AMP log. Second block:
+Discord catalog, search, files, Game.log browse, locations, fleets, snapshots.
+
+| Methods | Path | Notes |
+|---------|------|-------|
+| `GET` | `/settings` **root only** | Session. Runtime omits `adminToken`. |
+| `PUT` | `/settings/:name` **root only** | Allowlisted keys in `functions/settingsStore.js`. |
+| `PUT` | `/settings/discord/secrets` **root only** | |
+| `POST` | `/settings/primaryGroup/from-message` **root only** | |
+| `GET` `POST` | `/peers` **also /** | Roster / AddPeer. Session. |
+| `POST` | `/peers/announce` **also /** | `P2P_PEERING_OFFER`. |
+| `POST` | `/peers/restore-seeds` **also /** | |
+| `GET` `POST` `DELETE` | `/peers/:id` **also /** | POST patches enabled/label/shareLogs. |
+| `GET` | `/profile` **also /** | Local PeerProfile. Session. Desktop SPA presence is Fabric-first; this is still HTTP. |
+| `GET` | `/profiles/:id` **also /** | Session. |
+| `GET` `PUT` | `/presence` **also /** | Desktop SPA: `presenceClient` IPC first. |
+| `PUT` | `/presence/ship` **also /** | |
+| `GET` | `/presence/roster` **also /** | |
+| `GET` `DELETE` | `/fabric/messages` **also /** | `?format=collection` → `FabricMessageCollection`. |
+| `POST` `DELETE` | `/fabric/messages/clear` **also /** | |
+| `POST` | `/fabric/messages/pause` **also /** | |
+| `POST` | `/fabric/messages/resume` **also /** | |
+| `POST` | `/fabric/messages/decode` **also /** | |
+| `GET` | `/fabric/messages/tree` **also /** | Discord Request→Claim→Response. |
+| `GET` | `/fabric/messages/:hash` **also /** | |
+| `GET` | `/discord/links` **also /** | All Discord↔Fabric links. |
+| `GET` | `/discord/guilds` **also /** | |
+| `GET` | `/discord/guilds/:id/channels` **also /** | |
+| `GET` | `/discord/guilds/:id/members` **also /** | |
+| `GET` | `/discord/channels/:id` **also /** | |
+| `GET` | `/discord/coordination` **also /** | |
+| `GET` | `/discord/coordination/:requestId` **also /** | |
+| `GET` | `/world-view` **also /** | Aliases `/discord/world-view`. |
+| `GET` | `/search` **also /** | App search. Session. |
+| `GET` | `/network/observe` **also /** | Hub HTTP observe. Session. |
+| `GET` | `/collections/:kind/:id` | Prefix only. Session. |
+| `GET` | `/files/:id` | Prefix only. |
+| `POST` | `/files/:id/pin` | |
+| `POST` | `/files/:id/cluster-sync` | |
+| `GET` | `/loginfo` `/logslice` | Session. Game.log path + byte window. |
+| `GET` `POST` | `/reparse` | Session. |
+| `GET` | `/locations` **also /** | Public location catalog. |
+| `GET` | `/locations/map` **also /** | Public starmap JSON. |
+| `GET` | `/locations/reports` | Prefix only. Session. |
+| `GET` | `/locations/:slug` | Prefix only. Session. |
+| `GET` | `/ships` **also /** | Public ship catalog. |
+| `GET` `POST` | `/fleets` **also /** | Session. Personal fleets. |
+| `GET` | `/fleets/samples` **also /** | |
+| `POST` `PUT` | `/fleets/:id/ships` **also /** | |
+| `DELETE` | `/fleets/:id/ships/:slug` **also /** | |
+| `GET` `PUT` `PATCH` `DELETE` | `/fleets/:id` **also /** | |
+| `POST` | `/fleets/:id/share` **also /** | |
+| `GET` `DELETE` | `/snapshots` | Session. |
+| `GET` | `/snapshots/:id/image` | JPEG. Session. |
 
 ---
 
@@ -368,6 +565,7 @@ Gating an HTTP GET does not encrypt the same bytes on Fabric. See
 ## Pointers
 
 - Handlers: `services/LiveRelay.js` (`apiHandler`, `_handle`, `_requireSession`)
+- HTTP inventory lock: `tests/unit/httpPathInventory.test.js`
 - IPC: `preload.js`, `main.js`
 - Mesh: `services/FabricNetwork.js`, `contracts/applicationMessageTypes.js`
 - Auth bind: `functions/httpRemoteAuth.js`

@@ -102,6 +102,8 @@ Errors map to **403** (officer forbidden), **404** (not found), else **400**.
 ## Documentation
 
 - `DEVELOPERS.md` / `CONTRIBUTING.md` — call for G00N SQUAD, PERMAFLEET, and other orgs (maps the rest of this list).
+- `docs/APPLICATION.md` — why to start from this node (contracts, LiveRelay, Groups, login) rather than Hub.
+- `docs/INTELLIGENCE.md` — Groups as orgs; `settings/local.js` for a whitelabel intel desk.
 - `AGENTS.md` / `CLAUDE.md` — full project context for AI coding assistants (current surface).
 - `QUICKSTART.md` / `ELECTRON_BUILD.md` / `ANDROID.md` — run desktop, installer, sideload.
 - `docs/PRODUCTION.md` — public Fabric seed operators.

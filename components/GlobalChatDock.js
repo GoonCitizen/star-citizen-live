@@ -24,7 +24,7 @@ const LS_ACKED = 'gc.chatDock.acked';
 const LS_NOTIFIED = 'gc.chatNotify.seen';
 
 const CSS = `
-  .gcdock{position:fixed;right:16px;bottom:16px;z-index:30;width:min(380px,calc(100vw - 28px));
+  .gcdock{position:fixed;right:16px;bottom:var(--chrome-inset,16px);z-index:30;width:min(380px,calc(100vw - 28px));
     font-family:inherit;pointer-events:none}
   .gcdock *{pointer-events:auto}
   .gcdock-toggle{display:flex;align-items:center;gap:8px;width:100%;background:var(--panel);

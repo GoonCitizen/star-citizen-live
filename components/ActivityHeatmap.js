@@ -1,7 +1,7 @@
 'use strict';
 
 /**
- * Reusable "When you fly" activity heatmap — Home stats, Identity, peer profiles.
+ * Reusable "When you fly" activity heatmap — own profile, peer profiles.
  */
 
 const React = require('react');

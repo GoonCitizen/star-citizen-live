@@ -2,6 +2,7 @@
 Short security/privacy model for operators and players. See also `DECISIONS.md`
 (D-010 peering, D-017 opt-in logs). Public seed runbook: `docs/PRODUCTION.md`.
 Contributors and other orgs: [`DEVELOPERS.md`](../DEVELOPERS.md).
+Intel desk / Groups as orgs: [`INTELLIGENCE.md`](INTELLIGENCE.md).
 
 ## Known Attackers
 - Hostile Star Citizen organizations

@@ -13,6 +13,7 @@ const {
   offerVisibility,
   isSelfSourced
 } = require('../functions/groupJoinFlow');
+const { isInviteExpired, formatInviteExpiryLabel } = require('../functions/inviteExpiry');
 
 const BASE = '/services/star-citizen';
 
@@ -252,9 +253,9 @@ class Notifications extends React.Component {
     if (this.state.busyId) return;
     const refs = item.refs || {};
     const inviteId = refs.inviteId;
-    const groupId = refs.groupId;
-    if (!inviteId || !groupId) {
-      this.setState({ error: 'Invite is missing group or invite id' });
+    const groupId = refs.groupId || refs.contractId || 'invite';
+    if (!inviteId) {
+      this.setState({ error: 'Invite is missing an invite id' });
       return;
     }
     this.setState({ busyId: item.id, error: null });
@@ -367,13 +368,14 @@ class Notifications extends React.Component {
     if (item.kind === 'GroupOffer' && item.status === 'pending') {
       const vis = offerVisibility(item);
       const canApply = vis !== 'private';
+      const expired = isInviteExpired(item);
       return React.createElement('div', { className: 'nt-row' },
         canApply
           ? React.createElement('button', {
             className: 'nt-btn good',
-            disabled: this.state.busyId === item.id || !(item.refs && item.refs.groupId),
+            disabled: expired || this.state.busyId === item.id || !(item.refs && item.refs.groupId),
             onClick: () => this.actGroupOffer(item, true)
-          }, this.state.busyId === item.id ? '…' : 'Apply to join')
+          }, this.state.busyId === item.id ? '…' : (expired ? 'Expired' : 'Apply to join'))
           : null,
         React.createElement('button', {
           className: 'nt-btn ghost',
@@ -415,15 +417,18 @@ class Notifications extends React.Component {
       );
     }
     if ((item.kind === 'FederationInvite' || item.kind === 'MultisigWalletInvite') && item.status === 'pending') {
+      const expired = isInviteExpired(item);
       return React.createElement('div', { className: 'nt-row' },
         React.createElement('button', {
           className: 'nt-btn good',
-          disabled: this.state.busyId === item.id || !(item.refs && item.refs.inviteId && item.refs.groupId),
+          disabled: expired || this.state.busyId === item.id || !(item.refs && item.refs.inviteId),
           onClick: () => this.actFederationInvite(item, true)
-        }, this.state.busyId === item.id ? '…' : (item.kind === 'MultisigWalletInvite' ? 'Join wallet' : 'Accept')),
+        }, this.state.busyId === item.id ? '…' : (expired
+          ? 'Expired'
+          : (item.kind === 'MultisigWalletInvite' ? 'Join wallet' : 'Accept'))),
         React.createElement('button', {
           className: 'nt-btn ghost',
-          disabled: this.state.busyId === item.id || !(item.refs && item.refs.inviteId && item.refs.groupId),
+          disabled: this.state.busyId === item.id || !(item.refs && item.refs.inviteId),
           onClick: () => this.actFederationInvite(item, false)
         }, 'Decline'),
         React.createElement('button', {
@@ -455,6 +460,7 @@ class Notifications extends React.Component {
   }
 
   renderItem (item) {
+    const expiryLabel = formatInviteExpiryLabel(item);
     return React.createElement('div', {
       className: 'nt-item' + (item.status === 'pending' ? ' pending' : ''),
       key: item.id
@@ -479,7 +485,8 @@ class Notifications extends React.Component {
       fmtTime(item.ts) +
       (item.handle || item.source ? ' · ' + (item.handle || shortKey(item.source)) : '') +
       (item.source && item.handle ? ' · ' + shortKey(item.source) : '') +
-      (item.resolvedAt ? ' · resolved ' + fmtTime(item.resolvedAt) : '')
+      (item.resolvedAt ? ' · resolved ' + fmtTime(item.resolvedAt) : '') +
+      (expiryLabel ? ' · ' + expiryLabel.toLowerCase() : '')
     ),
     this.renderActions(item)
     );

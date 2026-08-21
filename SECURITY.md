@@ -15,7 +15,7 @@ Fabric networks are intended for deployment where **peers, relays, hubs, and ope
 
 See also [`docs/THREAT-MODEL.md`](docs/THREAT-MODEL.md) for product claims (opt-in log share, loopback HTTP default, plaintext chat limits).
 
-**Basics coverage:** [`tests/relay/adversarialEnvironment.basics.test.js`](tests/relay/adversarialEnvironment.basics.test.js). Related: [`tests/relay/fabric-hub-allowlist.test.js`](tests/relay/fabric-hub-allowlist.test.js).
+**Basics coverage:** [`tests/relay/adversarialEnvironment.basics.test.js`](tests/relay/adversarialEnvironment.basics.test.js). Playnet adversarial paths + local Hub registry takeover: [`tests/relay/playnet-registry-takeover.test.js`](tests/relay/playnet-registry-takeover.test.js). Related: [`tests/relay/fabric-hub-allowlist.test.js`](tests/relay/fabric-hub-allowlist.test.js).
 
 ## Operator defaults
 - Dashboard HTTP binds loopback unless shared mode is explicit. Public
@@ -26,13 +26,14 @@ See also [`docs/THREAT-MODEL.md`](docs/THREAT-MODEL.md) for product claims (opt-
   secrets file under the store root — never commit; never put tokens in the
   Fabric Store collection.
 - Site login / device-link complete only against allowlisted Hub origins.
+- Mesh `GroupChange` ingest (`GroupManager.ingestGroupChange`) authorizes the AMP signer (`source`), not `change.actor`. Strangers cannot `member.add` themselves. Same gates as HTTP `proposeChange` / `updateGroup`.
 
 ## Outstanding (RSI follow-ups)
 - **Open GitHub PR** — [PR #7](https://github.com/GoonCitizen/star-citizen-live/pull/7) (`feature/rsi`, WIP Android). [PR #6](https://github.com/GoonCitizen/star-citizen-live/pull/6) is closed historical overlay/replay. Do not merge to `master`.
-- ~~**`@fabric/*` pin hygiene**~~ — lockfile Git commit SHAs: core `4a1ff0a5707143d965a2da61f700eda4be3a24ae` ([#185](https://github.com/FabricLabs/fabric/pull/185)), http `cff2ce66a62d358f709b0150d2574d3910931047` ([#69](https://github.com/FabricLabs/fabric-http/pull/69)), hub `0f221d9d6c52edf4471c9d4419b434389ba11094` ([#16](https://github.com/FabricLabs/hub.fabric.pub/pull/16)), discord `175d9f24cc3c75fa46f5a7aef15cb749dec33dc0` ([#2](https://github.com/FabricLabs/fabric-discord/pull/2)). `report:install` wipes `package-lock.json` then `npm i --allow-git=all`. Normal install is `npm ci`. Hub `0f221d9` exports `./functions/bulkSecurityAdvisory` and `./functions/operatorAdminToken`, does not force Bitcoin RPC debug, walks GHSA arrays with `for…of`, and BIP-69-sorts unsigned PSBTs. Http `cff2ce66` sibling-NIC self-filter is in `@fabric/http/functions/fabricPeerHost`. Discord `175d9f2` voice flag `commit()` debounce is in `@fabric/discord`.
+- ~~**`@fabric/*` pin hygiene**~~ — lockfile Git commit SHAs: core `9938917804e2bf5ba5cf1fab7bf0975129d9063f` ([#185](https://github.com/FabricLabs/fabric/pull/185)), http `7d7f1c7c918dabe7f2ae59d638b16e1a020d08bd` ([#69](https://github.com/FabricLabs/fabric-http/pull/69)), hub `c12df87dda12c3668dfa7de898c91d128bf9e58c` ([#16](https://github.com/FabricLabs/hub.fabric.pub/pull/16)), discord `590bfe1e1e66456073e37a5d773cef4f614d6dc1` ([#2](https://github.com/FabricLabs/fabric-discord/pull/2)). `package.json` stays on `#feature/rsi`. `report:install` removes `package-lock.json` then `npm i --allow-git=all` (lockfile is gitignored here). Normal install is `npm ci` when a lockfile is present. Hub `c12df87` includes heap bounds plus `./functions/bulkSecurityAdvisory` and `./functions/operatorAdminToken`. Http `7d7f1c7` sibling-NIC self-filter is in `@fabric/http/functions/fabricPeerHost`. Discord `590bfe1` voice flag `commit()` debounce is in `@fabric/discord`.
 - ~~**Fabric coin types**~~ — current core pin includes **7777** / **7778**; local site-login verify re-exports `@fabric/http`. No SCL-local BIP44 identity hardcode remains to flip.
 - ~~**`@fabric/discord` `normalizeDiscordSettings`**~~ — [`functions/discordConfig.js`](functions/discordConfig.js) requires the package export; local [`functions/normalizeDiscordSettings.js`](functions/normalizeDiscordSettings.js) is a thin re-export.
-- ~~**Identity cluster**~~ — [`functions/identityCluster.js`](functions/identityCluster.js) re-exports `@fabric/hub/functions/identityCluster` (Hub `0f221d9` keys are x-only / compressed hex only). Keep [`functions/identityCrossSign.js`](functions/identityCrossSign.js) local (browser-safe protocol strings; `_normPubkey` matches core).
+- ~~**Identity cluster**~~ — [`functions/identityCluster.js`](functions/identityCluster.js) re-exports `@fabric/hub/functions/identityCluster` (Hub `c12df87` keys are x-only / compressed hex only). Keep [`functions/identityCrossSign.js`](functions/identityCrossSign.js) local (browser-safe protocol strings; `_normPubkey` matches core).
 - **npm audit (prod omit-dev)** — ~~**critical** `screenshot-desktop`~~ bumped to `=1.15.4` (GHSA-gjx4-2c7g-fm94); still hardcode `{ format: 'png' }` in capture paths. Remaining **high**: transitive `serialize-javascript` (mocha), `undici` (discord.js 14.18). Prefer upstream bumps / scoped overrides over `npm audit fix --force`.
 - ~~**Shared-mode LAN writes**~~ — [`functions/httpRemoteAuth.js`](functions/httpRemoteAuth.js) requires Bearer/Schnorr on mutating routes for non-loopback peers when `httpSharedMode` is on (same bar as `SC_MODE=server`). Hosted/shared-LAN GETs for notes, local tags, analytics, documents, Discord link/guilds, settings, peers, gameplay collections, groupaudit, chat list/channels, identity cluster, snapshots, and document offers require a session (`tests/relay/privacy-http-auth.test.js`). Unauth `GET /groups` does not dump private groups. `bitcoinRuntimeForSettings` omits `adminToken`. `isLoopbackRequest` ignores `X-Forwarded-For`. Bearer sessions expire in **8h**; `DELETE /services/star-citizen/auth` revokes the presented token. Remaining mesh/Hub/Passport follow-ups: [docs/PRIVACY_REMAINING.md](docs/PRIVACY_REMAINING.md).
 - **PR split** — large WIP still benefits from stacked PRs before merge to `master`.
@@ -41,7 +42,7 @@ See also [`docs/THREAT-MODEL.md`](docs/THREAT-MODEL.md) for product claims (opt-
 1. `npm test` before merging peering, auth, or wallet paths.
 2. Never commit `settings/local.js` secrets, `.env`, or live webhooks.
 3. Align with `@fabric/core` SECURITY.md when upgrading Fabric deps.
-4. Prefer `npm ci` / keep `package-lock.json`; `npm run report:install` wipes lockfile then `npm i --allow-git=all`.
+4. Prefer `npm ci` / keep `package-lock.json`; `npm run report:install` removes `package-lock.json` then `npm i --allow-git=all`.
 
 ## Disclosure
 Canonical monitored contact for Fabric/crypto issues: **`security@fabric.pub`**. GitHub Security Advisories are the alternate private channel. Product bugs may use the repository issue tracker.

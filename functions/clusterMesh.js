@@ -205,6 +205,7 @@ module.exports = {
   isClusterMeta,
   candidatesFromMeta,
   siblingCandidates,
+  hubRpc,
   register,
   listPeers,
   heartbeat

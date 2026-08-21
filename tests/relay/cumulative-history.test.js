@@ -22,6 +22,10 @@ test('cumulativeHistory ingest is idempotent across re-sync', async () => {
   assert.ok(first.changed || first.lines > 0);
   assert.strictEqual(history.missions.length, 3);
   assert.strictEqual(history.deaths.length, 2);
+  assert.ok(history.missions.every((m) => m.source === 'local'));
+  assert.ok(history.deaths.every((d) => d.source === 'local'));
+  assert.ok(cumulativeHistory.isLocalHistoryRecord(history.missions[0]));
+  assert.equal(cumulativeHistory.isLocalHistoryRecord({ source: '02ab' }), false);
   cumulativeHistory.saveHistory(historyFile, history);
   cumulativeHistory.saveCursors(cursorsFile, cursors);
 

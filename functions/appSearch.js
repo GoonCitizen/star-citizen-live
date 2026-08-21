@@ -32,7 +32,7 @@ const KIND_LABELS = Object.freeze({
   player: 'Pilot',
   snapshot: 'Library',
   inbox: 'Inbox',
-  playtimes: 'When they play',
+  playtimes: 'When they fly',
   file: 'File',
   location: 'Location'
 });
@@ -450,7 +450,7 @@ function indexPlaytimes (byKey, rows) {
       subtitle: 'Shared play times',
       pack: groupDataSync.PACK_PROFILE_PLAYTIMES,
       href: '/profiles/' + encodeURIComponent(row.pubkey),
-      haystack: haystack([row.pubkey, 'playtimes', 'when they play', 'profile'])
+      haystack: haystack([row.pubkey, 'playtimes', 'when they fly', 'when they play', 'profile'])
     }));
   }
 }

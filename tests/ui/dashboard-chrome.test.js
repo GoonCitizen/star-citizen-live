@@ -4,7 +4,7 @@ const { describe, it } = require('node:test');
 const assert = require('node:assert');
 
 require('../helpers/installReactStub');
-const { textOf, findType, collect } = require('../helpers/reactTree');
+const { textOf, findType, collect, findByClass, classList } = require('../helpers/reactTree');
 const Dashboard = require('../../components/Dashboard');
 const GlobalChatDock = require('../../components/GlobalChatDock');
 const SiteLogin = require('../../components/SiteLogin');
@@ -16,6 +16,19 @@ const { emojiFingerprint } = require('../../functions/pubkeyEmoji');
 const ME = '02' + 'ab'.repeat(32);
 
 describe('Dashboard chrome', () => {
+  it('places Missions directly after Home in the header tabs', () => {
+    const dash = new Dashboard({});
+    dash.state.tab = 'home';
+    dash.state.online = true;
+    dash.state.status = 'ok';
+    const nav = findByClass(dash.render(), 'header-nav')[0];
+    assert.ok(nav, 'missing header-nav');
+    const labels = collect(nav, (n) => n && n.$$typeof === 'element' && n.type === 'button' &&
+      classList(n).includes('tab')).map((n) => textOf(n).trim());
+    assert.equal(labels[0], 'Home');
+    assert.equal(labels[1], 'Missions');
+  });
+
   it('mounts the public shoutbox dock on Home and hides it on Chat', () => {
     const dash = new Dashboard({});
     dash.state.tab = 'home';
@@ -40,6 +53,17 @@ describe('Dashboard chrome', () => {
     assert.ok(scan, 'missing QR scan button');
     assert.equal(typeof dash.openQrScanner, 'function');
     assert.equal(typeof dash.applyScannedLink, 'function');
+  });
+
+  it('opens My profile from the identity flyout', () => {
+    const dash = new Dashboard({});
+    dash.state.online = true;
+    dash.state.status = 'ok';
+    dash.state.showIdFlyout = true;
+    dash.state.identityPubkey = ME;
+    const text = textOf(dash.renderIdentityFlyout());
+    assert.match(text, /My profile/);
+    assert.doesNotMatch(text, /When you fly/);
   });
 
   it('offers a header data-sync status control', () => {
@@ -113,6 +137,13 @@ describe('Dashboard chrome', () => {
 });
 
 describe('Public shoutbox dock', () => {
+  it('sits in the reserved bottom chrome inset', () => {
+    assert.match(GlobalChatDock.CSS, /bottom:\s*var\(--chrome-inset/);
+    assert.match(MissionBroadcastBanner.CSS, /bottom:\s*var\(--chrome-inset/);
+    const ActiveVoicePanel = require('../../components/ActiveVoicePanel');
+    assert.match(ActiveVoicePanel.CSS, /bottom:\s*var\(--chrome-inset/);
+  });
+
   it('toggles closed with Public shoutbox and empty copy when open', () => {
     const dock = new GlobalChatDock({});
     dock.state.open = false;

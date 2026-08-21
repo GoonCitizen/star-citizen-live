@@ -6,8 +6,8 @@
   <title>Primary group</title>
   <style>
     :root {
-      --bg: rgba(12, 14, 18, 0.78);
-      --line: rgba(255, 255, 255, 0.08);
+      --bg: rgba(8, 10, 14, 0.22);
+      --line: rgba(255, 255, 255, 0.05);
       --text: #e8edf5;
       --muted: #9aa3b2;
       --good: #3fb950;
@@ -32,8 +32,8 @@
       border-radius: 10px;
       background: var(--bg);
       border: 1px solid var(--line);
-      backdrop-filter: blur(10px);
-      -webkit-backdrop-filter: blur(10px);
+      backdrop-filter: blur(3px);
+      -webkit-backdrop-filter: blur(3px);
       max-height: calc(100vh - 16px);
       overflow: hidden;
       display: flex;
@@ -107,9 +107,25 @@
       height: 110px;
       display: block;
       border-radius: 8px;
-      background: #0b0e14;
+      background: rgba(11, 14, 20, 0.35);
       border: 1px solid var(--line);
     }
+    .voice {
+      font-size: 11.5px;
+      line-height: 1.4;
+      padding: 6px 8px;
+      border-radius: 8px;
+      border: 1px solid var(--line);
+      color: var(--muted);
+      background: rgba(255, 255, 255, 0.03);
+    }
+    .voice.on {
+      color: var(--text);
+      border-color: rgba(63, 185, 80, 0.28);
+      background: rgba(63, 185, 80, 0.10);
+    }
+    .voice .ttl { font-weight: 650; }
+    .voice .sub { color: var(--muted); font-size: 11px; margin-top: 2px; }
     .empty, .err, .warn {
       color: var(--muted);
       font-size: 12px;
@@ -127,6 +143,7 @@
       <span class="meta" id="meta"></span>
       <button type="button" class="off" id="overlay-off" title="Turn overlay off">×</button>
     </div>
+    <div class="voice idle" id="voice">Voice · not joined</div>
     <div id="comp"></div>
     <svg class="map" id="map" viewBox="0 0 100 100" preserveAspectRatio="xMidYMid meet" hidden></svg>
     <div class="list" id="list">
@@ -141,6 +158,7 @@
     const compEl = document.getElementById('comp');
     const mapEl = document.getElementById('map');
     const offBtn = document.getElementById('overlay-off');
+    const voiceEl = document.getElementById('voice');
 
     function overlayApi () {
       try { return window.overlayAPI || null; } catch (_) { return null; }
@@ -207,7 +225,7 @@
         return;
       }
       mapEl.removeAttribute('hidden');
-      let html = '<rect x="0" y="0" width="100" height="100" fill="#0b0e14"></rect>';
+      let html = '<rect x="0" y="0" width="100" height="100" fill="#0b0e14" opacity="0.35"></rect>';
       (layout.bodies || []).forEach((b) => {
         html += '<circle cx="' + pct(b.nx) + '" cy="' + pct(b.ny) + '" r="1.6" fill="' +
           (b.type === 'STAR' ? '#f5d76e' : '#6ea8fe') + '" opacity="0.85"></circle>';
@@ -237,12 +255,38 @@
       compEl.innerHTML = html;
     }
 
+    function renderVoice (data) {
+      if (!voiceEl) return;
+      const v = data && data.voice;
+      if (!v || !v.joined) {
+        voiceEl.className = 'voice idle';
+        voiceEl.textContent = 'Voice · not joined';
+        return;
+      }
+      voiceEl.className = 'voice on';
+      voiceEl.textContent = '';
+      const ttl = document.createElement('div');
+      ttl.className = 'ttl';
+      ttl.textContent = 'In voice · ' + (v.groupName || 'group') +
+        ' · ' + (v.memberCount || 0) + '/' + (v.cap || 8);
+      voiceEl.appendChild(ttl);
+      const sub = document.createElement('div');
+      sub.className = 'sub';
+      const talking = Array.isArray(v.talking) ? v.talking.filter(Boolean) : [];
+      const mode = v.mode === 'vad' ? 'Voice activity' : ('PTT ' + (v.pttLabel || 'Shift+Tab'));
+      sub.textContent = talking.length
+        ? mode + ' · talking: ' + talking.slice(0, 4).join(', ')
+        : mode;
+      voiceEl.appendChild(sub);
+    }
+
     function render (data) {
       if (!data || !data.groupId) {
         titleEl.textContent = 'No primary group';
         metaEl.textContent = '';
         renderComp(null);
         renderMap(null);
+        renderVoice(data);
         listEl.innerHTML = '<div class="empty">Pick a primary group in the Groups tab. Enable the overlay in Settings.</div>';
         return;
       }
@@ -251,6 +295,7 @@
         metaEl.textContent = '';
         renderComp(null);
         renderMap(null);
+        renderVoice(data);
         listEl.innerHTML = '<div class="err">' + String(data.error) + '</div>';
         return;
       }
@@ -260,6 +305,7 @@
       metaEl.textContent = online + '/' + members.length + ' online';
       renderComp(data);
       renderMap(data);
+      renderVoice(data);
 
       let html = '';
       if (data.warning) {

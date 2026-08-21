@@ -8,6 +8,31 @@ What runs: [`AGENTS.md`](AGENTS.md) §3–§4. D-002 removed a heavyweight *tran
 
 ---
 
+## D-020 — Fabric Message parents are a hash chain
+**Date:** 2026-08-20 · **Status:** Adopted (originate now; inbound zeros still accepted)
+
+**Decision:** Treat AMP header `parent` as a previous-frame pointer, not an unused
+zero field. Parent is the previous signed `Message.id` (SHA-256 of the complete
+AMP buffer) or 32 zero bytes at genesis. It is inside the Schnorr-signed header,
+so it is set **before** `signWithKey`. GoonCitizen `FabricNetwork._signMessage`
+chains durable outbound frames (chat, contract, alias, file send, …) and leaves
+session/peering/ping on genesis zeros. Pair collections with core `Tree`
+(`sortLeaves: true`) for Bitcoin-style inclusion and adjacent-leaf non-inclusion
+proofs.
+
+**Why:** Large message stacks need an order that does not depend on clocks or
+arrival; merkle inclusion/non-inclusion needs a committed sorted leaf set.
+
+**Consequences:**
+- Do not confuse `parent` / `id` (frame) with header `hash` (body double-SHA256).
+- Do not drop inbound genesis-zero frames yet (mesh peers that have not upgraded).
+- Per-channel / per-journal tips (GroupChange parent = previous journal frame,
+  not this node's global outbound tip) are a follow-up.
+- Hub `_appendFabricMessage` and http Bridge should start the same originate
+  rule after this core pin.
+
+---
+
 ## D-019 — Group shares as opaque Fabric Messages
 **Date:** 2026-07-24 · **Status:** Adopted
 
@@ -15,7 +40,9 @@ What runs: [`AGENTS.md`](AGENTS.md) §3–§4. D-002 removed a heavyweight *tran
 Message (signed `CONTRACT_MESSAGE` / `GroupShare` / `kind: GroupOffer` embedding
 the group genesis), not a legacy HTTP page URL as the primary artifact.
 `FederationContractInvite` gains the same `protocolUrl` / `messageHex` fields.
-Desktop `fabric:` opens opaque hex into an Accept/Ignore modal; ingest uses
+Shareable clips stamp **`expiresAt`** (default 7 days from issue; HTTP may pass
+`expiresInDays` / `ttlMs` / `expiresAt`). Import and Accept refuse an expired
+clip (`410`). Desktop `fabric:` opens opaque hex into an Accept/Ignore modal; ingest uses
 existing `ingestContractPublish` / invite handlers. HTTP `/groups/…` remains a
 secondary browser affordance.
 
@@ -25,6 +52,7 @@ HTTP origin; clipboard/QR portability across installs.
 **Consequences:**
 - Prefer `POST …/groups/:id/share` and invite responses’ `protocolUrl`.
 - Do not invent `fabric://group?…` query schemes — opaque Message is enough.
+- Invitation strings expire (default 7 days). Legacy clips without `expiresAt` stay valid.
 
 ---
 

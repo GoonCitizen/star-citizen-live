@@ -119,7 +119,14 @@ const APP_CONTRACT_BODY_TYPES = Object.freeze({
    * Not frozen into genesis messageTypes. Receivers apply only when the
    * signer is in the same IdentityCluster. Never carries seeds or tokens.
    */
-  DeviceDataShare: 'DeviceDataShare'
+  DeviceDataShare: 'DeviceDataShare',
+  /**
+   * Federation group voice presence. Ephemeral; not frozen into genesis
+   * messageTypes and not Statechain-journaled. SDP/ICE is Hub WebRTC, not these frames.
+   */
+  GroupVoiceJoin: 'GroupVoiceJoin',
+  GroupVoiceLeave: 'GroupVoiceLeave',
+  GroupVoiceSpeaking: 'GroupVoiceSpeaking'
 });
 
 const CONTRACT_BODY_TYPES = Object.freeze(Object.assign(

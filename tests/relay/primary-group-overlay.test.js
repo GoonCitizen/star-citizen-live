@@ -110,6 +110,8 @@ test('GET overlay/primary-group returns members + ships for primary group', asyn
     assert.ok(bobRow.ship.type || bobRow.shipType, 'ship type should be present');
     assert.ok(bobRow.location && /Area18/i.test(bobRow.location.name), 'member location');
     assert.equal(overlay.body.data.owner, true);
+    assert.ok(overlay.body.data.voice);
+    assert.equal(overlay.body.data.voice.joined, false);
     assert.ok(overlay.body.data.composition);
     assert.ok(overlay.body.data.composition.ships.some((r) => r.n === 'Aurora MR'));
     assert.ok(overlay.body.data.map && Array.isArray(overlay.body.data.map.bodies));
@@ -120,6 +122,7 @@ test('GET overlay/primary-group returns members + ships for primary group', asyn
     assert.match(String(html.body), /shipType|ship\.type|\.type/);
     assert.match(String(html.body), /overlay-off/);
     assert.match(String(html.body), /Composition|composition/);
+    assert.match(String(html.body), /id="voice"|Voice · not joined/);
   } finally {
     await svc.stop();
   }

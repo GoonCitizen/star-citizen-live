@@ -32,7 +32,7 @@ function leadFor (section) {
   }
   if (section === 'privacy') {
     return androidSurface('heatmap')
-      ? 'What peers can see: profile, presence, and optional when-you-play sharing.'
+      ? 'What peers can see: profile, presence, and optional when-you-fly publishing on your profile.'
       : 'What peers can see: profile and presence.';
   }
   return android

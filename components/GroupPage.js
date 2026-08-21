@@ -10,6 +10,7 @@
 
 const React = require('react');
 const Chat = require('./Chat');
+const { JoinVoiceButton } = require('./ActiveVoicePanel');
 const GroupFabricInspector = require('./GroupFabricInspector');
 const RegisterEventLog = require('./RegisterEventLog');
 const GroupBitcoinPanel = require('./GroupBitcoinPanel');
@@ -381,9 +382,7 @@ class GroupPage extends React.Component {
       this.setState({
         busy: false,
         inviteKey: '',
-        notice: data.relayed
-          ? `Invite sent (${data.peers || 0} peer connection(s)).`
-          : 'Invite copied — they paste it via Import… and Accept.'
+        notice: shareNotice(Object.assign({ visibility: 'private' }, data), null)
       });
     } catch (e) {
       this.setState({ busy: false, error: e.message });
@@ -915,6 +914,15 @@ class GroupPage extends React.Component {
                 onClick: () => this.share()
               }, 'Share'),
               g.role === 'creator' || g.role === 'member'
+                ? React.createElement(JoinVoiceButton, {
+                  className: 'gpage-btn ghost',
+                  groupId: g.id,
+                  handle: this.state.nickname || null,
+                  identityPubkey: this.state.pubkey,
+                  authToken: this.state.token
+                })
+                : null,
+              g.role === 'creator' || g.role === 'member'
                 ? React.createElement('button', {
                   className: 'gpage-btn ghost',
                   onClick: () => { window.location.href = '/#groups'; }
@@ -954,7 +962,8 @@ class GroupPage extends React.Component {
           groupId: g.id,
           embedded: true,
           identityPubkey: this.state.pubkey,
-          nickname: this.state.nickname
+          nickname: this.state.nickname,
+          authToken: this.state.token
         })
       )
     );

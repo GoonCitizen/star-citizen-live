@@ -78,6 +78,15 @@ contextBridge.exposeInMainWorld('electronAPI', {
     pullPending: () => ipcRenderer.invoke('fabric-group-share:pull-pending'),
     resolve: (opts) => ipcRenderer.invoke('fabric-group-share:resolve', opts || {})
   },
+  /** Group voice PTT — OS key-state poll so hold works while the game is focused. */
+  voice: {
+    setPttBind: (bind) => ipcRenderer.invoke('voice:set-ptt-bind', bind || {}),
+    onPtt: (handler) => {
+      const listener = (_e, held) => handler(held);
+      ipcRenderer.on('voice:ptt', listener);
+      return () => ipcRenderer.removeListener('voice:ptt', listener);
+    }
+  },
   /** Native OS pickers for importing log folders/files / selecting Game.log. */
   dialog: {
     openDirectory: () => ipcRenderer.invoke('dialog:openDirectory'),

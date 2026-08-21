@@ -17,7 +17,9 @@ const root = path.join(__dirname, '..');
 const www = path.join(root, 'android-www');
 const nodeApp = path.join(www, 'nodejs', 'app');
 
-const COPY_DIRS = ['scripts', 'services', 'functions', 'types', 'contracts', 'assets'];
+// Dashboard HTML is staged into android-www/index.html (WebView), not the
+// Node tree. scripts/ is only android-node.js (see stageNodeApp).
+const COPY_DIRS = ['services', 'functions', 'types', 'contracts'];
 const COPY_FILES = ['package.json', 'constants.js'];
 // Bundled starmap / ship JSON (not personal fleet dumps under data/fleets).
 const COPY_DATA_DIRS = ['locations', 'ships'];
@@ -59,8 +61,30 @@ const SKIP_DEPS = new Set([
   'electron', 'screenshot-desktop', 'jsdom', 'puppeteer', 'mocha', 'c8',
   '@noble/hashes', '@noble/curves',
   // Capacitor libnode cannot dlopen classic-level's android N-API prebuild.
-  'level', 'classic-level'
+  'level', 'classic-level',
+  // Hub / http package.json lists browser UI + bundlers as runtime deps.
+  // LiveRelay on device only needs @fabric/core Peer + leaf HTTP/Hub functions.
+  'webpack', 'webpack-cli', 'webpack-dev-server', 'babel-loader',
+  'semantic-ui-react', 'react', 'react-dom', 'react-router', 'react-router-dom',
+  'react-redux', 'redux', 'redux-thunk', 'jquery',
+  'd3', 'd3-graphviz', 'graphviz-wasm', 'html5-qrcode',
+  'discord.js', 'express', 'express-session', 'express-flash', 'express-bearer-token',
+  'nodemailer', 'jsdoc-to-markdown', 'jsdoc', 'caniuse-lite', 'cmake-ts', 'node-gyp'
 ]);
+
+function skipStagedDep (name) {
+  const n = String(name || '');
+  if (SKIP_DEPS.has(n)) return true;
+  if (n.startsWith('@babel/')) return true;
+  if (n.startsWith('@discordjs/')) return true;
+  if (n.startsWith('@hpcc-js/')) return true;
+  if (n.startsWith('@types/')) return true;
+  if (n.startsWith('@webassemblyjs/')) return true;
+  if (n.startsWith('@ts-morph/')) return true;
+  if (n.startsWith('d3-')) return true;
+  if (n.startsWith('react-')) return true;
+  return false;
+}
 
 function copyDir (src, dest, opts = {}) {
   fs.mkdirSync(dest, { recursive: true });
@@ -97,7 +121,7 @@ function packageSource (name) {
 }
 
 function stagePackage (name, destRoot, seen) {
-  if (seen.has(name) || SKIP_DEPS.has(name)) return;
+  if (seen.has(name) || skipStagedDep(name)) return;
   seen.add(name);
   const src = packageSource(name);
   if (!fs.existsSync(src) || !fs.existsSync(path.join(src, 'package.json'))) {
@@ -129,6 +153,10 @@ function stageDashboard () {
   }
   fs.mkdirSync(www, { recursive: true });
   fs.copyFileSync(built, path.join(www, 'index.html'));
+  for (const name of ['favicon.ico', 'favicon.svg', 'apple-touch-icon.png']) {
+    const src = path.join(root, 'assets', name);
+    if (fs.existsSync(src)) fs.copyFileSync(src, path.join(www, name));
+  }
   console.log('[ANDROID] copied dashboard → android-www/index.html');
 }
 
@@ -139,6 +167,11 @@ function stageNodeApp () {
     const src = path.join(root, dir);
     if (!fs.existsSync(src)) continue;
     copyDir(src, path.join(nodeApp, dir));
+  }
+  const androidNode = path.join(root, 'scripts', 'android-node.js');
+  if (fs.existsSync(androidNode)) {
+    fs.mkdirSync(path.join(nodeApp, 'scripts'), { recursive: true });
+    fs.copyFileSync(androidNode, path.join(nodeApp, 'scripts', 'android-node.js'));
   }
   for (const file of COPY_FILES) {
     const src = path.join(root, file);
@@ -294,7 +327,7 @@ function fillMissingNestedDeps (destRoot) {
     let pkg = {};
     try { pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf8')); } catch (_) { return; }
     for (const name of Object.keys(pkg.dependencies || {})) {
-      if (SKIP_DEPS.has(name) || String(name).startsWith('@types/')) continue;
+      if (skipStagedDep(name)) continue;
       if (resolvesFrom(dir, name, destRoot)) continue;
       const src = packageSource(name);
       if (!fs.existsSync(path.join(src, 'package.json'))) {

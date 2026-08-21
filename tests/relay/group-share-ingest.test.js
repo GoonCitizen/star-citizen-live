@@ -209,3 +209,149 @@ test('opaque hex fabric: url still ingests a GroupOffer', async () => {
     fs.rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test('expired GroupOffer and Federation invite clips return 410', async () => {
+  const alice = createIdentity();
+  const bob = createIdentity();
+  const def = groupContractDefinition({
+    groupId: 'group-expired-offer-1',
+    creator: alice.pubkey,
+    validators: [alice.pubkey],
+    threshold: 1,
+    createdAt: '2026-01-01T00:00:00.000Z',
+    meta: { name: 'Stale Ops', visibility: 'public' }
+  });
+  const contractId = groupContractId(def);
+  const offer = buildGroupOfferBody({
+    group: { id: def.groupId, name: 'Stale Ops', visibility: 'public', contractId },
+    definition: def,
+    actor: alice.pubkey,
+    expiresAt: Date.now() - 1000
+  });
+  const invite = parseFederationContractInvite(buildFederationContractInviteJson({
+    inviteId: 'inv-expired-1',
+    inviterHubId: alice.pubkey,
+    contractId,
+    proposedPolicy: def.proposedPolicy,
+    groupId: def.groupId,
+    groupName: 'Stale Ops',
+    expiresAt: Date.now() - 1000
+  }));
+  const { service, port, dir } = await startRelay(bob);
+  try {
+    const offerIngest = await request(port, 'POST', `${BASE}/groups/share/ingest`, {
+      protocolUrl: opaqueOfferUrl(alice, offer, contractId)
+    });
+    assert.strictEqual(offerIngest.status, 410, JSON.stringify(offerIngest.body));
+    assert.strictEqual(offerIngest.body.expired, true);
+
+    const inviteIngest = await request(port, 'POST', `${BASE}/groups/share/ingest`, {
+      protocolUrl: opaqueInviteUrl(alice, invite, contractId)
+    });
+    assert.strictEqual(inviteIngest.status, 410, JSON.stringify(inviteIngest.body));
+    assert.strictEqual(inviteIngest.body.expired, true);
+  } finally {
+    await service.stop();
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('accept refuses a stored invite after expiresAt', async () => {
+  const alice = createIdentity();
+  const bob = createIdentity();
+  const def = groupContractDefinition({
+    groupId: 'group-expire-accept-1',
+    creator: alice.pubkey,
+    validators: [alice.pubkey],
+    threshold: 1,
+    createdAt: '2026-01-01T00:00:00.000Z',
+    meta: { name: 'Expire Accept', visibility: 'private' }
+  });
+  const contractId = groupContractId(def);
+  const invite = parseFederationContractInvite(buildFederationContractInviteJson({
+    inviteId: 'inv-expire-accept-1',
+    inviterHubId: alice.pubkey,
+    contractId,
+    proposedPolicy: def.proposedPolicy,
+    groupId: def.groupId,
+    groupName: 'Expire Accept',
+    expiresAt: Date.now() + (7 * 24 * 60 * 60 * 1000)
+  }));
+  const { service, port, dir } = await startRelay(bob);
+  try {
+    const ingest = await request(port, 'POST', `${BASE}/groups/share/ingest`, {
+      protocolUrl: opaqueInviteUrl(alice, invite, contractId)
+    });
+    assert.strictEqual(ingest.status, 200, ingest.body && ingest.body.error);
+    const stored = service.registerStore.get('groupinvites', invite.inviteId);
+    assert.ok(stored);
+    stored.expiresAt = Date.now() - 1;
+    service.registerStore.put('groupinvites', invite.inviteId, stored);
+
+    const accept = await request(port, 'POST',
+      `${BASE}/groups/${encodeURIComponent(def.groupId)}/invites/${encodeURIComponent(invite.inviteId)}/accept`,
+      {});
+    assert.strictEqual(accept.status, 410, JSON.stringify(accept.body));
+    assert.strictEqual(accept.body.expired, true);
+  } finally {
+    await service.stop();
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('targeted invite clip is refused by a different identity; invitee accept joins', async () => {
+  const alice = createIdentity();
+  const bob = createIdentity();
+  const carol = createIdentity();
+  const def = groupContractDefinition({
+    groupId: 'group-targeted-1',
+    creator: alice.pubkey,
+    validators: [alice.pubkey],
+    threshold: 1,
+    createdAt: '2026-01-01T00:00:00.000Z',
+    meta: { name: 'Targeted Wing', visibility: 'private' }
+  });
+  const contractId = groupContractId(def);
+  const invite = parseFederationContractInvite(buildFederationContractInviteJson({
+    inviteId: 'inv-targeted-1',
+    inviterHubId: alice.pubkey,
+    contractId,
+    proposedPolicy: def.proposedPolicy,
+    groupId: def.groupId,
+    groupName: 'Targeted Wing',
+    inviteePubkey: bob.pubkey
+  }));
+  const protocolUrl = opaqueInviteUrl(alice, invite, contractId);
+
+  const carolNode = await startRelay(carol);
+  try {
+    const denied = await request(carolNode.port, 'POST', `${BASE}/groups/share/ingest`, { protocolUrl });
+    assert.strictEqual(denied.status, 403, JSON.stringify(denied.body));
+  } finally {
+    await carolNode.service.stop();
+    fs.rmSync(carolNode.dir, { recursive: true, force: true });
+  }
+
+  const { service, port, dir } = await startRelay(bob);
+  try {
+    const ingest = await request(port, 'POST', `${BASE}/groups/share/ingest`, { protocolUrl });
+    assert.strictEqual(ingest.status, 200, ingest.body && ingest.body.error);
+    assert.strictEqual(ingest.body.data.kind, 'FederationContractInvite');
+    assert.ok(ingest.body.data.inbox);
+
+    const accept = await request(port, 'POST',
+      `${BASE}/groups/${encodeURIComponent(def.groupId)}/invites/${encodeURIComponent(invite.inviteId)}/accept`,
+      {});
+    assert.strictEqual(accept.status, 200, accept.body && accept.body.error);
+    assert.ok(accept.body.data.group);
+    assert.ok(
+      (accept.body.data.group.members || []).some(
+        (m) => String(m).toLowerCase() === String(bob.pubkey).toLowerCase()
+      ),
+      'bob joined locally'
+    );
+  } finally {
+    await service.stop();
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});

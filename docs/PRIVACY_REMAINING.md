@@ -5,14 +5,11 @@ closed HTTP gates: [SECURITY.md](../SECURITY.md), [THREAT-MODEL.md](THREAT-MODEL
 [API-SURFACES.md](API-SURFACES.md). Canvas snapshot:
 `fabric-stack-privacy-eval.canvas.tsx` (Cursor canvases).
 
-**Last advanced:** 2026-08-15 — presence Fabric-first (desktop IPC, HTTP
-fallback) + shared-LAN session gates on Game.log browse (`/loginfo`,
-`/logslice`, `/reparse`), personal `/fleets`, and Discord `/coordination`.
-Earlier 2026-08-15: shoutbox label/docs pass. 2026-08-14: HTTP privacy gates
-+ Settings confirms; core `MESH_CHAT.md` + `fabricChatKind`; Hub ActivityStream
-note; GroupChat seal recommended. Also: shared HTTP WS token fail-closed;
-Bearer TTL 8h + revoke; Hub prefers `X-Fabric-Xpub` / body over `?xpub=`.
-Bind warning + snapshots/offers/groups locks.
+**Last advanced:** 2026-08-17 — re-audit (privacy-http-auth 27/27; live + chaos
+probes; report `security-privacy-audit-2026-08-17.md`; canvases refreshed;
+core `MESH_CHAT.md` + fabricChatKind tests restored again). Earlier 2026-08-16
+re-audit; 2026-08-15 presence/Game.log/fleets gates + shoutbox labels;
+2026-08-14 HTTP privacy gates.
 
 ## Mesh chat direction (do not regress)
 

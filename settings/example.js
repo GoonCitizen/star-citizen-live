@@ -5,14 +5,15 @@ const {
 } = require('../constants');
 
 /**
- * Example configuration for Star Citizen Live service.
- * Copy this file to local.js and customize as needed.
+ * Example configuration for Star Citizen Live / GoonCitizen.
+ * Copy to settings/local.js (gitignored) and customize.
+ * Downstream orgs / whitelabel intel desks: docs/INTELLIGENCE.md
+ * (Groups as orgs, defaultGroupMessageId, Discord as YOUR bot).
  */
 module.exports = {
   authority: 'https://sensemaker.io',
+  // Peering / HTTP alias (not the pubkey). Whitelabel: your desk name.
   name: NAME,
-
-  // Path to Star Citizen game log file
   logfile: 'C:/Program Files/Roberts Space Industries/StarCitizen/LIVE/Game.log',
 
   // HTTP Server Configuration (local dashboard / REST — not the peering transport)
@@ -39,6 +40,8 @@ module.exports = {
     // Peer bind — default 0.0.0.0; pin NIC with FABRIC_INTERFACE=65.21.231.149
     // interface: process.env.FABRIC_INTERFACE || '0.0.0.0',
     peers: ['hub.fabric.pub:7777', 'relay.goon.vc:7777']
+    // Add your public seed (host:port). A saved empty list is respected.
+    // Whitelabel intel desk: docs/INTELLIGENCE.md.
     // Optional public hostname for P2P_PEERING_OFFER + self-dial filter:
     // Store key fabricAdvertiseHost, or env FABRIC_PUBLIC_HOST /
     // FABRIC_ADVERTISE_HOST (required on relay.goon.vc so it does not dial itself).
@@ -104,6 +107,7 @@ module.exports = {
   // Instance default group — paste a Fabric message id (from Groups → Share /
   // Fabric Messages → Copy id), an opaque fabric: GroupOffer, or a group id.
   // On start, seeds Store primaryGroupId when that setting is still empty.
+  // Downstream orgs: this is how member machines boot into YOUR Group.
   // defaultGroupMessageId: '…',
 
   // Initial State

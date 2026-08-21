@@ -6,6 +6,7 @@
  */
 
 const { botPermissionsFromChannel } = require('./discordChannelAccess');
+const { discordBotAuthorizeUrl } = require('./discordBotAuthorize');
 
 const DISCORD_CHAT_PREFIX = 'discord:';
 /** Peer-addressed Discord DM thread in Chat (`discord:dm:<userId>`). */
@@ -388,12 +389,16 @@ function buildDiscordGuildCatalog (client, opts = {}) {
       ? String(client.user.id)
       : null);
   const sync = opts.sync && typeof opts.sync === 'object' ? opts.sync : null;
+  const appId = opts.appId != null && String(opts.appId).trim()
+    ? String(opts.appId).trim()
+    : null;
 
   if (!client || !client.guilds) {
     return {
       botReady,
       botUser,
       botUserId,
+      appId,
       selectedChannelId,
       guilds: [],
       users: [],
@@ -411,6 +416,7 @@ function buildDiscordGuildCatalog (client, opts = {}) {
     botReady,
     botUser,
     botUserId,
+    appId,
     selectedChannelId,
     guilds,
     users: uniqueUsersFromGuilds(guilds),
@@ -534,9 +540,13 @@ function channelIconLabel (ch) {
  * Map discord.js / Discord REST errors into a Chat-facing message.
  * Code 50013 is the usual "Missing Permissions" when posting.
  * @param {*} err
- * @returns {{ status: number, error: string }}
+ * @param {Object} [opts]
+ * @param {string} [opts.appId]
+ * @param {string} [opts.guildId]
+ * @param {boolean} [opts.skipAuthorize]
+ * @returns {{ status: number, error: string, authorizeUrl?: string }}
  */
-function formatDiscordBridgeError (err) {
+function formatDiscordBridgeError (err, opts = {}) {
   const msg = String((err && err.message) || err || 'Discord request failed');
   const code = Number(
     (err && err.code) ||
@@ -544,19 +554,26 @@ function formatDiscordBridgeError (err) {
     (err && err.data && err.data.code) ||
     NaN
   );
+  const authorizeUrl = opts.skipAuthorize === true
+    ? null
+    : discordBotAuthorizeUrl(opts);
   if (code === 50013 || /missing permissions/i.test(msg)) {
-    return {
+    const out = {
       status: 403,
       error: 'Discord: Missing Permissions — give the bot View Channel + Send Messages ' +
         '(and Read Message History) on that channel, then try again.'
     };
+    if (authorizeUrl) out.authorizeUrl = authorizeUrl;
+    return out;
   }
   if (code === 50001 || /missing access/i.test(msg)) {
-    return {
+    const out = {
       status: 403,
       error: 'Discord: Missing Access — the bot cannot see that channel. ' +
         'Check channel private permissions / role hierarchy.'
     };
+    if (authorizeUrl) out.authorizeUrl = authorizeUrl;
+    return out;
   }
   if (code === 10003 || /unknown channel/i.test(msg)) {
     return { status: 404, error: 'Discord: unknown channel (refresh the Chat Discord list).' };

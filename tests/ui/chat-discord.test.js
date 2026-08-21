@@ -218,12 +218,13 @@ describe('Chat Discord bridged UI', () => {
   it('marks when the Discord bot cannot send on a channel', () => {
     const chat = new Chat({ identityPubkey: '02aa', nickname: 'Neorion' });
     chat.state.channels = [{ key: 'global', label: 'Global', kind: 'global' }];
-    chat.state.discordCatalog = catalog;
+    chat.state.discordCatalog = Object.assign({}, catalog, { appId: '123456789012345678' });
     chat.state.discordChannels = [{
       key: 'discord:c1',
       label: '#general',
       kind: 'discord',
       guildName: 'Fleet Ops',
+      guildId: '987654321098765432',
       channelId: 'c1',
       bot: { view: true, send: false }
     }];
@@ -232,8 +233,14 @@ describe('Chat Discord bridged UI', () => {
     chat.state.page = 'messages';
     const tree = chat.render();
     assert.ok(textOf(tree).includes('bot cannot chat'));
+    assert.ok(textOf(tree).includes('Authorize permission'));
     const send = findByClass(tree, 'chat-send')[0];
     assert.strictEqual(send.props.disabled, true);
+    const auth = findByClass(tree, 'dc-auth-link')[0];
+    assert.ok(auth);
+    assert.ok(String(auth.props.href).startsWith('https://discord.com/oauth2/authorize?'));
+    assert.ok(String(auth.props.href).includes('client_id=123456789012345678'));
+    assert.ok(String(auth.props.href).includes('guild_id=987654321098765432'));
   });
 
   it('offers + Channel to create a Federation group chat', () => {
@@ -302,7 +309,9 @@ describe('Chat Discord bridged UI', () => {
       assert.ok(!text.includes('Bot settings'));
       assert.equal(findType(tree, DiscordChatSettings).length, 0);
       chat.openDiscordPage();
-      assert.strictEqual(chat.state.page, 'messages');
+      assert.strictEqual(chat.state.page, 'discord');
+      const settings = chat.render();
+      assert.strictEqual(findType(settings, DiscordChatSettings).length, 1);
     } finally {
       global.window.electronAPI = prev;
     }

@@ -455,22 +455,22 @@ class Peers extends React.Component {
     if (!d) return null;
     if (d.self) {
       if (!androidSurface('heatmap')) return null;
-      return React.createElement('div', { style: { marginTop: 10 } },
-        React.createElement(ActivityHeatmap, {
-          title: 'When you play',
-          subtitle: 'Local heatmap. Opt in on Identity / Profile to share common play times with Federation groups.',
-          analytics: this.props.analytics || null
-        })
-      );
+      const pk = d.pubkey;
+      return React.createElement('div', { className: 'pr-hint', style: { marginTop: 10 } },
+        'When you fly lives on ',
+        pk
+          ? React.createElement('a', { href: '/profiles/' + encodeURIComponent(pk) }, 'your profile')
+          : 'your profile',
+        ' (identity chip → My profile) — open it to view the heatmap and publish it to Federation groups.');
     }
     const cells = d.playtimes && Array.isArray(d.playtimes.cells) ? d.playtimes.cells : null;
     if (!cells || !cells.length) {
       return React.createElement('div', { className: 'pr-hint', style: { marginTop: 10 } },
-        'This player has not shared when they play.');
+        'This player has not shared when they fly.');
     }
     return React.createElement(ActivityHeatmap, {
-      title: 'When they play',
-      subtitle: 'Common play times shared with a Federation group.',
+      title: 'When they fly',
+      subtitle: 'Common fly times shared with a Federation group.',
       heatcells: cells
     });
   }

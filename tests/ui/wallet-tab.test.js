@@ -34,6 +34,7 @@ describe('Wallet tab', () => {
     const text = textOf(tree);
     assert.strictEqual(findType(tree, BitcoinWalletPanel).length, 1);
     assert.match(text, /Escrow backend/);
+    assert.match(text, /Alliance treasury/);
     assert.match(text, /Group Taproot/);
     assert.match(text, /Mission escrows/);
     assert.match(text, /No groups yet/);

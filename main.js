@@ -14,7 +14,7 @@ if (!electron || typeof electron !== 'object' || !electron.app) {
   process.exit(1);
 }
 
-const { app, BrowserWindow, Tray, Menu, nativeImage, ipcMain, shell, Notification, dialog } = electron;
+const { app, BrowserWindow, Tray, Menu, nativeImage, ipcMain, shell, Notification, dialog, globalShortcut } = electron;
 const path = require('path');
 const fs = require('fs');
 const http = require('http');
@@ -45,6 +45,8 @@ const {
 } = require('./functions/deviceLinkLifecycle');
 const { applyFabricEnvConfig, loadRepoDotEnv } = require('./functions/fabricEnvIdentity');
 const { applyGoonCitizenEnvAliases } = require('./functions/goonCitizenEnvAliases');
+const voicePttGlobal = require('./functions/voicePttGlobal');
+const groupVoiceSettings = require('./functions/groupVoiceSettings');
 
 let settings = {};
 try {
@@ -562,6 +564,24 @@ function syncOverlayFromSettings () {
   rebuildTrayMenu();
 }
 
+function sendVoicePtt (held) {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  mainWindow.webContents.send('voice:ptt', !!held);
+}
+
+function syncVoicePttFromSettings (override) {
+  const settings = override || (starCitizenService && starCitizenService._voiceSettings) ||
+    groupVoiceSettings.defaultVoiceSettings();
+  const sanitized = groupVoiceSettings.sanitizeVoiceSettings(settings);
+  return voicePttGlobal.start({
+    enabled: sanitized.mode === 'ptt',
+    pttKey: sanitized.pttKey,
+    globalShortcut,
+    onHeld: sendVoicePtt,
+    isRendererFocused: () => !!(mainWindow && !mainWindow.isDestroyed() && mainWindow.isFocused())
+  });
+}
+
 async function startService () {
   const preferred = servicePort();
   const candidates = [preferred, preferred + 1, preferred + 2, 0];
@@ -893,6 +913,7 @@ if (gotLock) {
       applySnapshotCaptureToService();
       createWindow(activePort || servicePort());
       syncOverlayFromSettings();
+      syncVoicePttFromSettings();
       if (earlyFabricUrl) {
         const u = earlyFabricUrl;
         earlyFabricUrl = null;
@@ -927,6 +948,8 @@ if (gotLock) {
       tray.destroy();
       tray = null;
     }
+    try { voicePttGlobal.stop(); } catch (_) { /* ignore */ }
+    try { globalShortcut.unregisterAll(); } catch (_) { /* ignore */ }
     await stopService();
   });
 }
@@ -1081,7 +1104,9 @@ function loadEnvPublishingIdentity () {
 /** Push publishing identity into the running relay (env > unlocked UI identity). */
 function applyIdentityToService () {
   if (starCitizenService && typeof starCitizenService.setIdentity === 'function') {
-    starCitizenService.setIdentity(envPublishingIdentity || unlockedIdentity);
+    starCitizenService.setIdentity(envPublishingIdentity || unlockedIdentity, {
+      unlockedPubkey: unlockedIdentity ? unlockedIdentity.pubkey : null
+    });
   }
 }
 
@@ -1588,6 +1613,16 @@ ipcMain.handle('get-group-overlay', () => {
     primaryGroupId: (starCitizenService && starCitizenService._primaryGroupId) || null,
     platform: process.platform
   };
+});
+
+ipcMain.handle('voice:set-ptt-bind', (_e, payload) => {
+  const src = payload && typeof payload === 'object' && !Array.isArray(payload)
+    ? payload
+    : { enabled: true, pttKey: { code: String(payload || 'Shift+Tab') } };
+  return syncVoicePttFromSettings({
+    mode: src.enabled === false ? 'vad' : 'ptt',
+    pttKey: src.pttKey || src
+  });
 });
 
 ipcMain.handle('notify:show', (_e, { title, body, id, kind, actions } = {}) => {

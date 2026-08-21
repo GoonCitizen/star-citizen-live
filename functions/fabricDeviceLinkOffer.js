@@ -83,6 +83,7 @@ function compactPendingOffer (offer) {
     hubBase: String(offer.hubBase).replace(/\/$/, ''),
     origin: String(offer.origin || offer.hubBase).replace(/\/$/, ''),
     nonce: offer.nonce || null,
+    pollSecret: offer.pollSecret || null,
     label: offer.label || null,
     createdAt: Number(offer.createdAt) || Date.now(),
     protocolUrl: offer.protocolUrl || null,
@@ -137,6 +138,7 @@ async function startDeviceLinkOffer (identity, opts = {}) {
     ok: true,
     sessionId: created.sessionId,
     nonce: created.nonce || nonce,
+    pollSecret: created.pollSecret || null,
     label,
     hubBase,
     origin,
@@ -157,6 +159,7 @@ async function abandonDeviceLinkOffer (offer, opts = {}) {
   if (!offer || !offer.sessionId || !offer.hubBase) return { ok: true, skipped: true };
   return cancelDeviceLinkSession(offer.hubBase, offer.sessionId, {
     origin: offer.origin || offer.hubBase,
+    pollSecret: offer.pollSecret,
     fetchImpl: opts.fetchImpl
   });
 }
@@ -182,6 +185,7 @@ async function tickDeviceLinkOffer (identity, offer, opts = {}) {
   const origin = offer.origin || offer.hubBase;
   const st = await fetchDeviceLinkSession(offer.hubBase, offer.sessionId, {
     origin,
+    pollSecret: offer.pollSecret,
     fetchImpl: opts.fetchImpl
   });
   if (!st.ok) {

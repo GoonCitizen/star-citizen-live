@@ -37,6 +37,7 @@ describe('profile.files listing pack', () => {
     assert.strictEqual(payload.pubkey, PUBKEY);
     assert.strictEqual(payload.files.length, 1);
     assert.strictEqual(payload.files[0].name, 'gooncitizen.dmg');
+    assert.strictEqual(payload.files[0].kind, 'application');
     assert.strictEqual(payload.files[0].purchasePriceSats, 4);
     assert.ok(!payload.files[0].blobs);
     assert.ok(!payload.files[0].documentBlobIndex);
@@ -98,6 +99,17 @@ describe('profile.files listing pack', () => {
     const loaded = profileFiles.loadFiles(store, PUBKEY);
     assert.ok(loaded);
     assert.strictEqual(loaded.files[0].name, 'app.apk');
+    assert.strictEqual(loaded.files[0].kind, 'application');
     assert.strictEqual(profileFiles.loadAllFiles(store).length, 1);
+  });
+
+  it('classifies installers as application and notes as file', () => {
+    assert.strictEqual(profileFiles.classifyProfileFileKind('gooncitizen.dmg'), 'application');
+    assert.strictEqual(profileFiles.classifyProfileFileKind({ name: 'org-desktop.exe' }), 'application');
+    assert.strictEqual(profileFiles.classifyProfileFileKind({ name: 'GoonCitizen-linux.AppImage' }), 'application');
+    assert.strictEqual(profileFiles.classifyProfileFileKind({ name: 'gooncitizen-win64.zip' }), 'application');
+    assert.strictEqual(profileFiles.classifyProfileFileKind({ name: 'notes.txt' }), 'file');
+    assert.strictEqual(profileFiles.classifyProfileFileKind({ name: 'archive.zip' }), 'file');
+    assert.strictEqual(profileFiles.classifyProfileFileKind({ name: 'notes.txt', kind: 'application' }), 'application');
   });
 });

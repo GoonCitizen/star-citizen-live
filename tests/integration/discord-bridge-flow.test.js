@@ -190,6 +190,18 @@ describe('Discord ↔ Fabric chat bridge', () => {
       });
       assert.strictEqual(posted.status, 403);
       assert.match(String(posted.body && posted.body.error), /Send Messages/i);
+      assert.ok(!posted.body.authorizeUrl);
+
+      svc.settings.discord = Object.assign({}, svc.settings.discord, {
+        app: { id: '123456789012345678' }
+      });
+      const withLink = await request(port, 'POST', `${BASE}/chat/messages`, {
+        channel: 'discord:c1',
+        body: 'should fail again'
+      });
+      assert.strictEqual(withLink.status, 403);
+      assert.ok(withLink.body.authorizeUrl);
+      assert.ok(String(withLink.body.authorizeUrl).includes('client_id=123456789012345678'));
     } finally {
       await svc.stop();
       fs.rmSync(dir, { recursive: true, force: true });

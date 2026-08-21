@@ -7,6 +7,7 @@
  */
 
 const React = require('react');
+const groupPresence = require('../functions/groupPresence');
 
 const BASE = '/services/star-citizen';
 
@@ -14,6 +15,7 @@ const CSS = `
   .smap{display:grid;gap:10px}
   .smap-tools{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
   .smap-tools label{font-size:12px;color:var(--muted);display:flex;gap:6px;align-items:center}
+  .smap-sys-count{font-size:12px;color:var(--muted)}
   .smap-tools select{background:var(--bg);border:1px solid var(--line);color:var(--text);
     border-radius:7px;padding:5px 8px;font-size:12px}
   .smap-canvas{position:relative;width:100%;background:#0b0e14;border:1px solid var(--line);
@@ -326,6 +328,17 @@ class StarMap extends React.Component {
     );
   }
 
+  renderSystemCounts (systems) {
+    const members = this.props.members;
+    if (!members || !members.length) return null;
+    const summary = groupPresence.formatSystemCounts(members, systems);
+    if (!summary) return null;
+    return React.createElement('span', {
+      className: 'smap-sys-count',
+      title: 'Online players per system'
+    }, summary);
+  }
+
   render () {
     const systems = (this.state.layout && this.state.layout.systems) || [
       { code: 'STANTON', name: 'Stanton' },
@@ -348,7 +361,8 @@ class StarMap extends React.Component {
             onChange: (e) => this.setState({ includeHotspots: e.target.checked }, () => this.fetchLayout())
           }),
           'Hotspots'
-        )
+        ),
+        this.renderSystemCounts(systems)
       ),
       this.renderSvg(),
       React.createElement('div', { className: 'smap-legend' },

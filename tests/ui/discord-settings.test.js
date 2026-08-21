@@ -4,12 +4,28 @@ const { describe, it } = require('node:test');
 const assert = require('node:assert');
 
 require('../helpers/installReactStub');
-const { textOf, hasClass, findByClass } = require('../helpers/reactTree');
+const { textOf, hasClass, findByClass, findType } = require('../helpers/reactTree');
 const { buildDiscordGuildCatalog } = require('../../functions/discordGuildCatalog');
 const { makeCache } = require('../helpers/discordBotStub');
 const DiscordChatSettings = require('../../components/DiscordChatSettings');
+const VoiceSettingsPanel = require('../../components/VoiceSettingsPanel');
 
 describe('DiscordChatSettings UI', () => {
+  it('exposes Voice PTT rebind on the Voice tab', () => {
+    const page = new DiscordChatSettings({});
+    page.state.loading = false;
+    page.state.view = 'voice';
+    const tree = page.render();
+    const nested = findType(tree, VoiceSettingsPanel);
+    assert.strictEqual(nested.length, 1);
+    const inner = new VoiceSettingsPanel(nested[0].props);
+    const text = textOf(tree) + ' ' + textOf(inner.render());
+    assert.ok(text.includes('Voice'));
+    assert.ok(text.includes('Push-to-talk'));
+    assert.ok(text.includes('Rebind'));
+    assert.ok(text.includes('Shift+Tab'));
+  });
+
   it('shows guilds, users, and the selected announce channel', () => {
     const catalog = buildDiscordGuildCatalog({
       guilds: {
@@ -70,18 +86,25 @@ describe('DiscordChatSettings UI', () => {
       }
     }, { botReady: true, selectedChannelId: 'c1' });
     catalog.guilds[0].channels[0].bot = { view: true, send: false };
+    catalog.appId = '123456789012345678';
+    catalog.guilds[0].id = '111222333444555666';
 
     const page = new DiscordChatSettings({ identityPubkey: '02aa' });
     page.state.loading = false;
     page.state.catalog = catalog;
     page.state.selectedChannelId = 'c1';
-    page.state.openGuildIds = { g1: true };
+    page.state.openGuildIds = { '111222333444555666': true };
     page.state.discordChatDirections = { c1: 'listen' };
 
     const tree = page.render();
     const text = textOf(tree);
     assert.ok(text.includes('you'));
     assert.ok(text.includes('bot'));
+    assert.ok(text.includes('Authorize permission'));
+    const auth = findByClass(tree, 'dc-auth-link')[0];
+    assert.ok(auth);
+    assert.ok(String(auth.props.href).includes('client_id=123456789012345678'));
+    assert.ok(String(auth.props.href).includes('guild_id=111222333444555666'));
   });
 
   it('filters servers and channels by serverQuery', () => {

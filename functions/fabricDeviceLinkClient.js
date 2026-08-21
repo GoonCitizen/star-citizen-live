@@ -29,7 +29,7 @@ async function cancelDeviceLinkSession (hubBase, sessionId, opts = {}) {
   try {
     const res = await fetchImpl(`${base}/device-links/${encodeURIComponent(sid)}`, {
       method: 'DELETE',
-      headers: deviceLinkHeaders(origin),
+      headers: deviceLinkHeaders(origin, { pollSecret: opts.pollSecret }),
       cache: 'no-store'
     });
     const data = await res.json().catch(() => ({}));

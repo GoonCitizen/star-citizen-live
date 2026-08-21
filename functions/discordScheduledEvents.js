@@ -298,6 +298,7 @@ function categorizeEvent (event) {
     channelId: row && row.channelId,
     entityTypeName: row && row.entityTypeName,
     statusName: row && row.statusName,
+    userCount: row && row.userCount,
     description: row && row.description
   };
 }

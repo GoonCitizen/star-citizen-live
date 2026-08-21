@@ -168,7 +168,8 @@ function mergeSnapshotIntoHistory (history, index, snap, sourcePubkey) {
     if (cumulativeHistory.applyEvent(history, index, ev, {
       handle: m.player || handleHint,
       generators: {},
-      countHeat: false
+      countHeat: false,
+      source: sourcePubkey || 'peer'
     })) changed = true;
   }
   for (const d of snap.deaths || []) {
@@ -178,10 +179,13 @@ function mergeSnapshotIntoHistory (history, index, snap, sourcePubkey) {
       timestamp: d.ts,
       player: d.player,
       bodyId: d.bodyId || null
-    }, { handle: d.player, countHeat: false })) changed = true;
+    }, { handle: d.player, countHeat: false, source: sourcePubkey || 'peer' })) changed = true;
   }
   for (const p of snap.pilots || []) {
-    if (cumulativeHistory.applyEvent(history, index, { kind: 'player:login', handle: p }, { countHeat: false })) {
+    if (cumulativeHistory.applyEvent(history, index, { kind: 'player:login', handle: p }, {
+      countHeat: false,
+      source: sourcePubkey || 'peer'
+    })) {
       changed = true;
     }
   }

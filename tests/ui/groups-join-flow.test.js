@@ -4,8 +4,9 @@ const { describe, it } = require('node:test');
 const assert = require('node:assert');
 
 require('../helpers/installReactStub');
-const { textOf, findByClass } = require('../helpers/reactTree');
+const { textOf, findType, findByClass } = require('../helpers/reactTree');
 const Groups = require('../../components/Groups');
+const { JoinVoiceButton } = require('../../components/ActiveVoicePanel');
 const GroupOfferModal = require('../../components/GroupOfferModal');
 const Notifications = require('../../components/Notifications');
 
@@ -61,6 +62,9 @@ describe('Groups join flow UI', () => {
     const tree = page.render();
     const text = textOf(tree);
     assert.ok(findByClass(tree, 'gp-cog').length >= 1);
+    const join = findType(tree, JoinVoiceButton);
+    assert.ok(join.length >= 1);
+    assert.strictEqual(join[0].props.groupId, 'group-1');
     assert.ok(!text.includes('Pins & shares'));
     assert.ok(!text.includes('Pin this group’s Fabric chat'));
     assert.ok(!text.includes('Primary color'));
@@ -238,5 +242,23 @@ describe('Notifications group actions', () => {
     const tree = page.render();
     assert.ok(textOf(tree).includes('Waiting for the creator'));
     assert.ok(!textOf(tree).includes('Reject'));
+  });
+
+  it('lets a recipient Accept a pending group invite with only inviteId', () => {
+    const page = new Notifications({});
+    page.state.loading = false;
+    page.state.pubkey = ME;
+    page.state.items = [{
+      id: 'inbox-fi-1',
+      kind: 'FederationInvite',
+      status: 'pending',
+      title: 'Invite to Salvage Wing',
+      actionable: true,
+      refs: { inviteId: 'inv-1' }
+    }];
+    page.state.filter = 'pending';
+    const tree = page.render();
+    assert.ok(textOf(tree).includes('Accept'));
+    assert.ok(textOf(tree).includes('Decline'));
   });
 });

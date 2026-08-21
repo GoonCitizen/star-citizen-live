@@ -33,6 +33,10 @@ function writableDataPath () {
 }
 
 async function main () {
+  const t0 = Date.now();
+  const mark = (label) => {
+    console.log(`[STAR-CITIZEN] android boot ${label} +${Date.now() - t0}ms`);
+  };
   const root = appRoot();
   process.env.SC_MODE = 'android';
   if (!process.env.FABRIC_HUB_INTERFACE && !process.env.INTERFACE && !process.env.FABRIC_HTTP_INTERFACE) {
@@ -41,6 +45,18 @@ async function main () {
   const dataPath = writableDataPath();
   process.env.SC_SETTINGS_DIR = process.env.SC_SETTINGS_DIR || path.join(dataPath, 'stores');
 
+  const httpPort = Number(process.env.PORT);
+  const port = (Number.isFinite(httpPort) && httpPort > 0) ? httpPort : 3041;
+  const host = process.env.FABRIC_HUB_INTERFACE || '127.0.0.1';
+  let bootHttp = null;
+  try {
+    const { listenAndroidBootHttp } = require(path.join(root, 'functions', 'androidBootHttp.js'));
+    bootHttp = await listenAndroidBootHttp({ host, port });
+    mark('http');
+  } catch (e) {
+    console.warn('[STAR-CITIZEN] android boot HTTP skipped:', e && e.message ? e.message : e);
+  }
+
   let LiveRelay;
   try {
     LiveRelay = require(path.join(root, 'services', 'LiveRelay.js'));
@@ -48,6 +64,7 @@ async function main () {
     console.error('[STAR-CITIZEN] [ERROR] cannot load LiveRelay:', e && e.stack ? e.stack : e);
     throw e;
   }
+  mark('require LiveRelay');
   let identity = null;
   let source = null;
   const { applyGoonCitizenEnvAliases } = require(path.join(root, 'functions', 'goonCitizenEnvAliases.js'));
@@ -61,14 +78,21 @@ async function main () {
   }
   const { buildAndroidRelaySettings } = require(path.join(root, 'functions', 'androidRelaySettings.js'));
   const settings = await buildAndroidRelaySettings({ dataPath: process.env.SC_SETTINGS_DIR });
+  settings.port = port;
+  settings.httpHost = host;
+  if (bootHttp) settings.listen = false;
   const service = new LiveRelay(settings);
+  mark('construct');
   try {
     await service.start();
   } catch (e) {
     console.error('[STAR-CITIZEN] [ERROR] LiveRelay start:', e && e.stack ? e.stack : e);
+    if (bootHttp) bootHttp.attach(service);
     if (!service.server) throw e;
     console.warn('[STAR-CITIZEN] loopback HTTP is up — keeping the local node after start error');
   }
+  if (bootHttp) bootHttp.attach(service);
+  mark('ready');
   if (identity) {
     service.setIdentity(identity);
     console.log(`[STAR-CITIZEN] android identity from env (${source})`);

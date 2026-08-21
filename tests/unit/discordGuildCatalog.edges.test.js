@@ -103,6 +103,29 @@ describe('discordGuildCatalog edges', () => {
     assert.strictEqual(sync.error, 'no_client');
   });
 
+  it('formatDiscordBridgeError attaches a bot authorize URL', () => {
+    const { formatDiscordBridgeError } = require('../../functions/discordGuildCatalog');
+    const missing = formatDiscordBridgeError({ code: 50013, message: 'Missing Permissions' }, {
+      appId: '123456789012345678',
+      guildId: '111'
+    });
+    assert.strictEqual(missing.status, 403);
+    assert.match(missing.error, /Send Messages/i);
+    assert.ok(missing.authorizeUrl);
+    assert.ok(missing.authorizeUrl.includes('client_id=123456789012345678'));
+    assert.ok(missing.authorizeUrl.includes('guild_id=111'));
+
+    const skipped = formatDiscordBridgeError({ code: 50013, message: 'Missing Permissions' }, {
+      appId: '123456789012345678',
+      skipAuthorize: true
+    });
+    assert.strictEqual(skipped.authorizeUrl, undefined);
+
+    const noApp = formatDiscordBridgeError({ code: 50001, message: 'Missing Access' });
+    assert.strictEqual(noApp.status, 403);
+    assert.strictEqual(noApp.authorizeUrl, undefined);
+  });
+
   it('channel insight helpers', () => {
     assert.strictEqual(channelIsChatInsight(0), true);
     assert.strictEqual(channelIsChatInsight(5), true);

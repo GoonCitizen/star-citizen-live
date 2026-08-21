@@ -6,6 +6,8 @@ and **`pm2`**.
 This is not a product ship checklist. Owner names the release cut. Gate before
 deploy: `npm test`. Other orgs hosting their own seed (or G00N / PERMAFLEET
 members learning the operator path) start at [`DEVELOPERS.md`](../DEVELOPERS.md).
+Why this node is an application basis (not Hub): [`APPLICATION.md`](APPLICATION.md).
+Groups as the org + `settings/local.js` whitelabel: [`INTELLIGENCE.md`](INTELLIGENCE.md).
 Threat model: [`THREAT-MODEL.md`](THREAT-MODEL.md), [`SECURITY.md`](../SECURITY.md).
 
 ## What this host is

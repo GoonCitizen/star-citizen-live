@@ -139,6 +139,9 @@ test('ChatManager: DM channels are participant-only and publishable', async () =
   const key = ChatManager.dmChannelKey(a.pubkey, b.pubkey);
   assert.ok(key && key.startsWith('dm:'));
   assert.strictEqual(ChatManager.dmChannelKey(b.pubkey, a.pubkey), key);
+  const pair = key.slice('dm:'.length).split(':');
+  assert.strictEqual(pair.length, 2);
+  assert.ok(pair[0] < pair[1], 'DM pair order is lexicographic, not localeCompare');
   assert.strictEqual(cm.canAccess(key, a.pubkey, { enforceMembership: true }), true);
   assert.strictEqual(cm.canAccess(key, b.pubkey, { enforceMembership: true }), true);
   assert.strictEqual(cm.canAccess(key, eve.pubkey, { enforceMembership: true }), false);

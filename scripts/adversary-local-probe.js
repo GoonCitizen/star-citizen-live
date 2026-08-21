@@ -10,7 +10,7 @@
  * Does not ingest or send OpenSSF / GHSA advisory dumps.
  * `--production` dials Hub/RSI with `@fabric/core` Peer (no local LiveRelay).
  *
- * Usage: node scripts/adversary-local-probe.js [--production]
+ * Usage: node scripts/adversary-local-probe.js [--production] [--chaos]
  */
 
 const fs = require('fs');
@@ -22,16 +22,24 @@ const https = require('https');
 const LiveRelay = require('../services/LiveRelay');
 const { createIdentity } = require('../functions/identity');
 const { writeAgentProbe } = require('../functions/agentProbeExport');
-const { classifyPlaynetPosture } = require('../functions/playnetDeploy');
+const {
+  classifyPlaynetPosture,
+  planLocalHubRegistryTakeover
+} = require('../functions/playnetDeploy');
 
 const PRODUCTION = process.argv.includes('--production') ||
   process.env.ADV_PRODUCTION === '1' ||
   process.env.ADV_PRODUCTION === 'true';
+const CHAOS = process.argv.includes('--chaos') ||
+  process.env.ADV_CHAOS === '1' ||
+  process.env.ADV_CHAOS === 'true';
 
 const TARGET_HTTP = process.env.ADV_HTTP ||
   (PRODUCTION ? 'https://relay.goon.vc' : 'http://127.0.0.1:3041');
 const TARGET_FABRIC = (process.env.ADV_FABRIC ||
-  (PRODUCTION ? 'hub.fabric.pub:7777,relay.goon.vc:7777' : '127.0.0.1:7778,127.0.0.1:7777'))
+  (PRODUCTION
+    ? 'hub.fabric.pub:7777,relay.goon.vc:7777'
+    : '127.0.0.1:7777,127.0.0.1:7778'))
   .split(',')
   .map((s) => s.trim())
   .filter(Boolean);
@@ -47,6 +55,7 @@ console.log('[adversary-probe] posture', {
   posture: PLAYNET_POSTURE.posture,
   treatAsAdversary: PLAYNET_POSTURE.treatAsAdversary,
   treatAsOperatorPublish: PLAYNET_POSTURE.treatAsOperatorPublish,
+  chaos: CHAOS,
   reasons: PLAYNET_POSTURE.reasons
 });
 if (PLAYNET_POSTURE.posture === 'ambiguous') {
@@ -54,6 +63,17 @@ if (PLAYNET_POSTURE.posture === 'ambiguous') {
 }
 if (PLAYNET_POSTURE.treatAsOperatorPublish && !PLAYNET_POSTURE.treatAsAdversary) {
   console.warn('[adversary-probe] operator signals without adversary — prefer npm run playnet:deploy-gooncitizen for publish');
+}
+if (CHAOS) {
+  console.warn('[adversary-probe] chaos mode — ephemeral noisy neighbors only (never FABRIC_XPRV); crash/disconnect findings captured in report');
+  try {
+    const localReg = planLocalHubRegistryTakeover({ includeRelay: false });
+    console.log('[adversary-probe] dominant local registry plan', {
+      hub: localReg.registryHubUrl,
+      peers: localReg.fabricPeers,
+      safe: localReg.safe
+    });
+  } catch (_) { /* ignore */ }
 }
 
 const findings = [];
@@ -183,7 +203,16 @@ async function spawnFabricNeighbors (n = 2) {
 
   console.log('\n=== Fabric neighbors dialing', TARGET_FABRIC.join(', '), '===\n');
   const peers = [];
-  const stormTypes = ['P2P_PING', 'P2P_CHAT_MESSAGE', 'P2P_PEER_GOSSIP', 'P2P_PEERING_OFFER'];
+  const stormTypes = [
+    'P2P_PING',
+    'P2P_CHAT_MESSAGE',
+    'P2P_PEER_GOSSIP',
+    'P2P_PEERING_OFFER',
+    'P2P_PEER_ALIAS',
+    'P2P_BASE_MESSAGE'
+  ];
+  const writesPerNeighbor = CHAOS ? 48 : 8;
+  const crash = { disconnects: [], econnreset: 0, hardErrors: [] };
 
   for (let i = 0; i < n; i++) {
     const key = new Key();
@@ -198,8 +227,14 @@ async function spawnFabricNeighbors (n = 2) {
     const hard = [];
     client.on('error', (err) => {
       const msg = err && (err.message || String(err));
+      if (msg && /ECONNRESET|EPIPE/i.test(msg)) {
+        crash.econnreset += 1;
+        crash.disconnects.push({ neighbor: i, at: new Date().toISOString(), reason: msg });
+        return;
+      }
       if (msg && /Attempted to write to a closed|ECONNRESET|EPIPE/i.test(msg)) return;
       hard.push(msg);
+      crash.hardErrors.push(msg);
     });
     await client.start();
     const deadline = Date.now() + 20000;
@@ -212,26 +247,45 @@ async function spawnFabricNeighbors (n = 2) {
       (conns[0] ? (' first=' + conns[0]) : ''));
 
     let writes = 0;
-    for (let k = 0; k < 8 && conns.length; k++) {
+    for (let k = 0; k < writesPerNeighbor && conns.length; k++) {
       const t = stormTypes[k % stormTypes.length];
       const body = t === 'P2P_CHAT_MESSAGE'
-        ? ('adv-neighbor-' + i + '-' + k)
+        ? ('adv-neighbor-' + i + '-' + k + (CHAOS ? '-' + require('crypto').randomBytes(64).toString('hex') : ''))
         : JSON.stringify({ type: t, nonce: 'adv-' + i + '-' + k, created: new Date().toISOString() });
       try {
         const msg = Message.fromVector([t, body]).signWithKey(client.key);
-        const conn = client.connections[conns[0]];
+        const live = Object.keys(client.connections || {});
+        const conn = live[0] && client.connections[live[0]];
         if (conn && typeof conn._writeFabric === 'function') {
           conn._writeFabric(msg.toBuffer());
           writes += 1;
+        } else {
+          crash.disconnects.push({
+            neighbor: i,
+            at: new Date().toISOString(),
+            reason: 'connection-lost-mid-storm'
+          });
+          break;
         }
       } catch (e) {
         note('warn', 'Neighbor write failed', e.message || String(e));
+        crash.disconnects.push({
+          neighbor: i,
+          at: new Date().toISOString(),
+          reason: e.message || String(e)
+        });
       }
+      if (CHAOS && (k & 3) === 3) await new Promise((r) => setImmediate(r));
     }
     note('info', 'Neighbor ' + i + ' signed writes', String(writes));
     if (hard.length) note('warn', 'Neighbor ' + i + ' hard errors', hard.slice(0, 3).join('; '));
-    peers.push({ client, key });
+    peers.push({ client, key, crash });
   }
+  if (CHAOS && crash.disconnects.length) {
+    note('important', 'Chaos captured peer disconnects/resets',
+      'disconnects=' + crash.disconnects.length + ' econnreset=' + crash.econnreset);
+  }
+  peers._chaosCrash = crash;
   return peers;
 }
 
@@ -340,10 +394,18 @@ async function main () {
   }
   let peers = [];
   try {
-    if (PRODUCTION) {
-      peers = await spawnFabricNeighbors(Number(process.env.ADV_PEERS) || 2);
+    const peerCount = Number(process.env.ADV_PEERS) || (CHAOS ? 4 : (PRODUCTION ? 2 : 3));
+    if (PRODUCTION || CHAOS) {
+      // Production and chaos modes dial Fabric targets with ephemeral Peer clients
+      // (no operator FABRIC_XPRV). Local non-chaos still spawns LiveRelay adversaries.
+      peers = await spawnFabricNeighbors(peerCount);
+      if (!PRODUCTION && CHAOS) {
+        // Also pressure the local desktop LiveRelay HTTP surface with extra relays.
+        const extras = await spawnAdversaryPeers(Math.min(2, peerCount));
+        peers = peers.concat(extras);
+      }
     } else {
-      peers = await spawnAdversaryPeers(Number(process.env.ADV_PEERS) || 3);
+      peers = await spawnAdversaryPeers(peerCount);
     }
   } catch (e) {
     note('warn', 'Peer spawn failed', e.message || String(e));
@@ -352,13 +414,17 @@ async function main () {
   const outDir = path.join(__dirname, '..', 'reports');
   try { fs.mkdirSync(outDir, { recursive: true }); } catch (_) { /* ignore */ }
   const reportName = process.env.ADV_REPORT ||
-    (PRODUCTION || /goon\.vc|fabric\.pub/i.test(TARGET_HTTP)
-      ? 'adversary-public-probe.json'
-      : 'adversary-local-probe.json');
+    (CHAOS
+      ? (PRODUCTION ? 'adversary-chaos-public.json' : 'adversary-chaos-local.json')
+      : (PRODUCTION || /goon\.vc|fabric\.pub/i.test(TARGET_HTTP)
+        ? 'adversary-public-probe.json'
+        : 'adversary-local-probe.json'));
   const out = path.join(outDir, reportName);
+  const crash = peers && peers._chaosCrash ? peers._chaosCrash : null;
   const report = {
     findings,
-    targets: { http: TARGET_HTTP, fabric: TARGET_FABRIC, production: PRODUCTION },
+    targets: { http: TARGET_HTTP, fabric: TARGET_FABRIC, production: PRODUCTION, chaos: CHAOS },
+    crash,
     at: new Date().toISOString()
   };
   fs.writeFileSync(out, JSON.stringify(report, null, 2));
@@ -374,7 +440,8 @@ async function main () {
     console.warn('Agent probe export failed:', e && e.message ? e.message : e);
   }
 
-  const holdMs = Number(process.env.ADV_HOLD_MS) || (PRODUCTION ? 15000 : 8000);
+  const holdMs = Number(process.env.ADV_HOLD_MS) ||
+    (CHAOS ? 20000 : (PRODUCTION ? 15000 : 8000));
   await new Promise((r) => setTimeout(r, holdMs));
   for (const p of peers) {
     try {

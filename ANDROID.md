@@ -49,7 +49,7 @@ Site login (D-011) stays interchangeable: `fabric://login` and Passport `FABRIC_
 
 HTTP is loopback-only (`httpSharedMode` is off and hidden). Game.log, snapshots, and Discord bot credentials are desktop LiveRelay controls.
 
-The Capacitor-NodeJS engine loads `android-www/nodejs/index.js`, which **always calls `main()`** in the staged `scripts/android-node.js` (a bare `require()` does not start LiveRelay). Plugin `startMode` is **`auto`**. The dashboard waits until loopback HTTP answers before rendering Chat / Groups.
+The Capacitor-NodeJS engine loads `android-www/nodejs/index.js`, which **always calls `main()`** in the staged `scripts/android-node.js` (a bare `require()` does not start LiveRelay). Plugin `startMode` is **`auto`**. Loopback HTTP binds **before** `require('LiveRelay')` so the wait screen can leave as soon as `GET /services/star-citizen` answers; other APIs queue until LiveRelay attaches. Staging skips Hub UI packages (webpack, React, discord.js, …) so the first-launch copy of `files/nodejs` is the local Peer runtime, not a Hub desktop tree.
 
 ## Build (sideload)
 
@@ -74,13 +74,13 @@ App id: `vc.goon.android`. The first paint is a local-node wait screen, then the
 
 Deep links: `fabric://login` and `fabric://link` open the in-app approval card (hub origin + purpose). Non-allowlisted hubs are refused. After device-link, `IdentityCrossSign` is posted to the **local** node, which gossips it on Fabric.
 
-Embedded Node: `@choreruiz/capacitor-node-js` loads `android-www/nodejs/` (`startMode: auto`). `npm run android:sync` copies LiveRelay sources into `android-www/nodejs/app` (gitignored), **location and ship catalogs** from `data/locations` and `data/ships` (not personal `data/fleets` dumps), Fabric runtime packages into `android-www/nodejs/node_modules` (JS `level` shim, no `classic-level` `.node`; fills hoisted nested deps such as `xtend` for `through2@2`), and Node `builtin_modules` into app assets. After install, wipe `files/nodejs` once (`run-as vc.goon.android rm -rf files/nodejs`) so Capacitor recopies assets.
+Embedded Node: `@choreruiz/capacitor-node-js` loads `android-www/nodejs/` (`startMode: auto`). `npm run android:sync` copies LiveRelay sources into `android-www/nodejs/app` (gitignored; dashboard HTML stays in `android-www/index.html`, not the Node tree), **location and ship catalogs** from `data/locations` and `data/ships` (not personal `data/fleets` dumps), Fabric runtime packages into `android-www/nodejs/node_modules` (JS `level` shim, no `classic-level` `.node`; Hub UI deps such as webpack / React / discord.js are skipped; fills hoisted nested deps such as `xtend` for `through2@2`), and Node `builtin_modules` into app assets. After install, wipe `files/nodejs` once (`run-as vc.goon.android rm -rf files/nodejs`) so Capacitor recopies assets.
 
 ## What the mobile app hides
 
 Desktop LiveRelay controls that cannot work on the companion:
 
-- Game.log path, corpus / **My logs**, Home Analyze (heatmap, missions charts, QT, pilots, parser rules)
+- Game.log path, corpus / **My logs**, Home Analyze (missions charts, QT, pilots, parser rules)
 - Snapshots / **Library**
 - Discord **bot** settings (token, Bot settings page). Shared Discord catalog from Federation groups can still appear in Chat.
 - Hub Bitcoin proxy — **Wallet** tab and Keys **Associated funds**

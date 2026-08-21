@@ -15,6 +15,7 @@ const { sanitizeProfile } = require('./peerProfile');
 const { sanitizePresenceShare } = require('./presence');
 const { sanitizeLinks } = require('./discordIdentityLink');
 const { normalizeDirections } = require('./discordChatDirection');
+const { sanitizeVoiceSettings } = require('./groupVoiceSettings');
 
 // Operator-editable keys (mirrors the Hub's allowlisted-settings approach).
 const ALLOWED_KEYS = [
@@ -71,7 +72,8 @@ const ALLOWED_KEYS = [
   'discordAnnounceCombat',
   'discordAnnounceIncaps',
   'discordIdentityLinks',    // [{ discordUserId, pubkey, username, linkedAt, verified }]
-  'discordChatDirections'    // { [channelId]: 'listen' | 'bidirectional' } — missing → bidirectional
+  'discordChatDirections',  // { [channelId]: 'listen' | 'bidirectional' } — missing → bidirectional
+  'voice'                   // { mode, pttKey, vadSensitivity, muted, deafened, devices }
 ];
 
 const NICKNAME_MAX = 32;
@@ -226,6 +228,9 @@ function putSetting (store, key, value) {
   }
   if (key === 'discordChatDirections') {
     next = normalizeDirections(next);
+  }
+  if (key === 'voice') {
+    next = sanitizeVoiceSettings(next);
   }
   if (key === 'pendingDeviceLinkOffer') {
     if (!next || typeof next !== 'object') next = null;

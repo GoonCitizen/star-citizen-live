@@ -130,7 +130,7 @@ class SiteLogin extends React.Component {
     return j;
   }
 
-  _pollSigned (sessionId) {
+  _pollSigned (sessionId, pollSecret) {
     let tries = 0;
     this._clearPoll();
     this._pollTimer = setInterval(() => {
@@ -141,8 +141,10 @@ class SiteLogin extends React.Component {
         this._setStatus('Timed out waiting for approval.', true);
         return;
       }
+      const pollHeaders = { Accept: 'application/json' };
+      if (pollSecret) pollHeaders['X-Fabric-Poll-Secret'] = pollSecret;
       fetch('/sessions/' + encodeURIComponent(sessionId), {
-        headers: { Accept: 'application/json' },
+        headers: pollHeaders,
         cache: 'no-store'
       }).then((res) => res.json().then((j) => ({ ok: res.ok, j })))
         .then((r) => {
@@ -171,7 +173,7 @@ class SiteLogin extends React.Component {
       document.body.appendChild(a);
       a.click();
       document.body.removeChild(a);
-      this._pollSigned(j.sessionId);
+      this._pollSigned(j.sessionId, j.pollSecret);
       this.setState({ protocolUrl });
       try {
         const { protocolQrDataUrl } = require('../functions/protocolQr');
@@ -219,7 +221,7 @@ class SiteLogin extends React.Component {
         message
       }, window.location.origin);
       this._setStatus('Approve in the Passport popup…');
-      this._pollSigned(sessionId);
+      this._pollSigned(sessionId, j.pollSecret);
     } catch (e) {
       this.setState({ busy: false });
       this._setStatus((e && e.message) || String(e), true);

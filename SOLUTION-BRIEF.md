@@ -5,7 +5,8 @@
 > **Companion docs (technical):** `DESIGN-missions-mvp.md`, `DESIGN-distributed.md`,
 > `DECISIONS.md`. **What actually runs:** `AGENTS.md` §3–§4 (this brief lags the
 > LiveRelay + Fabric Peer cut). **Call for developers / other orgs:**
-> [`DEVELOPERS.md`](DEVELOPERS.md).
+> [`DEVELOPERS.md`](DEVELOPERS.md). **Second application / fork artifacts:**
+> [`docs/APPLICATION.md`](docs/APPLICATION.md).
 
 ---
 

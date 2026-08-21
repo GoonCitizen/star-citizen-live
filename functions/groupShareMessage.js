@@ -249,6 +249,10 @@ function parseOpaqueFabricMessage (hexOrUrlOrBase64) {
  * @param {string} [opts.actor] Offerer pubkey
  * @param {string} [opts.note]
  * @param {string} [opts.offerId]
+ * @param {string} [opts.offeredAt]
+ * @param {string|number} [opts.expiresAt] ISO or epoch ms (default 7 days from offeredAt)
+ * @param {number} [opts.ttlMs]
+ * @param {number} [opts.expiresInDays]
  * @returns {object}
  */
 function buildGroupOfferBody (opts = {}) {
@@ -261,6 +265,19 @@ function buildGroupOfferBody (opts = {}) {
   const groupId = String(group.id || definition.groupId || '').trim();
   if (!groupId) throw new Error('groupId required');
   const offerId = opts.offerId || crypto.randomBytes(16).toString('hex');
+  const offeredAt = opts.offeredAt || new Date().toISOString();
+  const {
+    resolveShareExpiresAtMs,
+    expiresAtIso
+  } = require('./inviteExpiry');
+  const expiresAt = expiresAtIso(resolveShareExpiresAtMs({
+    offeredAt,
+    expiresAt: opts.expiresAt,
+    ttlMs: opts.ttlMs,
+    expiresInMs: opts.expiresInMs,
+    expiresInSeconds: opts.expiresInSeconds,
+    expiresInDays: opts.expiresInDays
+  }));
   return {
     kind: GROUP_SHARE_KIND_OFFER,
     offerId,
@@ -276,7 +293,8 @@ function buildGroupOfferBody (opts = {}) {
     note: opts.note != null && String(opts.note).trim()
       ? String(opts.note).trim().slice(0, 2000)
       : null,
-    offeredAt: opts.offeredAt || new Date().toISOString(),
+    offeredAt,
+    expiresAt,
     offeredBy: opts.actor != null ? String(opts.actor).trim().toLowerCase() : null
   };
 }
@@ -373,7 +391,7 @@ function classifyGroupShareMessage (message) {
       body,
       object: inv,
       contractId: (inv && inv.contractId) || contractId,
-      groupId: null
+      groupId: (inv && inv.groupId) || null
     };
   }
 

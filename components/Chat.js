@@ -49,6 +49,8 @@ const {
   lastMessageAtByAuthor,
   sortChatMembers
 } = require('../functions/chatMemberSort');
+const { pubkeysMatch } = require('@fabric/http/functions/fabricPubkey');
+const { shareClipboardText } = require('../functions/groupJoinFlow');
 const {
   filterMembers,
   mergePeopleDirectory,
@@ -67,8 +69,13 @@ const {
   canBotPostToDiscord,
   canOperatorPostToDiscord
 } = require('../functions/discordChannelAccess');
+const {
+  botPermissionNotice,
+  looksLikeMissingPermissionError
+} = require('../functions/discordBotAuthorize');
 const { androidSurface } = require('../functions/androidSurface');
 const { fetchPresenceRoster } = require('../functions/presenceClient');
+const { JoinVoiceButton } = require('./ActiveVoicePanel');
 
 const BASE = '/services/star-citizen';
 
@@ -213,7 +220,10 @@ const CSS = `
   .chat-slash .cmd{font-weight:650;font-size:12.5px;font-family:'Cascadia Code',Consolas,monospace}
   .chat-slash .hint{font-size:11.5px;color:var(--muted)}
   .chat-err{background:rgba(248,81,73,.12);color:var(--kill);border-radius:7px;margin:0 14px 10px;padding:8px 11px;font-size:12.5px;
-    flex:0 0 auto}
+    flex:0 0 auto;line-height:1.5}
+  .chat-perm-notice{background:rgba(247,147,26,.1);color:#f7931a;border-radius:7px;margin:0 14px 10px;padding:8px 11px;
+    font-size:12.5px;flex:0 0 auto;line-height:1.5}
+  .chat-err a,.chat-perm-notice a{color:#5865F2;font-weight:650}
   .chat-members{background:var(--panel);border:1px solid var(--line);border-radius:12px;overflow:auto;display:flex;
     flex-direction:column;min-height:0;min-width:0}
   .chat-members h3{font-size:12px;color:var(--muted);margin:0;padding:12px 14px 6px;text-transform:uppercase;letter-spacing:.4px}
@@ -304,7 +314,7 @@ function dmChannelKey (a, b) {
   const x = String(a || '').trim();
   const y = String(b || '').trim();
   if (!x || !y || x === y) return null;
-  const [lo, hi] = [x, y].sort((p, q) => p.localeCompare(q));
+  const [lo, hi] = [x, y].sort();
   return `dm:${lo}:${hi}`;
 }
 
@@ -348,6 +358,7 @@ class Chat extends React.Component {
       messages: [],
       draft: '',
       error: null,
+      authorizeUrl: null,
       sending: false,
       loading: true,
       members: [],
@@ -486,8 +497,74 @@ class Chat extends React.Component {
       discordOnly,
       listenOnly,
       isDm,
-      botReady
+      botReady,
+      bot: row.bot || null,
+      guildId: row.guildId || null
     };
+  }
+
+  discordAppId () {
+    const cat = this.state.discordCatalog || {};
+    const world = cat.worldView || {};
+    return cat.appId || world.sourceAppId || null;
+  }
+
+  discordBotPermissionNotice (access) {
+    if (!access || access.discordSurface !== true || access.isDm) return null;
+    return botPermissionNotice({
+      bot: access.bot || null,
+      appId: this.discordAppId(),
+      guildId: access.guildId || null,
+      authorizeUrl: this.state.authorizeUrl || null
+    });
+  }
+
+  renderAuthorizeNotice (notice, className) {
+    if (!notice) return null;
+    return React.createElement('div', { className: className || 'chat-perm-notice' },
+      notice.text,
+      notice.url
+        ? React.createElement(React.Fragment, null,
+          ' ',
+          React.createElement('a', {
+            className: 'dc-auth-link',
+            href: notice.url,
+            target: '_blank',
+            rel: 'noopener noreferrer'
+          }, notice.linkLabel)
+        )
+        : null
+    );
+  }
+
+  renderChatAccessBanner (access) {
+    const notice = this.discordBotPermissionNotice(access);
+    if (this.state.error) {
+      const url = this.state.authorizeUrl ||
+        (looksLikeMissingPermissionError(this.state.error) && notice && notice.url) ||
+        null;
+      const linkLabel = notice && notice.linkLabel
+        ? notice.linkLabel
+        : 'Authorize permission';
+      return React.createElement('div', { className: 'chat-err' },
+        this.state.error,
+        url
+          ? React.createElement(React.Fragment, null,
+            ' ',
+            React.createElement('a', {
+              className: 'dc-auth-link',
+              href: url,
+              target: '_blank',
+              rel: 'noopener noreferrer'
+            }, linkLabel)
+          )
+          : null
+      );
+    }
+    if (notice) {
+      return this.renderAuthorizeNotice(notice, 'chat-perm-notice');
+    }
+    return null;
   }
 
   renderPermBadges (ch) {
@@ -663,6 +740,7 @@ class Chat extends React.Component {
 
   async ensureAuth () {
     if (this.state.authToken) return this.state.authToken;
+    if (this.props.authToken) return this.props.authToken;
     const bridge = identityBridge();
     if (!bridge) return null;
     try {
@@ -705,8 +783,9 @@ class Chat extends React.Component {
       if (!res.ok) throw new Error(json.error || `HTTP ${res.status}`);
       const target = this.state.hoverPubkey;
       const groups = (json.data || []).filter((g) => {
-        if (!Array.isArray(g.members) || !g.members.includes(me)) return false;
-        if (target && g.members.includes(target)) return false;
+        const members = Array.isArray(g.members) ? g.members : [];
+        if (!members.some((m) => pubkeysMatch(m, me))) return false;
+        if (target && members.some((m) => pubkeysMatch(m, target))) return false;
         return true;
       });
       const preferred = this.props.groupId && groups.some((g) => g.id === this.props.groupId)
@@ -744,9 +823,13 @@ class Chat extends React.Component {
       const json = await res.json();
       if (!res.ok) throw new Error(json.error || `HTTP ${res.status}`);
       const data = json.data || {};
+      const url = shareClipboardText(data);
+      if (url) {
+        try { await navigator.clipboard.writeText(url); } catch (_) { /* ignore */ }
+      }
       const mesh = data.relayed
-        ? `Invite sent to the network (${data.peers || 0} peer connection(s)).`
-        : (`Invite saved` + (data.relayError ? ` — mesh: ${data.relayError}` : ''));
+        ? `Invite sent as the same Fabric message that was copied (${data.peers || 0} peer connection(s)). They Accept in Notifications.`
+        : (`Invite copied` + (data.relayError ? ` — mesh: ${data.relayError}` : ''));
       this.setState({ inviteBusy: false, inviteOk: mesh });
     } catch (e) {
       this.setState({ inviteBusy: false, inviteError: e.message || String(e) });
@@ -1095,9 +1178,9 @@ class Chat extends React.Component {
   }
 
   openDiscordPage () {
-    if (this.props.embedded || !this.showDiscordBotUi()) return;
+    if (this.props.embedded) return;
     this.setState({ page: 'discord', error: null });
-    this.refreshDiscordCatalog(true);
+    if (this.showDiscordBotUi()) this.refreshDiscordCatalog(true);
   }
 
   closeDiscordPage () {
@@ -1110,15 +1193,20 @@ class Chat extends React.Component {
     if ((!body && !pending) || this.state.sending) return;
     const access = this.discordAccessForRow();
     if (access.discordOnly && !access.canPost) {
+      const notice = !access.listenOnly ? this.discordBotPermissionNotice(access) : null;
       const err = access.listenOnly
         ? 'Channel is listen-only — Chat → Discord posting is disabled.'
-        : (!access.botCanPost
-          ? 'The Discord bot cannot chat in this channel.'
-          : 'Cannot post to Discord on this channel.');
-      this.setState({ error: err });
+        : ((notice && notice.text) ||
+          (!access.botCanPost
+            ? 'The Discord bot cannot chat in this channel.'
+            : 'Cannot post to Discord on this channel.'));
+      this.setState({
+        error: err,
+        authorizeUrl: (notice && notice.url) || null
+      });
       return;
     }
-    this.setState({ sending: true, error: null, slashOpen: false });
+    this.setState({ sending: true, error: null, authorizeUrl: null, slashOpen: false });
     try {
       const price = this.state.attachPriceSats != null
         ? this.state.attachPriceSats
@@ -1142,12 +1230,22 @@ class Chat extends React.Component {
         body: JSON.stringify(payload)
       });
       const json = await res.json();
-      if (!res.ok) throw new Error(json.error || `HTTP ${res.status}`);
-      this.setState({ draft: '', sending: false, pendingFile: null });
+      if (!res.ok) {
+        const err = new Error(json.error || `HTTP ${res.status}`);
+        err.authorizeUrl = json.authorizeUrl || null;
+        throw err;
+      }
+      this.setState({ draft: '', sending: false, pendingFile: null, authorizeUrl: null });
       await this.refresh();
       if (this._msgsRef.current) this._msgsRef.current.scrollTop = this._msgsRef.current.scrollHeight;
     } catch (e) {
-      this.setState({ sending: false, error: e.message });
+      this.setState({
+        sending: false,
+        error: e.message,
+        authorizeUrl: e.authorizeUrl || (looksLikeMissingPermissionError(e.message)
+          ? ((this.discordBotPermissionNotice(access) || {}).url || null)
+          : null)
+      });
     }
   }
 
@@ -2107,7 +2205,7 @@ class Chat extends React.Component {
       );
     }
     const me = this.props.identityPubkey || null;
-    const discordPage = this.showDiscordBotUi() && !this.props.embedded && this.state.page === 'discord';
+    const discordPage = !this.props.embedded && this.state.page === 'discord';
     const active = this.channelRowFor(this.state.channel);
     const discordChannelId = parseDiscordChatChannel(this.state.channel) ||
       (active && active.discordKey ? parseDiscordChatChannel(active.discordKey) : null);
@@ -2118,10 +2216,23 @@ class Chat extends React.Component {
     const discordOnly = !!(access.discordOnly);
     const discordComposeLocked = !!(discordOnly && !access.canPost);
     const botDm = botDmChannelFromCatalog(this.state.discordCatalog);
+    const voiceGroupId = this.props.groupId ||
+      (active && active.kind === 'group' && (active.groupId || String(this.state.channel || '').replace(/^group:/, ''))) ||
+      null;
+    const voiceMember = (() => {
+      if (!voiceGroupId) return false;
+      const row = (active && active.kind === 'group') ? active : null;
+      const members = row && Array.isArray(row.members) ? row.members : null;
+      const creator = row && row.creator;
+      if (!members && !creator) return true;
+      if (!me) return false;
+      if (creator && pubkeysMatch(creator, me)) return true;
+      return (members || []).some((m) => pubkeysMatch(m, me));
+    })();
 
     const embedded = !!this.props.embedded;
     const headLabel = discordPage
-      ? 'Discord'
+      ? 'Chat settings'
       : (embedded
         ? 'Group chat'
         : (active
@@ -2137,7 +2248,7 @@ class Chat extends React.Component {
                   : (active.kind === 'dm' ? '✉️ ' + active.label : '👥 ' + active.label)))))
           : this.state.channel));
     const headSub = discordPage
-      ? 'bot guilds, channels & users'
+      ? 'push-to-talk, Discord bot'
       : (embedded
         ? 'members only · same channel as Chat tab'
         : (active && active.kind === 'global'
@@ -2200,6 +2311,16 @@ class Chat extends React.Component {
             React.createElement('span', { className: 'sub' }, headSub)
           ),
           React.createElement('div', { className: 'chat-head-actions' },
+            voiceGroupId && voiceMember
+              ? React.createElement(JoinVoiceButton, {
+                groupId: voiceGroupId,
+                handle: this.props.nickname || null,
+                identityPubkey: me,
+                authToken: this.state.authToken || this.props.authToken,
+                getAuthToken: () => this.ensureAuth(),
+                disabled: !me
+              })
+              : null,
             React.createElement('button', {
               type: 'button',
               className: 'chat-pins-btn' + (this.state.pinsOpen ? ' on' : ''),
@@ -2215,13 +2336,13 @@ class Chat extends React.Component {
             this.pinnedMessages().length
               ? React.createElement('span', { className: 'n' }, this.pinnedMessages().length)
               : null),
-            embedded || !this.showDiscordBotUi()
+            embedded
               ? null
               : React.createElement('button', {
                 type: 'button',
                 className: 'chat-cog' + (discordPage ? ' on' : ''),
-                title: 'Discord bot — guilds, channels & users',
-                'aria-label': 'Discord bot settings',
+                title: 'Chat settings — PTT and Discord',
+                'aria-label': 'Chat settings',
                 onClick: () => (discordPage ? this.closeDiscordPage() : this.openDiscordPage())
               }, '⚙️')
           )
@@ -2231,7 +2352,8 @@ class Chat extends React.Component {
             identityPubkey: this.props.identityPubkey || null,
             discordChatDirections: this.discordDirectionsMap(),
             onDirectionsChanged: (next) => this.onDiscordDirectionsChanged(next),
-            onClose: () => this.closeDiscordPage()
+            onClose: () => this.closeDiscordPage(),
+            showDiscord: this.showDiscordBotUi()
           })
           : React.createElement(React.Fragment, null,
             this.state.pinsOpen ? this.renderPinsDrawer() : null,
@@ -2247,7 +2369,7 @@ class Chat extends React.Component {
                         ? 'Public shoutbox is empty — posts are cleartext on the mesh (relays can read). Sealed group chat is for confidential traffic.'
                         : 'No messages yet — say hello, Citizen.')))
             ),
-            this.state.error ? React.createElement('div', { className: 'chat-err' }, this.state.error) : null,
+            this.renderChatAccessBanner(access),
             React.createElement('div', { className: 'chat-compose-wrap' },
               this.state.pendingFile
                 ? React.createElement('div', { className: 'chat-attach-chip' },

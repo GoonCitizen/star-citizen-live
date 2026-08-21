@@ -82,12 +82,18 @@ idempotent — the same convergence rule as the event uplink.</p>
 <li>CONTRACT_MESSAGE     — GoonCitizen app types + per-Group Federation types</li>
 <li>CONTRACT_PUBLISH     — GoonCitizen genesis + per-Group Federation genesis</li>
 </ul>
+<p>Durable outbound frames set AMP <code>parent</code> to the previous signed <code>Message.id</code>
+(D-020). Ping / session / peering stay genesis zeros.</p>
 <p>Lazy-requires Peer/Message so memory-only unit tests stay light.</p>
 </dd>
 <dt><del><a href="#DEFAULT_SEED">DEFAULT_SEED</a></del></dt>
 <dd></dd>
 <dt><a href="#DEFAULT_MAX_PEERS">DEFAULT_MAX_PEERS</a></dt>
 <dd><p>Default TCP peer cap (matches @fabric/core MAX_PEERS soft default for slot fill).</p>
+</dd>
+<dt><a href="#PARENT_CHAIN_SKIP">PARENT_CHAIN_SKIP</a></dt>
+<dd><p>Session / slot-fill frames keep genesis parent (zeros). Durable application
+frames chain <a href="Message#parent">Message#parent</a> to this node&#39;s previous signed frame id.</p>
 </dd>
 <dt><a href="#APP_RELAY_TYPES">APP_RELAY_TYPES</a></dt>
 <dd><p>App <code>type</code> values under GoonCitizen / Group CONTRACT_MESSAGE (ingest catalog).</p>
@@ -838,6 +844,7 @@ Deterministic id for a message payload (mirror of post()).
         * [.connectedAddresses()](#FabricNetwork+connectedAddresses)
         * [._signAndRelay(vectorType, body, [opts])](#FabricNetwork+_signAndRelay)
         * [.signContractMessage(contractId, type, object, [opts])](#FabricNetwork+signContractMessage)
+        * [.relaySignedMessage(message, [opts])](#FabricNetwork+relaySignedMessage) ⇒ <code>object</code>
         * [.encodeOpaqueMessage(message, [opts])](#FabricNetwork+encodeOpaqueMessage) ⇒ <code>Object</code>
         * [._wrapPeerConnect(peer)](#FabricNetwork+_wrapPeerConnect) ⇒ <code>void</code>
         * [._wrapPeeringCandidateEnqueue(peer)](#FabricNetwork+_wrapPeeringCandidateEnqueue) ⇒ <code>void</code>
@@ -868,6 +875,7 @@ Deterministic id for a message payload (mirror of post()).
         * [.publishLookupResponse(payload)](#FabricNetwork+publishLookupResponse)
         * [.publishGameStateSnapshot(snapshot, [opts])](#FabricNetwork+publishGameStateSnapshot)
         * [.publishGroupChat(contractId, payload)](#FabricNetwork+publishGroupChat)
+        * [.publishGroupVoice(contractId, type, payload)](#FabricNetwork+publishGroupVoice)
         * [.publishMessageReceived(contractId, payload)](#FabricNetwork+publishMessageReceived)
         * [.publishMessageReceipt(contractId, payload, [opts])](#FabricNetwork+publishMessageReceipt)
         * [.publishGroupChange(contractId, payload)](#FabricNetwork+publishGroupChange)
@@ -981,6 +989,24 @@ Sign a CONTRACT_MESSAGE without requiring peer ready (clipboard / share).
 | object | <code>object</code> | 
 | [opts] | <code>Object</code> | 
 | [opts.relay] | <code>boolean</code> | 
+
+<a name="FabricNetwork+relaySignedMessage"></a>
+
+### fabricNetwork.relaySignedMessage(message, [opts]) ⇒ <code>object</code>
+Relay an already-signed AMP Message (same bytes as a clipboard `fabric:` clip).
+Does not re-sign. Used so mesh GroupOffer / FederationContractInvite frames
+are bit-identical to Import… paste.
+
+**Kind**: instance method of [<code>FabricNetwork</code>](#FabricNetwork)  
+**Returns**: <code>object</code> - message  
+
+| Param | Type | Description |
+| --- | --- | --- |
+| message | <code>object</code> | Fabric Message |
+| [opts] | <code>Object</code> |  |
+| [opts.to] | <code>Array.&lt;string&gt;</code> |  |
+| [opts.relay] | <code>boolean</code> |  |
+| [opts.record] | <code>boolean</code> | When false, skip a second message-log row |
 
 <a name="FabricNetwork+encodeOpaqueMessage"></a>
 
@@ -1328,6 +1354,19 @@ Publish a compact cumulative game-state snapshot for Hub sidechain sync.
 | --- | --- | --- |
 | contractId | <code>string</code> | Group Federation contract id |
 | payload | <code>Object</code> | GroupChat object |
+
+<a name="FabricNetwork+publishGroupVoice"></a>
+
+### fabricNetwork.publishGroupVoice(contractId, type, payload)
+Ephemeral group voice presence (Join / Leave / Speaking). Not journaled.
+
+**Kind**: instance method of [<code>FabricNetwork</code>](#FabricNetwork)  
+
+| Param | Type | Description |
+| --- | --- | --- |
+| contractId | <code>string</code> |  |
+| type | <code>string</code> | GroupVoiceJoin | GroupVoiceLeave | GroupVoiceSpeaking |
+| payload | <code>Object</code> |  |
 
 <a name="FabricNetwork+publishMessageReceived"></a>
 
@@ -2054,6 +2093,9 @@ Wire Messages:
   - CONTRACT_MESSAGE     — GoonCitizen app types + per-Group Federation types
   - CONTRACT_PUBLISH     — GoonCitizen genesis + per-Group Federation genesis
 
+Durable outbound frames set AMP `parent` to the previous signed `Message.id`
+(D-020). Ping / session / peering stay genesis zeros.
+
 Lazy-requires Peer/Message so memory-only unit tests stay light.
 
 **Kind**: global constant  
@@ -2067,6 +2109,13 @@ Lazy-requires Peer/Message so memory-only unit tests stay light.
 
 ## DEFAULT\_MAX\_PEERS
 Default TCP peer cap (matches @fabric/core MAX_PEERS soft default for slot fill).
+
+**Kind**: global constant  
+<a name="PARENT_CHAIN_SKIP"></a>
+
+## PARENT\_CHAIN\_SKIP
+Session / slot-fill frames keep genesis parent (zeros). Durable application
+frames chain [Message#parent](Message#parent) to this node's previous signed frame id.
 
 **Kind**: global constant  
 <a name="APP_RELAY_TYPES"></a>

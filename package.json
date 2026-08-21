@@ -2,6 +2,7 @@
   "name": "@rsi/star-citizen",
   "version": "0.1.0-dev",
   "description": "Fabric connectivity for the Star Citizen universe with Discord integration.",
+  "desktopName": "vc.goon.desktop",
   "main": "main.js",
   "exports": {
     ".": "./services/LiveRelay.js",
@@ -34,13 +35,21 @@
     "make:api": "jsdoc2md --configure jsdoc.json --files types/*.js services/*.js README.md > API.md.tmp && mv API.md.tmp API.md",
     "playnet:deploy-gooncitizen": "node scripts/playnet-deploy-gooncitizen.js",
     "publish:gooncitizen": "node scripts/playnet-deploy-gooncitizen.js",
+    "playnet:chaos": "node ../fabric-clean/scripts/playnet-chaos-neighbors.js",
+    "playnet:chaos:local": "node ../fabric-clean/scripts/playnet-chaos-neighbors.js --local --peers 127.0.0.1:7777,127.0.0.1:7778",
+    "playnet:chaos:production": "FABRIC_PLAYNET_CHAOS=1 node ../fabric-clean/scripts/playnet-chaos-neighbors.js --production",
+    "adversary:probe": "node scripts/adversary-local-probe.js",
+    "adversary:probe:production": "node scripts/adversary-local-probe.js --production",
+    "adversary:chaos": "ADV_PEERS=4 ADV_HOLD_MS=20000 node scripts/adversary-local-probe.js --chaos",
+    "adversary:chaos:production": "ADV_PEERS=4 ADV_HOLD_MS=20000 node scripts/adversary-local-probe.js --production --chaos",
     "publish:builds": "node scripts/publish-build-documents.js",
     "refresh:ships": "node scripts/refresh-ship-catalog.js",
     "refresh:locations": "node scripts/refresh-location-catalog.js",
     "replay": "node scripts/replay.js",
     "discord:events": "node scripts/discord-events.js",
+    "discord:events:graphic": "node scripts/discord-events.js graphic --assets --png",
     "probes:publish": "node scripts/publish-agent-probes.js",
-    "report:install": "rm -rf node_modules && mkdir -p reports && echo \"\\n\" > package-lock.json && echo \"$ npm i --allow-git=all\" > reports/install.log && npm i --allow-git=all >> reports/install.log 2>&1",
+    "report:install": "rm -rf node_modules && mkdir -p reports && rm -f package-lock.json && echo \"$ npm i --allow-git=all\" > reports/install.log && npm i --allow-git=all >> reports/install.log 2>&1",
     "report:todo": "grep --exclude package.json --exclude-dir=.env --exclude-dir=.git --exclude-dir=_book --exclude-dir=stores --exclude-dir=assets --exclude-dir=node_modules --exclude-dir=reports --exclude-dir=coverage --exclude-dir=docs --exclude-dir=libraries -rEI \"TODO|FIXME\" . | sed 's/\\([^:]*:\\)[ ]*/\\1 /' > reports/TODO.txt",
     "start:browser": "node scripts/node.js",
     "start:desktop:dev": "node scripts/desktop.js . --dev",
@@ -213,6 +222,7 @@
       "!**/node_modules/*/prebuilds/android-*/**"
     ],
     "mac": {
+      "icon": "assets/icon.icns",
       "category": "public.app-category.games",
       "target": [
         "dmg",
@@ -220,6 +230,7 @@
       ]
     },
     "win": {
+      "icon": "assets/icon.ico",
       "target": [
         {
           "target": "nsis",
@@ -239,6 +250,8 @@
       "createStartMenuShortcut": true
     },
     "linux": {
+      "syncDesktopName": true,
+      "icon": "assets/icon.png",
       "target": [
         {
           "target": "deb",
@@ -271,8 +284,42 @@
       }
     ]
   },
+  "c8": {
+    "include": [
+      "functions/**",
+      "services/LiveRelay.js",
+      "services/FabricNetwork.js",
+      "services/MissionManager.js",
+      "services/GroupManager.js",
+      "services/ChatManager.js",
+      "services/PayoutManager.js",
+      "services/SnapshotManager.js",
+      "types/**",
+      "contracts/**",
+      "components/**",
+      "scripts/**",
+      "main.js",
+      "preload.js",
+      "constants.js"
+    ],
+    "exclude": [
+      "types/StarCitizenAPI.js",
+      "components/Interface.js",
+      "components/StarCitizenHome.js",
+      "components/MissionHome.js",
+      "scripts/fabric.js",
+      "browser.min.js",
+      "assets/**",
+      "tests/**"
+    ],
+    "reporter": [
+      "text-summary"
+    ],
+    "report-dir": "./coverage"
+  },
   "engines": {
-    "node": "24.15.0"
+    "node": "24.15.0",
+    "npm": ">=12.0.0"
   },
   "allowScripts": {
     "esbuild@0.25.12": true,

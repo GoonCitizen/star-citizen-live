@@ -17,6 +17,7 @@ const Chat = require('./Chat');
 const DeliverySync = require('./DeliverySync');
 const GlobalChatDock = require('./GlobalChatDock');
 const MissionBroadcastBanner = require('./MissionBroadcastBanner');
+const ActiveVoicePanel = require('./ActiveVoicePanel');
 const Notifications = require('./Notifications');
 const Groups = require('./Groups');
 const Library = require('./Library');
@@ -36,7 +37,6 @@ const ShipPicker = require('./ShipPicker');
 const LocationPicker = require('./LocationPicker');
 const StarMap = require('./StarMap');
 const MapPage = require('./MapPage');
-const activityHeat = require('../functions/activityHeat');
 const missionCharts = require('../functions/missionCharts');
 
 const { FEATURES } = require('../constants');
@@ -56,14 +56,14 @@ function isCumulativeAnalytics (j) {
 }
 
 // Top-level features, listed along the top of the dashboard (Hub-style).
-// Order is product-facing: Home → Map → Files (advanced) → Groups → Missions → Fleets → Chat → Wallet → Network.
+// Order is product-facing: Home → Missions → Map → Files (advanced) → Groups → Fleets → Chat → Wallet → Network.
 // Feature-flagged tabs (see constants.FEATURES) are filtered out when disabled.
 const TABS = [
   ['home', 'Home'],
+  ['missions', 'Missions'],
   ['map', 'Map'],
   ['documents', 'Files'],
   ['groups', 'Groups'],
-  ['missions', 'Missions'],
   ['fleet', 'Fleets'],
   ['chat', 'Chat'],
   ['wallet', 'Wallet'],
@@ -127,8 +127,8 @@ function resolveHash (rawHash, advancedMode) {
 }
 
 // Exclusive activity views on Home (tab-like). Filters is a separate flyover.
+// "When you fly" lives on the operator's own profile (identity chip → My profile).
 const HOME_VIEWS = [
-  ['heatmap', 'When you fly'],
   ['charts', 'Missions'],
   ['quantum', 'Quantum'],
   ['pilots', 'Pilots']
@@ -141,6 +141,7 @@ const HOME_ADVANCED_VIEWS = [
 
 const ADVANCED_MODE_KEY = 'gooncitizen.advancedMode';
 const FEED_SOURCES_KEY = 'gooncitizen.feedSources';
+const HOME_LOG_SCOPE_KEY = 'gooncitizen.homeLogScope';
 
 function readAdvancedMode () {
   try {
@@ -184,6 +185,26 @@ function writeFeedSources (sources) {
   } catch (_) { /* ignore */ }
 }
 
+/** First-time / missing key = all public activity on this node (no scope filter). */
+function readHomeLogScope () {
+  try {
+    if (typeof localStorage === 'undefined') return 'all';
+    const raw = localStorage.getItem(HOME_LOG_SCOPE_KEY);
+    if (raw === 'mine') return 'mine';
+    return 'all';
+  } catch (_) {
+    return 'all';
+  }
+}
+
+function writeHomeLogScope (scope) {
+  try {
+    if (typeof localStorage === 'undefined') return;
+    if (scope === 'mine') localStorage.setItem(HOME_LOG_SCOPE_KEY, 'mine');
+    else localStorage.removeItem(HOME_LOG_SCOPE_KEY);
+  } catch (_) { /* ignore */ }
+}
+
 const TITLE = 'GoonCitizen — Monitor';
 
 const CSS = `
@@ -191,17 +212,22 @@ const CSS = `
     --bg:#0e1117; --panel:#161b22; --panel2:#1c232d; --line:#2a313c;
     --text:#e6edf3; --muted:#8b949e; --accent:#3b82f6;
     --good:#3fb950; --warn:#d29922; --raw:#6e7681; --kill:#f85149;
+    /* Bottom chrome band: shoutbox dock (right) + reserved voice bar (left). */
+    --chrome-inset: max(16px, env(safe-area-inset-bottom, 0px));
+    --chrome-bottom: calc(80px + var(--chrome-inset));
   }
   *{box-sizing:border-box}
   html,body,#root{height:100%}
+  html{scroll-padding-bottom: var(--chrome-bottom)}
   body{margin:0;background:var(--bg);color:var(--text);
        font-family:'Segoe UI',system-ui,sans-serif;font-size:14px;
-       padding:env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left)}
+       padding:env(safe-area-inset-top) env(safe-area-inset-right) 0 env(safe-area-inset-left)}
   header{position:sticky;top:0;z-index:20;background:var(--panel);
          border-bottom:1px solid var(--line);padding:12px 18px;max-width:100%}
   /* Fill tabs (Chat, Fleet): window is the canvas — header + fill; scroll inside panes only. */
   body.chat-fill{overflow:hidden}
-  body.chat-fill #root{display:flex;flex-direction:column;min-height:0;overflow:hidden}
+  body.chat-fill #root{display:flex;flex-direction:column;min-height:0;overflow:hidden;
+    padding-bottom:var(--chrome-bottom)}
   body.chat-fill #root > header{flex:0 0 auto;position:relative}
   body.chat-fill #root > .chat-wrap,
   body.chat-fill .chat-wrap,
@@ -209,7 +235,7 @@ const CSS = `
   /* Full-bleed page shell (Home / Fleet width): no centered max-width column. */
   .page-shell,.mi-wrap,.wa-wrap,.pr-wrap,.lib-wrap,.fm-wrap,.nt-wrap,
   .gpage,.mpage,.ppage,.ac-wrap{
-    width:100%;max-width:none;margin:0;padding:12px 14px 72px;box-sizing:border-box;
+    width:100%;max-width:none;margin:0;padding:12px 14px var(--chrome-bottom);box-sizing:border-box;
     display:grid;gap:14px
   }
   .network-nav{display:flex;flex-wrap:wrap;align-items:center;gap:8px;padding:14px 18px 0}
@@ -271,7 +297,7 @@ const CSS = `
   input[type=text]{background:var(--bg);border:1px solid var(--line);color:var(--text);
        border-radius:6px;padding:6px 9px;font-size:13px;min-width:240px}
   label{display:flex;gap:5px;align-items:center;cursor:pointer;user-select:none}
-  main{padding:12px 14px;display:grid;gap:16px;grid-template-columns:1fr 1fr}
+  main{padding:12px 14px var(--chrome-bottom);display:grid;gap:16px;grid-template-columns:1fr 1fr}
   .panel{background:var(--panel);border:1px solid var(--line);border-radius:10px;overflow:hidden;
          display:flex;flex-direction:column;min-height:200px}
   .panel.full{grid-column:1 / -1}
@@ -282,6 +308,8 @@ const CSS = `
   .panel h2 .home-title{flex:1;min-width:12em}
   .panel h2 .home-tools{margin-left:auto;padding:0;flex-wrap:wrap}
   .panel h2 .home-tools .btn{margin-left:0}
+  .panel h2 .home-tools .chip{margin-left:0}
+  .panel h2 .home-tools .gear{margin-left:0;padding:4px 8px}
   .panel h2 .home-tools .sub{margin-left:0}
   .btn{background:var(--panel2);border:1px solid var(--line);color:var(--text);
        border-radius:6px;padding:4px 10px;font-size:12px;cursor:pointer}
@@ -379,6 +407,7 @@ const CSS = `
   .home-card .hc-stat{font-size:11.5px;color:var(--accent);font-family:'Cascadia Code',Consolas,monospace}
   .home-tools{display:flex;flex-wrap:wrap;gap:8px;padding:12px 14px;align-items:center}
   .home-tools .btn.on,.live-bar .btn.on{border-color:var(--accent);color:var(--accent)}
+  .home-tools .gear.on{border-color:var(--accent);color:var(--accent);background:rgba(59,130,246,.14)}
   .home-tools .sub{margin-left:auto}
   .home-views{display:flex;flex-wrap:wrap;gap:6px;padding:0 14px 12px;align-items:center}
   .home-flyover{border-top:1px solid var(--line)}
@@ -442,7 +471,6 @@ const CSS = `
 const GOOD = '#3fb950';
 const WARN = '#d29922';
 const KILL = '#f85149';
-const ACC = '#3b82f6';
 const GRAY = '#6e7681';
 const OC = {
   Complete: { t: 'Completed', c: GOOD },
@@ -480,6 +508,13 @@ function facOf (m) {
 
 function has (set, v) {
   return (!set || !set.size) ? true : set.has(v);
+}
+
+/** Missing `source` is this node's Game.log (legacy history.json). */
+function isLocalHistoryRecord (row) {
+  if (!row || typeof row !== 'object') return false;
+  const s = row.source;
+  return s == null || s === '' || s === 'local';
 }
 
 function monthMinus (ym, k) {
@@ -575,6 +610,7 @@ class Dashboard extends React.Component {
       showIdentity: false,
       chatUnread: 0,
       notifyPending: 0,
+      voiceJoined: false,
       nickname: null,
       presenceOnline: false,
       presenceSharing: false,
@@ -605,9 +641,10 @@ class Dashboard extends React.Component {
       showFabricImport: false,
       showQrScan: false,
       qrScanError: null,
-      homeView: null,          // exclusive activity tab: heatmap|charts|quantum|pilots|tree|rules
+      homeView: null,          // exclusive activity tab: charts|quantum|pilots|tree|rules
       homeFiltersOpen: false,  // flyover toggle
-      showMyLogs: false,       // My logs + import modal
+      azLogScope: readHomeLogScope(), // 'all' (default) | 'mine'
+      showMyLogs: false,       // corpus + import modal (home logs cog)
       azGroups: [],
       azPublishGroupId: '',
       azPublishBusy: false,
@@ -1428,6 +1465,40 @@ class Dashboard extends React.Component {
     this.setState({ homeFiltersOpen: !this.state.homeFiltersOpen });
   }
 
+  setHomeLogScope (scope) {
+    const next = scope === 'mine' ? 'mine' : 'all';
+    writeHomeLogScope(next);
+    this._analyzeModel = null;
+    this._analyzeModelKey = null;
+    this.setState({ azLogScope: next });
+  }
+
+  logSel (row) {
+    if (this.state.azLogScope !== 'mine') return true;
+    return isLocalHistoryRecord(row);
+  }
+
+  renderHomeLogScopeButtons (kind) {
+    const scope = this.state.azLogScope === 'mine' ? 'mine' : 'all';
+    const cls = kind === 'chip' ? 'chip' : 'btn';
+    return [
+      React.createElement('button', {
+        key: 'all',
+        type: 'button',
+        className: cls + (scope === 'all' ? ' on' : ''),
+        title: 'All public activity on this node',
+        onClick: () => this.setHomeLogScope('all')
+      }, 'All logs'),
+      React.createElement('button', {
+        key: 'mine',
+        type: 'button',
+        className: cls + (scope === 'mine' ? ' on' : ''),
+        title: 'Only this node’s Game.log corpus',
+        onClick: () => this.setHomeLogScope('mine')
+      }, 'My logs')
+    ];
+  }
+
   openMyLogs () {
     if (!androidSurface('corpus')) return;
     this.setState({ showMyLogs: true });
@@ -1534,37 +1605,37 @@ class Dashboard extends React.Component {
 
   baseM () {
     const D = this.state.analytics;
-    return (D && D.missions || []).filter((m) => this.mSel(ymOf(m.ts)) && this.pSel(m.player));
+    return (D && D.missions || []).filter((m) => this.logSel(m) && this.mSel(ymOf(m.ts)) && this.pSel(m.player));
   }
 
   baseD () {
     const D = this.state.analytics;
-    return (D && D.deaths || []).filter((d) => this.mSel(ymOf(d.ts)) && this.pSel(d.player));
+    return (D && D.deaths || []).filter((d) => this.logSel(d) && this.mSel(ymOf(d.ts)) && this.pSel(d.player));
   }
 
   baseQ () {
     const D = this.state.analytics;
-    return (D && D.quantum || []).filter((q) => this.mSel(ymOf(q.ts)) && this.pSel(q.player));
+    return (D && D.quantum || []).filter((q) => this.logSel(q) && this.mSel(ymOf(q.ts)) && this.pSel(q.player));
   }
 
   baseI () {
     const D = this.state.analytics;
-    return (D && D.incap || []).filter((i) => this.mSel(ymOf(i.ts)) && this.pSel(i.player));
+    return (D && D.incap || []).filter((i) => this.logSel(i) && this.mSel(ymOf(i.ts)) && this.pSel(i.player));
   }
 
   baseC () {
     const D = this.state.analytics;
-    return (D && D.crimestat || []).filter((c) => this.mSel(ymOf(c.ts)) && this.pSel(c.player));
+    return (D && D.crimestat || []).filter((c) => this.logSel(c) && this.mSel(ymOf(c.ts)) && this.pSel(c.player));
   }
 
   aggMonths (set) {
     const D = this.state.analytics;
     if (!isCumulativeAnalytics(D)) return { done: 0, deaths: 0, sessions: 0 };
-    const ms = (D.missions || []).filter((m) => this.pSel(m.player) && set.has(ymOf(m.ts)) && this.tSel(m.type) && this.fSel(facOf(m)));
+    const ms = (D.missions || []).filter((m) => this.logSel(m) && this.pSel(m.player) && set.has(ymOf(m.ts)) && this.tSel(m.type) && this.fSel(facOf(m)));
     return {
       done: ms.filter((m) => m.outcome === 'Complete').length,
-      deaths: (D.deaths || []).filter((d) => this.pSel(d.player) && set.has(ymOf(d.ts))).length,
-      sessions: (D.sessions || []).filter((s) => this.pSel(s.player) && set.has(ymOf(s.ts))).length
+      deaths: (D.deaths || []).filter((d) => this.logSel(d) && this.pSel(d.player) && set.has(ymOf(d.ts))).length,
+      sessions: (D.sessions || []).filter((s) => this.logSel(s) && this.pSel(s.player) && set.has(ymOf(s.ts))).length
     };
   }
 
@@ -1702,21 +1773,6 @@ class Dashboard extends React.Component {
   }
 
   // ---- analyze SVG (string HTML kept for chart density) ----
-  rHeatHtml () {
-    const D = this.state.analytics || {};
-    const months = new Set();
-    // Preserve month filter from Home slicer (empty set = all months via mSel).
-    (D.heatcells || []).forEach((c) => { if (this.mSel(c.ym)) months.add(c.ym); });
-    const cells = activityHeat.resolveHeatcells(D, {
-      months: months.size ? months : null
-    }).filter((c) => this.mSel(c.ym));
-    return activityHeat.renderHeatSvg(cells, {
-      accent: ACC,
-      gray: GRAY,
-      emptyHtml: '<div class="empty">no activity in the selected months</div>'
-    });
-  }
-
   rDonutHtml (ms) {
     return missionCharts.renderOutcomesDonut(ms, {
       selected: this.state.azOutcomes
@@ -1811,6 +1867,7 @@ class Dashboard extends React.Component {
       (D.missions || []).length,
       (D.deaths || []).length,
       this.state.azMonths ? [...this.state.azMonths].sort().join(',') : '',
+      this.state.azLogScope === 'mine' ? 'mine' : 'all',
       this.state.azPlayers ? [...this.state.azPlayers].sort().join(',') : '',
       this.state.azTypes ? [...this.state.azTypes].sort().join(',') : '',
       this.state.azFactions ? [...this.state.azFactions].sort().join(',') : '',
@@ -1842,7 +1899,7 @@ class Dashboard extends React.Component {
     const n = selArr.length;
     const curSessions = this.state.azMonths
       ? this.aggMonths(this.state.azMonths).sessions
-      : (D.sessions || []).filter((s) => this.pSel(s.player)).length;
+      : (D.sessions || []).filter((s) => this.logSel(s) && this.pSel(s.player)).length;
     let prev = null;
     if (n) {
       const pset = new Set();
@@ -1891,7 +1948,7 @@ class Dashboard extends React.Component {
     });
     this.baseD().forEach((d) => { get(d.player).deaths++; });
     (D.sessions || []).forEach((s) => {
-      if (this.mSel(ymOf(s.ts)) && this.pSel(s.player)) get(s.player).sess++;
+      if (this.logSel(s) && this.mSel(ymOf(s.ts)) && this.pSel(s.player)) get(s.player).sess++;
     });
     const cmpRows = Object.keys(cby).map((k) => {
       const b = cby[k];
@@ -1899,6 +1956,7 @@ class Dashboard extends React.Component {
     }).filter((r) => r.tot || r.sess).sort((a, b) => b.rate - a.rate);
 
     const af = [];
+    if (this.state.azLogScope === 'mine') af.push(['azLogScope', 'my logs']);
     if (this.state.azPlayers && this.state.azPlayers.size) af.push(['azPlayers', 'pilots: ' + [...this.state.azPlayers].join(', ')]);
     if (this.state.azTypes && this.state.azTypes.size) af.push(['azTypes', 'type: ' + [...this.state.azTypes].join(', ')]);
     if (this.state.azFactions && this.state.azFactions.size) af.push(['azFactions', 'faction: ' + [...this.state.azFactions].join(', ')]);
@@ -1938,8 +1996,12 @@ class Dashboard extends React.Component {
           ? ` · ${src.importedDirs || 0} folders · ${src.importedFiles || 0} files imported`
           : '') +
         (src.pendingFiles ? ` · ${src.pendingFiles} pending` : '') +
-        ' · import via My logs…'),
+        ' · import via the logs cog'),
       React.createElement('div', { style: { padding: '8px 14px 14px' } },
+        React.createElement('div', { className: 'slrow' },
+          React.createElement('span', { className: 'flab' }, 'logs'),
+          this.renderHomeLogScopeButtons('chip')
+        ),
         React.createElement('div', { className: 'slrow' },
           React.createElement('span', { className: 'flab' }, 'period'),
           React.createElement('button', { type: 'button', className: 'chip', onClick: () => this.setState({ azMonths: new Set(D.availableMonths) }) }, 'All'),
@@ -1991,6 +2053,7 @@ class Dashboard extends React.Component {
               className: 'chip on',
               onClick: () => {
                 if (f[0] === 'azMonths') this.setState({ azMonths: new Set(D.availableMonths) });
+                else if (f[0] === 'azLogScope') this.setHomeLogScope('all');
                 else this.setState({ [f[0]]: null });
               }
             }, f[1] + ' ✕')).concat([
@@ -1998,13 +2061,17 @@ class Dashboard extends React.Component {
                 type: 'button',
                 key: 'reset',
                 className: 'chip',
-                onClick: () => this.setState({
-                  azMonths: new Set(D.availableMonths),
-                  azPlayers: null,
-                  azTypes: null,
-                  azOutcomes: null,
-                  azFactions: null
-                })
+                onClick: () => {
+                  writeHomeLogScope('all');
+                  this.setState({
+                    azLogScope: 'all',
+                    azMonths: new Set(D.availableMonths),
+                    azPlayers: null,
+                    azTypes: null,
+                    azOutcomes: null,
+                    azFactions: null
+                  });
+                }
               }, '↺ reset')
             ])
             : null
@@ -2520,16 +2587,6 @@ class Dashboard extends React.Component {
   renderHomeView (m) {
     const view = this.state.homeView;
     if (!view) return null;
-    if (view === 'heatmap' && m) {
-      return React.createElement('section', { className: 'panel full' },
-        React.createElement('h2', null, '🗓️ When you fly ',
-          React.createElement('span', { className: 'sub' }, '— day & hour (local); darker = busier')),
-        React.createElement('div', {
-          style: { padding: '12px 14px', overflow: 'auto' },
-          dangerouslySetInnerHTML: { __html: this.rHeatHtml() }
-        })
-      );
-    }
     if (view === 'charts' && m) {
       return React.createElement(React.Fragment, null,
         React.createElement('section', { className: 'panel' },
@@ -2638,11 +2695,7 @@ class Dashboard extends React.Component {
           ),
           androidSurface('heatmap')
             ? React.createElement('span', { className: 'home-tools' },
-              React.createElement('button', {
-                type: 'button',
-                className: 'btn',
-                onClick: () => this.openMyLogs()
-              }, 'My logs…'),
+              this.renderHomeLogScopeButtons('btn'),
               React.createElement('button', {
                 type: 'button',
                 className: 'btn' + (this.state.homeFiltersOpen ? ' on' : ''),
@@ -2651,7 +2704,14 @@ class Dashboard extends React.Component {
               (this.state.historySync && this.state.historySync.status === 'running')
                 ? React.createElement('span', { className: 'sub' },
                   `Indexing ${this.state.historySync.fileIndex || 0}/${this.state.historySync.files || 0} logs…`)
-                : null
+                : null,
+              React.createElement('button', {
+                type: 'button',
+                className: 'gear home-logs-gear' + (this.state.showMyLogs ? ' on' : ''),
+                title: 'Log files and import',
+                'aria-label': 'Log files and import',
+                onClick: () => this.openMyLogs()
+              }, '⚙️')
             )
             : null
         ),
@@ -2678,7 +2738,7 @@ class Dashboard extends React.Component {
             : React.createElement('div', { className: 'empty' },
               (this.state.historySync && this.state.historySync.status === 'running')
                 ? `indexing logs (${this.state.historySync.fileIndex || 0}/${this.state.historySync.files || 0})…`
-                : (this.state.azLoading ? 'loading cumulative activity…' : 'no activity history yet — open My logs… to import, or start the game')))
+                : (this.state.azLoading ? 'loading cumulative activity…' : 'no activity history yet — open the logs cog to import, or start the game')))
           : null
       ),
       androidSurface('heatmap') ? this.renderHomeView(m) : null,
@@ -3096,6 +3156,13 @@ class Dashboard extends React.Component {
         ),
       ),
       this.renderTab(),
+      React.createElement(ActiveVoicePanel, {
+        identityPubkey: this.state.identityPubkey,
+        onVoice: (voice) => {
+          const joined = !!(voice && voice.joined);
+          if (joined !== this.state.voiceJoined) this.setState({ voiceJoined: joined });
+        }
+      }),
       React.createElement(GlobalChatDock, {
         identityPubkey: this.state.identityPubkey,
         nickname: this.state.nickname,
@@ -3109,6 +3176,7 @@ class Dashboard extends React.Component {
       }),
       React.createElement(MissionBroadcastBanner, {
         hide: this.state.tab === 'notifications',
+        raised: this.state.voiceJoined,
         onResolved: () => {
           if (this.state.tab === 'missions') this.showTab('missions');
         },
@@ -3120,10 +3188,22 @@ class Dashboard extends React.Component {
   }
 }
 
+/** Appended last in `scripts/build.js` so page `padding:` shorthand cannot eat it. */
+const CHROME_CSS = `
+  main,.page-shell,.mi-wrap,.wa-wrap,.pr-wrap,.lib-wrap,.fm-wrap,.nt-wrap,
+  .gpage,.mpage,.ppage,.ac-wrap,.dx-wrap,.mmap,.lpage,.fpage,.wpage,.cpage{
+    padding-bottom:var(--chrome-bottom);
+  }
+  body.chat-fill #root{padding-bottom:var(--chrome-bottom)}
+  body.chat-fill #root > .chat-wrap,
+  body.chat-fill #root > .fl-wrap{padding-bottom:12px}
+`;
+
 Dashboard.TITLE = TITLE;
+Dashboard.CHROME_CSS = CHROME_CSS;
 Dashboard.CSS = CSS + '\n' + (SiteLogin.CSS || '') + '\n' + (LogBrowser.CSS || '') + '\n' +
   (AppSearch.CSS || '') + '\n' + (Account.CSS || '') + '\n' + (DataSyncStatus.CSS || '') + '\n' +
-  (LinkedDevices.CSS || '') + '\n' + (Settings.CSS || '');
+  (LinkedDevices.CSS || '') + '\n' + (Settings.CSS || '') + '\n' + (ActiveVoicePanel.CSS || '') + '\n' + CHROME_CSS;
 Dashboard.resolveHash = resolveHash;
 Dashboard.offerPassportDeviceLink = offerPassportDeviceLink;
 

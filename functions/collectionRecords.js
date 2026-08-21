@@ -21,7 +21,7 @@ const KIND_LABELS = Object.freeze({
   player: 'Pilot',
   snapshot: 'Library',
   inbox: 'Inbox',
-  playtimes: 'When they play',
+  playtimes: 'When they fly',
   file: 'File',
   document: 'File',
   location: 'Location',

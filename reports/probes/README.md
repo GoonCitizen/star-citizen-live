@@ -9,6 +9,7 @@ Public (after deploy): https://relay.goon.vc/probes/
 | `discord-scheduled-events.json` | `npm run discord:events -- fetch` |
 | `discord-events-schedule.json` | `npm run discord:events -- categorize` |
 | `discord-events-resolved.json` | `npm run discord:events -- resolve …` |
+| `goon-squad-schedule.json` | `npm run discord:events -- graphic` (paths to SVG/HTML) |
 | `adversary-local-probe.json` | `node scripts/adversary-local-probe.js` |
 | `adversary-public-probe.json` | `node scripts/adversary-local-probe.js --production` |
 

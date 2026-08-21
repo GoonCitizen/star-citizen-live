@@ -5,13 +5,14 @@
 > project context **here** so the two never drift. (`PROJECT_CONTEXT.md` is a
 > legacy pointer to this file as well.)
 >
-> **Last reviewed against source:** branch `feature/rsi` · 2026-08-14
+> **Last reviewed against source:** branch `feature/rsi` · 2026-08-20
 > (LiveRelay + Fabric Peer uplink is what runs — not the retired `app/` skeleton.
-> D-018 Chain of Blocks / consensus modes; D-017 opt-in log share / Peers UI;
-> D-019 GroupOffer opaque `fabric:<hex>` shares + group Statechain journal;
-> D-016 contract-namespace sidechains / Hub ADR-001; D-015 sidechain/Beacon seal;
-> D-014 cumulative history; D-013 device-link; D-012 application namespaces;
-> D-011 site login; D-010 Fabric P2P; D-009 Fabric conventions + Network.)
+> D-020 Fabric Message `parent` hash chain; D-019 GroupOffer opaque `fabric:<hex>`
+> shares + group Statechain journal; D-018 Chain of Blocks / consensus modes;
+> D-017 opt-in log share / Peers UI; D-016 contract-namespace sidechains /
+> Hub ADR-001; D-015 sidechain/Beacon seal; D-014 cumulative history; D-013
+> device-link; D-012 application namespaces; D-011 site login; D-010 Fabric P2P;
+> D-009 Fabric conventions + Network.)
 > If you change architecture, commands, or state, update **this file** and the
 > reality it describes — not a copy.
 
@@ -35,10 +36,22 @@
   (`operator` / `adversary` / `ambiguous` / `local`): unclear public-host runs
   from `playnet:deploy-gooncitizen` still treat as operator publish; pure
   adversary posture is refused (use `scripts/adversary-local-probe.js` instead).
-  `--accept` tries Hub-issued `FABRIC_HUB_ADMIN_TOKEN` / `~/.fabric/hub-admin-token`
-  first, then mints from operator `FABRIC_XPRV` (same key as Hub `_rootKey` when
-  aligned). `npm run playnet:deploy-gooncitizen -- --production --accept`
+  `--local-registry` makes this machine’s Hub the playnet registry: Accept only
+  on loopback Hub HTTP, Fabric peers prefer `127.0.0.1:7777` and omit
+  `hub.fabric.pub:7777`. **Short-term:** recapture playnet lead on the local
+  Hub/GoonCitizen desktops (same `FABRIC_XPRV`). **Long-term:** hand management
+  back to `hub.fabric.pub`. Tests assume a Fabric network always exists (local
+  desktop mesh, public playnet, or ephemeral loopback hub in CI).
+  Desktop Hub + GoonCitizen share suite `FABRIC_XPRV` as
+  dominant clients; chaos / noisy-neighbor scripts (`npm run playnet:chaos`,
+  `npm run adversary:chaos`) always use **ephemeral** keys and write crash
+  reports under `reports/` (never mint Accept as the operator).
+  `--accept` tries Hub-issued `FABRIC_HUB_ADMIN_TOKEN` /
+  `~/.fabric/hub-admin-token` first, then mints from operator `FABRIC_XPRV`
+  (same key as Hub `_rootKey` when aligned).
+  `npm run playnet:deploy-gooncitizen -- --production --accept`
   publishes the GoonCitizen application contract to both peers and Accepts it on Hub.
+  Local registry cutover: `npm run playnet:deploy-gooncitizen -- --local-registry --accept`.
 - **Public relays:** operators of `relay.goon.vc` (nvm 24.15 + pm2, Caddy or
   Nginx → loopback HTTP, Peer on the dedicated NIC) read **`docs/PRODUCTION.md`**.
 
@@ -127,6 +140,7 @@ npm run test:browser      # rebuild SPA + Fabric HTTP Sandbox click suite (Chrom
 npm run link:fabric       # repair empty npm 12 `@fabric/{core,http,hub}` dirs (or FABRIC_CORE / FABRIC_HTTP / FABRIC_HUB)
 npm run replay /path/to/Game.log
 npm run discord:events -- fetch   # pull Guild Scheduled Events → discordcatalog (needs bot token)
+npm run discord:events -- graphic --fetch --png --assets  # G00N week infographic (SVG/HTML/PNG)
 npm run probes:publish            # copy reports/probes/*.json → $SC_AGENT_STATIC_ROOT/probes/
 npm run build:desktop     # installers for the current OS
 npm run build:installers  # Windows x64 + Debian x64 + macOS
@@ -138,11 +152,16 @@ npm run publish:builds    # SPA + dist/ installers + APKs → local Files catalo
   (auto-detects `~/Library/Application Support/@rsi/star-citizen/…`). Persists
   into Fabric Store `discordcatalog` as `guild-events:<guildId>` (default G00N
   SQUAD `1190527980120850493`). Subcommands: `fetch`, `list`, `get`,
-  `categorize` (day theme vs timed vs special), `resolve <id>…`. If the
+  `categorize` (day theme vs timed vs special), `resolve <id>…`, `graphic`
+  (1920×1080 SVG/HTML infographic; `--fetch` refreshes from Discord, `--png`
+  screenshots via Chrome, `--assets` copies into `assets/`). If the
   desktop LevelDB is locked, pass `--register stores/gooncitizen/register`.
   Also writes agent probe JSON under `reports/probes/` (and into
   `$SC_AGENT_STATIC_ROOT/probes/` when set — live URL
   `https://relay.goon.vc/probes/` after nginx/Caddy is updated).
+  Re-render the shareable week board:
+  `npm run discord:events -- graphic --fetch --png --assets` (or
+  `--from-json reports/discord-scheduled-events.json`).
 - `npm run probes:publish` — `functions/agentProbeExport.js` /
   `scripts/publish-agent-probes.js`. Copies local probe dumps to the relay
   static document root. Adversary probes (`scripts/adversary-local-probe.js`)
@@ -214,11 +233,11 @@ npm run publish:builds    # SPA + dist/ installers + APKs → local Files catalo
   Hub Bitcoin (Wallet tab / associated funds) is desktop-only. **Profiles** (`GET …/profiles/:id`) accept a
   Fabric pubkey, `discord:<snowflake>`, or future `platform:id`
   (`functions/identityActor.js`); linked Discord ↔ Fabric identities and
-  IdentityCluster devices roll up on one actor page.   **When I
-  play** is a separate opt-in on the operator’s own profile (`sharePlaytimes`,
-  default off): a compact weekday×hour grid (`profile.playtimes`) gossips on
-  Federation `GroupDataShare` — not this machine’s heatmap painted onto someone
-  else’s handle. **Published files** pin to a profile with 📌 (`POST …/files/:id/pin`,
+  IdentityCluster devices roll up on one actor page. **When you fly** is on the
+  operator’s own profile (identity chip → **My profile**): the local weekday×hour
+  heatmap plus a **Publish when I fly** checkbox (`sharePlaytimes`, default off).
+  Publishing gossips a compact grid (`profile.playtimes`) on Federation
+  `GroupDataShare` — not this machine’s heatmap painted onto someone else’s handle. **Published files** pin to a profile with 📌 (`POST …/files/:id/pin`,
   dedicated page `/files/:id`): a compact `profile.files` listing (name / size / price /
   merkle root — not blob bytes) gossips on the same pack envelope so group members see it
   on `GET …/profiles/:id`. A local developer install is the **application publisher**:
@@ -254,7 +273,10 @@ npm run publish:builds    # SPA + dist/ installers + APKs → local Files catalo
   when `fabricMessage.hash` is present). Journal `fabricMessage.hex` is a
   bit-identical AMP frame; collect / restore / replay those frames as a
   `FabricMessageCollection` (`functions/fabricMessageCollection.js`, core
-  helper). `GET …/fabric/messages?format=collection` exports the local peer
+  helper). Durable outbound AMP frames set header `parent` to the previous
+  `Message.id` (D-020); ping/session/peering stay genesis zeros. Collection
+  records expose `id` / `parent`; `merkleRoot` is a Bitcoin-style Tree over
+  sorted frame ids. `GET …/fabric/messages?format=collection` exports the local peer
   ring the same way. Group
   **creators** set channel shortcuts; members pin messages and share fleets. The
   Groups tab also has **Local tags**:
@@ -267,7 +289,11 @@ npm run publish:builds    # SPA + dist/ installers + APKs → local Files catalo
   Default body is base64; hex is still sniffed on paste. Settings → Fabric Network
   can prefer a hex body. Tagged `fabric:base64,…` clips are still accepted.
   **Private** Share copies a clipboard-only Federation join invite (not mesh-flooded);
-  a targeted **Invite** from Members still relays to that pubkey. Join requests,
+  both Share and Invite clips stamp `expiresAt` (default **7 days**; override with
+  `expiresInDays` / `ttlMs` / `expiresAt` on the POST). Expired clips return **410**
+  on Import and on Accept. A targeted **Invite** from Members signs once and relays
+  **those same AMP bytes** as the copied `fabric:` clip; ingest and Accept are
+  gated to `inviteePubkey`. Join requests,
   shares, and invite responses are actionable on `#notifications`. Each group’s
   local Statechain journals applications / decisions / `GroupChange` and
   folds deterministic `GoonCitizenGroupState` (D-016). A header **notification bell** opens the
@@ -559,9 +585,10 @@ Which wire to use is **[`docs/API-SURFACES.md`](docs/API-SURFACES.md)** — not
   `body_01_noMagicPocket` marker), `mission:start` and `mission:end`
   (CompletionType: Complete/Abandon/Fail/Deactivate). Kills are still parsed but
   dormant on the current game (only ≤4.3.0 logged them — §1).
-- **Activity-analytics dashboard** (Analyze tab): KPI strip, activity heatmap,
-  outcome donut, mission-type bars, pilot leaderboard, pilot comparison; **month/
-  year add-remove slicer**; served by `GET …/analytics` from **cumulative**
+- **Activity-analytics dashboard** (Home): KPI strip, outcome donut, mission-type
+  bars, pilot leaderboard, **month/year add-remove slicer**; the **When you fly**
+  heatmap lives on the operator’s own profile (identity chip → My profile) with a
+  publish checkbox. Served by `GET …/analytics` from **cumulative**
   history (plus in-flight active missions). Header counts are all-time by default;
   `counts.session` on `/monitor` is this-process only.
 - **Cumulative log history (D-014):** `functions/cumulativeHistory.js` + startup
@@ -642,11 +669,13 @@ Discord webhook into a tracked file.**
 |-----|------------|
 | `AGENTS.md` (this file) / `CLAUDE.md` | Canonical AI-assistant context (CLAUDE.md imports this). |
 | `DEVELOPERS.md` / `CONTRIBUTING.md` | Call for G00N SQUAD, PERMAFLEET, and other orgs (fork + Fabric mesh). |
+| `docs/APPLICATION.md` | Why LiveRelay is the application basis (artifacts vs Hub / core / blank Peer). |
+| `docs/INTELLIGENCE.md` | Downstream orgs: Groups as the org, `settings/local.js` whitelabel. |
 | `docs/PRODUCTION.md` | Public relay operators (`relay.goon.vc`): nvm 24.15, pm2, Caddy or Nginx, Peer bind. |
 | `@fabric/core` `docs/TYPES_AND_SERVICES.md` | Suite `types/` + `services/` layering (core / http / Hub / Passport / this app). |
 | `CONTINUE.md` | Quick-start — **partially stale** (still describes M1 `app/`); prefer §3. |
 | `PROGRESS.md` | Milestone + retrospective trail (newest first). The live status log. |
-| `DECISIONS.md` | ADRs — the *why* (D-001…D-019; note D-002 amended by D-009/D-010). |
+| `DECISIONS.md` | ADRs — the *why* (D-001…D-020; note D-002 amended by D-009/D-010). |
 | `SOLUTION-BRIEF.md` | Plain-English product brief for org leadership. |
 | `DESIGN-missions-mvp.md` | Technical design for the mission register (M5). |
 | `DESIGN-distributed.md` | Design-only: optional federated/decentralized future (D-004). |
@@ -705,7 +734,7 @@ human product owner (**Neorion**). The rules below are binding for any AI agent.
   not a live connection. One agent writes findings; the other reads on next pull
   and responds in the same doc; the owner records decisions there.
 - Keep the exchange factual and cite files/lines. Don't re-litigate settled
-  decisions — check `DECISIONS.md` (D-001…D-019) and `PROGRESS.md` first.
+  decisions — check `DECISIONS.md` (D-001…D-020) and `PROGRESS.md` first.
 
 **Ground truths — do not "rediscover" or contradict without new evidence:**
 - **D-002** removed the heavyweight Fabric *transport* from the local relay so

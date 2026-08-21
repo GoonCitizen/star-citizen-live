@@ -324,6 +324,7 @@ function entryFromGroupOffer (payload) {
       contractId,
       visibility: (group && group.visibility) || (offer.meta && offer.meta.visibility) || null,
       groupName: (group && group.name) || (offer.meta && offer.meta.name) || null,
+      expiresAt: offer.expiresAt || null,
       offer
     },
     dedupeKey: seed
@@ -387,7 +388,8 @@ function entryFromFederationInvite (invite, source = null) {
       contractId: invite.contractId || null,
       inviteePubkey: invite.inviteePubkey || null,
       groupName,
-      role
+      role,
+      expiresAt: invite.expiresAt || null
     },
     dedupeKey: invite.inviteId
   });

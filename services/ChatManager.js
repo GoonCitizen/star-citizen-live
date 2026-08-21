@@ -61,7 +61,7 @@ function dmChannelKey (a, b) {
     return null;
   }
   if (xa === xb) return null;
-  const [lo, hi] = [xa, xb].sort((p, q) => p.localeCompare(q));
+  const [lo, hi] = [xa, xb].sort();
   return `${DM_PREFIX}${lo}:${hi}`;
 }
 
@@ -177,7 +177,14 @@ class ChatManager extends EventEmitter {
         ? (viewer ? this.groupManager.groupsFor(viewer) : [])
         : this.groupManager.groups;
       for (const g of groups) {
-        channels.push({ key: GROUP_PREFIX + g.id, label: g.name, kind: 'group', groupId: g.id });
+        channels.push({
+          key: GROUP_PREFIX + g.id,
+          label: g.name,
+          kind: 'group',
+          groupId: g.id,
+          members: Array.isArray(g.members) ? g.members.slice() : [],
+          creator: g.creator || null
+        });
       }
     }
     const all = this.store.all('chatmessages');

@@ -112,8 +112,8 @@ describe('GoonCitizen dashboard Sandbox', { timeout: 300000 }, () => {
     if (!requireReady(t)) return;
     assert.ok(await clickTab(sandbox.browser, 'Home'), 'Home tab');
     await sleep(300);
-    assert.ok(await clickTab(sandbox.browser, 'When you fly'), 'When you fly');
-    assert.ok(await waitForBodyText(sandbox.browser, /When you fly|heatmap|no activity/i, 8000));
+    assert.ok(await clickTab(sandbox.browser, 'Missions'), 'Missions');
+    assert.ok(await waitForBodyText(sandbox.browser, /Mission outcomes|By mission type|no activity/i, 8000));
     assert.ok(await clickTab(sandbox.browser, 'Pilots'), 'Pilots');
     await sleep(200);
     assert.ok(await clickTab(sandbox.browser, 'Home'), 'return Home');
@@ -284,7 +284,7 @@ describe('GoonCitizen dashboard Sandbox', { timeout: 300000 }, () => {
     const openedIdentity = await clickByText(sandbox.browser, 'Identity…') ||
       await clickByText(sandbox.browser, 'Identity');
     if (!openedIdentity) t.skip('Identity flyout action missing');
-    assert.ok(await waitForBodyText(sandbox.browser, /Pin files to this profile|Share when I play/, 8000));
+    assert.ok(await waitForBodyText(sandbox.browser, /Pin files to this profile|When you fly lives on/, 8000));
     await closeOverlays(sandbox.browser);
   });
 
@@ -322,7 +322,7 @@ describe('GoonCitizen dashboard Sandbox', { timeout: 300000 }, () => {
 
     await clickTab(sandbox.browser, 'Home', '.header-nav button.tab');
     await sleep(200);
-    for (const label of ['When you fly', 'Missions', 'Quantum', 'Pilots', 'Activity Tree', 'Parser rules']) {
+    for (const label of ['Missions', 'Quantum', 'Pilots', 'Activity Tree', 'Parser rules']) {
       const hit = await clickTab(sandbox.browser, label, '.home-views button.tab');
       if (!hit) continue;
       await capture('Home/' + label);
@@ -439,9 +439,17 @@ describe('GoonCitizen dashboard Sandbox', { timeout: 300000 }, () => {
     if (filters) {
       await sleep(200);
       const text = await bodyText(sandbox.browser);
-      assert.match(text, /Filters|period|log files|My logs|When you fly/i);
+      assert.match(text, /Filters|period|log files|My logs/i);
     }
-    assert.ok(await clickByText(sandbox.browser, 'My logs…'), 'My logs');
+    assert.ok(await clickByText(sandbox.browser, 'All logs'), 'All logs');
+    assert.ok(await clickByText(sandbox.browser, 'My logs'), 'My logs filter');
+    const logsCog = await sandbox.browser.evaluate(() => {
+      const el = document.querySelector('.home-tools button.home-logs-gear');
+      if (!el) return false;
+      el.click();
+      return true;
+    });
+    assert.ok(logsCog, 'logs cog');
     assert.ok(await waitForBodyText(sandbox.browser, /My logs|Import logs|Browse files/, 8000));
     assert.ok(await clickByText(sandbox.browser, 'Close'), 'close My logs');
     await sleep(200);
@@ -641,7 +649,7 @@ describe('GoonCitizen dashboard Sandbox', { timeout: 300000 }, () => {
     }
   });
 
-  it('toggles Share when I play and starts Add a device', async (t) => {
+  it('opens My profile When you fly and starts Add a device', async (t) => {
     if (!requireReady(t)) return;
     await closeOverlays(sandbox.browser);
     await gotoReady(sandbox.browser, ctx.origin + '/');
@@ -657,16 +665,6 @@ describe('GoonCitizen dashboard Sandbox', { timeout: 300000 }, () => {
     const openedIdentity = await clickByText(sandbox.browser, 'Identity…') ||
       await clickByText(sandbox.browser, 'Identity');
     if (!openedIdentity) t.skip('Identity flyout action missing');
-    assert.ok(await waitForBodyText(sandbox.browser, 'Share when I play', 8000));
-    const toggled = await sandbox.browser.evaluate(() => {
-      const labels = Array.from(document.querySelectorAll('label'));
-      const row = labels.find((el) => /Share when I play/i.test(el.textContent || ''));
-      if (!row) return false;
-      const input = row.querySelector('input[type="checkbox"]') || row;
-      input.click();
-      return true;
-    });
-    assert.ok(toggled, 'share playtimes');
     await sleep(200);
     const addDevice = await sandbox.browser.evaluate(() => {
       const btn = Array.from(document.querySelectorAll('button'))
@@ -676,6 +674,26 @@ describe('GoonCitizen dashboard Sandbox', { timeout: 300000 }, () => {
     });
     assert.ok(addDevice.found, 'Add a device control');
     await closeOverlays(sandbox.browser);
+    const reopenedChip = await sandbox.browser.evaluate(() => {
+      const chip = document.querySelector('button.idchip, button.pill.idchip');
+      if (!chip) return false;
+      chip.click();
+      return true;
+    });
+    if (!reopenedChip) t.skip('identity chip not rendered');
+    await sleep(200);
+    const openedProfile = await clickByText(sandbox.browser, 'My profile');
+    if (!openedProfile) t.skip('My profile flyout action missing');
+    assert.ok(await waitForBodyText(sandbox.browser, /When you fly/, 8000));
+    const toggled = await sandbox.browser.evaluate(() => {
+      const labels = Array.from(document.querySelectorAll('label'));
+      const row = labels.find((el) => /Publish when I fly/i.test(el.textContent || ''));
+      if (!row) return false;
+      const input = row.querySelector('input[type="checkbox"]') || row;
+      input.click();
+      return true;
+    });
+    assert.ok(toggled, 'publish when I fly');
   });
 
   it('opens Settings Discord and Snapshots sections', async (t) => {

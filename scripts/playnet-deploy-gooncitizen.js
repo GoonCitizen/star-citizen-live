@@ -31,10 +31,14 @@ const {
   loadPeerKeySettings,
   listAcceptAdminTokenCandidates,
   classifyPlaynetPosture,
+  planLocalHubRegistryTakeover,
+  assertLocalRegistryTakeoverSafe,
   preflightOperatorAlignment,
   acceptTrackedWithTokenCascade,
   hubRpcBase,
   productionPlaynetTarget,
+  LOCAL_HUB_HTTP_DEFAULT,
+  LOCAL_HUB_PEER_DEFAULT,
   hubRpc,
   playnetPeers,
   waitForPeerConnections
@@ -55,6 +59,8 @@ function printHelp () {
   --hub <url>        Hub HTTP base (default FABRIC_HUB_RPC_URL / http://127.0.0.1:8080)
   --production       Target https://hub.fabric.pub and hub.fabric.pub:7777,relay.goon.vc:7777
                      Local machine uses the same FABRIC_XPRV config as Hub (operator publish).
+  --local-registry   Local Hub takes over as playnet registry: Accept only on loopback
+                     Hub HTTP; Fabric peers prefer 127.0.0.1:7777 and omit hub.fabric.pub.
   --hold-ms <n>      Keep peer up after publish (default 4000)
   --check-only       Skip publish; only print contract id + ListTracked status
   --adversary        Mark posture adversarial (does not change targets; for probes/CI)
@@ -107,6 +113,8 @@ async function main () {
 
   let doAccept = false;
   let checkOnly = false;
+  let localRegistry = process.env.FABRIC_PLAYNET_LOCAL_REGISTRY === '1' ||
+    process.env.FABRIC_PLAYNET_LOCAL_REGISTRY === 'true';
   let production = process.env.FABRIC_PLAYNET_PRODUCTION === '1' ||
     process.env.FABRIC_PLAYNET_PRODUCTION === 'true';
   let hubUrl = hubRpcBase();
@@ -118,6 +126,7 @@ async function main () {
     if (a === '--accept') doAccept = true;
     else if (a === '--check-only') checkOnly = true;
     else if (a === '--production') production = true;
+    else if (a === '--local-registry') localRegistry = true;
     else if (a === '--adversary') { /* classified via classifyPlaynetPosture(argv) */ }
     else if (a === '--hub') hubUrl = String(argv[++i] || '').replace(/\/$/, '');
     else if (a === '--hold-ms') holdMs = Number(argv[++i] || holdMs);
@@ -129,7 +138,25 @@ async function main () {
     }
   }
 
-  if (production) {
+  let registryPlan = null;
+  if (localRegistry) {
+    registryPlan = planLocalHubRegistryTakeover({
+      argv,
+      hubUrl: (hubUrl && hubUrl !== hubRpcBase()) ? hubUrl : LOCAL_HUB_HTTP_DEFAULT,
+      localPeer: LOCAL_HUB_PEER_DEFAULT,
+      includeRelay: true,
+      extraPeers: positional
+    });
+    assertLocalRegistryTakeoverSafe(registryPlan);
+    hubUrl = registryPlan.registryHubUrl;
+    if (!positional.length) positional.push(...registryPlan.fabricPeers);
+    console.log('[playnet:deploy] local-registry takeover', {
+      hub: registryPlan.registryHubUrl,
+      peers: registryPlan.fabricPeers,
+      acceptAllowed: registryPlan.accept.allowed,
+      steps: registryPlan.steps.length
+    });
+  } else if (production) {
     const prod = productionPlaynetTarget();
     if (!process.env.FABRIC_HUB_RPC_URL && !process.env.FABRIC_HUB_URL &&
         hubUrl === hubRpcBase()) {
@@ -159,6 +186,9 @@ async function main () {
   }
   if (posture.treatAsAdversary && !posture.treatAsOperatorPublish) {
     throw new Error('Refusing deploy in adversary posture. Drop --adversary / ADV_PRODUCTION, or use scripts/adversary-local-probe.js');
+  }
+  if (localRegistry && registryPlan) {
+    assertLocalRegistryTakeoverSafe(Object.assign({}, registryPlan, { posture }));
   }
 
   const gc = loadContract();

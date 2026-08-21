@@ -131,7 +131,7 @@ class GroupBitcoinPanel extends React.Component {
           )
         )
         : React.createElement('p', { className: 'gbp-hint' },
-          gw.note || 'No Taproot address yet — group needs signer keys.'),
+          gw.note || 'No Taproot address yet — group needs signer keys. This address is the org treasury on this node, not Hub.'),
 
       bitcoinOn && gw.address
         ? (history.length
@@ -155,7 +155,7 @@ class GroupBitcoinPanel extends React.Component {
             )
           )
           : React.createElement('p', { className: 'gbp-hint' },
-            'No UTXOs yet — send to the receive address above.'))
+            'No UTXOs yet — send to the receive address above. Coins stay on this Group Taproot, not in a Hub wallet.'))
         : (!bitcoinOn
           ? React.createElement('p', { className: 'gbp-hint' },
             'Enable settings.bitcoin.enable to show on-chain balance and receive history.')

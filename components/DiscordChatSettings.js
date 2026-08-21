@@ -1,9 +1,8 @@
 'use strict';
 
 /**
- * Discord bot controls page — opened from the Chat tab settings cog.
- * Enumerates guilds and channels from the live `@fabric/discord` bot, plus
- * accumulated catalog/messages that survive Discord outages.
+ * Chat settings page — opened from the Chat tab ⚙.
+ * Voice (PTT bind) plus Discord bot guilds/channels when the bot UI is available.
  */
 
 const React = require('react');
@@ -21,6 +20,9 @@ const {
   setChannelDirection
 } = require('../functions/discordChatDirection');
 const { discordChannelIndicators } = require('../functions/discordChannelAccess');
+const { botPermissionNotice, discordBotAuthorizeUrl } = require('../functions/discordBotAuthorize');
+const groupVoiceSettings = require('../functions/groupVoiceSettings');
+const VoiceSettingsPanel = require('./VoiceSettingsPanel');
 
 const BASE = '/services/star-citizen';
 
@@ -44,6 +46,7 @@ const CSS = `
   .dc-body{flex:1 1 auto;min-height:0;overflow:hidden;padding:12px 16px;display:flex;flex-direction:column;gap:12px}
   .dc-banner{font-size:12.5px;line-height:1.55;color:var(--muted);padding:10px 12px;border-radius:8px;
     background:var(--panel2);border:1px solid var(--line)}
+  .dc-banner a{color:#5865F2;font-weight:650}
   .dc-banner.warn{color:var(--kill);background:rgba(248,81,73,.08);border-color:rgba(248,81,73,.25)}
   .dc-banner.ok{color:var(--good);background:rgba(63,185,80,.08);border-color:rgba(63,185,80,.25)}
   .dc-filter{display:flex;gap:8px;align-items:center;flex:0 0 auto;
@@ -90,6 +93,9 @@ const CSS = `
   .dc-ch .tag.muted{background:rgba(110,118,129,.15);color:var(--muted)}
   .dc-ch .tag.block{background:rgba(248,81,73,.12);color:var(--kill)}
   .dc-ch .tag.warn{background:rgba(247,147,26,.16);color:#f7931a}
+  .dc-auth-link{color:#5865F2;font-weight:650;text-decoration:underline}
+  .dc-ch .dc-auth-link{font-size:10px;font-weight:700;padding:1px 6px;border-radius:4px;
+    background:rgba(88,101,242,.12);text-decoration:none;flex:none}
   .dc-ch-row .dir-btns{display:flex;gap:4px;flex:none}
   .dc-ch-row .dir-btn{font-size:10px;font-weight:700;padding:2px 7px;border-radius:4px;cursor:pointer;
     border:1px solid var(--line);background:var(--bg);color:var(--muted);line-height:1.2}
@@ -140,7 +146,7 @@ const CSS = `
   .dc-net-edge button{background:none;border:none;color:var(--accent);cursor:pointer;padding:0;font:inherit;font-weight:600}
   .dc-net-edge .share{color:var(--muted);font-size:11.5px;line-height:1.45;flex:1 1 100%}
   .dc-empty{color:var(--muted);font-size:12px;padding:10px 12px;line-height:1.5}
-`;
+` + (VoiceSettingsPanel.CSS || '');
 
 function channelIcon (ch) {
   if (!ch) return '#';
@@ -172,12 +178,15 @@ class DiscordChatSettings extends React.Component {
       hideBots: true,
       minShared: 1,
       discordChatDirections: normalizeDirections(props.discordChatDirections) || {},
-      busyDirectionId: null
+      busyDirectionId: null,
+      voice: groupVoiceSettings.defaultVoiceSettings(),
+      voiceBusy: false
     };
   }
 
   componentDidMount () {
     this.load();
+    this.loadVoice();
   }
 
   componentDidUpdate (prevProps) {
@@ -242,6 +251,37 @@ class DiscordChatSettings extends React.Component {
     }
   }
 
+  async loadVoice () {
+    try {
+      const res = await fetch('/settings', { headers: { Accept: 'application/json' } });
+      const body = await res.json().catch(() => ({}));
+      const raw = body && body.settings && body.settings.voice;
+      this.setState({ voice: groupVoiceSettings.sanitizeVoiceSettings(raw) });
+    } catch (_) { /* ignore */ }
+  }
+
+  async putVoice (patch) {
+    const next = groupVoiceSettings.sanitizeVoiceSettings(Object.assign({}, this.state.voice, patch));
+    this.setState({ voice: next, voiceBusy: true, error: null });
+    groupVoiceSettings.applyElectronPttBind(next);
+    try {
+      const res = await fetch('/settings/voice', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+        body: JSON.stringify({ value: next })
+      });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error((body && body.error) || ('HTTP ' + res.status));
+      this.setState({ voiceBusy: false });
+    } catch (err) {
+      this.setState({ voiceBusy: false, error: err.message });
+    }
+  }
+
+  showDiscordTabs () {
+    return this.props.showDiscord !== false;
+  }
+
   async setChatDirection (channel, direction) {
     if (!channel || !channel.id) return;
     const id = String(channel.id);
@@ -279,7 +319,7 @@ class DiscordChatSettings extends React.Component {
     }
   }
 
-  renderChannelPermTags (ch) {
+  renderChannelPermTags (ch, guild) {
     if (!ch || !ch.canAnnounce) return null;
     const listenOnly = directionForChannel(ch.id, {
       discordChatDirections: this.state.discordChatDirections
@@ -294,12 +334,29 @@ class DiscordChatSettings extends React.Component {
       discordOnly: true,
       isDm: false
     });
-    if (!indicators.length) return null;
-    return indicators.map((ind) => React.createElement('span', {
-      key: ind.id,
-      className: 'tag ' + (ind.tone === 'block' ? 'block' : 'warn'),
-      title: ind.title
-    }, ind.label));
+    const notice = botPermissionNotice({
+      bot: ch.bot || null,
+      appId: catalog.appId || null,
+      guildId: guild && guild.id
+    });
+    if (!indicators.length && !(notice && notice.url)) return null;
+    return React.createElement(React.Fragment, null,
+      indicators.map((ind) => React.createElement('span', {
+        key: ind.id,
+        className: 'tag ' + (ind.tone === 'block' ? 'block' : 'warn'),
+        title: ind.title
+      }, ind.label)),
+      notice && notice.url
+        ? React.createElement('a', {
+          className: 'dc-auth-link',
+          href: notice.url,
+          target: '_blank',
+          rel: 'noopener noreferrer',
+          title: notice.text,
+          onClick: (e) => e.stopPropagation()
+        }, notice.linkLabel)
+        : null
+    );
   }
 
   renderDirectionControls (ch) {
@@ -563,7 +620,21 @@ class DiscordChatSettings extends React.Component {
         ' accumulated before the outage (and from group data shares). Enable a bot token under Settings ⚙ → Discord bot to refresh from Discord.');
     }
     return React.createElement('div', { className: 'dc-banner warn' },
-      'Discord bot is not ready. Enable integration and save a bot token under Settings ⚙ → Discord bot, then invite the bot to your server. Group members who run a bot can share data packs over Fabric so this node can still build a world view.');
+      'Discord bot is not ready. Enable integration and save a bot token under Settings ⚙ → Discord bot, then ',
+      (() => {
+        const url = discordBotAuthorizeUrl({ appId: cat.appId });
+        return url
+          ? React.createElement(React.Fragment, null,
+            React.createElement('a', {
+              className: 'dc-auth-link',
+              href: url,
+              target: '_blank',
+              rel: 'noopener noreferrer'
+            }, 'authorize the bot in Discord'),
+            '.')
+          : 'invite the bot to your server.';
+      })(),
+      ' Group members who run a bot can share data packs over Fabric so this node can still build a world view.');
   }
 
   renderGuild (guild) {
@@ -632,7 +703,7 @@ class DiscordChatSettings extends React.Component {
             ? React.createElement('span', { className: 'tag muted', title: ch.lastMessageAt || '' },
               String(ch.messageCount) + ' msg')
             : null,
-          this.renderChannelPermTags(ch),
+          this.renderChannelPermTags(ch, guild),
           this.state.busyChannel === ch.id
             ? React.createElement('span', { className: 'tag muted' }, '…')
             : null
@@ -858,15 +929,26 @@ class DiscordChatSettings extends React.Component {
     );
   }
 
+  renderVoice () {
+    return React.createElement(VoiceSettingsPanel, {
+      voice: this.state.voice,
+      disabled: this.state.voiceBusy,
+      onChange: (patch) => this.putVoice(patch)
+    });
+  }
+
   render () {
     const cat = this.state.catalog;
     const guilds = cat && Array.isArray(cat.guilds) ? cat.guilds : [];
-    const view = this.state.view === 'network' ? 'network' : 'servers';
+    const showDiscord = this.showDiscordTabs();
+    let view = this.state.view;
+    if (view !== 'voice' && view !== 'network' && view !== 'servers') view = 'servers';
+    if (!showDiscord) view = 'voice';
 
     return React.createElement('div', { className: 'dc-page' },
       React.createElement('div', { className: 'dc-toolbar' },
-        React.createElement('div', { className: 'ttl' }, 'Discord bot'),
-        cat && (cat.botReady || guilds.length)
+        React.createElement('div', { className: 'ttl' }, view === 'voice' ? 'Voice' : 'Discord bot'),
+        view !== 'voice' && cat && (cat.botReady || guilds.length)
           ? React.createElement('span', { className: 'meta' },
             React.createElement('b', null, guilds.length),
             ` guild${guilds.length === 1 ? '' : 's'}`,
@@ -893,12 +975,14 @@ class DiscordChatSettings extends React.Component {
               }())
               : null)
           : null,
-        React.createElement('button', {
-          type: 'button',
-          className: 'dc-btn',
-          disabled: this.state.loading || this.state.refreshing,
-          onClick: () => this.refresh()
-        }, this.state.refreshing || this.state.loading ? 'Refreshing…' : 'Refresh'),
+        view === 'voice'
+          ? null
+          : React.createElement('button', {
+            type: 'button',
+            className: 'dc-btn',
+            disabled: this.state.loading || this.state.refreshing,
+            onClick: () => this.refresh()
+          }, this.state.refreshing || this.state.loading ? 'Refreshing…' : 'Refresh'),
         typeof this.props.onClose === 'function'
           ? React.createElement('button', {
             type: 'button',
@@ -911,25 +995,43 @@ class DiscordChatSettings extends React.Component {
         React.createElement('button', {
           type: 'button',
           role: 'tab',
-          className: 'dc-tab' + (view === 'servers' ? ' on' : ''),
-          'aria-selected': view === 'servers',
-          onClick: () => this.setState({ view: 'servers' })
-        }, 'Servers'),
-        React.createElement('button', {
-          type: 'button',
-          role: 'tab',
-          className: 'dc-tab' + (view === 'network' ? ' on' : ''),
-          'aria-selected': view === 'network',
-          onClick: () => this.setState({ view: 'network' })
-        }, 'Network')
+          className: 'dc-tab' + (view === 'voice' ? ' on' : ''),
+          'aria-selected': view === 'voice',
+          onClick: () => this.setState({ view: 'voice' })
+        }, 'Voice'),
+        showDiscord
+          ? React.createElement('button', {
+            type: 'button',
+            role: 'tab',
+            className: 'dc-tab' + (view === 'servers' ? ' on' : ''),
+            'aria-selected': view === 'servers',
+            onClick: () => this.setState({ view: 'servers' })
+          }, 'Servers')
+          : null,
+        showDiscord
+          ? React.createElement('button', {
+            type: 'button',
+            role: 'tab',
+            className: 'dc-tab' + (view === 'network' ? ' on' : ''),
+            'aria-selected': view === 'network',
+            onClick: () => this.setState({ view: 'network' })
+          }, 'Network')
+          : null
       ),
       React.createElement('div', { className: 'dc-body' },
         this.state.error ? React.createElement('div', { className: 'dc-err' }, this.state.error) : null,
         this.state.notice ? React.createElement('div', { className: 'dc-banner ok' }, this.state.notice) : null,
-        this.state.loading && !cat
-          ? React.createElement('div', { className: 'dc-empty' }, 'Loading Discord guilds…')
+        view === 'voice'
+          ? this.renderVoice()
           : null,
-        view === 'network'
+        view === 'voice'
+          ? null
+          : (this.state.loading && !cat
+            ? React.createElement('div', { className: 'dc-empty' }, 'Loading Discord guilds…')
+            : null),
+        view === 'voice'
+          ? null
+          : (view === 'network'
           ? React.createElement('div', { className: 'dc-guild-list' }, this.renderNetwork())
           : React.createElement(React.Fragment, null,
             this.renderBanner(),
@@ -945,7 +1047,20 @@ class DiscordChatSettings extends React.Component {
                 this.renderServerFilter(filtered.length, channelCount),
                 !this.state.loading && allGuilds.length === 0 && cat && cat.botReady
                   ? React.createElement('div', { className: 'dc-empty' },
-                    'Bot is ready but not in any guilds yet — invite it from the Discord Developer Portal.')
+                    'Bot is ready but not in any guilds yet — ',
+                    (() => {
+                      const url = discordBotAuthorizeUrl({ appId: cat.appId });
+                      return url
+                        ? React.createElement(React.Fragment, null,
+                          React.createElement('a', {
+                            className: 'dc-auth-link',
+                            href: url,
+                            target: '_blank',
+                            rel: 'noopener noreferrer'
+                          }, 'authorize it in Discord'),
+                          '.')
+                        : 'invite it from the Discord Developer Portal.';
+                    })())
                   : null,
                 !this.state.loading && allGuilds.length > 0 && filtered.length === 0
                   ? React.createElement('div', { className: 'dc-empty' },
@@ -962,7 +1077,7 @@ class DiscordChatSettings extends React.Component {
                 )
               );
             })()
-          )
+          ))
       )
     );
   }

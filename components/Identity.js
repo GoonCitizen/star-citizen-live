@@ -22,7 +22,6 @@
  */
 
 const React = require('react');
-const ActivityHeatmap = require('./ActivityHeatmap');
 const ShipPicker = require('./ShipPicker');
 const LocationPicker = require('./LocationPicker');
 const BitcoinWalletPanel = require('./BitcoinWalletPanel');
@@ -131,7 +130,6 @@ class Identity extends React.Component {
       bio: '',
       scHandle: '',
       nicknameBusy: false,
-      sharePlaytimes: false,
       // opt-in PeerPresence
       sharePresence: false,
       presenceVisibility: 'private',
@@ -198,8 +196,6 @@ class Identity extends React.Component {
         nickname: (res.settings && res.settings.nickname) || '',
         bio: profile.bio || '',
         scHandle: profile.scHandle || '',
-        sharePlaytimes: (res.settings && res.settings.sharePlaytimes === true) ||
-          (res.runtime && res.runtime.sharePlaytimes === true),
         linkedDevices: Array.isArray(res.settings && res.settings.linkedDevices)
           ? res.settings.linkedDevices
           : []
@@ -257,28 +253,6 @@ class Identity extends React.Component {
       this.setState({ groups });
       if (presenceRes && presenceRes.ok && presenceRes.data) this.applyPresenceData(presenceRes.data);
     } catch (_) { /* ignore */ }
-  }
-
-  async putSharePlaytimes (on) {
-    const prev = this.state.sharePlaytimes;
-    this.setState({ sharePlaytimes: on === true, nicknameBusy: true, error: null, notice: null });
-    try {
-      const res = await fetch('/settings/sharePlaytimes', {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ value: on === true })
-      });
-      const j = await res.json();
-      if (!res.ok) throw new Error(j.error || res.statusText);
-      this.setState({
-        nicknameBusy: false,
-        sharePlaytimes: !!(j.settings && j.settings.sharePlaytimes) ||
-          !!(j.runtime && j.runtime.sharePlaytimes) || on === true,
-        notice: on ? 'When-I-play pack enabled for Federation groups you belong to.' : 'When-I-play pack kept local.'
-      });
-    } catch (e) {
-      this.setState({ nicknameBusy: false, sharePlaytimes: prev, error: e.message });
-    }
   }
 
   async putPresence (patch) {
@@ -972,29 +946,16 @@ class Identity extends React.Component {
 
   renderProfileActivity () {
     if (!androidSurface('heatmap')) return null;
+    const pk = this.state.info && this.state.info.pubkey;
     return React.createElement('div', { style: { marginTop: 12 } },
-      React.createElement(ActivityHeatmap, {
-        title: 'When you play',
-        subtitle: 'Local cumulative heatmap (this machine’s logs). Sharing publishes only a weekday × hour grid to Federation groups — not missions or sessions.',
-        analytics: this.props.analytics || null
-      }),
-      React.createElement('label', {
-        style: { display: 'flex', gap: 8, alignItems: 'flex-start', fontSize: 13, cursor: 'pointer', marginTop: 10 }
-      },
-      React.createElement('input', {
-        type: 'checkbox',
-        checked: this.state.sharePlaytimes === true,
-        disabled: this.state.nicknameBusy,
-        onChange: (e) => this.putSharePlaytimes(e.target.checked),
-        style: { marginTop: 3 }
-      }),
-      React.createElement('span', null,
-        'Share when I play with Federation groups I belong to',
-        React.createElement('div', { className: 'd', style: { marginTop: 4, marginBottom: 0 } },
-          'Off by default. Group members see common play times as a data pack on this profile — not your full activity tree.')
-      )),
+      pk
+        ? React.createElement('div', { className: 'd' },
+          'When you fly lives on ',
+          React.createElement('a', { href: '/profiles/' + encodeURIComponent(pk) }, 'your profile'),
+          ' (identity chip → My profile). Publish a weekday × hour grid to Federation groups from there.')
+        : null,
       React.createElement('div', { className: 'd', style: { marginTop: 12, marginBottom: 0 } },
-        'Pin files to this profile with 📌 on each file page. A local developer install uses the same pin to list GoonCitizen builds for Federation groups — names, sizes, and prices, not the bytes.')
+        'Pin files to this profile with 📌 on each file page. Installers pinned here are how other org leaders run this desktop from your identity — names, sizes, and prices, not the bytes.')
     );
   }
 
