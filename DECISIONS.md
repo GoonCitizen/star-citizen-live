@@ -165,8 +165,11 @@ semantics
    `SCEventBatch`) when log sharing is authorized (D-017: `shareLogsGlobal`
    or per-peer `shareLogs`).
 2. **relay.goon.vc** (`goon.vc` Hub) folds ingest into durable cumulative
-   history, then applies a trusted sidechain patch via
-   `Hub._applySidechainPatchesTrusted` (path policy allows `/services/rsi`).
+   history, then submits a **signed** sidechain patch (`SubmitSidechainStatePatch`
+   with `federationWitness`, or `SIDECHAIN_STATE_PATCH` on the Fabric mesh) —
+   path policy allows `/services/rsi`. Trusted internal apply
+   (`Hub._applySidechainPatchesTrusted`) is **not** used; enable only via
+   `FABRIC_SIDECHAIN_TRUSTED_PATCH=1` for regtest/playnet experiments.
 3. **Beacon** already embeds `payload.sidechain { clock, stateDigest }` and
    writes per-epoch snapshots — no parallel “game chain”; GoonCitizen rides the
    Hub sidechain.

@@ -844,6 +844,10 @@ class FabricNetwork extends EventEmitter {
         this.emit('eventBatch', { object, source, meta });
         this._forward('onEventBatch', object, source, meta);
       },
+      onGameStateSnapshot: (object, source, meta) => {
+        this.emit('gameStateSnapshot', { object, source, meta });
+        this._forward('onGameStateSnapshot', object, source, meta);
+      },
       onChat: (msg, source, meta) => {
         this.emit('chat', { msg, source, meta });
         this._forward('onChat', msg, source, meta);

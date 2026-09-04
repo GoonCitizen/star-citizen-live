@@ -48,7 +48,52 @@ const {
   androidDashboardTabVisible
 } = require('../functions/androidSurface');
 const { offerPassportDeviceLink } = require('../functions/fabricDeviceLinkOffer');
+const { canonicalChatAuthor } = require('../functions/identity');
 const featureEnabled = (key) => FEATURES[key] !== false;
+
+/** Same `/profiles/:id` key chat uses (x-only Fabric author). */
+function selfProfileHref (pubkey) {
+  const pk = String(pubkey || '').trim();
+  if (!pk) return null;
+  try {
+    const key = canonicalChatAuthor(pk) || pk;
+    return '/profiles/' + encodeURIComponent(key);
+  } catch (_) {
+    return '/profiles/' + encodeURIComponent(pk);
+  }
+}
+
+/**
+ * Mesh / chat identity for the social profile page.
+ * Prefer the LiveRelay publishing key (settings.runtime.identity / GET /profile)
+ * over the unlocked wallet chip — desktop often runs FABRIC_XPRV as publisher
+ * while Identity… unlocks a different local key. Chat authors are the publisher.
+ */
+async function resolveMeshProfilePubkey (preferred) {
+  const tryPk = (v) => {
+    const s = String(v || '').trim();
+    return s || null;
+  };
+  let pk = tryPk(preferred);
+  if (pk) return pk;
+  try {
+    const res = await fetch('/profile');
+    if (res.ok) {
+      const j = await res.json();
+      pk = tryPk(j && j.data && j.data.pubkey);
+      if (pk) return pk;
+    }
+  } catch (_) { /* ignore */ }
+  try {
+    const res = await fetch('/settings');
+    if (res.ok) {
+      const j = await res.json();
+      pk = tryPk(j && j.runtime && j.runtime.identity);
+      if (pk) return pk;
+    }
+  } catch (_) { /* ignore */ }
+  return null;
+}
 
 /** Cumulative Analyze payload — never treat a 401 `{ error }` body as history. */
 function isCumulativeAnalytics (j) {
@@ -142,6 +187,7 @@ const HOME_ADVANCED_VIEWS = [
 const ADVANCED_MODE_KEY = 'gooncitizen.advancedMode';
 const FEED_SOURCES_KEY = 'gooncitizen.feedSources';
 const HOME_LOG_SCOPE_KEY = 'gooncitizen.homeLogScope';
+const SHARE_LOGS_CONFIRM = 'Share parsed Game.log activity with every connected Fabric peer?\n\nThis node always keeps a full local copy for analysis. Peers who also share will send you theirs — All logs includes that intel.';
 
 function readAdvancedMode () {
   try {
@@ -409,6 +455,13 @@ const CSS = `
   .home-tools .btn.on,.live-bar .btn.on{border-color:var(--accent);color:var(--accent)}
   .home-tools .gear.on{border-color:var(--accent);color:var(--accent);background:rgba(59,130,246,.14)}
   .home-tools .sub{margin-left:auto}
+  .home-share{display:flex;flex-wrap:wrap;align-items:center;gap:10px;padding:10px 14px;border-top:1px solid var(--line);font-size:12.5px;line-height:1.45}
+  .home-share.off{background:rgba(210,153,34,.1)}
+  .home-share.on{background:rgba(63,185,80,.1)}
+  .home-share .home-share-copy{flex:1;min-width:16em}
+  .home-share .home-share-copy .sub{display:block;margin-top:2px;margin-left:0}
+  .home-share .btn.share-on{border-color:var(--good);color:var(--good)}
+  .home-share .btn.share-off{border-color:#d29922;color:#d29922}
   .home-views{display:flex;flex-wrap:wrap;gap:6px;padding:0 14px 12px;align-items:center}
   .home-flyover{border-top:1px solid var(--line)}
   .gc-modal-backdrop{position:fixed;inset:0;z-index:10040;background:rgba(0,0,0,.55);
@@ -601,6 +654,8 @@ class Dashboard extends React.Component {
       azOutcomes: null,
       azFactions: null,
       identityPubkey: null,
+      /** LiveRelay publishing pubkey (chat author / social profile). May differ from identityPubkey. */
+      meshPubkey: null,
       identityLocked: false,
       identityExists: false,
       bitcoinEnable: isAndroidCompanion() ? false : null, // null until /settings; then runtime.bitcoin.enable
@@ -644,6 +699,9 @@ class Dashboard extends React.Component {
       homeView: null,          // exclusive activity tab: charts|quantum|pilots|tree|rules
       homeFiltersOpen: false,  // flyover toggle
       azLogScope: readHomeLogScope(), // 'all' (default) | 'mine'
+      shareLogsGlobal: false,
+      shareLogsActive: false,
+      shareLogsBusy: false,
       showMyLogs: false,       // corpus + import modal (home logs cog)
       azGroups: [],
       azPublishGroupId: '',
@@ -764,10 +822,14 @@ class Dashboard extends React.Component {
       const primaryColor = (res.runtime && res.runtime.primaryGroupColor) || null;
       this.setState({
         nickname: (res.settings && res.settings.nickname) || null,
+        meshPubkey: (res.runtime && res.runtime.identity) || this.state.meshPubkey || null,
         bitcoinEnable: bitcoin ? bitcoin.enable === true : null,
         documentsEnable: documents ? documents.enable === true : null,
         documentsRuntime: documents,
-        primaryGroupColor: primaryColor
+        primaryGroupColor: primaryColor,
+        shareLogsGlobal: (res.runtime && res.runtime.shareLogsGlobal) === true
+          || (res.settings && res.settings.shareLogsGlobal) === true,
+        shareLogsActive: (res.runtime && res.runtime.shareLogsActive) === true
       });
       this.applyPrimaryGroupTheme(primaryColor);
     } catch (_) { /* ignore */ }
@@ -932,6 +994,17 @@ class Dashboard extends React.Component {
       typeof window.electronAPI.setGroupOverlay === 'function';
   }
 
+  async ensureGroupOverlayOpen () {
+    if (!this.canToggleOverlay()) return;
+    if (this.state.groupOverlay) return;
+    this.setState({ groupOverlay: true });
+    try {
+      await window.electronAPI.setGroupOverlay(true);
+    } catch (_) {
+      this.setState({ groupOverlay: false });
+    }
+  }
+
   async toggleGroupOverlay () {
     if (!this.canToggleOverlay()) return;
     const next = !this.state.groupOverlay;
@@ -1030,16 +1103,19 @@ class Dashboard extends React.Component {
       React.createElement('button', {
         type: 'button',
         className: 'btn',
-        disabled: !pk,
-        title: pk ? 'Open your profile page' : 'Unlock identity first',
-        onClick: () => {
-          if (!pk) return;
+        disabled: !pk && !this.state.meshPubkey,
+        title: (pk || this.state.meshPubkey)
+          ? 'Open your mesh profile (same page as clicking yourself in chat)'
+          : 'Unlock identity first',
+        onClick: async () => {
           this.setState({ showIdFlyout: false });
           if (this.preferAccountPages()) {
             this.openAccount('privacy');
             return;
           }
-          window.location.href = '/profiles/' + encodeURIComponent(pk);
+          const meshPk = await resolveMeshProfilePubkey(this.state.meshPubkey || pk);
+          const href = selfProfileHref(meshPk);
+          if (href) window.location.href = href;
         }
       }, this.preferAccountPages() ? 'Profile & privacy' : 'My profile'),
       React.createElement('button', {
@@ -1088,6 +1164,8 @@ class Dashboard extends React.Component {
         status: d.status,
         online: d.status === 'STARTED' || d.status === 'STARTING',
         counts: d.counts || this.state.counts,
+        shareLogsGlobal: d.sharing ? d.sharing.logs === true : this.state.shareLogsGlobal,
+        shareLogsActive: d.sharing ? d.sharing.logsActive === true : this.state.shareLogsActive,
         missionStats: d.missionStats || {},
         sessions: d.sessions || [],
         channel: d.channel,
@@ -1185,6 +1263,8 @@ class Dashboard extends React.Component {
           });
           return;
         }
+        this._analyzeModel = null;
+        this._analyzeModelKey = null;
         this.setState({
           analytics: j,
           corpus: j.corpus || this.state.corpus,
@@ -1476,6 +1556,79 @@ class Dashboard extends React.Component {
   logSel (row) {
     if (this.state.azLogScope !== 'mine') return true;
     return isLocalHistoryRecord(row);
+  }
+
+  /**
+   * Header + KPI counts for the current Home log scope (and month slicer).
+   * Falls back to the monitor payload when analytics has not loaded yet.
+   */
+  headerCounts () {
+    const c = this.state.counts || {};
+    const m = this.buildAnalyzeModel();
+    if (!m || !m.counts) return c;
+    return Object.assign({}, c, m.counts);
+  }
+
+  async toggleHomeLogShare () {
+    if (this.state.shareLogsBusy || !androidSurface('logShare')) return;
+    const next = !this.state.shareLogsGlobal;
+    if (next && typeof window !== 'undefined' && window.confirm &&
+        !window.confirm(SHARE_LOGS_CONFIRM)) {
+      return;
+    }
+    const prev = this.state.shareLogsGlobal;
+    const prevActive = this.state.shareLogsActive;
+    this.setState({
+      shareLogsGlobal: next,
+      shareLogsActive: next,
+      shareLogsBusy: true
+    });
+    try {
+      const res = await fetch('/settings/shareLogsGlobal', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ value: next })
+      });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(json.error || `HTTP ${res.status}`);
+      const rt = json.runtime || {};
+      this.setState({
+        shareLogsBusy: false,
+        shareLogsGlobal: rt.shareLogsGlobal != null ? rt.shareLogsGlobal === true : next,
+        shareLogsActive: rt.shareLogsActive != null ? rt.shareLogsActive === true : next
+      });
+    } catch (_) {
+      this.setState({
+        shareLogsBusy: false,
+        shareLogsGlobal: prev,
+        shareLogsActive: prevActive
+      });
+    }
+  }
+
+  renderHomeShareStrip () {
+    if (!androidSurface('heatmap') || !androidSurface('logShare')) return null;
+    const on = this.state.shareLogsGlobal === true || this.state.shareLogsActive === true;
+    return React.createElement('div', {
+      className: 'home-share ' + (on ? 'on' : 'off')
+    },
+      React.createElement('div', { className: 'home-share-copy' },
+        on ? 'Sharing parsed Game.log activity with the mesh.' : 'Game logs stay on this node.',
+        React.createElement('span', { className: 'sub' },
+          on
+            ? 'All logs includes intel peers send back. My logs is still only this node’s corpus.'
+            : 'Always accumulated locally for analysis. Turn this on so connected peers who also share can acquire your logs.')
+      ),
+      React.createElement('button', {
+        type: 'button',
+        className: 'btn ' + (on ? 'share-on' : 'share-off'),
+        disabled: this.state.shareLogsBusy,
+        title: on
+          ? 'Stop publishing parsed Game.log events to connected Fabric peers'
+          : 'Publish parsed Game.log events to connected Fabric peers',
+        onClick: () => this.toggleHomeLogShare()
+      }, on ? 'Sharing on' : 'Share with mesh')
+    );
   }
 
   renderHomeLogScopeButtons (kind) {
@@ -1913,6 +2066,20 @@ class Dashboard extends React.Component {
     const is = this.baseI();
     const cs = this.baseC();
     const src = D.sources || {};
+    const scopedM = this.baseM();
+    const scopedD = this.baseD();
+    const scopedPilots = new Set();
+    scopedM.forEach((row) => { if (row.player) scopedPilots.add(row.player); });
+    scopedD.forEach((row) => { if (row.player) scopedPilots.add(row.player); });
+    const counts = {
+      missions: scopedM.length,
+      deaths: scopedD.length,
+      players: scopedPilots.size,
+      sessions: curSessions,
+      completed: scopedM.filter((row) => row.outcome === 'Complete').length,
+      abandoned: scopedM.filter((row) => row.outcome === 'Abandon').length,
+      failed: scopedM.filter((row) => row.outcome === 'Fail').length
+    };
     const kpis = [
       ['Active pilots', pil.size, null],
       ['Sessions', curSessions, prev ? dl(curSessions, prev.sessions) : null],
@@ -1978,7 +2145,7 @@ class Dashboard extends React.Component {
       .sort((a, b) => b.c - a.c).slice(0, 12);
 
     const model = {
-      D, months, asc, selArr, lo, hi, ss, years, byY, src, kpis,
+      D, months, asc, selArr, lo, hi, ss, years, byY, src, kpis, counts,
       msMain, msBars, msFac, rows, cmpRows, af, ts, fs, destRows
     };
     this._analyzeModelKey = key;
@@ -2690,7 +2857,7 @@ class Dashboard extends React.Component {
             '🛰️ GoonCitizen ',
             React.createElement('span', { className: 'sub' },
               '— ' + (androidSurface('heatmap')
-                ? 'cumulative history from your logs'
+                ? 'cumulative history on this node (your Game.log + shared peer intel)'
                 : 'this device’s node (groups, chat, missions, peers)'))
           ),
           androidSurface('heatmap')
@@ -2715,6 +2882,7 @@ class Dashboard extends React.Component {
             )
             : null
         ),
+        this.renderHomeShareStrip(),
         androidSurface('heatmap') && this.state.homeFiltersOpen && m ? this.renderHomeFilters(m) : null,
         androidSurface('heatmap')
           ? React.createElement('div', { className: 'home-views' },
@@ -2876,7 +3044,9 @@ class Dashboard extends React.Component {
         }
       });
       case 'chat': return React.createElement(Chat, {
-        identityPubkey: this.state.identityPubkey,
+        // Social "me" + profile links follow the mesh publisher (chat author),
+        // not a separate unlocked wallet chip when FABRIC_XPRV is set.
+        identityPubkey: this.state.meshPubkey || this.state.identityPubkey,
         nickname: this.state.nickname,
         documentsEnable: this.state.documentsEnable === true,
         documentsDefaultPriceSats: (this.state.documentsRuntime &&
@@ -2915,8 +3085,9 @@ class Dashboard extends React.Component {
   }
 
   render () {
-    const c = this.state.counts;
-    const sess = c.session || {};
+    const c = this.headerCounts();
+    const sess = (this.state.counts && this.state.counts.session) || {};
+    const scopeMine = this.state.azLogScope === 'mine';
 
     return React.createElement(React.Fragment, null,
       React.createElement(Onboarding, {
@@ -3015,14 +3186,17 @@ class Dashboard extends React.Component {
           // Compact stat strip — cumulative by default (Analyze has the full breakdown).
           React.createElement('div', { className: 'counts' },
             React.createElement('span', {
-              title: `all-time ended missions · ${c.completed || 0} complete · ${c.abandoned || 0} abandoned · session now: ${sess.missions || 0}`
+              title: (scopeMine ? 'this node’s logs' : 'all logs on this node') +
+                ` · ${c.completed || 0} complete · ${c.abandoned || 0} abandoned · session now: ${sess.missions || 0}`
             }, 'missions ', React.createElement('b', null, c.missions)),
             React.createElement('span', {
               className: 'k',
-              title: `all-time deaths (corpse-recovery) · session now: ${sess.deaths || 0} · ${c.kills || 0} logged kills · ${c.incaps || 0} downs`
+              title: (scopeMine ? 'this node’s logs' : 'all logs on this node') +
+                ` · deaths (corpse-recovery) · session now: ${sess.deaths || 0} · ${c.kills || 0} logged kills · ${c.incaps || 0} downs`
             }, 'deaths ', React.createElement('b', null, c.deaths)),
             React.createElement('span', {
-              title: `pilots in cumulative history · ${c.sessions || 0} sessions · session logins: ${sess.logins || 0}`
+              title: (scopeMine ? 'this node’s logs' : 'all logs on this node') +
+                ` · pilots · ${c.sessions || 0} sessions · session logins: ${sess.logins || 0}`
             }, 'players ', React.createElement('b', null, c.players))
           ),
           React.createElement('div', { className: 'ctrl' },
@@ -3160,11 +3334,13 @@ class Dashboard extends React.Component {
         identityPubkey: this.state.identityPubkey,
         onVoice: (voice) => {
           const joined = !!(voice && voice.joined);
-          if (joined !== this.state.voiceJoined) this.setState({ voiceJoined: joined });
+          if (joined === this.state.voiceJoined) return;
+          this.setState({ voiceJoined: joined });
+          if (joined) this.ensureGroupOverlayOpen();
         }
       }),
       React.createElement(GlobalChatDock, {
-        identityPubkey: this.state.identityPubkey,
+        identityPubkey: this.state.meshPubkey || this.state.identityPubkey,
         nickname: this.state.nickname,
         hide: this.state.tab === 'chat',
         documentsEnable: this.state.documentsEnable === true,

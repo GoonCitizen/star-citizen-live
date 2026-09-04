@@ -306,6 +306,10 @@ class Groups extends React.Component {
       pinnedGroupIds: readPinnedGroupIds(),
       detailLoading: false,
       colorEdit: '#3b82f6',
+      rsiTagEdit: '',
+      rsiOrg: null,
+      rsiOrgError: null,
+      rsiOrgLoading: false,
       settingsOpen: false,
       settingsView: 'main',
       logOpenId: null
@@ -753,11 +757,16 @@ class Groups extends React.Component {
       groupFleets: [],
       groupJournal: [],
       colorEdit: (g && g.primaryColor) || '#3b82f6',
+      rsiTagEdit: (g && g.rsiTag) || '',
+      rsiOrg: null,
+      rsiOrgError: null,
+      rsiOrgLoading: false,
       settingsOpen,
       settingsView: 'main',
       error: null
     }, () => {
       this.loadGroupExtras(id);
+      if (g && g.rsiTag) this.loadRsiOrg(g.rsiTag);
       if (!opts.skipHash) this.syncGroupHash();
     });
   }
@@ -802,6 +811,55 @@ class Groups extends React.Component {
       if (g.id === this.state.primaryGroupId && typeof this.props.onPrimaryGroupTheme === 'function') {
         this.props.onPrimaryGroupTheme(value);
       }
+    } catch (e) {
+      this.setState({ busy: false, error: e.message });
+    }
+  }
+
+  async loadRsiOrg (sid) {
+    const tag = String(sid || '').trim();
+    if (!tag) {
+      this.setState({ rsiOrg: null, rsiOrgError: null, rsiOrgLoading: false });
+      return;
+    }
+    this.setState({ rsiOrgLoading: true, rsiOrgError: null });
+    try {
+      const res = await fetch(`${BASE}/rsi/orgs/${encodeURIComponent(tag)}`, {
+        headers: this.headers()
+      });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(json.error || `HTTP ${res.status}`);
+      this.setState({ rsiOrg: json.data || null, rsiOrgLoading: false, rsiOrgError: null });
+    } catch (e) {
+      this.setState({ rsiOrg: null, rsiOrgLoading: false, rsiOrgError: e.message });
+    }
+  }
+
+  async saveRsiTag (g) {
+    if (!g || this.state.busy) return;
+    this.setState({ busy: true, error: null, notice: null });
+    try {
+      const value = this.state.rsiTagEdit === '' || this.state.rsiTagEdit == null
+        ? null
+        : String(this.state.rsiTagEdit).trim();
+      const res = await fetch(`${BASE}/groups/${encodeURIComponent(g.id)}`, {
+        method: 'PUT',
+        headers: this.headers(),
+        body: JSON.stringify({ rsiTag: value })
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error || `HTTP ${res.status}`);
+      const saved = (json.data && json.data.rsiTag) || value;
+      this.setState({
+        busy: false,
+        rsiTagEdit: saved || '',
+        notice: saved
+          ? ('RSI tag set to ' + saved + ' — loads robertsspaceindustries.com/orgs/' + saved)
+          : 'RSI tag cleared.'
+      });
+      await this.refresh();
+      if (saved) this.loadRsiOrg(saved);
+      else this.setState({ rsiOrg: null, rsiOrgError: null });
     } catch (e) {
       this.setState({ busy: false, error: e.message });
     }
@@ -1590,9 +1648,96 @@ class Groups extends React.Component {
                   React.createElement('h4', null, 'Accent'),
                   React.createElement('span', null,
                     React.createElement('b', { style: { color: g.primaryColor } }, g.primaryColor)))
+                : null),
+            isCreator
+              ? React.createElement('div', { className: 'gp-set-sec' },
+                React.createElement('h4', null, 'RSI org tag'),
+                React.createElement('div', { className: 'hint' },
+                  'Organization SID on robertsspaceindustries.com — e.g. PERMAFLEET loads /orgs/PERMAFLEET.'),
+                React.createElement('div', { className: 'gp-set-actions' },
+                  React.createElement('input', {
+                    type: 'text',
+                    value: this.state.rsiTagEdit,
+                    placeholder: 'PERMAFLEET',
+                    disabled: this.state.busy,
+                    maxLength: 32,
+                    onChange: (e) => this.setState({ rsiTagEdit: e.target.value }),
+                    style: {
+                      flex: 1, minWidth: 120, background: 'var(--bg)', border: '1px solid var(--line)',
+                      color: 'var(--text)', borderRadius: 7, padding: '6px 8px', fontSize: 12,
+                      textTransform: 'uppercase'
+                    }
+                  }),
+                  React.createElement('button', {
+                    type: 'button',
+                    className: 'gp-btn ghost',
+                    disabled: this.state.busy,
+                    onClick: () => this.saveRsiTag(g)
+                  }, 'Save tag'),
+                  g.rsiTag
+                    ? React.createElement('button', {
+                      type: 'button',
+                      className: 'gp-btn ghost',
+                      disabled: this.state.busy,
+                      onClick: () => this.setState({ rsiTagEdit: '' }, () => this.saveRsiTag(g))
+                    }, 'Clear')
+                    : null
+                ),
+                this.renderRsiOrgPreview()
+              )
+              : (g.rsiTag
+                ? React.createElement('div', { className: 'gp-set-sec' },
+                  React.createElement('h4', null, 'RSI org'),
+                  React.createElement('code', null, g.rsiTag),
+                  this.renderRsiOrgPreview())
                 : null)
           )
       )
+    );
+  }
+
+  renderRsiOrgPreview () {
+    if (this.state.rsiOrgLoading) {
+      return React.createElement('div', { className: 'hint', style: { marginTop: 8 } }, 'Loading RSI org…');
+    }
+    if (this.state.rsiOrgError) {
+      return React.createElement('div', {
+        className: 'hint',
+        style: { marginTop: 8, color: 'var(--bad, #f85149)' }
+      }, this.state.rsiOrgError);
+    }
+    const org = this.state.rsiOrg;
+    if (!org) return null;
+    return React.createElement('div', {
+      style: {
+        marginTop: 10, display: 'grid', gap: 6, fontSize: 12,
+        padding: '10px 12px', border: '1px solid var(--line)', borderRadius: 8
+      }
+    },
+      React.createElement('div', null,
+        React.createElement('b', null, org.name || org.sid),
+        ' ',
+        React.createElement('code', null, '[' + org.sid + ']')
+      ),
+      org.memberCount != null
+        ? React.createElement('div', { style: { color: 'var(--muted)' } },
+          org.memberCount + ' members' +
+            (org.commitment ? ' · ' + org.commitment : '') +
+            (org.model ? ' · ' + org.model : ''))
+        : null,
+      org.description
+        ? React.createElement('div', {
+          style: { color: 'var(--muted)', lineHeight: 1.4 }
+        }, org.description.length > 220 ? org.description.slice(0, 220) + '…' : org.description)
+        : null,
+      org.url
+        ? React.createElement('a', {
+          href: org.url,
+          target: '_blank',
+          rel: 'noopener noreferrer',
+          style: { color: 'var(--accent)' }
+        }, 'Open on RSI')
+        : null
     );
   }
 
@@ -1670,6 +1815,15 @@ class Groups extends React.Component {
             React.createElement('span', { className: 'gp-tag ' + (g.visibility === 'public' ? 'public' : 'private') }, g.visibility || 'private'),
             g.id === this.state.primaryGroupId
               ? React.createElement('span', { className: 'gp-tag primary' }, 'primary')
+              : null,
+            g.rsiTag
+              ? React.createElement('a', {
+                className: 'gp-tag public',
+                href: 'https://robertsspaceindustries.com/orgs/' + encodeURIComponent(g.rsiTag),
+                target: '_blank',
+                rel: 'noopener noreferrer',
+                title: 'RSI organization'
+              }, 'RSI ' + g.rsiTag)
               : null,
             g.parentId
               ? React.createElement('span', null, 'subgroup of ', React.createElement('b', null,

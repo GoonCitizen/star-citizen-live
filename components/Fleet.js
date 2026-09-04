@@ -9,6 +9,7 @@
 const React = require('react');
 const { readAppHash, setAppHash } = require('../functions/appHash');
 const { fetchPresence, fetchPresenceRoster } = require('../functions/presenceClient');
+const { filterSortShips, listOwners } = require('../functions/starjumpFleet');
 
 const BASE = '/services/star-citizen';
 
@@ -64,6 +65,16 @@ const CSS = `
   .fl-ship .ops{display:flex;gap:6px;align-items:center}
   .fl-ship .ops input{width:52px;background:var(--panel);border:1px solid var(--line);color:var(--text);
     border-radius:5px;padding:3px 6px;font-size:12px}
+  .fl-roster-tools{display:grid;gap:8px;margin:4px 0 10px;
+    grid-template-columns:minmax(0,1.2fr) minmax(0,.9fr) minmax(0,.9fr) minmax(0,.55fr) minmax(0,.55fr) minmax(0,.9fr)}
+  @media (max-width:900px){.fl-roster-tools{grid-template-columns:1fr 1fr}}
+  .fl-roster-tools label{display:grid;gap:4px;font-size:11px;color:var(--muted)}
+  .fl-roster-tools input,.fl-roster-tools select{background:var(--bg);border:1px solid var(--line);color:var(--text);
+    border-radius:7px;padding:6px 8px;font-size:12px;width:100%;box-sizing:border-box}
+  .fl-owner{font-size:10.5px;font-weight:700;padding:2px 8px;border-radius:5px;letter-spacing:.02em;
+    background:rgba(163,113,247,.15);color:#a371f7;margin-left:8px;vertical-align:middle}
+  .fl-owners{display:flex;flex-wrap:wrap;gap:4px;margin-top:4px}
+  .fl-owners .fl-owner{margin-left:0}
   .fl-form{display:grid;gap:10px;margin-top:10px;padding-top:10px;border-top:1px solid var(--line)}
   .fl-form label{display:grid;gap:4px;font-size:12px;color:var(--muted)}
   .fl-form input,.fl-form select{background:var(--bg);border:1px solid var(--line);color:var(--text);
@@ -118,7 +129,14 @@ class Fleet extends React.Component {
       newFleetName: 'My fleet',
       presence: null,
       presenceRoster: {},
-      browseGroupIds: []
+      browseGroupIds: [],
+      rosterQuery: '',
+      rosterOwner: '',
+      rosterMinCount: '',
+      rosterMaxCount: '',
+      rosterSort: 'name',
+      rosterConsolidate: 'none',
+      addOwner: ''
     };
     this._fileRef = React.createRef();
     this._searchTimer = null;
@@ -235,7 +253,13 @@ class Fleet extends React.Component {
         detail: d,
         name: d.name || '',
         visibility: d.visibility || 'private',
-        groupIds: Array.isArray(d.groupIds) ? d.groupIds.slice() : []
+        groupIds: Array.isArray(d.groupIds) ? d.groupIds.slice() : [],
+        rosterQuery: '',
+        rosterOwner: '',
+        rosterMinCount: '',
+        rosterMaxCount: '',
+        rosterSort: 'name',
+        rosterConsolidate: 'none'
       });
     } catch (e) {
       this.setState({ busy: false, error: e.message, detail: row });
@@ -329,8 +353,11 @@ class Fleet extends React.Component {
 
   addShip (ship) {
     if (!ship) return;
+    const owner = (this.state.addOwner || '').trim() || null;
     const existing = (this.state.detail && this.state.detail.ships || [])
-      .find((s) => s.slug === ship.slug);
+      .find((s) => s.slug === ship.slug
+        && (s.variant || null) === (ship.variant || null)
+        && (s.owner || null) === owner);
     const count = existing ? (existing.count || 1) + 1 : 1;
     return this.shipOp({
       slug: ship.slug,
@@ -338,7 +365,23 @@ class Fleet extends React.Component {
       manufacturer: ship.manufacturer || null,
       type: ship.type || null,
       size: ship.size || null,
+      owner,
       count
+    });
+  }
+
+  visibleRosterShips () {
+    const d = this.state.detail;
+    const ships = Array.isArray(d && d.ships) ? d.ships : [];
+    const minRaw = this.state.rosterMinCount;
+    const maxRaw = this.state.rosterMaxCount;
+    return filterSortShips(ships, {
+      q: this.state.rosterQuery,
+      owner: this.state.rosterOwner || undefined,
+      minCount: minRaw === '' ? undefined : Number(minRaw),
+      maxCount: maxRaw === '' ? undefined : Number(maxRaw),
+      sort: this.state.rosterSort || 'name',
+      consolidate: this.state.rosterConsolidate || 'none'
     });
   }
 
@@ -445,102 +488,235 @@ class Fleet extends React.Component {
 
   renderShipEditor () {
     const d = this.state.detail;
-    if (!d || d.remote) return null;
-    const ships = Array.isArray(d.ships) ? d.ships : [];
+    if (!d) return null;
+    const readOnly = !!d.remote;
+    const consolidated = this.state.rosterConsolidate && this.state.rosterConsolidate !== 'none';
+    const allShips = Array.isArray(d.ships) ? d.ships : [];
+    const ships = this.visibleRosterShips();
+    const owners = listOwners(allShips);
+    const hasUnowned = allShips.some((s) => !s.owner);
+    const rowEditable = !readOnly && !consolidated;
     return React.createElement('div', { className: 'fl-form' },
       React.createElement('div', { className: 'fl-hint', style: { margin: 0 } },
-        'Roster — add from the known-ship catalog or remove arbitrarily.'),
-      React.createElement('div', { className: 'fl-ships' },
-        !ships.length
-          ? React.createElement('div', { className: 'fl-empty', style: { padding: 12 } }, 'No ships yet')
-          : ships.map((s) => React.createElement('div', {
-            className: 'fl-ship',
-            key: s.slug + (s.variant || '')
-          },
-          React.createElement('div', null,
-            React.createElement('div', { className: 'n' },
-              s.name || s.slug,
-              s.type
-                ? React.createElement('span', {
-                  className: 'fl-tag peers',
-                  style: { marginLeft: 8, verticalAlign: 'middle' }
-                }, s.type)
-                : null
-            ),
-            React.createElement('div', { className: 's' },
-              [
-                s.slug + (s.variant ? ` (${s.variant})` : ''),
-                s.size || null,
-                s.manufacturer || null
-              ].filter(Boolean).join(' · '))
-          ),
-          React.createElement('div', { className: 'ops' },
-            React.createElement('input', {
-              type: 'number',
-              min: 1,
-              max: 9999,
-              value: s.count || 1,
-              disabled: this.state.busy,
-              onChange: (e) => {
-                const count = Math.max(1, Math.floor(Number(e.target.value) || 1));
-                this.shipOp({ slug: s.slug, variant: s.variant, name: s.name, count });
-              }
-            }),
-            React.createElement('button', {
-              type: 'button',
-              className: 'fl-btn danger mini',
-              disabled: this.state.busy,
-              onClick: () => this.shipOp({ slug: s.slug, variant: s.variant, remove: true })
-            }, 'Remove')
-          )
-          ))
-      ),
-      React.createElement('div', { className: 'fl-search' },
-        React.createElement('label', null,
-          'Add ship' +
-          (this.state.catalogMeta ? ` (${this.state.catalogMeta.count} known)` : ''),
+        readOnly
+          ? 'Peer roster — search, filter, consolidate by ship / class, or sort.'
+          : 'Roster — tracked by pilot owner when known. Consolidate by ship or class to roll up quantities.'),
+      React.createElement('div', { className: 'fl-roster-tools' },
+        React.createElement('label', null, 'Search roster',
           React.createElement('input', {
-            type: 'text',
-            value: this.state.shipQuery,
-            placeholder: 'Search catalog — polaris, cutlass, anvil…',
-            onChange: (e) => this.searchShips(e.target.value)
+            type: 'search',
+            value: this.state.rosterQuery,
+            placeholder: 'name, slug, owner…',
+            onChange: (e) => this.setState({ rosterQuery: e.target.value })
           })
         ),
-        this.state.shipHits.length
-          ? React.createElement('div', { className: 'fl-hits' },
-            this.state.shipHits.map((s) => React.createElement('div', {
-              key: s.slug,
-              className: 'fl-hit',
-              onClick: () => this.addShip(s)
+        React.createElement('label', null, 'View',
+          React.createElement('select', {
+            value: this.state.rosterConsolidate,
+            onChange: (e) => this.setState({ rosterConsolidate: e.target.value })
+          },
+          React.createElement('option', { value: 'none' }, 'By owner (detail)'),
+          React.createElement('option', { value: 'hull' }, 'By ship (consolidate)'),
+          React.createElement('option', { value: 'type' }, 'By class / type')
+          )
+        ),
+        React.createElement('label', null, 'Owner',
+          React.createElement('select', {
+            value: this.state.rosterOwner,
+            onChange: (e) => this.setState({ rosterOwner: e.target.value })
+          },
+          React.createElement('option', { value: '' }, 'All owners'),
+          hasUnowned
+            ? React.createElement('option', { value: '__none__' }, 'Unassigned')
+            : null,
+          owners.map((o) => React.createElement('option', { key: o, value: o }, o))
+          )
+        ),
+        React.createElement('label', null, 'Min qty',
+          React.createElement('input', {
+            type: 'number',
+            min: 1,
+            max: 9999,
+            value: this.state.rosterMinCount,
+            placeholder: 'any',
+            onChange: (e) => this.setState({ rosterMinCount: e.target.value })
+          })
+        ),
+        React.createElement('label', null, 'Max qty',
+          React.createElement('input', {
+            type: 'number',
+            min: 1,
+            max: 9999,
+            value: this.state.rosterMaxCount,
+            placeholder: 'any',
+            onChange: (e) => this.setState({ rosterMaxCount: e.target.value })
+          })
+        ),
+        React.createElement('label', null, 'Sort',
+          React.createElement('select', {
+            value: this.state.rosterSort,
+            onChange: (e) => this.setState({ rosterSort: e.target.value })
+          },
+          React.createElement('option', { value: 'name' }, 'Name'),
+          React.createElement('option', { value: 'count' }, 'Quantity (high → low)'),
+          React.createElement('option', { value: 'count-asc' }, 'Quantity (low → high)'),
+          React.createElement('option', { value: 'owner' }, 'Owner (A → Z)'),
+          React.createElement('option', { value: 'owner-desc' }, 'Owner (Z → A)'),
+          React.createElement('option', { value: 'type' }, 'Class / type')
+          )
+        )
+      ),
+      React.createElement('div', { className: 'fl-hint', style: { margin: '0 0 4px' } },
+        consolidated
+          ? `Showing ${ships.length} consolidated row${ships.length === 1 ? '' : 's'} from ${allShips.length} owner lines`
+          : `Showing ${ships.length} of ${allShips.length} lines`,
+        d.ownerCount ? ` · ${d.ownerCount} owner${d.ownerCount === 1 ? '' : 's'}` : null,
+        consolidated
+          ? ' · totals are read-only (switch to By owner to edit)'
+          : null),
+      React.createElement('div', { className: 'fl-ships' },
+        !allShips.length
+          ? React.createElement('div', { className: 'fl-empty', style: { padding: 12 } }, 'No ships yet')
+          : (!ships.length
+            ? React.createElement('div', { className: 'fl-empty', style: { padding: 12 } }, 'No ships match these filters')
+            : ships.map((s) => React.createElement('div', {
+              className: 'fl-ship',
+              key: (s.consolidated || 'line') + '\0' + s.slug + '\0' + (s.variant || '') + '\0' + (s.owner || '') + '\0' + (s.type || '')
             },
             React.createElement('div', null,
-              React.createElement('div', null,
-                s.name,
-                s.type
+              React.createElement('div', { className: 'n' },
+                s.name || s.slug,
+                s.type && s.consolidated !== 'type'
                   ? React.createElement('span', {
                     className: 'fl-tag peers',
-                    style: { marginLeft: 8 }
+                    style: { marginLeft: 8, verticalAlign: 'middle' }
                   }, s.type)
+                  : null,
+                s.consolidated === 'type' && s.uniqueHulls
+                  ? React.createElement('span', {
+                    className: 'fl-tag custom',
+                    style: { marginLeft: 8, verticalAlign: 'middle' }
+                  }, s.uniqueHulls + ' hull' + (s.uniqueHulls === 1 ? '' : 's'))
+                  : null,
+                s.owner
+                  ? React.createElement('span', { className: 'fl-owner' }, s.owner)
                   : null
               ),
-              React.createElement('div', { className: 'meta' },
-                [
-                  s.slug,
-                  s.size || null,
-                  s.manufacturer || null
-                ].filter(Boolean).join(' · '))
+              React.createElement('div', { className: 's' },
+                s.consolidated === 'type'
+                  ? [
+                    (s.count || 1) + ' ships',
+                    s.ownerCount ? s.ownerCount + ' owner' + (s.ownerCount === 1 ? '' : 's') : null
+                  ].filter(Boolean).join(' · ')
+                  : [
+                    s.slug + (s.variant ? ` (${s.variant})` : ''),
+                    s.size || null,
+                    s.manufacturer || null
+                  ].filter(Boolean).join(' · ')
+              ),
+              Array.isArray(s.owners) && s.owners.length
+                ? React.createElement('div', { className: 'fl-owners' },
+                  s.owners.map((o) => React.createElement('span', {
+                    key: String(o.owner || '__none__'),
+                    className: 'fl-owner',
+                    title: o.owner || 'Unassigned'
+                  }, (o.owner || 'unassigned') + ' ×' + (o.count || 1)))
+                )
+                : null
             ),
-            React.createElement('button', {
-              type: 'button',
-              className: 'fl-btn mini',
-              disabled: this.state.busy || !this.state.selected,
-              onClick: (e) => { e.stopPropagation(); this.addShip(s); }
-            }, 'Add')
-            ))
-          )
-          : React.createElement('div', { className: 'fl-hint', style: { margin: 0 } },
-            this.state.shipQuery ? 'No catalog matches' : 'Type to filter the catalog')
-      )
+            rowEditable
+              ? React.createElement('div', { className: 'ops' },
+                React.createElement('input', {
+                  type: 'number',
+                  min: 1,
+                  max: 9999,
+                  value: s.count || 1,
+                  disabled: this.state.busy,
+                  onChange: (e) => {
+                    const count = Math.max(1, Math.floor(Number(e.target.value) || 1));
+                    this.shipOp({
+                      slug: s.slug,
+                      variant: s.variant,
+                      owner: s.owner || null,
+                      name: s.name,
+                      count
+                    });
+                  }
+                }),
+                React.createElement('button', {
+                  type: 'button',
+                  className: 'fl-btn danger mini',
+                  disabled: this.state.busy,
+                  onClick: () => this.shipOp({
+                    slug: s.slug,
+                    variant: s.variant,
+                    owner: s.owner || null,
+                    remove: true
+                  })
+                }, 'Remove')
+              )
+              : React.createElement('div', { className: 'ops' },
+                React.createElement('span', { className: 'fl-tag peers' }, '×' + (s.count || 1))
+              )
+            )))
+      ),
+      readOnly
+        ? null
+        : React.createElement('div', { className: 'fl-search' },
+          React.createElement('label', null,
+            'Owner for new ships',
+            React.createElement('input', {
+              type: 'text',
+              value: this.state.addOwner,
+              placeholder: 'optional pilot handle',
+              onChange: (e) => this.setState({ addOwner: e.target.value })
+            })
+          ),
+          React.createElement('label', null,
+            'Add ship' +
+            (this.state.catalogMeta ? ` (${this.state.catalogMeta.count} known)` : ''),
+            React.createElement('input', {
+              type: 'text',
+              value: this.state.shipQuery,
+              placeholder: 'Search catalog — polaris, cutlass, anvil…',
+              onChange: (e) => this.searchShips(e.target.value)
+            })
+          ),
+          this.state.shipHits.length
+            ? React.createElement('div', { className: 'fl-hits' },
+              this.state.shipHits.map((s) => React.createElement('div', {
+                key: s.slug,
+                className: 'fl-hit',
+                onClick: () => this.addShip(s)
+              },
+              React.createElement('div', null,
+                React.createElement('div', null,
+                  s.name,
+                  s.type
+                    ? React.createElement('span', {
+                      className: 'fl-tag peers',
+                      style: { marginLeft: 8 }
+                    }, s.type)
+                    : null
+                ),
+                React.createElement('div', { className: 'meta' },
+                  [
+                    s.slug,
+                    s.size || null,
+                    s.manufacturer || null
+                  ].filter(Boolean).join(' · '))
+              ),
+              React.createElement('button', {
+                type: 'button',
+                className: 'fl-btn mini',
+                disabled: this.state.busy || !this.state.selected,
+                onClick: (e) => { e.stopPropagation(); this.addShip(s); }
+              }, 'Add')
+              ))
+            )
+            : React.createElement('div', { className: 'fl-hint', style: { margin: 0 } },
+              this.state.shipQuery ? 'No catalog matches' : 'Type to filter the catalog')
+        )
     );
   }
 
@@ -563,6 +739,7 @@ class Fleet extends React.Component {
         ),
         React.createElement('div', { className: 'meta' },
           `${d.shipCount || ships.length} ships · ${d.uniqueShips || ships.length} unique`,
+          d.ownerCount ? ` · ${d.ownerCount} owner${d.ownerCount === 1 ? '' : 's'}` : null,
           d.sourceFile ? ` · ${d.sourceFile}` : null,
           d.ownerPubkey ? ` · ${shortKey(d.ownerPubkey)}` : null
         )

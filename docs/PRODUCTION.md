@@ -201,9 +201,12 @@ Keep `proxy_set_header Host $host` and `X-Forwarded-Proto` so `POST /sessions`
 sees `https://relay.goon.vc`. WebSocket `Upgrade` headers are in the example for
 long-lived dashboard sockets; they do not carry Fabric Peer frames.
 
-Optional static files (`/downstream.agents.md`, `/patches/`, `/probes/`) are
-served from the nginx/Caddy document root **before** the LiveRelay proxy.
-Without those locations, LiveRelay 404s the directory index.
+Optional static files (`/downstream.agents.md`, `/patches/`, `/probes/`,
+`/guides/`) are served from the nginx/Caddy document root **before** the
+LiveRelay proxy. Without those locations, LiveRelay 404s the directory index.
+Fabric HTML lessons live in the checkout at `assets/guides/` (docco examples
+from `@fabric/core`); with the document root symlinked to `assets/`, that is
+`https://relay.goon.vc/guides/`.
 
 Agent probe JSON (Discord schedule dumps, adversary probes, …) lands in
 `reports/probes/` locally. On the public host:

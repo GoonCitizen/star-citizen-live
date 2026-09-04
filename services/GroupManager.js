@@ -591,43 +591,128 @@ class GroupManager extends EventEmitter {
     if (data.contractId && invite.contractId && data.contractId !== invite.contractId) {
       throw new Error('invite contract does not match group');
     }
-    if (this._memberMatch(new Group(data), pubkey)) return new Group(data).toJSON();
-
     const role = String(invite.role || 'signer').toLowerCase() === 'reader' ? 'reader' : 'signer';
-    data.members = data.members.concat([pubkey]);
-    if (!Array.isArray(data.validators) || !data.validators.length) {
-      data.validators = this._signerList(data);
+    if (!this._memberMatch(new Group(data), pubkey)) {
+      data.members = data.members.concat([pubkey]);
+      if (!Array.isArray(data.validators) || !data.validators.length) {
+        data.validators = this._signerList(data);
+      }
+      if (role === 'signer' && !data.validators.some((v) => this.sameActor(v, pubkey))) {
+        data.validators = data.validators.concat([pubkey]);
+      }
+      this._syncPolicyFromSigners(data);
+      const group = new Group(data);
+      group.validate();
+      const json = group.toJSON();
+      this.store.put('groups', groupId, Object.assign({}, data, json));
+      this._audit(pubkey, 'group.invite.accept', groupId, invite.inviteId);
+      this.emit('group:member-added', { groupId, pubkey, actor: pubkey, via: 'invite', role });
     }
-    if (role === 'signer' && !data.validators.some((v) => this.sameActor(v, pubkey))) {
-      data.validators = data.validators.concat([pubkey]);
-    }
-    this._syncPolicyFromSigners(data);
-    const group = new Group(data);
-    group.validate();
-    const json = group.toJSON();
-    this.store.put('groups', groupId, Object.assign({}, data, json));
-    this._audit(pubkey, 'group.invite.accept', groupId, invite.inviteId);
-    const change = {
-      id: this._id('gchg'),
-      action: 'member.add',
+    // Network notification is a GroupChangeProposal carrying the invitation
+    // (existing members vote / adopt). Do not gossip GroupChange from the
+    // invitee — that raced the proposal and skipped inviter addMember.
+    this.proposeInviteJoin({
       groupId,
-      contractId: data.contractId || invite.contractId || null,
-      actor: pubkey,
+      invite,
       member: pubkey,
-      role,
-      via: 'FederationContractInvite',
-      inviteId: invite.inviteId,
-      ts: new Date().toISOString()
-    };
-    this.emit('group:member-added', { groupId, pubkey, actor: pubkey, via: 'invite', role });
-    this.emit('group:local-change', change);
-    this._appendGroupStatechain(groupId, {
-      id: change.id,
-      type: 'GroupChange',
-      message: change,
-      acceptedAt: change.ts
+      role
     });
     return new Group(this.store.get('groups', groupId)).toJSON();
+  }
+
+  /**
+   * True when this node holds a FederationContractInvite that authorizes
+   * auto-voting an invite-join GroupChangeProposal (typically the inviter).
+   * @param {object} proposal
+   * @returns {boolean}
+   */
+  holdsInviteForJoinProposal (proposal) {
+    if (!proposal || !proposal.inviteId) return false;
+    const inv = this.store.get('groupinvites', proposal.inviteId);
+    if (!inv) return false;
+    if (String(inv.status || 'pending') === 'rejected') return false;
+    if (proposal.member && inv.inviteePubkey && !this.sameActor(inv.inviteePubkey, proposal.member)) {
+      return false;
+    }
+    if (proposal.groupId && inv.groupId && String(inv.groupId) !== String(proposal.groupId)) {
+      return false;
+    }
+    return true;
+  }
+
+  /**
+   * Deterministic GroupChangeProposal for an accepted Federation invite.
+   * Does not apply membership (invitee may already have joined locally).
+   * Idempotent for the same inviteId so invitee publish and inviter accept match.
+   * @param {object} opts
+   * @param {string} [opts.groupId]
+   * @param {object} opts.invite
+   * @param {string} [opts.member]
+   * @param {string} [opts.role]
+   * @returns {Object} `{ group, proposal, adopted, change }` — optional `skipped` when the proposal already exists
+   */
+  proposeInviteJoin (opts = {}) {
+    const gcp = require('../functions/groupChangeProposal');
+    const invite = opts.invite;
+    if (!invite || !invite.inviteId) throw new Error('invite required');
+    const { assertInviteNotExpired } = require('../functions/inviteExpiry');
+    assertInviteNotExpired(invite);
+    const member = String(opts.member || invite.inviteePubkey || '').trim();
+    if (!Group.isValidPubkey(member)) throw new Error('invalid member pubkey');
+    if (invite.inviteePubkey && !this.sameActor(invite.inviteePubkey, member)) {
+      const e = new Error('this invite is addressed to another identity');
+      e.code = 'FORBIDDEN';
+      throw e;
+    }
+    const groupId = opts.groupId || invite.groupId;
+    const data = this.store.get('groups', groupId);
+    if (!data) throw new Error('group not found');
+    if (data.contractId && invite.contractId && data.contractId !== invite.contractId) {
+      throw new Error('invite contract does not match group');
+    }
+    const id = gcp.inviteJoinProposalId(invite.inviteId);
+    const existing = this.store.get('groupchangeproposals', id);
+    if (existing) {
+      return {
+        group: new Group(data).toJSON(),
+        proposal: existing,
+        adopted: existing.status === 'adopted',
+        change: null,
+        skipped: existing.status === 'adopted' ? 'already-adopted' : 'duplicate'
+      };
+    }
+    const role = String(opts.role || invite.role || 'signer').toLowerCase() === 'reader'
+      ? 'reader'
+      : 'signer';
+    const proposal = gcp.createProposalRecord({
+      id,
+      groupId,
+      contractId: data.contractId || invite.contractId || null,
+      action: 'member.add',
+      member,
+      role,
+      proposedBy: member,
+      createdAt: gcp.proposalCreatedAtFromInvite(invite),
+      threshold: data.threshold || 1,
+      via: gcp.INVITE_VIA,
+      inviteId: invite.inviteId,
+      invite
+    });
+    this.store.put('groupchangeproposals', proposal.id, proposal);
+    this._audit(member, 'group.proposal.member.add', groupId, proposal.id);
+    this._appendGroupStatechain(groupId, {
+      id: proposal.id,
+      type: 'GroupChangeProposal',
+      message: gcp.proposalWireObject(proposal),
+      acceptedAt: proposal.createdAt
+    });
+    this.emit('group:proposal', proposal);
+    return {
+      group: new Group(this.store.get('groups', groupId)).toJSON(),
+      proposal,
+      adopted: false,
+      change: null
+    };
   }
 
   /**
@@ -687,6 +772,10 @@ class GroupManager extends EventEmitter {
         const { sanitizePrimaryColor } = require('../functions/groupPrimaryColor');
         data.primaryColor = sanitizePrimaryColor(patch.primaryColor);
       }
+      if (patch.rsiTag !== undefined) {
+        const { sanitizeRsiTag } = require('../functions/rsiLookup');
+        data.rsiTag = sanitizeRsiTag(patch.rsiTag);
+      }
       if (patch.pinnedChannels !== undefined) {
         const { sanitizePinnedChannels } = require('../functions/groupPinnedChannels');
         data.pinnedChannels = sanitizePinnedChannels(patch.pinnedChannels);
@@ -730,10 +819,23 @@ class GroupManager extends EventEmitter {
         actor,
         member: change.member || null,
         patch: change.patch || null,
+        proposalId: change.proposalId || null,
+        via: change.via || null,
+        inviteId: change.inviteId || null,
         ts: change.ts || new Date().toISOString()
       },
       acceptedAt: change.ts || new Date().toISOString()
     });
+    if (change.proposalId) {
+      const proposal = this.store.get('groupchangeproposals', change.proposalId);
+      if (proposal && proposal.status === 'pending') {
+        proposal.status = 'adopted';
+        proposal.adoptedChangeId = changeId;
+        proposal.adoptedAt = change.ts || new Date().toISOString();
+        this.store.put('groupchangeproposals', proposal.id, proposal);
+        this.emit('group:proposal-adopted', { proposal, change, group: json });
+      }
+    }
     this.emit('group:changed', { group: json, change, source: actor });
     return { group: json, applied: true };
   }
@@ -1063,6 +1165,12 @@ class GroupManager extends EventEmitter {
         if (!color) throw new Error('primaryColor must be #RRGGBB');
         opts = Object.assign({}, opts, { patch: Object.assign({}, patch, { primaryColor: color }) });
       }
+      if (patch.rsiTag !== undefined && patch.rsiTag !== null && patch.rsiTag !== '') {
+        const { sanitizeRsiTag } = require('../functions/rsiLookup');
+        const tag = sanitizeRsiTag(patch.rsiTag);
+        if (!tag) throw new Error('rsiTag must be a valid RSI org SID');
+        opts = Object.assign({}, opts, { patch: Object.assign({}, patch, { rsiTag: tag }) });
+      }
       if (patch.pinnedChannels !== undefined) {
         const { sanitizePinnedChannels } = require('../functions/groupPinnedChannels');
         const pins = sanitizePinnedChannels(patch.pinnedChannels);
@@ -1257,7 +1365,10 @@ class GroupManager extends EventEmitter {
       patch: object.patch,
       proposedBy: object.proposedBy || source,
       createdAt: object.createdAt,
-      threshold: object.threshold || group.threshold
+      threshold: object.threshold || group.threshold,
+      via: object.via,
+      inviteId: object.inviteId,
+      invite: object.invite
     });
     proposal.status = object.status === 'adopted' ? 'pending' : (object.status || 'pending');
     if (proposal.status === 'adopted') proposal.status = 'pending';
@@ -1297,8 +1408,8 @@ class GroupManager extends EventEmitter {
 
   /**
    * Update group settings. Creator-only for name / threshold / visibility /
-   * slug / primaryColor / pinnedChannels. Members may patch `pinnedMessages`
-   * alone (chat 📌 overlay).
+   * slug / primaryColor / rsiTag / pinnedChannels. Members may patch
+   * `pinnedMessages` alone (chat 📌 overlay).
    * Published as a GroupChangeProposal until validators adopt.
    */
   async updateGroup (groupId, patch = {}, actor) {
@@ -1315,6 +1426,16 @@ class GroupManager extends EventEmitter {
         const color = sanitizePrimaryColor(patch.primaryColor);
         if (!color) throw new Error('primaryColor must be #RRGGBB');
         clean.primaryColor = color;
+      }
+    }
+    if (patch.rsiTag !== undefined) {
+      const { sanitizeRsiTag } = require('../functions/rsiLookup');
+      if (patch.rsiTag === null || patch.rsiTag === '') {
+        clean.rsiTag = null;
+      } else {
+        const tag = sanitizeRsiTag(patch.rsiTag);
+        if (!tag) throw new Error('rsiTag must be a valid RSI org SID');
+        clean.rsiTag = tag;
       }
     }
     if (patch.pinnedChannels !== undefined) {

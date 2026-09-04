@@ -115,10 +115,19 @@ function attachLocation (layout, loc) {
  * @param {boolean} [opts.includeHotspots]
  */
 function layoutSystem (systemCode, opts = {}) {
+  const bodyTerrain = require('./bodyTerrain');
   const code = String(systemCode || 'STANTON').replace(/\s+system$/i, '');
   const system = locationCatalog.getSystem(code) || locationCatalog.getSystem('STANTON');
   const projected = projectBodies(system && system.bodies);
-  const bodies = projected.points;
+  const bodies = projected.points.map((b) => {
+    const style = bodyTerrain.surfaceStyleForBody(b);
+    const terrain = bodyTerrain.resolveBodyTerrain(b);
+    return Object.assign({}, b, {
+      surfaceStyle: style,
+      surfaceTile: bodyTerrain.surfaceTileForBody(b),
+      terrainSlug: terrain.slug
+    });
+  });
   const includeHotspots = opts.includeHotspots !== false;
   const locations = [];
   const hotspots = [];
@@ -183,9 +192,354 @@ function layoutSystem (systemCode, opts = {}) {
   };
 }
 
+/**
+ * Parse "Stanton - Pyro" style jump names into endpoint system codes.
+ * @param {string} name
+ * @param {Map<string, object>} byName
+ * @returns {[string, string]|null}
+ */
+function jumpEndpoints (name, byName) {
+  const raw = String(name || '');
+  const parts = raw.split(/\s*[-–—]\s*/).map((p) => p.trim()).filter(Boolean);
+  if (parts.length < 2) return null;
+  const a = byName.get(parts[0].toLowerCase());
+  const b = byName.get(parts[1].toLowerCase());
+  if (!a || !b) return null;
+  const ca = String(a.code || a.name).toUpperCase();
+  const cb = String(b.code || b.name).toUpperCase();
+  if (ca === cb) return null;
+  return [ca, cb];
+}
+
+/**
+ * Multi-system jump graph from catalog positions + JUMPPOINT names.
+ * @returns {{ systems: object[], edges: object[] }}
+ */
+function layoutGalaxy () {
+  const systems = locationCatalog.listSystems() || [];
+  const byName = new Map();
+  for (const s of systems) {
+    if (s.code) byName.set(String(s.code).toLowerCase(), s);
+    if (s.name) byName.set(String(s.name).toLowerCase(), s);
+  }
+
+  const raw = [];
+  for (const s of systems) {
+    const pos = s.position || {};
+    const x = Number(pos.x);
+    const y = Number(pos.z != null ? pos.z : pos.y);
+    if (!Number.isFinite(x) || !Number.isFinite(y)) continue;
+    raw.push({
+      code: String(s.code || s.name || '').toUpperCase(),
+      name: s.name || s.code,
+      x,
+      y
+    });
+  }
+  if (!raw.length) {
+    return { systems: [], edges: [] };
+  }
+
+  let minX = Infinity;
+  let maxX = -Infinity;
+  let minY = Infinity;
+  let maxY = -Infinity;
+  for (const p of raw) {
+    if (p.x < minX) minX = p.x;
+    if (p.x > maxX) maxX = p.x;
+    if (p.y < minY) minY = p.y;
+    if (p.y > maxY) maxY = p.y;
+  }
+  const pad = 0.14;
+  const spanX = Math.max(0.2, maxX - minX);
+  const spanY = Math.max(0.2, maxY - minY);
+  const span = Math.max(spanX, spanY);
+  const cx = (minX + maxX) / 2;
+  const cy = (minY + maxY) / 2;
+
+  const nodes = raw.map((p) => ({
+    code: p.code,
+    name: p.name,
+    kind: 'system',
+    nx: 0.5 + (p.x - cx) / span * (1 - pad * 2),
+    ny: 0.5 + (p.y - cy) / span * (1 - pad * 2)
+  }));
+  const byCode = new Map(nodes.map((n) => [n.code, n]));
+
+  const edgeKeys = new Set();
+  const edges = [];
+  for (const s of systems) {
+    for (const body of s.bodies || []) {
+      if (String(body.type || '').toUpperCase() !== 'JUMPPOINT') continue;
+      const ends = jumpEndpoints(body.name || body.designation, byName);
+      if (!ends) continue;
+      const [a, b] = ends;
+      if (!byCode.has(a) || !byCode.has(b)) continue;
+      const key = [a, b].sort().join('|');
+      if (edgeKeys.has(key)) continue;
+      edgeKeys.add(key);
+      const na = byCode.get(a);
+      const nb = byCode.get(b);
+      edges.push({
+        from: a,
+        to: b,
+        label: body.name || (a + ' – ' + b),
+        x1: na.nx,
+        y1: na.ny,
+        x2: nb.nx,
+        y2: nb.ny
+      });
+    }
+  }
+
+  return {
+    systems: nodes,
+    edges,
+    bounds: { cx, cy, span, pad }
+  };
+}
+
+function hashUnit (slug, salt) {
+  const s = String(slug || '') + ':' + String(salt || '');
+  let h = 2166136261;
+  for (let i = 0; i < s.length; i++) {
+    h ^= s.charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
+  return (h >>> 0) / 4294967296;
+}
+
+/**
+ * Deterministic lat/lon for a POI without catalog surface coords.
+ * @param {string} slug
+ * @returns {{ latitude: number, longitude: number }}
+ */
+function syntheticLatLon (slug) {
+  const u1 = hashUnit(slug, 'lat');
+  const u2 = hashUnit(slug, 'lon');
+  return {
+    latitude: -70 + u1 * 140,
+    longitude: u2 * 360
+  };
+}
+
+/**
+ * Orthographic-ish disk projection of lat/lon → normalized 0–1.
+ * @param {number} lat
+ * @param {number} lon
+ * @param {number} [viewLongitude=0] camera / rotation offset in degrees
+ * @returns {{ nx: number, ny: number, visible: boolean }}
+ */
+function projectSurface (lat, lon, viewLongitude) {
+  const latR = (Number(lat) || 0) * Math.PI / 180;
+  const lonR = ((Number(lon) || 0) - (Number(viewLongitude) || 0)) * Math.PI / 180;
+  const x = Math.cos(latR) * Math.sin(lonR);
+  const y = Math.sin(latR);
+  const z = Math.cos(latR) * Math.cos(lonR);
+  const visible = z >= -0.05;
+  const scale = 0.42;
+  return {
+    nx: 0.5 + x * scale,
+    ny: 0.5 - y * scale,
+    visible
+  };
+}
+
+function findSystemBody (system, token) {
+  const want = String(token || '').trim().toLowerCase();
+  if (!want || !system) return null;
+  const bodies = system.bodies || [];
+  return bodies.find((b) => {
+    const keys = [b.code, b.name, b.designation]
+      .filter(Boolean)
+      .map((v) => String(v).toLowerCase());
+    return keys.includes(want) || keys.some((k) => k.endsWith('.' + want) || k.includes(want));
+  }) || null;
+}
+
+const POI_TYPES = new Set([
+  'LandingZone', 'Outpost', 'PointOfInterest', 'Manmade', 'Manmade_VisibleOnInteraction',
+  'NavPoint', 'City', 'Settlement', 'Station'
+]);
+
+/**
+ * Body surface layout: textured disk coords + POIs + child moons.
+ * @param {string} systemCode
+ * @param {string} bodyToken name or code
+ * @param {object} [opts]
+ * @param {boolean} [opts.includeHidden]
+ */
+function pushProjectedPoi (list, base, viewLongitude) {
+  let proj = projectSurface(base.latitude, base.longitude, viewLongitude);
+  let farSide = false;
+  if (!proj.visible) {
+    farSide = true;
+    proj = projectSurface(base.latitude, base.longitude + 180, viewLongitude);
+  }
+  list.push(Object.assign({}, base, {
+    farSide,
+    nx: Math.min(0.94, Math.max(0.06, proj.nx)),
+    ny: Math.min(0.94, Math.max(0.06, proj.ny))
+  }));
+}
+
+function layoutBody (systemCode, bodyToken, opts = {}) {
+  const bodyTerrain = require('./bodyTerrain');
+  const starmapSpaceData = require('./starmapSpaceData');
+  const code = String(systemCode || 'STANTON').replace(/\s+system$/i, '');
+  const system = locationCatalog.getSystem(code) || locationCatalog.getSystem('STANTON');
+  const body = findSystemBody(system, bodyToken);
+  if (!body) {
+    return {
+      system: system
+        ? { code: system.code, name: system.name }
+        : { code: 'STANTON', name: 'Stanton' },
+      body: null,
+      pois: [],
+      satellites: [],
+      surfaceStyle: 'rocky'
+    };
+  }
+
+  const bodyName = String(body.name || body.code || '');
+  const bodyNameLc = bodyName.toLowerCase();
+  const terrain = bodyTerrain.resolveBodyTerrain(body);
+  const surfaceStyle = terrain.style;
+  const surfaceTile = bodyTerrain.surfaceTileForBody(body);
+  const includeHidden = opts.includeHidden === true;
+  const viewLongitude = Number(opts.viewLongitude) || 0;
+  const community = starmapSpaceData.listPoisForBody(bodyName);
+  const radiusMeters = starmapSpaceData.bodyRadiusMeters(bodyName);
+  const oc = starmapSpaceData.getObjectContainer(bodyName);
+
+  const pois = [];
+  const seenName = new Set();
+
+  for (const row of community) {
+    const nameKey = starmapSpaceData.normalizeName(row.name);
+    if (nameKey) seenName.add(nameKey);
+    pushProjectedPoi(pois, {
+      slug: 'starmap:' + (row.guid || row.itemId || nameKey),
+      name: row.name,
+      type: row.type,
+      system: row.system || system.name,
+      parent: bodyName,
+      hotspot: false,
+      quantum: row.quantum === true,
+      kind: 'poi',
+      latitude: row.latitude,
+      longitude: row.longitude,
+      height: row.height,
+      coordsSource: 'starmap.space',
+      x: row.x,
+      y: row.y,
+      z: row.z
+    }, viewLongitude);
+  }
+
+  for (const loc of locationCatalog.listLocations()) {
+    const locSys = String(loc.system || '').toLowerCase();
+    const sysName = String(system.name || system.code || '').toLowerCase();
+    const sysCode = String(system.code || '').toLowerCase();
+    if (locSys && locSys !== sysName && locSys !== sysCode) continue;
+    const parent = String(loc.parent || '').toLowerCase();
+    const name = String(loc.name || '').toLowerCase();
+    const onBody = parent === bodyNameLc || name === bodyNameLc;
+    if (!onBody) continue;
+    if (name === bodyNameLc && /Planet|Moon|Star/i.test(loc.type || '')) continue;
+    if (!POI_TYPES.has(loc.type) && !loc.hotspot && !loc.quantum) continue;
+    if (loc.hideInStarmap && !includeHidden && !loc.hotspot) continue;
+    const nameKey = starmapSpaceData.normalizeName(loc.name);
+    if (nameKey && seenName.has(nameKey)) continue;
+    // Prefer matching a community row by substring (e.g. "Kudre Ore" ↔ catalog)
+    const communityHit = community.find((c) => {
+      const ck = starmapSpaceData.normalizeName(c.name);
+      return ck && nameKey && (ck.includes(nameKey) || nameKey.includes(ck));
+    });
+    if (communityHit) {
+      if (nameKey) seenName.add(nameKey);
+      continue;
+    }
+    if (nameKey) seenName.add(nameKey);
+    const ll = syntheticLatLon(loc.slug || loc.name);
+    pushProjectedPoi(pois, {
+      slug: loc.slug,
+      name: loc.name,
+      type: loc.type,
+      system: loc.system,
+      parent: loc.parent,
+      hotspot: loc.hotspot === true,
+      quantum: loc.quantum === true,
+      kind: 'poi',
+      latitude: ll.latitude,
+      longitude: ll.longitude,
+      coordsSource: 'synthetic',
+      height: null
+    }, viewLongitude);
+  }
+
+  const satellites = [];
+  const seenMoon = new Set();
+  for (const loc of locationCatalog.listLocations()) {
+    if (!/Moon/i.test(loc.type || '')) continue;
+    if (String(loc.parent || '').toLowerCase() !== bodyNameLc) continue;
+    const key = String(loc.slug || loc.name).toLowerCase();
+    if (seenMoon.has(key)) continue;
+    seenMoon.add(key);
+    const hit = findSystemBody(system, loc.name);
+    const ll = syntheticLatLon('moon:' + (loc.slug || loc.name));
+    const proj = projectSurface(ll.latitude, ll.longitude, viewLongitude);
+    satellites.push({
+      code: (hit && hit.code) || loc.slug,
+      name: (hit && hit.name) || loc.name,
+      type: 'SATELLITE',
+      designation: (hit && hit.designation) || loc.designation || null,
+      kind: 'satellite',
+      slug: loc.slug,
+      nx: Math.min(0.96, Math.max(0.04, proj.nx)),
+      ny: Math.min(0.96, Math.max(0.04, proj.ny)),
+      r: 2.5
+    });
+  }
+
+  return {
+    system: { code: system.code, name: system.name },
+    body: {
+      code: body.code,
+      name: body.name,
+      type: body.type,
+      designation: body.designation || null,
+      distance: body.distance,
+      latitude: body.latitude,
+      longitude: body.longitude,
+      radiusMeters: radiusMeters,
+      internalName: oc && oc.InternalName ? oc.InternalName : null,
+      orbitalMarkerRadius: oc && Number.isFinite(Number(oc.OrbitalMarkerRadius))
+        ? Number(oc.OrbitalMarkerRadius)
+        : null
+    },
+    surfaceStyle,
+    surfaceTile,
+    terrainSlug: terrain.slug,
+    projection: 'equirectangular',
+    coordsCredit: community.length
+      ? 'Surface coordinates: starmap.space (Meridian / Eureka)'
+      : null,
+    viewLongitude,
+    pois,
+    satellites
+  };
+}
+
 module.exports = {
   KIND_RADIUS,
   projectBodies,
   attachLocation,
-  layoutSystem
+  layoutSystem,
+  layoutGalaxy,
+  layoutBody,
+  jumpEndpoints,
+  syntheticLatLon,
+  projectSurface,
+  findSystemBody
 };

@@ -4,23 +4,32 @@
  * Thin re-export — invite JSON parse/build lives in `@fabric/http`.
  * Hub and GoonCitizen share one FederationContractInvite shape (incl. group labels).
  *
- * GoonCitizen stamps `expiresAt` (default 7 days) even when the http pin's
- * builder does not yet know the field.
+ * Invite expiry (`expiresAt`, default 7 days) is upstream as of http
+ * `resolveFederationInviteExpiresAt`. The stamping shim below only runs on
+ * pins predating that helper, so this file collapses to the bare module once
+ * the lockfile moves.
  *
  * @see @fabric/http/functions/federationContractInvite
  */
 
 const http = require('@fabric/http/functions/federationContractInvite');
 
+const PIN_STAMPS_EXPIRES_AT = typeof http.resolveFederationInviteExpiresAt === 'function' &&
+  typeof http.DEFAULT_FEDERATION_INVITE_TTL_MS === 'number';
+
 const DEFAULT_FEDERATION_INVITE_TTL_MS = http.DEFAULT_FEDERATION_INVITE_TTL_MS
   || (7 * 24 * 60 * 60 * 1000);
+
+function positiveEpochMs (value) {
+  if (value == null || value === '') return null;
+  const n = Number(value);
+  return Number.isFinite(n) && n > 0 ? n : null;
+}
 
 function stampExpiresAt (doc, fields) {
   if (!doc || typeof doc !== 'object') return doc;
   if (doc.expiresAt != null && doc.expiresAt !== '') return doc;
-  const invitedAt = doc.invitedAt != null && Number.isFinite(Number(doc.invitedAt))
-    ? Number(doc.invitedAt)
-    : Date.now();
+  const invitedAt = positiveEpochMs(doc.invitedAt) ?? Date.now();
   if (fields && fields.expiresAt != null && fields.expiresAt !== '') {
     const n = typeof fields.expiresAt === 'number'
       ? fields.expiresAt
@@ -49,8 +58,10 @@ function buildFederationContractInvite (fields) {
   return JSON.parse(buildFederationContractInviteJson(fields));
 }
 
-module.exports = Object.assign({}, http, {
-  DEFAULT_FEDERATION_INVITE_TTL_MS,
-  buildFederationContractInviteJson,
-  buildFederationContractInvite
-});
+module.exports = PIN_STAMPS_EXPIRES_AT
+  ? http
+  : Object.assign({}, http, {
+    DEFAULT_FEDERATION_INVITE_TTL_MS,
+    buildFederationContractInviteJson,
+    buildFederationContractInvite
+  });

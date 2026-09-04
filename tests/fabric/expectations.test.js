@@ -64,7 +64,28 @@ describe('Fabric expectations: GoonCitizen re-exports @fabric/http', () => {
   });
 
   it('federationContractInvite re-exports http', () => {
-    assert.equal(gcInvite, httpInvite);
+    // Behaviour, not reference identity: on http pins predating
+    // `resolveFederationInviteExpiresAt` the local module wraps the builder to
+    // stamp `expiresAt`. Same convention as tests/fabric/peer-host.test.js.
+    assert.equal(gcInvite.parseFederationContractInvite, httpInvite.parseFederationContractInvite);
+    assert.equal(gcInvite.FEDERATION_CONTRACT_INVITE, httpInvite.FEDERATION_CONTRACT_INVITE);
+    if (typeof httpInvite.resolveFederationInviteExpiresAt === 'function') {
+      assert.equal(gcInvite, httpInvite);
+    }
+    const invite = gcInvite.buildFederationContractInvite({
+      inviteId: 'i1',
+      inviterHubId: 'hub1',
+      contractId: 'c1',
+      invitedAt: 1000
+    });
+    assert.equal(invite.expiresAt, 1000 + gcInvite.DEFAULT_FEDERATION_INVITE_TTL_MS);
+    assert.equal(gcInvite.DEFAULT_FEDERATION_INVITE_TTL_MS, 7 * 24 * 60 * 60 * 1000);
+    const explicit = gcInvite.buildFederationContractInvite({
+      inviteId: 'i2',
+      invitedAt: 1000,
+      ttlMs: 5000
+    });
+    assert.equal(explicit.expiresAt, 6000);
   });
 });
 
@@ -91,6 +112,31 @@ describe('Fabric expectations: IdentityCrossSign (local, lockstep strings)', () 
     );
     assert.equal(gcSign.buildCrossSignMessage(nonce, 'aa:bb', peer), null);
     assert.equal(coreSign.buildCrossSignMessage(nonce, 'aa:bb', peer), null);
+
+    // Lockstep is a hand-maintained copy, so assert it over the whole shared
+    // surface rather than one happy path. A silent divergence on the revoke
+    // strings would mean device revocations stop verifying across the mesh.
+    for (const name of ['CROSS_SIGN_PREFIX', 'REVOKE_PREFIX', 'SIGN_TYPE', 'REVOKE_TYPE']) {
+      assert.equal(gcSign[name], coreSign[name], `${name} drifted from @fabric/core`);
+    }
+    const revoke = gcSign.buildRevokeMessage(nonce, local, peer);
+    assert.equal(revoke, `fabric:identity-cross-sign-revoke:1:${nonce}:${local}:${peer}`);
+    assert.equal(revoke, coreSign.buildRevokeMessage(nonce, local, peer));
+    assert.equal(gcSign.buildRevokeMessage(nonce, 'aa:bb', peer), null);
+    assert.equal(coreSign.buildRevokeMessage(nonce, 'aa:bb', peer), null);
+    assert.deepEqual(gcSign.parseRevokeMessage(revoke), coreSign.parseRevokeMessage(revoke));
+    assert.equal(gcSign.parseRevokeMessage(msg), null);
+    assert.equal(gcSign.parseCrossSignMessage(revoke), null);
+    for (const type of [gcSign.SIGN_TYPE, gcSign.REVOKE_TYPE, 'Nope', '']) {
+      assert.equal(gcSign.isCrossSignType(type), coreSign.isCrossSignType(type), type);
+    }
+
+    // Core may add exports; the local copy must not fall behind. The reverse is
+    // allowed — `coerceCrossSignObject` unwraps CONTRACT_MESSAGE bodies and is
+    // GoonCitizen-only until it lands upstream.
+    const missing = Object.keys(coreSign).filter((k) => !(k in gcSign));
+    assert.deepEqual(missing, [], `local copy missing @fabric/core exports: ${missing.join(', ')}`);
+    assert.equal(typeof gcSign.coerceCrossSignObject, 'function');
   });
 });
 

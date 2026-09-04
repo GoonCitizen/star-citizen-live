@@ -74,6 +74,47 @@ describe('targeted FederationContractInvite join', () => {
     });
     assert.equal(gm.getGroup(g.id).includes(b.pubkey), true);
     assert.ok(joined.members.some((m) => String(m).toLowerCase() === String(b.pubkey).toLowerCase()));
+    const proposal = gm.getProposal(require('../../functions/groupChangeProposal').inviteJoinProposalId('inv-2'));
+    assert.ok(proposal);
+    assert.equal(proposal.action, 'member.add');
+    assert.equal(String(proposal.member).toLowerCase(), String(b.pubkey).toLowerCase());
+    assert.equal(proposal.inviteId, 'inv-2');
+    assert.ok(proposal.invite);
+    assert.equal(proposal.invite.inviteId, 'inv-2');
+  });
+
+  it('proposeInviteJoin is idempotent and does not emit GroupChange', async () => {
+    const gcp = require('../../functions/groupChangeProposal');
+    const a = createIdentity();
+    const b = createIdentity();
+    const gm = new GroupManager({});
+    const g = await gm.createGroup({ name: 'Wing', threshold: 1 }, a.pubkey);
+    const invite = {
+      inviteId: 'inv-idem-1',
+      inviteePubkey: b.pubkey,
+      contractId: g.contractId,
+      groupId: g.id,
+      groupName: 'Wing',
+      role: 'signer',
+      invitedAt: 1_700_000_000_000,
+      type: 'FederationContractInvite',
+      v: 2
+    };
+    const events = [];
+    gm.on('group:proposal', (p) => events.push(['proposal', p.id]));
+    gm.on('group:local-change', (ch) => events.push(['change', ch.action]));
+    const first = gm.proposeInviteJoin({ groupId: g.id, invite, member: b.pubkey });
+    const second = gm.proposeInviteJoin({ groupId: g.id, invite, member: b.pubkey });
+    assert.equal(first.proposal.id, gcp.inviteJoinProposalId('inv-idem-1'));
+    assert.equal(second.skipped, 'duplicate');
+    assert.equal(second.proposal.id, first.proposal.id);
+    assert.ok(events.some((e) => e[0] === 'proposal'));
+    assert.ok(!events.some((e) => e[0] === 'change'));
+    assert.ok(!gm.getGroup(g.id).includes(b.pubkey));
+    const wire = gcp.proposalWireObject(first.proposal);
+    assert.equal(wire.via, 'FederationContractInvite');
+    assert.equal(wire.invite.inviteePubkey, String(b.pubkey).toLowerCase());
+    assert.equal(wire.member, String(b.pubkey).toLowerCase());
   });
 
   it('clipboard fabric: bytes match the signed CONTRACT_MESSAGE', () => {

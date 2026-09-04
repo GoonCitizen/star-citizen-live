@@ -11,14 +11,13 @@ npm warn gitignore-fallback No .npmignore file found, using .gitignore for file 
 npm warn deprecated uuid@8.3.2: uuid@10 and below is no longer supported.  For ESM codebases, update to uuid@latest.  For CommonJS codebases, use uuid@11 (but be aware this version will likely be deprecated in 2028).
 npm warn deprecated glob@10.5.0: Old versions of glob are not supported, and contain widely publicized security vulnerabilities, which have been fixed in the current version. Please update. Support for old versions may be purchased (at exorbitant rates) by contacting i@izs.me
 npm warn deprecated discord.js@14.18.0: This version is deprecated. Please use a newer version
-npm warn gitignore-fallback No .npmignore file found, using .gitignore for file exclusion. Consider creating a .npmignore file to explicitly control published files.
 
-added 1250 packages, and audited 1251 packages in 1m
+added 1253 packages, and audited 1254 packages in 1m
 
-167 packages are looking for funding
+168 packages are looking for funding
   run `npm fund` for details
 
-18 vulnerabilities (4 low, 7 moderate, 7 high)
+22 vulnerabilities (4 low, 11 moderate, 7 high)
 
 Some issues need review, and may require choosing
 a different dependency.

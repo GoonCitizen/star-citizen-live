@@ -41,6 +41,24 @@ describe('discordContract edges', () => {
     assert.strictEqual(fromActivity.guildId, 'g9');
   });
 
+  it('requestFromDiscordActivity rejects non-positive object.created', () => {
+    const fallback = requestFromDiscordActivity({
+      type: 'DiscordMessage',
+      object: { content: 'hi', created: 0 },
+      target: { ref: 'c1' },
+      actor: { ref: 'u1' }
+    });
+    assert.ok(fallback);
+    assert.notStrictEqual(fallback.createdAt, new Date(0).toISOString());
+    const ok = requestFromDiscordActivity({
+      type: 'DiscordMessage',
+      object: { content: 'hi', created: 1_700_000_000_000 },
+      target: { ref: 'c1' },
+      actor: { ref: 'u1' }
+    });
+    assert.strictEqual(ok.createdAt, new Date(1_700_000_000_000).toISOString());
+  });
+
   it('buildDiscordClaim requires requestId and pubkey', () => {
     assert.throws(() => buildDiscordClaim({}, 'pk'), /requestId/);
     assert.throws(() => buildDiscordClaim({ requestId: 'r1' }, ''), /claimantPubkey/);

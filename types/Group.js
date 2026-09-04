@@ -47,6 +47,10 @@ class Group {
     this.spendLadder = data.spendLadder || null;
     this.primaryColor = data.primaryColor || null;
     {
+      const { sanitizeRsiTag } = require('../functions/rsiLookup');
+      this.rsiTag = sanitizeRsiTag(data.rsiTag) || null;
+    }
+    {
       const { sanitizePinnedChannels } = require('../functions/groupPinnedChannels');
       this.pinnedChannels = sanitizePinnedChannels(data.pinnedChannels);
     }
@@ -182,6 +186,7 @@ class Group {
       policyFingerprint: this.policyFingerprint || null,
       spendLadder: this.spendLadder || null,
       primaryColor: this.primaryColor || null,
+      rsiTag: this.rsiTag || null,
       pinnedChannels: Array.isArray(this.pinnedChannels) ? this.pinnedChannels.slice() : [],
       pinnedMessages: Array.isArray(this.pinnedMessages) ? this.pinnedMessages.slice() : [],
       commitment: this.commitment()
@@ -205,6 +210,7 @@ class Group {
       contractId: this.contractId || null,
       policyFingerprint: this.policyFingerprint || null,
       primaryColor: this.primaryColor || null,
+      rsiTag: this.rsiTag || null,
       pinnedChannels: Array.isArray(this.pinnedChannels) ? this.pinnedChannels.slice() : [],
       pinnedMessages: Array.isArray(this.pinnedMessages) ? this.pinnedMessages.slice() : []
     };

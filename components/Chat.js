@@ -50,6 +50,7 @@ const {
   sortChatMembers
 } = require('../functions/chatMemberSort');
 const { pubkeysMatch } = require('@fabric/http/functions/fabricPubkey');
+const { canonicalChatAuthor } = require('../functions/identity');
 const { shareClipboardText } = require('../functions/groupJoinFlow');
 const {
   filterMembers,
@@ -735,7 +736,15 @@ class Chat extends React.Component {
 
   openProfile (pubkey) {
     if (!pubkey) return;
-    window.location.href = `/profiles/${encodeURIComponent(pubkey)}`;
+    let key = pubkey;
+    if (!isDiscordActor(pubkey)) {
+      try {
+        key = canonicalChatAuthor(pubkey) || pubkey;
+      } catch (_) {
+        key = pubkey;
+      }
+    }
+    window.location.href = `/profiles/${encodeURIComponent(key)}`;
   }
 
   async ensureAuth () {
@@ -895,6 +904,7 @@ class Chat extends React.Component {
     const showKey = discord
       ? true
       : !!(handle && String(handle).trim() && String(handle).trim() !== shortKey(author));
+    const isMe = !!(me && (author === me || pubkeysMatch(author, me)));
     return React.createElement('span', {
       className: 'chat-author',
       title: discord ? (author + ' — click for profile') : (author + ' — hover for preview · click for profile'),
@@ -910,7 +920,7 @@ class Chat extends React.Component {
         }
       }
     },
-    React.createElement('span', { className: 'who' + (me && author === me ? ' me' : '') }, who),
+    React.createElement('span', { className: 'who' + (isMe ? ' me' : '') }, who),
     showKey
       ? React.createElement('span', { className: 'key', title: author },
         discord ? 'discord' : shortKey(author))
@@ -1597,7 +1607,7 @@ class Chat extends React.Component {
     const nickname = profile.nickname || m.handle || null;
     const scHandle = profile.scHandle || null;
     const bio = profile.bio || null;
-    const isSelf = !!(me && pubkey === me);
+    const isSelf = !!(me && (pubkey === me || pubkeysMatch(pubkey, me)));
 
     if (discord) {
       const canMessage = !!(m.discordUserId && parseDiscordDmChannel(discordDmChannelKey(m.discordUserId)));

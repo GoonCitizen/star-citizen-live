@@ -33,6 +33,9 @@ describe('Peers inspect', () => {
     assert.match(text, /Fabric Network/);
     assert.match(text, /Inspect/);
     assert.match(text, /hub\.fabric\.pub:7777/);
+    assert.match(text, /Share with mesh/);
+    assert.match(text, /Always accumulated locally/);
+    assert.match(text, /Game logs stay on this node/);
   });
 
   it('inspects a peer with profile, peering string, and Open profile page', () => {

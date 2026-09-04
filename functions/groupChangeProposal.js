@@ -9,6 +9,79 @@ const crypto = require('crypto');
 const { pubkeyXOnly, pubkeysMatch } = require('./identity');
 
 const ACTIONS = new Set(['member.add', 'member.remove', 'update']);
+const INVITE_VIA = 'FederationContractInvite';
+const INVITE_JOIN_ID_PREFIX = 'gprop-join-';
+
+/**
+ * Stable id so invitee publish and inviter accept land on one proposal.
+ * @param {string} inviteId
+ * @returns {string}
+ */
+function inviteJoinProposalId (inviteId) {
+  const id = String(inviteId || '').trim();
+  if (!id) throw new Error('inviteId required');
+  return INVITE_JOIN_ID_PREFIX + id.toLowerCase();
+}
+
+/**
+ * Invitation fields carried on a join proposal (signed + on the wire).
+ * Omits clipboard hex / direction so inviter and invitee snapshots match.
+ * @param {object} invite
+ * @returns {object|null}
+ */
+function canonicalInviteForProposal (invite) {
+  if (!invite || typeof invite !== 'object') return null;
+  const inviteId = invite.inviteId || invite.id;
+  if (!inviteId) return null;
+  const invitedAtRaw = Number(invite.invitedAt);
+  const invitedAt = Number.isFinite(invitedAtRaw) && invitedAtRaw > 0 ? invitedAtRaw : null;
+  let expiresAt = null;
+  if (invite.expiresAt != null && invite.expiresAt !== '') {
+    const n = Number(invite.expiresAt);
+    expiresAt = Number.isFinite(n) && n > 0 ? n : invite.expiresAt;
+  }
+  return {
+    type: INVITE_VIA,
+    v: invite.v != null ? Number(invite.v) || 2 : 2,
+    inviteId: String(inviteId),
+    inviterHubId: invite.inviterHubId ? String(invite.inviterHubId).toLowerCase() : null,
+    inviteePubkey: invite.inviteePubkey ? String(invite.inviteePubkey).toLowerCase() : null,
+    contractId: invite.contractId ? String(invite.contractId).toLowerCase() : null,
+    groupId: invite.groupId ? String(invite.groupId) : null,
+    groupName: invite.groupName != null && String(invite.groupName).trim()
+      ? String(invite.groupName).trim()
+      : null,
+    role: invite.role != null && String(invite.role).trim()
+      ? String(invite.role).trim().toLowerCase()
+      : null,
+    invitedAt,
+    expiresAt
+  };
+}
+
+/**
+ * Deterministic proposal `createdAt` from the invite clock (not Date.now()).
+ * @param {object} invite
+ * @returns {string}
+ */
+function proposalCreatedAtFromInvite (invite) {
+  if (!invite || typeof invite !== 'object') return new Date().toISOString();
+  const n = Number(invite.invitedAt);
+  if (Number.isFinite(n) && n > 0) return new Date(n).toISOString();
+  if (invite.createdAt) return String(invite.createdAt);
+  return new Date().toISOString();
+}
+
+/**
+ * @param {object} proposal
+ * @returns {boolean}
+ */
+function isInviteJoinProposal (proposal) {
+  if (!proposal || typeof proposal !== 'object') return false;
+  if (String(proposal.via || '') === INVITE_VIA) return true;
+  if (proposal.inviteId) return true;
+  return String(proposal.id || '').startsWith(INVITE_JOIN_ID_PREFIX);
+}
 
 /**
  * Canonical UTF-8 string validators BIP340-sign for a proposal.
@@ -28,7 +101,10 @@ function signingStringForGroupChangeProposal (proposal) {
     role: p.role != null ? String(p.role) : null,
     patch: p.patch && typeof p.patch === 'object' ? p.patch : null,
     proposedBy: String(p.proposedBy || '').toLowerCase(),
-    createdAt: String(p.createdAt || '')
+    createdAt: String(p.createdAt || ''),
+    via: p.via ? String(p.via) : null,
+    inviteId: p.inviteId ? String(p.inviteId) : null,
+    invite: canonicalInviteForProposal(p.invite)
   };
   return JSON.stringify(body);
 }
@@ -56,11 +132,16 @@ function createProposalRecord (opts = {}) {
     proposedBy,
     createdAt: opts.createdAt || new Date().toISOString(),
     threshold: Math.max(1, Number(opts.threshold) || 1),
+    via: opts.via ? String(opts.via) : null,
+    inviteId: opts.inviteId ? String(opts.inviteId) : null,
+    invite: canonicalInviteForProposal(opts.invite),
     signatures: {},
     adoptedChangeId: null,
     adoptedAt: null
   };
   if (!record.groupId) throw new Error('groupId required');
+  if (record.invite && !record.inviteId) record.inviteId = record.invite.inviteId;
+  if (record.inviteId && !record.via) record.via = INVITE_VIA;
   return record;
 }
 
@@ -122,6 +203,9 @@ function changeFromProposal (record) {
     role: record.role || undefined,
     patch: record.patch || undefined,
     proposalId: record.id,
+    via: record.via || undefined,
+    inviteId: record.inviteId || undefined,
+    invite: record.invite || undefined,
     ts: record.adoptedAt || new Date().toISOString(),
     type: 'GroupChange'
   };
@@ -145,7 +229,10 @@ function proposalWireObject (record) {
     proposedBy: record.proposedBy,
     createdAt: record.createdAt,
     threshold: record.threshold,
-    status: record.status
+    status: record.status,
+    via: record.via || null,
+    inviteId: record.inviteId || null,
+    invite: record.invite || null
   };
 }
 
@@ -218,6 +305,12 @@ function signProposalVote (keyOrIdentity, proposal) {
 
 module.exports = {
   ACTIONS,
+  INVITE_VIA,
+  INVITE_JOIN_ID_PREFIX,
+  inviteJoinProposalId,
+  canonicalInviteForProposal,
+  proposalCreatedAtFromInvite,
+  isInviteJoinProposal,
   signingStringForGroupChangeProposal,
   createProposalRecord,
   addVote,

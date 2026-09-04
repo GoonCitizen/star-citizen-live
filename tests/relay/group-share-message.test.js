@@ -144,6 +144,39 @@ describe('groupShareMessage', () => {
     );
   });
 
+  it('classifies MissionBroadcast opaque messages', () => {
+    const key = new Key();
+    const { gooncitizenContractId } = require('../../contracts/gooncitizen');
+    const gcId = gooncitizenContractId();
+    const payload = {
+      '@type': 'MissionBroadcast',
+      missionId: 'mission-share-1',
+      broadcastAt: '2026-09-03T00:00:00.000Z',
+      scope: 'global',
+      groupId: null,
+      expiresAt: '2026-09-10T00:00:00.000Z',
+      mission: {
+        id: 'mission-share-1',
+        title: 'Escort the Hull-C',
+        status: 'open',
+        createdBy: key.pubkey
+      }
+    };
+    const body = {
+      contract: gcId,
+      type: 'MissionBroadcast',
+      actor: { publicKey: key.pubkey, id: key.pubkey },
+      object: payload
+    };
+    const msg = Message.fromVector(['CONTRACT_MESSAGE', JSON.stringify(body)]).signWithKey(key);
+    const url = buildOpaqueFabricUrl(msg);
+    const classified = classifyGroupShareMessage(parseOpaqueFabricMessage(url).message);
+    assert.equal(classified.kind, 'MissionBroadcast');
+    assert.equal(classified.missionId, 'mission-share-1');
+    assert.equal(classified.object.mission.title, 'Escort the Hull-C');
+    assert.equal(classified.contractId, gcId);
+  });
+
   it('rejects garbage opaque urls', () => {
     assert.equal(parseOpaqueFabricUrl('https://example.com').ok, false);
     assert.equal(parseOpaqueFabricUrl('fabric://login?sessionId=aa&hub=https://x').ok, false);

@@ -15,10 +15,13 @@ const MS_PER_DAY = 24 * 60 * 60 * 1000;
 /**
  * Canonical expire timestamp as epoch milliseconds.
  * Accepts a number (ms) or an ISO-8601 string. Missing / empty → null.
+ *
+ * Upstream in `@fabric/http/functions/federationContractInvite`; the local
+ * body below only runs on pins predating that export.
  * @param {unknown} value
  * @returns {number|null}
  */
-function normalizeInviteExpiresAtMs (value) {
+let normalizeInviteExpiresAtMs = function (value) {
   if (value == null || value === '') return null;
   if (typeof value === 'number' && Number.isFinite(value) && value > 0) {
     return Math.floor(value);
@@ -35,6 +38,15 @@ function normalizeInviteExpiresAtMs (value) {
     if (Number.isFinite(parsed) && parsed > 0) return parsed;
   }
   return null;
+};
+
+try {
+  const upstream = require('@fabric/http/functions/federationContractInvite');
+  if (typeof upstream.normalizeInviteExpiresAtMs === 'function') {
+    normalizeInviteExpiresAtMs = upstream.normalizeInviteExpiresAtMs;
+  }
+} catch (e) {
+  if (e.code !== 'MODULE_NOT_FOUND') throw e;
 }
 
 /**
@@ -83,12 +95,14 @@ function resolveShareExpiresAtMs (opts = {}, now = Date.now()) {
     }
     return exp;
   }
+  // Number(null)/'' → 0; require a positive epoch (suite chat/invite stamp).
   let invitedAt = now;
-  if (opts.invitedAt != null && Number.isFinite(Number(opts.invitedAt))) {
-    invitedAt = Number(opts.invitedAt);
+  if (opts.invitedAt != null && opts.invitedAt !== '') {
+    const n = Number(opts.invitedAt);
+    if (Number.isFinite(n) && n > 0) invitedAt = n;
   } else if (opts.offeredAt != null) {
     const parsed = Date.parse(opts.offeredAt);
-    if (Number.isFinite(parsed)) invitedAt = parsed;
+    if (Number.isFinite(parsed) && parsed > 0) invitedAt = parsed;
   }
   return invitedAt + relativeInviteTtlMs(opts);
 }

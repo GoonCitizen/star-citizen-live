@@ -22,7 +22,7 @@ const nodeApp = path.join(www, 'nodejs', 'app');
 const COPY_DIRS = ['services', 'functions', 'types', 'contracts'];
 const COPY_FILES = ['package.json', 'constants.js'];
 // Bundled starmap / ship JSON (not personal fleet dumps under data/fleets).
-const COPY_DATA_DIRS = ['locations', 'ships'];
+const COPY_DATA_DIRS = ['locations', 'ships', 'starmap'];
 
 const SKIP_BULKY = new Set([
   '.git', '.github', '.cursor', '.vscode', '.idea', 'docs', 'test', 'tests', '__tests__', 'coverage',

@@ -251,6 +251,9 @@ function foldGroupState (definition, entries = []) {
           createdAt: message.createdAt || entry.acceptedAt || null,
           threshold: Number(message.threshold) || threshold,
           status: message.status || 'pending',
+          via: message.via || null,
+          inviteId: message.inviteId || null,
+          invite: message.invite || null,
           signatures: (message.signatures && typeof message.signatures === 'object')
             ? Object.assign({}, message.signatures)
             : {}

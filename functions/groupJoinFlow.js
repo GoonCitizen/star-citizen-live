@@ -33,6 +33,12 @@ function shareNotice (data, pageUrl) {
   const isInvite = kind === 'FederationContractInvite' || vis === 'private';
   const expiry = formatInviteExpiryLabel(data);
   const expiryBit = expiry ? (' ' + expiry + '.') : '';
+  if (kind === 'MissionBroadcast') {
+    return mesh +
+      'Mission share copied — they paste it via Import… to get an offer in Notifications (Accept applies).' +
+      expiryBit +
+      page;
+  }
   if (isInvite) {
     if (data && data.relayed) {
       return mesh +

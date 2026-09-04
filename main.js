@@ -787,7 +787,7 @@ async function handleFabricProtocolUrl (urlStr) {
     const opaque = parseOpaqueFabricMessage(urlStr);
     if (opaque.ok) {
       const classified = classifyGroupShareMessage(opaque.message);
-      if (classified.kind === 'GroupOffer' || classified.kind === 'FederationContractInvite' || classified.kind === 'GroupPublish') {
+      if (classified.kind === 'GroupOffer' || classified.kind === 'FederationContractInvite' || classified.kind === 'GroupPublish' || classified.kind === 'MissionBroadcast') {
         deliverGroupSharePrompt({
           kind: classified.kind,
           protocolUrl: urlStr.startsWith('fabric:') ? urlStr.trim() : ('fabric:' + opaque.hex),
@@ -795,8 +795,12 @@ async function handleFabricProtocolUrl (urlStr) {
           messageBase64: opaque.base64 || null,
           contractId: classified.contractId,
           groupId: classified.groupId,
+          missionId: classified.missionId || null,
           offer: classified.kind === 'GroupOffer' ? classified.object : null,
           invite: classified.kind === 'FederationContractInvite' ? classified.object : null,
+          mission: classified.kind === 'MissionBroadcast'
+            ? ((classified.object && classified.object.mission) || classified.object)
+            : null,
           group: classified.kind === 'GroupOffer' && classified.object && classified.object.meta
             ? { name: classified.object.meta.name, visibility: classified.object.meta.visibility }
             : null,

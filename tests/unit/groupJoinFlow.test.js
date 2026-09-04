@@ -35,6 +35,15 @@ describe('groupJoinFlow', () => {
     assert.match(priv, /Join invite copied/i);
     assert.match(priv, /Import/i);
     assert.doesNotMatch(priv, /apply/i);
+    const mission = shareNotice({
+      kind: 'MissionBroadcast',
+      relayed: true,
+      peers: 2,
+      expiresAt: Date.now() + (7 * 24 * 60 * 60 * 1000)
+    }, 'http://x/missions/m1');
+    assert.match(mission, /Mission share copied/i);
+    assert.match(mission, /Import/i);
+    assert.match(mission, /Expires in 7 days/);
     const meshInvite = shareNotice({
       kind: 'FederationContractInvite',
       visibility: 'private',

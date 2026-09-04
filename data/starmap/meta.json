@@ -1,0 +1,12 @@
+{
+  "source": "https://starmap.space",
+  "credit": "StarMap / Meridian (Eureka) \u2014 community object-container + POI database",
+  "apis": [
+    "https://starmap.space/api/v2/oc/index.php",
+    "https://starmap.space/api/v2/pois/index.php"
+  ],
+  "bodies": 34,
+  "pois": 1881,
+  "fetchedAt": "2026-09-01",
+  "coordNotes": "Local body coords in km; BodyRadius in meters. lat=asin(z/r), lon=atan2(-y,-x) degrees."
+}

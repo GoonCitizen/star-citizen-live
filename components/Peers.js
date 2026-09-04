@@ -57,6 +57,11 @@ const CSS = `
   .pr-tag.warn{background:rgba(210,153,34,.18);color:#d29922}
   .pr-tag.primary{background:rgba(56,139,253,.18);color:#58a6ff}
   .pr-tag.mut{background:rgba(110,118,129,.14);color:var(--muted);font-weight:600}
+  .pr-share{display:flex;flex-wrap:wrap;align-items:flex-start;gap:10px;margin-top:12px;padding:10px 12px;border:1px solid var(--line);border-radius:8px}
+  .pr-share.off{background:rgba(210,153,34,.1)}
+  .pr-share.on{background:rgba(63,185,80,.1)}
+  .pr-share .copy{flex:1;min-width:16em;font-size:12.5px;line-height:1.45}
+  .pr-share .copy .sub{display:block;margin-top:3px;color:var(--muted);font-size:12px}
   .pr-conns{margin-top:10px;font-size:11.5px;color:var(--muted)}
   .pr-conns code{color:var(--text);font-size:11px}
   .pr-hubs{display:grid;gap:8px;margin-top:10px}
@@ -227,6 +232,25 @@ class Peers extends React.Component {
     this.setState({ busy: true, error: null });
     try {
       await this.putSetting('broadcastPeering', next);
+      this.setState({ busy: false });
+      await this.load();
+    } catch (e) {
+      this.setState({ busy: false, error: e.message });
+    }
+  }
+
+  async toggleShareLogsGlobal () {
+    if (this.state.busy) return;
+    const next = !(this.state.runtime && this.state.runtime.shareLogsGlobal);
+    if (next && typeof window !== 'undefined' && window.confirm &&
+        !window.confirm(
+          'Share parsed Game.log activity with every connected Fabric peer?\n\nThis node always keeps a full local copy for analysis. Prefer per-peer “Share logs” below when you only trust specific nodes.'
+        )) {
+      return;
+    }
+    this.setState({ busy: true, error: null });
+    try {
+      await this.putSetting('shareLogsGlobal', next);
       this.setState({ busy: false });
       await this.load();
     } catch (e) {
@@ -540,6 +564,25 @@ class Peers extends React.Component {
             React.createElement('span', { className: 'pr-tag ' + (rt.uplinkActive ? 'on' : 'off') },
               rt.uplinkActive ? `event queue · ${rt.uplinkQueued || 0}` : 'event queue idle')
           ),
+          androidSurface('logShare')
+            ? React.createElement('div', {
+              className: 'pr-share ' + (shareActive ? 'on' : 'off')
+            },
+              React.createElement('div', { className: 'copy' },
+                shareActive
+                  ? 'Sharing parsed Game.log activity with the mesh.'
+                  : 'Game logs stay on this node.',
+                React.createElement('span', { className: 'sub' },
+                  'Always accumulated locally for analysis. Incoming shared logs from peers land in All logs. Per-peer “Share logs” below is the narrower grant.')
+              ),
+              React.createElement('button', {
+                type: 'button',
+                className: 'pr-btn ' + (shareActive ? 'ghost' : ''),
+                disabled: this.state.busy || !this.state.editable || !unlocked,
+                onClick: () => this.toggleShareLogsGlobal()
+              }, shareGlobal ? 'Sharing on' : 'Share with mesh')
+            )
+            : null,
           unlocked
             ? React.createElement('div', { className: 'pr-conns' },
               React.createElement('div', { className: 'pr-row', style: { marginTop: 0 } },

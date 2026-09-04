@@ -129,6 +129,9 @@ class Identity extends React.Component {
       nickname: '',
       bio: '',
       scHandle: '',
+      rsiClaim: null,
+      rsiVerified: null,
+      rsiVerifyBusy: false,
       nicknameBusy: false,
       // opt-in PeerPresence
       sharePresence: false,
@@ -201,6 +204,39 @@ class Identity extends React.Component {
           : []
       });
     } catch (_) { /* settings unavailable */ }
+    try {
+      const claimRes = await fetch('/services/star-citizen/rsi/claim');
+      if (claimRes.ok) {
+        const claimJson = await claimRes.json();
+        this.setState({
+          rsiClaim: (claimJson.data && claimJson.data.claim) || null
+        });
+      }
+    } catch (_) { /* claim optional until identity unlocked */ }
+  }
+
+  async verifyRsiOwnership () {
+    const handle = String(this.state.scHandle || '').trim();
+    if (!handle || this.state.rsiVerifyBusy) return;
+    this.setState({ rsiVerifyBusy: true, error: null, notice: null, rsiVerified: null });
+    try {
+      const res = await fetch(
+        '/services/star-citizen/rsi/citizens/' + encodeURIComponent(handle) + '/verify'
+      );
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(json.error || `HTTP ${res.status}`);
+      const ownership = json.data || {};
+      this.setState({
+        rsiVerifyBusy: false,
+        rsiVerified: ownership.verified === true,
+        notice: ownership.verified
+          ? ('RSI handle ' + handle + ' verified via ' + (ownership.claim || 'g00n claim') + '.')
+          : ('RSI bio does not yet contain ' + (this.state.rsiClaim || 'your g00n claim') +
+            '. Paste the token into your public RSI biography and try again.')
+      });
+    } catch (e) {
+      this.setState({ rsiVerifyBusy: false, rsiVerified: false, error: e.message });
+    }
   }
 
   applyPresenceData (pd) {
@@ -910,10 +946,53 @@ class Identity extends React.Component {
         React.createElement('input', {
           type: 'text',
           maxLength: 64,
-          placeholder: 'optional',
+          placeholder: 'RSI handle (citizens/…)',
           value: this.state.scHandle,
-          onChange: (e) => this.setState({ scHandle: e.target.value })
-        })
+          onChange: (e) => this.setState({
+            scHandle: e.target.value,
+            rsiVerified: null
+          })
+        }),
+        this.state.rsiClaim
+          ? React.createElement('div', {
+            className: 'd',
+            style: { marginTop: 8, lineHeight: 1.45 }
+          },
+            'To prove this handle is yours, paste ',
+            React.createElement('code', {
+              style: { userSelect: 'all', cursor: 'pointer' },
+              title: 'Click to copy',
+              onClick: () => {
+                const t = this.state.rsiClaim;
+                if (t && typeof navigator !== 'undefined' && navigator.clipboard) {
+                  navigator.clipboard.writeText(t).catch(() => {});
+                }
+              }
+            }, this.state.rsiClaim),
+            ' into your public RSI citizen biography, then verify.',
+            this.state.rsiVerified === true
+              ? React.createElement('span', {
+                className: 'id-tag on',
+                style: { marginLeft: 8 }
+              }, 'verified')
+              : (this.state.rsiVerified === false
+                ? React.createElement('span', {
+                  className: 'id-tag off',
+                  style: { marginLeft: 8 }
+                }, 'unverified')
+                : null)
+          )
+          : null,
+        this.state.scHandle && this.state.rsiClaim
+          ? React.createElement('div', { className: 'id-row', style: { marginTop: 8 } },
+            React.createElement('button', {
+              type: 'button',
+              className: 'id-btn ghost',
+              disabled: this.state.rsiVerifyBusy || this.state.nicknameBusy,
+              onClick: () => this.verifyRsiOwnership()
+            }, this.state.rsiVerifyBusy ? 'Checking RSI…' : 'Verify on RSI')
+          )
+          : null
       ),
       React.createElement('div', { className: 'id-field' },
         React.createElement('label', null, 'Bio'),

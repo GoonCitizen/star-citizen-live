@@ -114,7 +114,10 @@ class ProfilePage extends React.Component {
       showSettings: false,
       showIdentity: false,
       advancedMode: readAdvancedMode(),
-      sharePlaytimes: false
+      sharePlaytimes: false,
+      rsiCitizen: null,
+      rsiCitizenError: null,
+      rsiOwnership: null
     };
   }
 
@@ -149,8 +152,37 @@ class ProfilePage extends React.Component {
         sharePlaytimes: !!(profRes.j.data && profRes.j.data.sharePlaytimes),
         error: null
       });
+      const handle = profRes.j.data &&
+        profRes.j.data.profile &&
+        profRes.j.data.profile.scHandle;
+      const fabricPk = (profRes.j.data && (profRes.j.data.pubkey ||
+        (profRes.j.data.profile && profRes.j.data.profile.pubkey))) || null;
+      if (handle) this.loadRsiCitizen(handle, fabricPk);
+      else this.setState({ rsiCitizen: null, rsiCitizenError: null, rsiOwnership: null });
     } catch (e) {
       this.setState({ loading: false, error: e.message || String(e) });
+    }
+  }
+
+  async loadRsiCitizen (handle, pubkey) {
+    const h = String(handle || '').trim();
+    if (!h) {
+      this.setState({ rsiCitizen: null, rsiCitizenError: null, rsiOwnership: null });
+      return;
+    }
+    try {
+      let url = `${BASE}/rsi/citizens/${encodeURIComponent(h)}`;
+      if (pubkey) url += '?pubkey=' + encodeURIComponent(pubkey);
+      const res = await fetch(url);
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(json.error || `HTTP ${res.status}`);
+      this.setState({
+        rsiCitizen: json.data || null,
+        rsiCitizenError: null,
+        rsiOwnership: json.ownership || null
+      });
+    } catch (e) {
+      this.setState({ rsiCitizen: null, rsiCitizenError: e.message, rsiOwnership: null });
     }
   }
 
@@ -550,8 +582,64 @@ class ProfilePage extends React.Component {
           hasFabric
             ? React.createElement('div', { className: 'ppage-kv' },
               React.createElement('b', null, 'Star Citizen handle '), React.createElement('br'),
-              profile.scHandle || '—')
+              profile.scHandle
+                ? React.createElement(React.Fragment, null,
+                  profile.scHandle,
+                  ' ',
+                  React.createElement('a', {
+                    href: 'https://robertsspaceindustries.com/citizens/' + encodeURIComponent(profile.scHandle),
+                    target: '_blank',
+                    rel: 'noopener noreferrer',
+                    style: { color: 'var(--accent)', fontFamily: 'inherit' }
+                  }, 'RSI ↗'))
+                : '—')
             : null,
+          this.state.rsiCitizen
+            ? React.createElement('div', {
+              className: 'ppage-kv',
+              style: { marginTop: 8 }
+            },
+              React.createElement('b', null, 'RSI citizen '),
+              this.state.rsiOwnership && this.state.rsiOwnership.verified
+                ? React.createElement('span', {
+                  className: 'ppage-tag on',
+                  style: { marginLeft: 6 },
+                  title: 'RSI bio contains g00n claim for this Fabric key'
+                }, 'verified')
+                : null,
+              React.createElement('br'),
+              this.state.rsiCitizen.displayName || this.state.rsiCitizen.handle,
+              this.state.rsiCitizen.citizenRecordLabel
+                ? React.createElement('span', null, ' · ' + this.state.rsiCitizen.citizenRecordLabel)
+                : null,
+              this.state.rsiCitizen.badge
+                ? React.createElement('span', null, ' · ' + this.state.rsiCitizen.badge)
+                : null,
+              this.state.rsiCitizen.enlisted
+                ? React.createElement('div', { style: { marginTop: 4 } },
+                  'enlisted ' + this.state.rsiCitizen.enlisted)
+                : null,
+              this.state.rsiCitizen.mainOrgSid
+                ? React.createElement('div', { style: { marginTop: 4 } },
+                  'org ',
+                  React.createElement('a', {
+                    href: 'https://robertsspaceindustries.com/orgs/' +
+                      encodeURIComponent(this.state.rsiCitizen.mainOrgSid),
+                    target: '_blank',
+                    rel: 'noopener noreferrer',
+                    style: { color: 'var(--accent)' }
+                  }, this.state.rsiCitizen.mainOrgName || this.state.rsiCitizen.mainOrgSid))
+                : null,
+              this.state.rsiOwnership && !this.state.rsiOwnership.verified && this.state.rsiOwnership.claim
+                ? React.createElement('div', {
+                  className: 'ppage-hint',
+                  style: { marginTop: 6 }
+                }, 'Unverified — RSI bio does not contain ' + this.state.rsiOwnership.claim)
+                : null)
+            : (this.state.rsiCitizenError && profile.scHandle
+              ? React.createElement('div', { className: 'ppage-hint', style: { marginBottom: 8 } },
+                'RSI lookup: ' + this.state.rsiCitizenError)
+              : null),
           this.renderSharedStats(d, peering),
           peering.string
             ? React.createElement('div', { className: 'ppage-kv' },

@@ -8,8 +8,10 @@
 
 const React = require('react');
 const groupPresence = require('../functions/groupPresence');
+const proceduralStarfield = require('../functions/proceduralStarfield');
 
 const BASE = '/services/star-citizen';
+const MAP_ASSET = '/assets/map';
 
 const CSS = `
   .smap{display:grid;gap:10px}
@@ -34,7 +36,34 @@ const CSS = `
     background:rgba(63,185,80,.15);color:var(--good)}
   .smap-empty{color:var(--muted);font-size:12.5px;padding:8px 0}
   .smap-hit{cursor:pointer}
+  .smap-attr{font-size:11px;color:var(--muted);line-height:1.4}
 `;
+
+let _manifestCache = null;
+let _manifestPromise = null;
+
+function loadManifest () {
+  if (_manifestCache) return Promise.resolve(_manifestCache);
+  if (_manifestPromise) return _manifestPromise;
+  _manifestPromise = fetch(MAP_ASSET + '/manifest.json', { cache: 'force-cache' })
+    .then((res) => (res.ok ? res.json() : null))
+    .then((j) => {
+      _manifestCache = j || {};
+      return _manifestCache;
+    })
+    .catch(() => {
+      _manifestCache = {};
+      return _manifestCache;
+    });
+  return _manifestPromise;
+}
+
+function assetUrl (rel) {
+  if (!rel) return null;
+  const s = String(rel).replace(/^\/+/, '');
+  if (s.includes('..')) return null;
+  return MAP_ASSET + '/' + s;
+}
 
 function slugish (value) {
   return String(value || '')
@@ -114,23 +143,135 @@ class StarMap extends React.Component {
       layout: null,
       error: null,
       system: props.system || 'STANTON',
-      includeHotspots: props.includeHotspots !== false
+      includeHotspots: props.includeHotspots !== false,
+      manifest: null,
+      tileStarfieldOk: false,
+      tileNebulaOk: false,
+      proceduralUrl: null,
+      surfaceOk: {},
+      viewBox: '0 0 100 100',
+      zooming: false
     };
+    this._zoomTimer = null;
+    this._zoomRaf = null;
   }
 
   componentDidMount () {
+    this.refreshBackground();
     this.fetchLayout();
+  }
+
+  componentWillUnmount () {
+    if (this._zoomTimer) clearTimeout(this._zoomTimer);
+    if (this._zoomRaf) cancelAnimationFrame(this._zoomRaf);
   }
 
   componentDidUpdate (prev) {
     if (prev.system !== this.props.system && this.props.system) {
-      this.setState({ system: this.props.system }, () => this.fetchLayout());
+      this.setState({ system: this.props.system }, () => {
+        this.refreshBackground();
+        this.fetchLayout();
+      });
       return;
+    }
+    if (this.state.system !== prev.system && !this.props.system) {
+      this.refreshBackground();
     }
     if (prev.includeHotspots !== this.props.includeHotspots &&
         this.props.includeHotspots != null) {
       this.setState({ includeHotspots: this.props.includeHotspots !== false }, () => this.fetchLayout());
     }
+  }
+
+  async refreshBackground () {
+    const system = this.state.system || 'STANTON';
+    const manifest = await loadManifest();
+    const colours = proceduralStarfield.coloursForSystem(system, manifest);
+    const proceduralUrl = proceduralStarfield.buildStarfieldDataUrl({
+      seed: system,
+      tint: colours.tint,
+      nebula: colours.nebula,
+      width: 480,
+      height: 480,
+      stars: 180
+    });
+    this.setState({
+      manifest,
+      proceduralUrl,
+      tileStarfieldOk: false,
+      tileNebulaOk: false
+    });
+    const sf = assetUrl(colours.starfield);
+    const nb = assetUrl(colours.nebulaPath);
+    if (sf) {
+      const img = typeof Image !== 'undefined' ? new Image() : null;
+      if (img) {
+        img.onload = () => this.setState({ tileStarfieldOk: true });
+        img.onerror = () => this.setState({ tileStarfieldOk: false });
+        img.src = sf;
+      }
+    }
+    if (nb) {
+      const img = typeof Image !== 'undefined' ? new Image() : null;
+      if (img) {
+        img.onload = () => this.setState({ tileNebulaOk: true });
+        img.onerror = () => this.setState({ tileNebulaOk: false });
+        img.src = nb;
+      }
+    }
+  }
+
+  backgroundLayers () {
+    const system = this.state.system || 'STANTON';
+    const colours = proceduralStarfield.coloursForSystem(system, this.state.manifest);
+    const layers = [];
+    layers.push(React.createElement('rect', {
+      key: 'bg-tint',
+      x: 0,
+      y: 0,
+      width: 100,
+      height: 100,
+      fill: colours.tint || '#0b0e14'
+    }));
+    if (this.state.proceduralUrl) {
+      layers.push(React.createElement('image', {
+        key: 'bg-proc',
+        href: this.state.proceduralUrl,
+        x: 0,
+        y: 0,
+        width: 100,
+        height: 100,
+        preserveAspectRatio: 'xMidYMid slice',
+        opacity: 0.95
+      }));
+    }
+    const sf = assetUrl(colours.starfield);
+    if (sf && this.state.tileStarfieldOk) {
+      layers.push(React.createElement('image', {
+        key: 'bg-sf',
+        href: sf,
+        x: 0,
+        y: 0,
+        width: 100,
+        height: 100,
+        preserveAspectRatio: 'xMidYMid slice',
+        opacity: 0.55
+      }));
+    }
+    const nb = assetUrl(colours.nebulaPath);
+    if (nb && this.state.tileNebulaOk) {
+      layers.push(React.createElement('image', {
+        key: 'bg-nb',
+        href: nb,
+        x: 0,
+        y: 0,
+        width: 100,
+        height: 100,
+        preserveAspectRatio: 'xMidYMid slice',
+        opacity: 0.45
+      }));
+    }
+    return layers;
   }
 
   async fetchLayout () {
@@ -143,9 +284,41 @@ class StarMap extends React.Component {
       const res = await fetch(`${BASE}/locations/map?${params}`, { cache: 'no-store' });
       const j = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(j.error || res.statusText);
-      this.setState({ layout: j.data || j, error: null });
+      const layout = j.data || j;
+      this.setState({
+        layout,
+        error: null,
+        viewBox: '0 0 100 100',
+        zooming: false,
+        surfaceOk: {}
+      });
+      this.preloadSurfaceTiles(layout);
     } catch (e) {
       this.setState({ error: e.message || String(e), layout: null });
+    }
+  }
+
+  preloadSurfaceTiles (layout) {
+    if (typeof Image === 'undefined') return;
+    const bodies = (layout && layout.bodies) || [];
+    for (const b of bodies) {
+      const tile = b.surfaceTile || null;
+      const url = assetUrl(tile);
+      if (!url) continue;
+      const key = String(tile);
+      if (this.state.surfaceOk[key]) continue;
+      const img = new Image();
+      img.onload = () => {
+        this.setState((prev) => ({
+          surfaceOk: Object.assign({}, prev.surfaceOk, { [key]: true })
+        }));
+      };
+      img.onerror = () => {
+        this.setState((prev) => ({
+          surfaceOk: Object.assign({}, prev.surfaceOk, { [key]: false })
+        }));
+      };
+      img.src = url;
     }
   }
 
@@ -157,8 +330,55 @@ class StarMap extends React.Component {
       slug: pt.slug || null,
       name: pt.name || pt.label || pt.token || pt.code || slug,
       token: pt.token || pt.slug || pt.code || slug,
-      kind: pt.kind || 'location'
+      code: pt.code || null,
+      type: pt.type || null,
+      kind: pt.kind || 'location',
+      surfaceStyle: pt.surfaceStyle || null,
+      surfaceTile: pt.surfaceTile || null
     });
+  }
+
+  isOrbital (pt) {
+    const t = String((pt && pt.type) || '').toUpperCase();
+    return t === 'STAR' || t === 'PLANET' || t === 'SATELLITE' || t === 'MOON';
+  }
+
+  zoomToBodyThenSelect (pt) {
+    if (!pt || this.state.zooming) return;
+    const cx = toPct(pt.nx);
+    const cy = toPct(pt.ny);
+    const size = 28;
+    const x = Math.max(0, Math.min(100 - size, cx - size / 2));
+    const y = Math.max(0, Math.min(100 - size, cy - size / 2));
+    const target = x + ' ' + y + ' ' + size + ' ' + size;
+    const start = performance.now();
+    const duration = 320;
+    const from = this.state.viewBox || '0 0 100 100';
+    const parseVb = (s) => String(s).trim().split(/\s+/).map(Number);
+    const a = parseVb(from);
+    const b = parseVb(target);
+    this.setState({ zooming: true });
+    const step = (now) => {
+      const t = Math.min(1, (now - start) / duration);
+      const e = t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2;
+      const cur = a.map((v, i) => v + (b[i] - v) * e);
+      this.setState({ viewBox: cur.join(' ') });
+      if (t < 1) {
+        this._zoomRaf = requestAnimationFrame(step);
+      } else {
+        this.emitSelect(Object.assign({ kind: 'body' }, pt));
+        this._zoomTimer = setTimeout(() => {
+          this.setState({ viewBox: '0 0 100 100', zooming: false });
+        }, 40);
+      }
+    };
+    if (typeof requestAnimationFrame === 'function') {
+      this._zoomRaf = requestAnimationFrame(step);
+    } else {
+      this.setState({ viewBox: target });
+      this.emitSelect(Object.assign({ kind: 'body' }, pt));
+      this.setState({ viewBox: '0 0 100 100', zooming: false });
+    }
   }
 
   isSelected (pt) {
@@ -168,6 +388,87 @@ class StarMap extends React.Component {
       .filter(Boolean)
       .map((v) => String(v).toLowerCase());
     return keys.includes(want);
+  }
+
+  fillForBody (b) {
+    const style = String(b.surfaceStyle || '').toLowerCase();
+    if (b.type === 'STAR' || style === 'star') return '#f5d76e';
+    if (style === 'ice') return '#a8c4d8';
+    if (style === 'gas') return '#c87840';
+    if (style === 'volcanic') return '#5a2018';
+    if (style === 'industrial') return '#6a7080';
+    if (style === 'arid') return '#c4a46a';
+    if (String(b.type).toUpperCase() === 'PLANET') return '#6ea8fe';
+    return '#9aa3b2';
+  }
+
+  bodyOrb (key, b) {
+    const selectable = typeof this.props.onSelect === 'function' &&
+      (b.slug || b.token || b.name || b.code);
+    const selected = this.isSelected(b);
+    const orbital = this.isOrbital(b);
+    const r = orbital
+      ? Math.max(1.6, Math.min(5.2, (b.r || 3) / 1.9))
+      : Math.max(1.0, Math.min(2.4, (b.r || 3) / 2.6));
+    const cx = toPct(b.nx);
+    const cy = toPct(b.ny);
+    const clipId = 'smap-body-' + String(key).replace(/[^a-zA-Z0-9_-]/g, '');
+    const tileUrl = assetUrl(b.surfaceTile);
+    const styleKey = String(b.surfaceTile || b.surfaceStyle || '');
+    const textured = orbital && tileUrl && this.state.surfaceOk[styleKey];
+    const onClick = selectable
+      ? (e) => {
+        if (e && e.stopPropagation) e.stopPropagation();
+        if (orbital) this.zoomToBodyThenSelect(b);
+        else this.emitSelect(Object.assign({ kind: 'body' }, b));
+      }
+      : undefined;
+
+    const kids = [
+      React.createElement('defs', { key: 'd' },
+        React.createElement('clipPath', { id: clipId },
+          React.createElement('circle', { cx, cy, r })
+        )
+      ),
+      React.createElement('circle', {
+        key: 'fill',
+        cx,
+        cy,
+        r,
+        fill: this.fillForBody(b),
+        opacity: textured ? 0.35 : 0.92
+      }),
+      textured
+        ? React.createElement('image', {
+          key: 'tex',
+          href: tileUrl,
+          x: cx - r,
+          y: cy - r,
+          width: r * 2,
+          height: r * 2,
+          preserveAspectRatio: 'xMidYMid slice',
+          clipPath: 'url(#' + clipId + ')',
+          opacity: 0.95,
+          style: { pointerEvents: 'none' }
+        })
+        : null,
+      React.createElement('circle', {
+        key: 'ring',
+        cx,
+        cy,
+        r,
+        fill: 'none',
+        stroke: selected ? '#fff' : 'rgba(255,255,255,0.28)',
+        strokeWidth: selected ? 0.55 : 0.25,
+        style: { pointerEvents: 'none' }
+      }, React.createElement('title', null, b.name || b.code))
+    ];
+    return React.createElement('g', {
+      key,
+      className: selectable ? 'smap-hit' : undefined,
+      onClick,
+      style: selectable ? { cursor: 'pointer' } : undefined
+    }, kids);
   }
 
   circle (key, pt, style) {
@@ -188,7 +489,15 @@ class StarMap extends React.Component {
     if (selectable) {
       props.onClick = (e) => {
         if (e && e.stopPropagation) e.stopPropagation();
-        this.emitSelect(Object.assign({ kind: style.kind }, pt));
+        const payload = Object.assign({ kind: style.kind }, pt);
+        if (this.isOrbital(pt) || /^(Planet|Moon|Star)$/i.test(pt.type || '')) {
+          this.zoomToBodyThenSelect(Object.assign({}, pt, {
+            type: /moon/i.test(pt.type || '') ? 'SATELLITE' : pt.type,
+            kind: 'body'
+          }));
+          return;
+        }
+        this.emitSelect(payload);
       };
     }
     return React.createElement('circle', props,
@@ -238,20 +547,14 @@ class StarMap extends React.Component {
     const h = Number(this.props.height) || 280;
     return React.createElement('svg', {
       className: 'smap-canvas',
-      viewBox: '0 0 100 100',
+      viewBox: this.state.viewBox || '0 0 100 100',
       preserveAspectRatio: 'xMidYMid meet',
       style: { height: h, display: 'block' },
       role: 'img',
       'aria-label': (layout.system && layout.system.name) || 'Star map'
     },
-    React.createElement('rect', { x: 0, y: 0, width: 100, height: 100, fill: '#0b0e14' }),
-    bodies.map((b, i) => this.circle('b-' + (b.code || b.name || i), b, {
-      r: Math.max(1.2, Math.min(4, (b.r || 3) / 2.2)),
-      fill: b.type === 'STAR' ? '#f5d76e' : (b.type === 'PLANET' ? '#6ea8fe' : '#9aa3b2'),
-      opacity: 0.9,
-      kind: 'body',
-      title: b.name || b.code
-    })),
+    this.backgroundLayers(),
+    bodies.map((b, i) => this.bodyOrb('b-' + (b.code || b.name || i), b)),
     locations.map((p, i) => this.circle('l-' + (p.slug || i), p, {
       r: 0.9,
       fill: '#58a6ff',
@@ -345,34 +648,50 @@ class StarMap extends React.Component {
       { code: 'PYRO', name: 'Pyro' },
       { code: 'NYX', name: 'Nyx' }
     ];
+    const hideTools = this.props.hideTools === true || this.props.embedded === true;
+    const hideLegend = this.props.embedded === true;
     return React.createElement('div', { className: 'smap' },
-      React.createElement('div', { className: 'smap-tools' },
-        React.createElement('select', {
-          value: this.state.system,
-          onChange: (e) => this.setState({ system: e.target.value }, () => this.fetchLayout())
-        }, systems.map((s) => React.createElement('option', {
-          key: s.code || s.name,
-          value: s.code || s.name
-        }, s.name || s.code))),
-        React.createElement('label', null,
-          React.createElement('input', {
-            type: 'checkbox',
-            checked: this.state.includeHotspots !== false,
-            onChange: (e) => this.setState({ includeHotspots: e.target.checked }, () => this.fetchLayout())
-          }),
-          'Hotspots'
+      hideTools
+        ? null
+        : React.createElement('div', { className: 'smap-tools' },
+          React.createElement('select', {
+            value: this.state.system,
+            onChange: (e) => {
+              const system = e.target.value;
+              this.setState({ system }, () => {
+                this.refreshBackground();
+                this.fetchLayout();
+              });
+              if (typeof this.props.onSystemChange === 'function') {
+                this.props.onSystemChange(system);
+              }
+            }
+          }, systems.map((s) => React.createElement('option', {
+            key: s.code || s.name,
+            value: s.code || s.name
+          }, s.name || s.code))),
+          React.createElement('label', null,
+            React.createElement('input', {
+              type: 'checkbox',
+              checked: this.state.includeHotspots !== false,
+              onChange: (e) => this.setState({ includeHotspots: e.target.checked }, () => this.fetchLayout())
+            }),
+            'Hotspots'
+          ),
+          this.renderSystemCounts(systems)
         ),
-        this.renderSystemCounts(systems)
-      ),
       this.renderSvg(),
-      React.createElement('div', { className: 'smap-legend' },
-        React.createElement('span', null, React.createElement('i', { className: 'smap-swatch', style: { background: '#f5d76e' } }), 'star / planet'),
-        React.createElement('span', null, React.createElement('i', { className: 'smap-swatch', style: { background: '#3fb950' } }), 'QT visits'),
-        React.createElement('span', null, React.createElement('i', { className: 'smap-swatch', style: { background: '#d29922' } }), 'wiki hotspots'),
-        this.props.members && this.props.members.length
-          ? React.createElement('span', null, React.createElement('i', { className: 'smap-swatch', style: { background: '#f78166' } }), 'online members')
-          : null
-      ),
+      hideLegend
+        ? null
+        : React.createElement('div', { className: 'smap-legend' },
+          React.createElement('span', null, React.createElement('i', { className: 'smap-swatch', style: { background: '#f5d76e' } }), 'star'),
+          React.createElement('span', null, React.createElement('i', { className: 'smap-swatch', style: { background: '#6ea8fe' } }), 'planet / moon (textured)'),
+          React.createElement('span', null, React.createElement('i', { className: 'smap-swatch', style: { background: '#3fb950' } }), 'QT visits'),
+          React.createElement('span', null, React.createElement('i', { className: 'smap-swatch', style: { background: '#d29922' } }), 'wiki hotspots'),
+          this.props.members && this.props.members.length
+            ? React.createElement('span', null, React.createElement('i', { className: 'smap-swatch', style: { background: '#f78166' } }), 'online members')
+            : null
+        ),
       this.renderList()
     );
   }

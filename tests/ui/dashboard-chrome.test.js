@@ -55,15 +55,31 @@ describe('Dashboard chrome', () => {
     assert.equal(typeof dash.applyScannedLink, 'function');
   });
 
-  it('opens My profile from the identity flyout', () => {
+  it('opens My profile from the identity flyout', async () => {
+    const { canonicalChatAuthor } = require('../../functions/identity');
+    const MESH = '03' + 'cd'.repeat(32);
     const dash = new Dashboard({});
     dash.state.online = true;
     dash.state.status = 'ok';
     dash.state.showIdFlyout = true;
     dash.state.identityPubkey = ME;
-    const text = textOf(dash.renderIdentityFlyout());
+    // Mesh publisher (chat author) can differ from the unlocked wallet chip.
+    dash.state.meshPubkey = MESH;
+    const flyout = dash.renderIdentityFlyout();
+    const text = textOf(flyout);
     assert.match(text, /My profile/);
     assert.doesNotMatch(text, /When you fly/);
+    const buttons = collect(flyout, (n) => n && n.$$typeof === 'element' && n.type === 'button');
+    const myProfile = buttons.find((n) => /My profile/.test(textOf(n)));
+    assert.ok(myProfile, 'My profile button');
+    const prevHref = global.window.location.href;
+    await myProfile.props.onClick();
+    const expected = '/profiles/' + encodeURIComponent(canonicalChatAuthor(MESH) || MESH);
+    assert.ok(String(global.window.location.href).includes(expected),
+      'My profile should open the mesh/chat identity, not the wallet chip (' + expected + ')');
+    assert.ok(!String(global.window.location.href).includes(encodeURIComponent(canonicalChatAuthor(ME))),
+      'should not open unlocked wallet pubkey when mesh differs');
+    try { global.window.location.href = prevHref; } catch (_) { /* ignore */ }
   });
 
   it('offers a header data-sync status control', () => {
@@ -87,6 +103,43 @@ describe('Dashboard chrome', () => {
       dash.state.status = 'ok';
       const text = textOf(dash.render());
       assert.match(text, /Overlay/);
+    } finally {
+      window.electronAPI = prev;
+    }
+  });
+
+  it('opens the primary-group overlay when voice is joined', async () => {
+    const prev = window.electronAPI;
+    const calls = [];
+    window.electronAPI = {
+      identity: { get: async () => ({}) },
+      setGroupOverlay: async (enabled) => {
+        calls.push(!!enabled);
+        return { groupOverlay: !!enabled };
+      },
+      getGroupOverlay: async () => ({ groupOverlay: false })
+    };
+    try {
+      const ActiveVoicePanel = require('../../components/ActiveVoicePanel');
+      const dash = new Dashboard({});
+      dash.state.online = true;
+      dash.state.status = 'ok';
+      dash.state.voiceJoined = false;
+      dash.state.groupOverlay = false;
+      const panel = findType(dash.render(), ActiveVoicePanel)[0];
+      assert.ok(panel && typeof panel.props.onVoice === 'function');
+      panel.props.onVoice({ joined: true, groupId: 'g1' });
+      assert.strictEqual(dash.state.voiceJoined, true);
+      assert.strictEqual(dash.state.groupOverlay, true);
+      await Promise.resolve();
+      assert.deepStrictEqual(calls, [true]);
+      panel.props.onVoice({ joined: true, groupId: 'g1' });
+      await Promise.resolve();
+      assert.deepStrictEqual(calls, [true]);
+      panel.props.onVoice({ joined: false });
+      assert.strictEqual(dash.state.voiceJoined, false);
+      assert.strictEqual(dash.state.groupOverlay, true);
+      assert.deepStrictEqual(calls, [true]);
     } finally {
       window.electronAPI = prev;
     }

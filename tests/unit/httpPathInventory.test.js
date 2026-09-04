@@ -104,6 +104,7 @@ const REQUIRED_NEEDLES = [
   '/missions/:id/cancel',
   '/missions/:id/apply',
   '/missions/:id/broadcast',
+  '/missions/:id/share',
   '/missions/:id/claim',
   '/missions/:id/escrow',
   '/missions/:id/payout',

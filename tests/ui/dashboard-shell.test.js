@@ -54,7 +54,7 @@ describe('Dashboard shell UI', () => {
     dash.state.status = 'ok';
     const tree = dash.render();
     const text = textOf(tree);
-    assert.match(text, /cumulative history from your logs/);
+    assert.match(text, /cumulative history on this node/);
     assert.match(text, /All logs/);
     assert.match(text, /My logs/);
     assert.match(text, /Filters/);
@@ -113,6 +113,22 @@ describe('Dashboard shell UI', () => {
     assert.equal(localStorage.getItem('gooncitizen.homeLogScope'), null);
     const reset = dash.buildAnalyzeModel();
     assert.equal(reset.msMain.length, 3);
+
+    dash.state.counts = { missions: 99, deaths: 99, players: 99, completed: 99, abandoned: 0, failed: 0, session: {} };
+    dash.state.online = true;
+    dash.state.status = 'STARTED';
+    const allStrip = findByClass(dash.render(), 'counts')[0];
+    assert.match(textOf(allStrip), /missions\s+3/);
+    const allKpis = findByClass(dash.render(), 'kpis')[0];
+    assert.match(textOf(allKpis), /Missions done\s+3/);
+
+    dash.setHomeLogScope('mine');
+    const mineStrip = findByClass(dash.render(), 'counts')[0];
+    assert.match(textOf(mineStrip), /missions\s+2/);
+    const mineKpis = findByClass(dash.render(), 'kpis')[0];
+    assert.match(textOf(mineKpis), /Missions done\s+2/);
+    assert.match(textOf(dash.render()), /Share with mesh/);
+    assert.match(textOf(dash.render()), /Always accumulated locally/);
 
     dash.state.homeFiltersOpen = true;
     const fly = textOf(dash.render());

@@ -233,6 +233,16 @@ class GroupOfferModal extends React.Component {
     if (data.kind === 'GroupPublish' && data.group) {
       return `Group “${data.group.name || data.group.id}” imported.`;
     }
+    if (data.kind === 'MissionBroadcast') {
+      const title = (data.mission && data.mission.title) || data.missionId || 'mission';
+      if (data.filtered) {
+        return `Mission “${title}” is group-scoped and not offered to this identity.`;
+      }
+      if (data.pending) {
+        return `Mission “${title}” is in Notifications — Accept there to apply.`;
+      }
+      return `Mission “${title}” imported.`;
+    }
     if (data.group) return `Group “${data.group.name || data.group.id}” imported.`;
     return 'Fabric message ingested.';
   }
@@ -279,6 +289,11 @@ class GroupOfferModal extends React.Component {
         this.finishImport(data, `Group “${data.group.name || data.group.id}” imported.`);
         return;
       }
+      if (data.kind === 'MissionBroadcast') {
+        const notice = await this.handleIngestResult(data);
+        this.finishImport(data, notice);
+        return;
+      }
       if (data.kind === 'FederationContractInvite' && data.skipped) {
         throw new Error(
           data.skipped === 'identity-locked'
@@ -310,10 +325,10 @@ class GroupOfferModal extends React.Component {
         React.createElement('p', null,
           'Paste the invite someone shared (',
           React.createElement('code', null, 'fabric:…'),
-          '). Import sniffs hex vs base64 from the body, then Join or Apply from Notifications.'),
+          '). Import sniffs hex vs base64 from the body. Group joins and mission offers land in Notifications.'),
         React.createElement('textarea', {
           value: this.state.pasteText,
-          placeholder: 'fabric:… join invite or group share',
+          placeholder: 'fabric:… join invite, group share, or mission share',
           spellCheck: false,
           autoFocus: true,
           onChange: (e) => this.setState({ pasteText: e.target.value }),
@@ -415,6 +430,10 @@ class GroupOfferModal extends React.Component {
   closeNotice () {
     const data = this.state.lastImport;
     this.setState({ notice: null, lastImport: null });
+    if (data && data.kind === 'MissionBroadcast' && data.missionId && typeof window !== 'undefined') {
+      window.location.href = '/missions/' + encodeURIComponent(data.missionId);
+      return;
+    }
     const id = data && data.group && (data.group.id || data.groupId);
     const fallback = data && data.invite && (data.invite.groupId || data.groupId);
     const groupId = id || fallback;
@@ -425,6 +444,9 @@ class GroupOfferModal extends React.Component {
 
   render () {
     if (this.state.notice && !this.state.prompt) {
+      const openLabel = (this.state.lastImport && this.state.lastImport.kind === 'MissionBroadcast')
+        ? 'Open mission'
+        : 'Open group';
       return React.createElement('div', {
         className: 'group-offer-modal-backdrop',
         onClick: () => this.closeNotice()
@@ -432,7 +454,7 @@ class GroupOfferModal extends React.Component {
         React.createElement('div', { className: 'group-offer-modal', onClick: (e) => e.stopPropagation() },
           React.createElement('p', null, this.state.notice),
           React.createElement('div', { className: 'actions' },
-            React.createElement('button', { type: 'button', onClick: () => this.closeNotice() }, 'Open group')
+            React.createElement('button', { type: 'button', onClick: () => this.closeNotice() }, openLabel)
           )
         )
       );
@@ -448,9 +470,17 @@ class GroupOfferModal extends React.Component {
 
     const p = this.state.prompt;
     if (!p) return null;
-    const title = p.kind === 'FederationContractInvite' ? 'Group invite' : 'Group share';
-    const name = (p.group && p.group.name) || (p.offer && p.offer.meta && p.offer.meta.name) || p.groupId || 'Group';
+    const isMission = p.kind === 'MissionBroadcast';
+    const title = isMission
+      ? 'Mission share'
+      : (p.kind === 'FederationContractInvite' ? 'Group invite' : 'Group share');
+    const name = isMission
+      ? ((p.mission && p.mission.title) || p.missionId || 'Mission')
+      : ((p.group && p.group.name) || (p.offer && p.offer.meta && p.offer.meta.name) || p.groupId || 'Group');
     const note = (p.offer && p.offer.note) || (p.invite && p.invite.note) || null;
+    const primary = isMission
+      ? 'Import offer'
+      : (p.kind === 'FederationContractInvite' ? 'Join group' : 'Apply to join');
     return React.createElement('div', { className: 'group-offer-modal-backdrop' },
       React.createElement('div', { className: 'group-offer-modal' },
         React.createElement('h2', null, title),
@@ -465,7 +495,7 @@ class GroupOfferModal extends React.Component {
             className: 'primary',
             disabled: this.state.busy,
             onClick: () => this.accept()
-          }, this.state.busy ? 'Working…' : (p.kind === 'FederationContractInvite' ? 'Join group' : 'Apply to join'))
+          }, this.state.busy ? 'Working…' : primary)
         )
       )
     );

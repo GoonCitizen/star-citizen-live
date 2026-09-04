@@ -49,7 +49,7 @@ second product.
 | [dolkensp/unp4k](https://github.com/dolkensp/unp4k) | C# | **tool** | Extracts `Data.p4k` (global.ini, DataForge). The local, durable way to map mission/ship codenames → names. |
 | [Dymerz/StarCitizen-GameData](https://github.com/Dymerz/StarCitizen-GameData) | C# | **tool/data** | Converts game data XML → JSON/SQL — turns DataForge into a usable lookup table. |
 | [StarCitizenWiki/API](https://github.com/StarCitizenWiki/API) | PHP | **live API** | Scraped game data + public API (ships, missions). Enrichment source (community-run → fragility caveat). |
-| [Dymerz/RSI-Scraper](https://github.com/Dymerz/RSI-Scraper) | Python | idea | Scrape RSI org members/fleet — roster import. |
+| [Dymerz/RSI-Scraper](https://github.com/Dymerz/RSI-Scraper) | Python | idea | Scrape RSI org members/fleet — roster import. Local: `functions/rsiLookup.js` fetches public `/orgs/<SID>` + `/citizens/<handle>` HTML for basic fields (group `rsiTag`, profile `scHandle`). |
 | [dolkensp/Spectrum.Net](https://github.com/dolkensp/Spectrum.Net) | C# | idea | RSI Spectrum API wrapper — identity/integration idea. |
 | UEXcorp API · SCMDB (non-GitHub) | — | live API | Trade/contract catalogs (from earlier research). |
 

@@ -88,4 +88,49 @@ describe('GroupChangeProposal governance', () => {
     assert.strictEqual(gcp.verifyProposalVote(proposal, a.pubkey, signed.signature), true);
     assert.strictEqual(gcp.verifyProposalVote(proposal, a.pubkey, '00'.repeat(64)), false);
   });
+
+  it('invite-join snapshot is stable and covered by the vote string', () => {
+    const invite = {
+      type: 'FederationContractInvite',
+      v: 2,
+      inviteId: 'inv-snap-1',
+      inviterHubId: 'AA' + '11'.repeat(31),
+      inviteePubkey: 'BB' + '22'.repeat(31),
+      contractId: 'cc'.repeat(32),
+      groupId: 'group-1',
+      groupName: 'Wing',
+      role: 'signer',
+      invitedAt: 1_700_000_000_000,
+      expiresAt: 1_700_604_800_000,
+      protocolUrl: 'fabric:deadbeef',
+      direction: 'outbound'
+    };
+    const snap = gcp.canonicalInviteForProposal(invite);
+    assert.deepEqual(gcp.canonicalInviteForProposal(snap), snap);
+    assert.equal(snap.inviterHubId, String(invite.inviterHubId).toLowerCase());
+    assert.equal(snap.inviteePubkey, String(invite.inviteePubkey).toLowerCase());
+    assert.equal(gcp.inviteJoinProposalId('INV-snap-1'), 'gprop-join-inv-snap-1');
+    assert.ok(!Object.prototype.hasOwnProperty.call(snap, 'protocolUrl'));
+
+    const a = createIdentity();
+    const proposal = gcp.createProposalRecord({
+      id: gcp.inviteJoinProposalId(invite.inviteId),
+      groupId: 'group-1',
+      contractId: invite.contractId,
+      action: 'member.add',
+      member: invite.inviteePubkey,
+      proposedBy: invite.inviteePubkey,
+      createdAt: gcp.proposalCreatedAtFromInvite(invite),
+      via: gcp.INVITE_VIA,
+      inviteId: invite.inviteId,
+      invite
+    });
+    const signed = gcp.signProposalVote(a, proposal);
+    assert.equal(gcp.verifyProposalVote(proposal, a.pubkey, signed.signature), true);
+    assert.match(signed.message, /inv-snap-1/);
+    assert.match(signed.message, /FederationContractInvite/);
+    const wire = gcp.proposalWireObject(proposal);
+    assert.equal(wire.invite.inviteId, 'inv-snap-1');
+    assert.equal(wire.member, String(invite.inviteePubkey).toLowerCase());
+  });
 });

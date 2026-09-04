@@ -303,6 +303,7 @@ use `:id` (pubkey, hash, slug, snowflake — as implemented).
 | `POST` | `/missions/:id/cancel` | |
 | `POST` | `/missions/:id/apply` | |
 | `POST` | `/missions/:id/broadcast` | |
+| `GET`/`POST` | `/missions/:id/share` | Opaque `fabric:` MissionBroadcast clip (clipboard + optional mesh relay; creator-only) |
 | `POST` | `/missions/:id/claim` | |
 | `GET` `POST` | `/missions/:id/escrow` | |
 | `POST` | `/missions/:id/payout` | |
@@ -387,7 +388,9 @@ Discord catalog, search, files, Game.log browse, locations, fleets, snapshots.
 | `GET` | `/loginfo` `/logslice` | Session. Game.log path + byte window. |
 | `GET` `POST` | `/reparse` | Session. |
 | `GET` | `/locations` **also /** | Public location catalog. |
-| `GET` | `/locations/map` **also /** | Public starmap JSON. |
+| `GET` | `/locations/map` **also /** | Public starmap JSON (`?system=`, `?view=galaxy`, `?view=body&body=`). |
+| `GET` | `/assets/map/manifest.json` · `/assets/map/tiles/*.png` | Allowlisted map tiles (CC0 / procedural). |
+| `GET` | `/assets/scripts/universe-explorer.js` | Lazy Three.js explorer bundle. |
 | `GET` | `/locations/reports` | Prefix only. Session. |
 | `GET` | `/locations/:slug` | Prefix only. Session. |
 | `GET` | `/ships` **also /** | Public ship catalog. |
@@ -449,7 +452,7 @@ type (`global` vs `group:<id>` vs `discord:`).
 |------|---------|----------------|
 | `fabric://login?sessionId&hub` | D-011 site login | IPC / Passport → `POST /sessions/:id/signatures` |
 | `fabric://link?sessionId&hub` | D-013 device-link | same, `/device-links` |
-| `fabric:<hex>` or `fabric:base64,…` | Opaque AMP `Message` (GroupOffer / invite) (D-019) | IPC `groupShare` or `POST …/groups/share/ingest` |
+| `fabric:<hex>` or `fabric:base64,…` | Opaque AMP `Message` (GroupOffer / invite / MissionBroadcast) (D-019) | IPC `groupShare` or `POST …/groups/share/ingest` |
 
 These are **not** a third REST. They are envelopes that land on HTTP rendezvous
 or Fabric ingest.
@@ -504,6 +507,7 @@ not the bot bridge.
 | Send group chat | same HTTP | persist | `GroupChat` `CONTRACT_MESSAGE` on the group contract |
 | Create group | HTTP POST `/groups` | GroupManager | `CONTRACT_PUBLISH` genesis |
 | Share public group | HTTP GET/POST `…/share` | sign opaque Message | optional relay; clipboard `fabric:` |
+| Share mission | HTTP GET/POST `…/missions/:id/share` | sign opaque MissionBroadcast | optional relay; clipboard `fabric:`; Import… → offer |
 | Apply to mission | HTTP POST `…/apply` (IPC only if HTTP needs a signed envelope) | MissionManager + audit | `MissionCreated` / claim types as implemented |
 | Broadcast mission | HTTP POST `…/broadcast` | inbox on receivers | `MissionBroadcast` or group `GroupShare` |
 | Site login on relay.goon.vc | IPC or Passport | `POST /sessions…` | none (Bearer stays HTTP) |

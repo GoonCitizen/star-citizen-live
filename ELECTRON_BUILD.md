@@ -117,9 +117,9 @@ menu (or Cmd+Q on macOS).
 Dev runs (`npm run start:desktop`) do **not** enable open-at-login unless you
 set `openAtLogin: true` or `SC_OPEN_AT_LOGIN=1`.
 
-Icons: suite lettermark `assets/icon.png` (window / Linux), `assets/icon.icns` /
-`assets/icon.ico` (installers), `assets/tray.png` / `trayTemplate.png` (menu bar).
-Regenerate from `@fabric/http` `npm run make:icons`.
+Icons: GoonCitizen **gc** lettermark `assets/icon.png` (window / Linux),
+`assets/icon.icns` / `assets/icon.ico` (installers), `assets/tray.png` /
+`trayTemplate.png` (menu bar). Regenerate with `npm run make:icons`.
 
 ## Application Structure
 
@@ -163,8 +163,8 @@ Your shell has `ELECTRON_RUN_AS_NODE=1`. Use `npm run start:desktop` (via
 ## Adding Icons
 
 Defaults ship under `assets/` (`icon.png`, `icon.ico`, `icon.icns`, `tray.png`,
-`trayTemplate.png`). Do not redraw the mark here — run `@fabric/http`
-`npm run make:icons` (serif **f** on `#4C1D95`).
+`trayTemplate.png`). Do not redraw the mark by hand — run `npm run make:icons`
+(serif **gc** on `#4C1D95`; Hub keeps Fabric **f**).
 To replace them:
 1. `assets/icon.png` (512×512) for the window / Linux
 2. `assets/icon.ico` for Windows

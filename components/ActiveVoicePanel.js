@@ -12,33 +12,66 @@ const { VoiceMesh } = require('../functions/groupVoiceRtc');
 
 const CSS = `
   .avp{position:fixed;left:var(--chrome-inset,16px);bottom:var(--chrome-inset,16px);z-index:33;
-    width:min(320px,calc(100vw - 36px));pointer-events:none}
-  .avp-card{pointer-events:auto;background:var(--panel);border:1px solid var(--line);border-radius:12px;
-    box-shadow:0 12px 40px rgba(0,0,0,.45);padding:10px 12px;display:grid;gap:8px}
-  .avp-top{display:flex;align-items:center;gap:8px;min-width:0}
-  .avp-name{flex:1;min-width:0;font-size:13px;font-weight:650;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
-    background:none;border:none;color:var(--text);cursor:pointer;text-align:left;padding:0}
-  .avp-name:hover{color:var(--accent)}
-  .avp-sub{color:var(--muted);font-size:11.5px}
-  .avp-dots{display:flex;flex-wrap:wrap;gap:4px}
-  .avp-dot{width:8px;height:8px;border-radius:50%;background:var(--muted);flex:none}
-  .avp-dot.on{background:var(--good);box-shadow:0 0 0 2px rgba(63,185,80,.25)}
-  .avp-row{display:flex;gap:6px;flex-wrap:wrap;align-items:center}
-  .avp-btn{background:var(--panel2);border:1px solid var(--line);color:var(--text);border-radius:7px;
-    padding:6px 10px;font-size:12px;font-weight:600;cursor:pointer}
-  .avp-btn:hover{border-color:var(--accent)}
+    width:auto;max-width:calc(100vw - 36px);pointer-events:none}
+  .avp-card{pointer-events:auto;background:var(--panel);border:1px solid var(--line);border-radius:10px;
+    box-shadow:0 10px 28px rgba(0,0,0,.4);padding:4px;display:flex;flex-direction:column;gap:2px;position:relative}
+  .avp-row{display:flex;align-items:center;gap:2px;width:178px;flex:none}
+  .avp-btn{position:relative;background:transparent;border:1px solid transparent;color:var(--text);border-radius:8px;
+    width:34px;min-width:34px;max-width:34px;height:34px;padding:0;font-size:15px;line-height:1;cursor:pointer;flex:none;
+    display:inline-flex;align-items:center;justify-content:center;box-sizing:border-box}
+  .avp-btn:hover{border-color:var(--line);background:var(--panel2)}
   .avp-btn.on{border-color:var(--accent);background:rgba(59,130,246,.14);color:var(--accent)}
-  .avp-btn.ptt{min-width:92px}
+  .avp-btn.live{border-color:var(--good);color:var(--good);background:rgba(63,185,80,.12)}
   .avp-btn.ptt.held{border-color:var(--good);background:rgba(63,185,80,.16);color:var(--good)}
-  .avp-btn.leave{margin-left:auto}
-  .avp-err{background:rgba(248,81,73,.12);color:var(--kill);border-radius:7px;padding:6px 8px;font-size:12px}
-  .chat-voice-btn,.gp-voice{background:var(--panel2);border:1px solid var(--line);color:var(--text);
-    border-radius:8px;height:34px;padding:0 10px;flex:none;cursor:pointer;font-size:12px;font-weight:650;
-    display:inline-flex;align-items:center;justify-content:center;gap:4px}
+  .avp-btn.leave{color:var(--kill)}
+  .avp-btn.leave:hover{border-color:var(--kill);background:rgba(248,81,73,.12)}
+  .avp-btn:disabled{opacity:.55;cursor:default}
+  .avp-glyph{display:inline-flex;width:1.25em;height:1.25em;align-items:center;justify-content:center;
+    font-size:15px;line-height:1;pointer-events:none}
+  .avp-btn[data-tooltip]::after,.chat-voice-btn[data-tooltip]::after,.gp-voice[data-tooltip]::after{
+    content:attr(data-tooltip);position:absolute;left:50%;bottom:calc(100% + 8px);transform:translateX(-50%);
+    background:rgba(15,18,28,.94);color:#f3f4f6;border:1px solid var(--line);border-radius:6px;
+    padding:5px 8px;font-size:11.5px;font-weight:600;line-height:1.25;white-space:nowrap;pointer-events:none;
+    opacity:0;visibility:hidden;transition:opacity .12s ease;z-index:40;box-shadow:0 8px 20px rgba(0,0,0,.35)}
+  .avp-btn[data-tooltip]::before,.chat-voice-btn[data-tooltip]::before,.gp-voice[data-tooltip]::before{
+    content:'';position:absolute;left:50%;bottom:calc(100% + 2px);transform:translateX(-50%);
+    border:6px solid transparent;border-top-color:rgba(15,18,28,.94);opacity:0;visibility:hidden;
+    transition:opacity .12s ease;pointer-events:none;z-index:40}
+  .avp-btn:hover[data-tooltip]::after,.avp-btn:focus-visible[data-tooltip]::after,
+  .avp-btn:hover[data-tooltip]::before,.avp-btn:focus-visible[data-tooltip]::before,
+  .chat-voice-btn:hover[data-tooltip]::after,.chat-voice-btn:focus-visible[data-tooltip]::after,
+  .chat-voice-btn:hover[data-tooltip]::before,.chat-voice-btn:focus-visible[data-tooltip]::before,
+  .gp-voice:hover[data-tooltip]::after,.gp-voice:focus-visible[data-tooltip]::after,
+  .gp-voice:hover[data-tooltip]::before,.gp-voice:focus-visible[data-tooltip]::before{
+    opacity:1;visibility:visible}
+  .avp-dots{display:flex;flex-wrap:wrap;gap:3px;padding:1px 4px 0;width:170px;min-height:6px;box-sizing:border-box}
+  .avp-dot{width:6px;height:6px;border-radius:50%;background:var(--muted);flex:none}
+  .avp-dot.on{background:var(--good);box-shadow:0 0 0 2px rgba(63,185,80,.25)}
+  .avp-err{position:absolute;left:0;bottom:calc(100% + 6px);max-width:min(280px,70vw);
+    background:rgba(248,81,73,.12);color:var(--kill);border:1px solid rgba(248,81,73,.35);
+    border-radius:7px;padding:5px 8px;font-size:11.5px;pointer-events:auto}
+  .chat-voice-btn,.gp-voice{position:relative;background:var(--panel2);border:1px solid var(--line);color:var(--text);
+    border-radius:8px;height:34px;width:6.75rem;min-width:6.75rem;max-width:6.75rem;padding:0 8px;flex:none;
+    cursor:pointer;font-size:12px;font-weight:650;box-sizing:border-box;
+    display:inline-flex;align-items:center;justify-content:center;gap:4px;overflow:visible}
   .chat-voice-btn:hover,.gp-voice:hover{border-color:var(--accent);background:rgba(56,139,253,.1)}
   .chat-voice-btn.on,.gp-voice.on{border-color:var(--good);color:var(--good);background:rgba(63,185,80,.12)}
-  .mbb-stack.raised{bottom:calc(var(--chrome-inset,16px) + 88px)}
+  .chat-voice-err{color:var(--kill);font-size:11px;margin-left:6px}
+  .mbb-stack.raised{bottom:calc(var(--chrome-inset,16px) + 52px)}
 `;
+
+function tipProps (label) {
+  const text = String(label || '').trim();
+  return {
+    title: text,
+    'data-tooltip': text,
+    'aria-label': text
+  };
+}
+
+function glyph (char) {
+  return React.createElement('span', { className: 'avp-glyph', 'aria-hidden': true }, char);
+}
 
 class JoinVoiceButton extends React.Component {
   constructor (props) {
@@ -98,18 +131,20 @@ class JoinVoiceButton extends React.Component {
   render () {
     if (!this.props.groupId) return null;
     const joined = !!this.state.joined;
+    const label = joined ? 'Leave voice' : 'Join voice';
+    const tip = joined
+      ? 'Leave voice'
+      : 'Join voice (push-to-talk)';
     return React.createElement(React.Fragment, null,
-      React.createElement('button', {
+      React.createElement('button', Object.assign({
         type: 'button',
         className: (this.props.className || 'chat-voice-btn') + (joined ? ' on' : ''),
         disabled: !!this.state.busy || !!this.props.disabled,
-        title: joined ? 'Leave voice' : 'Join voice (push-to-talk)',
-        'aria-label': joined ? 'Leave voice' : 'Join voice',
         'aria-pressed': joined,
         onClick: () => this.toggle()
-      }, joined ? 'Leave voice' : 'Join voice'),
+      }, tipProps(tip)), label),
       this.state.error
-        ? React.createElement('span', { className: 'avp-err', style: { fontSize: 11 } }, this.state.error)
+        ? React.createElement('span', { className: 'chat-voice-err' }, this.state.error)
         : null
     );
   }
@@ -302,52 +337,68 @@ class ActiveVoicePanel extends React.Component {
     const settings = voice.settings || groupVoiceSettings.defaultVoiceSettings();
     const members = voice.members || [];
     const ptt = settings.mode !== 'vad';
-    return React.createElement('div', { className: 'avp', role: 'status' },
+    const speaking = members.some((m) => m && m.speaking);
+    const groupLabel = (voice.groupName || 'Voice') +
+      ' · ' + members.length + '/' + (voice.cap || 8);
+    const pttLabel = groupVoiceSettings.pttBindLabel(settings.pttKey);
+    const muteTip = this.state.muted ? 'Unmute microphone' : 'Mute microphone';
+    const deafenTip = this.state.deafened ? 'Undeafen' : 'Deafen';
+    const pttTip = this.state.pttHeld
+      ? ('Talking · release ' + pttLabel)
+      : ('Hold to talk · ' + pttLabel);
+    return React.createElement('div', {
+      className: 'avp',
+      role: 'status',
+      'aria-label': 'Voice · ' + groupLabel
+    },
+      this.state.error
+        ? React.createElement('div', { className: 'avp-err' }, this.state.error)
+        : null,
       React.createElement('div', { className: 'avp-card' },
-        React.createElement('div', { className: 'avp-top' },
-          React.createElement('button', {
-            type: 'button',
-            className: 'avp-name',
-            title: 'Open group',
-            onClick: () => this.openGroup()
-          }, voice.groupName || 'Voice'),
-          React.createElement('span', { className: 'avp-sub' },
-            members.length + '/' + (voice.cap || 8))
-        ),
         React.createElement('div', { className: 'avp-dots', 'aria-label': 'Speakers' },
           members.map((m) => React.createElement('span', {
             key: m.webrtcPeerId || m.pubkey,
             className: 'avp-dot' + (m.speaking ? ' on' : ''),
-            title: m.handle || (m.pubkey && m.pubkey.slice(0, 8))
+            title: m.handle || (m.pubkey && m.pubkey.slice(0, 8)) || 'member'
           }))
         ),
-        this.state.error ? React.createElement('div', { className: 'avp-err' }, this.state.error) : null,
         React.createElement('div', { className: 'avp-row' },
-          React.createElement('button', {
+          React.createElement('button', Object.assign({
+            type: 'button',
+            className: 'avp-btn' + (speaking ? ' live' : ''),
+            onClick: () => this.openGroup()
+          }, tipProps('Open group · ' + groupLabel)), glyph('👥')),
+          React.createElement('button', Object.assign({
             type: 'button',
             className: 'avp-btn' + (this.state.muted ? ' on' : ''),
+            'aria-pressed': !!this.state.muted,
             onClick: () => this.toggleMute()
-          }, this.state.muted ? 'Unmute' : 'Mute'),
+          }, tipProps(muteTip)), glyph(this.state.muted ? '🔇' : '🎤')),
           ptt
-            ? React.createElement('button', {
+            ? React.createElement('button', Object.assign({
               type: 'button',
               className: 'avp-btn ptt' + (this.state.pttHeld ? ' held' : ''),
               onPointerDown: (e) => { e.preventDefault(); this.setPtt(true); },
               onPointerUp: () => this.setPtt(false),
               onPointerLeave: () => this.setPtt(false),
-              title: groupVoiceSettings.pttBindLabel(settings.pttKey)
-            }, this.state.pttHeld ? 'Talking' : groupVoiceSettings.pttBindLabel(settings.pttKey))
-            : React.createElement('span', { className: 'avp-sub' }, 'Voice activity'),
-          React.createElement('button', {
+              'aria-pressed': !!this.state.pttHeld
+            }, tipProps(pttTip)), glyph('🎙'))
+            : React.createElement('button', Object.assign({
+              type: 'button',
+              className: 'avp-btn live',
+              disabled: true
+            }, tipProps('Voice activity detection')), glyph('🎙')),
+          React.createElement('button', Object.assign({
             type: 'button',
             className: 'avp-btn' + (this.state.deafened ? ' on' : ''),
+            'aria-pressed': !!this.state.deafened,
             onClick: () => this.toggleDeafen()
-          }, this.state.deafened ? 'Undeafen' : 'Deafen'),
-          React.createElement('button', {
+          }, tipProps(deafenTip)), glyph('🎧')),
+          React.createElement('button', Object.assign({
             type: 'button',
             className: 'avp-btn leave',
             onClick: () => this.leave()
-          }, 'Leave')
+          }, tipProps('Leave voice')), glyph('✕'))
         )
       )
     );

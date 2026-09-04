@@ -128,6 +128,9 @@ class GroupPage extends React.Component {
       inviteKey: '',
       slugEdit: '',
       colorEdit: '#3b82f6',
+      rsiTagEdit: '',
+      rsiOrg: null,
+      rsiOrgError: null,
       discordChannels: [],
       busy: false,
       newFleetName: ''
@@ -246,11 +249,32 @@ class GroupPage extends React.Component {
         group, applications, proposals, groupWallet, presenceRoster, events, fleets, loading: false,
         slugEdit: group.slug || '',
         colorEdit: group.primaryColor || '#3b82f6',
+        rsiTagEdit: group.rsiTag || '',
         notice: null
       });
       document.title = `${group.name} — GoonCitizen`;
+      if (group.rsiTag) this.loadRsiOrg(group.rsiTag);
+      else this.setState({ rsiOrg: null, rsiOrgError: null });
     } catch (e) {
       this.setState({ loading: false, group: null, error: e.message });
+    }
+  }
+
+  async loadRsiOrg (sid) {
+    const tag = String(sid || '').trim();
+    if (!tag) {
+      this.setState({ rsiOrg: null, rsiOrgError: null });
+      return;
+    }
+    try {
+      const res = await fetch(`${BASE}/rsi/orgs/${encodeURIComponent(tag)}`, {
+        headers: this.headers()
+      });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(json.error || `HTTP ${res.status}`);
+      this.setState({ rsiOrg: json.data || null, rsiOrgError: null });
+    } catch (e) {
+      this.setState({ rsiOrg: null, rsiOrgError: e.message });
     }
   }
 
@@ -449,7 +473,8 @@ class GroupPage extends React.Component {
         busy: false,
         notice: 'Settings saved.',
         slugEdit: next.slug || '',
-        colorEdit: next.primaryColor || this.state.colorEdit || '#3b82f6'
+        colorEdit: next.primaryColor || this.state.colorEdit || '#3b82f6',
+        rsiTagEdit: next.rsiTag || ''
       });
       await this.load();
       if (typeof this.props.onPrimaryGroupTheme === 'function' && next.primaryColor !== undefined) {
@@ -742,6 +767,58 @@ class GroupPage extends React.Component {
           ),
           React.createElement('div', { style: { fontSize: 11.5, color: 'var(--muted)', marginTop: 5 } },
             'Members who set this group as primary use this accent to theme their dashboard.')
+        ),
+        React.createElement('div', { className: 'gpage-field', style: { marginTop: 14 } },
+          React.createElement('label', null, 'RSI org tag'),
+          React.createElement('div', { style: { display: 'flex', gap: 8 } },
+            React.createElement('input', {
+              type: 'text', value: this.state.rsiTagEdit,
+              placeholder: 'PERMAFLEET',
+              maxLength: 32,
+              style: { textTransform: 'uppercase' },
+              onChange: (e) => this.setState({ rsiTagEdit: e.target.value })
+            }),
+            React.createElement('button', {
+              className: 'gpage-btn ghost', disabled: this.state.busy,
+              onClick: () => this.patch({ rsiTag: this.state.rsiTagEdit.trim() || null })
+            }, 'Save'),
+            g.rsiTag
+              ? React.createElement('button', {
+                className: 'gpage-btn danger', disabled: this.state.busy,
+                onClick: () => this.setState({ rsiTagEdit: '' }, () => this.patch({ rsiTag: null }))
+              }, 'Clear')
+              : null
+          ),
+          React.createElement('div', { style: { fontSize: 11.5, color: 'var(--muted)', marginTop: 5 } },
+            'Organization SID on robertsspaceindustries.com (e.g. PERMAFLEET → /orgs/PERMAFLEET).'),
+          this.state.rsiOrgError
+            ? React.createElement('div', {
+              style: { fontSize: 12, color: 'var(--kill)', marginTop: 8 }
+            }, this.state.rsiOrgError)
+            : null,
+          this.state.rsiOrg
+            ? React.createElement('div', {
+              style: {
+                marginTop: 8, fontSize: 12, padding: '8px 10px',
+                border: '1px solid var(--line)', borderRadius: 8
+              }
+            },
+              React.createElement('b', null, this.state.rsiOrg.name),
+              ' [', this.state.rsiOrg.sid, ']',
+              this.state.rsiOrg.memberCount != null
+                ? React.createElement('span', { style: { color: 'var(--muted)' } },
+                  ' · ' + this.state.rsiOrg.memberCount + ' members')
+                : null,
+              this.state.rsiOrg.url
+                ? React.createElement('div', null,
+                  React.createElement('a', {
+                    href: this.state.rsiOrg.url,
+                    target: '_blank',
+                    rel: 'noopener noreferrer'
+                  }, 'Open on RSI'))
+                : null
+            )
+            : null
         ),
         this.renderPinnedChannelsEditor()
       )

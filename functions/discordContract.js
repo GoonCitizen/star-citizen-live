@@ -58,11 +58,16 @@ function requestFromDiscordActivity (activity, opts = {}) {
   ).trim();
   const channelId = String(target.ref || target.id || opts.channelId || '').trim();
   const content = String(object.content || '').trim();
-  const createdAt = object.created != null
-    ? (typeof object.created === 'number'
-      ? new Date(object.created).toISOString()
-      : String(object.created))
-    : new Date().toISOString();
+  // Number(null)/'' → 0; reject non-positive so request ids do not collapse to 1970.
+  let createdAt = new Date().toISOString();
+  if (typeof object.created === 'number' && Number.isFinite(object.created) && object.created > 0) {
+    createdAt = new Date(object.created).toISOString();
+  } else if (typeof object.created === 'string' && object.created.trim()) {
+    const parsed = Date.parse(object.created);
+    createdAt = Number.isFinite(parsed) && parsed > 0
+      ? new Date(parsed).toISOString()
+      : object.created.trim();
+  }
   if (!channelId || (!discordMessageId && !content)) return null;
 
   const requestId = discordRequestId({

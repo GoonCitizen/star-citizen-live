@@ -267,7 +267,7 @@ class Settings extends React.Component {
     if (value === true) {
       const confirms = {
         shareLogsGlobal:
-          'Share parsed Game.log events with EVERY connected Fabric peer?\n\nPrefer per-peer “Share logs” on Network → Peers when possible.',
+          'Share parsed Game.log events with EVERY connected Fabric peer?\n\nThis node always keeps a full local copy for analysis. Prefer per-peer “Share logs” on Network → Peers when possible.',
         shareDiscordCatalog:
           'Gossip Discord/chat catalog packs to Federation groups you belong to?\n\nPeers in those groups will see compact server/people/message packs from this node.',
         httpSharedMode:
@@ -417,7 +417,7 @@ class Settings extends React.Component {
         'Share game logs with every connected peer'
       ),
       isAndroidCompanion() ? null : React.createElement('div', { className: 'd', style: { marginTop: -4, marginBottom: 10 } },
-        'Default off. Prefer per-peer “Share logs” on Network → Peers. Also under Fabric Network.'),
+        'Default off. This node still accumulates Game.log locally. Prefer per-peer “Share logs” on Network → Peers. Also under Fabric Network.'),
       React.createElement('div', { className: 'st-row', style: { marginBottom: 12 } },
         React.createElement('button', {
           type: 'button',

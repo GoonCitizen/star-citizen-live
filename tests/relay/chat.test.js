@@ -219,8 +219,13 @@ test('hosted chat: signed envelope required, group channels members-only', async
     assert.strictEqual(posted.status, 200, JSON.stringify(posted.body));
     assert.strictEqual(posted.body.data.author, pubkeyXOnly(alice.pubkey));
     assert.ok(pubkeysMatch(posted.body.data.author, alice.pubkey));
+    // Hosted reads are session-gated even for `global` (privacy hardening), so
+    // "anyone can read global" means any *authenticated* viewer, not anon.
     const anonRead = await request(port, 'GET', `${BASE}/chat/messages?channel=global`);
-    assert.strictEqual(anonRead.body.data.length, 1);
+    assert.strictEqual(anonRead.status, 401);
+    const eveRead = await request(port, 'GET', `${BASE}/chat/messages?channel=global`, null, eveToken);
+    assert.strictEqual(eveRead.status, 200, JSON.stringify(eveRead.body));
+    assert.strictEqual(eveRead.body.data.length, 1);
 
     // Group channel: member post OK, non-member post + read forbidden.
     const gEnv = signEnvelope(alice, { channel: groupChannel, body: 'wing only', ts: new Date().toISOString() });

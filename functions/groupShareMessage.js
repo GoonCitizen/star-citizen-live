@@ -333,22 +333,31 @@ function _parseMessageBody (message) {
 }
 
 /**
- * Classify a parsed Message for group share ingest.
+ * Classify a parsed Message for group / mission share ingest.
  * @param {object} message Fabric Message
  * @returns {{
- *   kind: 'GroupOffer'|'FederationContractInvite'|'GroupPublish'|'unknown',
+ *   kind: 'GroupOffer'|'FederationContractInvite'|'GroupPublish'|'MissionBroadcast'|'unknown',
  *   wireType: string|null,
  *   body: object|null,
  *   object: object|null,
  *   contractId: string|null,
- *   groupId: string|null
+ *   groupId: string|null,
+ *   missionId: string|null
  * }}
  */
 function classifyGroupShareMessage (message) {
   const wireType = message && (message.type || message.wireType) || null;
   const body = _parseMessageBody(message);
   if (!body || typeof body !== 'object') {
-    return { kind: 'unknown', wireType, body: null, object: null, contractId: null, groupId: null };
+    return {
+      kind: 'unknown',
+      wireType,
+      body: null,
+      object: null,
+      contractId: null,
+      groupId: null,
+      missionId: null
+    };
   }
 
   if (wireType === 'CONTRACT_PUBLISH' || (body.name && isGroupContractDefinition(body))) {
@@ -359,7 +368,8 @@ function classifyGroupShareMessage (message) {
         body,
         object: body,
         contractId: groupContractId(body),
-        groupId: body.groupId || null
+        groupId: body.groupId || null,
+        missionId: null
       };
     }
   }
@@ -367,6 +377,26 @@ function classifyGroupShareMessage (message) {
   const appType = body.type || null;
   const object = body.object != null ? body.object : body;
   const contractId = body.contract || (object && object.contractId) || null;
+
+  // Mission offer clipboard (MissionBroadcast) or GroupShare-wrapped mission.
+  const missionInner = (object && object.kind === 'MissionBroadcast' && object.object)
+    ? object.object
+    : object;
+  const isMissionBroadcast = appType === 'MissionBroadcast' ||
+    (missionInner && (missionInner['@type'] === 'MissionBroadcast' || missionInner.type === 'MissionBroadcast')) ||
+    (object && object.kind === 'MissionBroadcast');
+  if (isMissionBroadcast && missionInner) {
+    const mission = missionInner.mission || missionInner;
+    return {
+      kind: 'MissionBroadcast',
+      wireType: wireType || 'CONTRACT_MESSAGE',
+      body,
+      object: missionInner,
+      contractId: contractId || gooncitizenContractId(),
+      groupId: missionInner.groupId || (mission && mission.groupId) || null,
+      missionId: missionInner.missionId || (mission && mission.id) || null
+    };
+  }
 
   if (appType === 'GroupShare' || (object && object.kind === GROUP_SHARE_KIND_OFFER)) {
     if (object && object.kind === GROUP_SHARE_KIND_OFFER) {
@@ -376,7 +406,8 @@ function classifyGroupShareMessage (message) {
         body,
         object,
         contractId: object.contractId || contractId,
-        groupId: object.groupId || null
+        groupId: object.groupId || null,
+        missionId: null
       };
     }
   }
@@ -391,11 +422,12 @@ function classifyGroupShareMessage (message) {
       body,
       object: inv,
       contractId: (inv && inv.contractId) || contractId,
-      groupId: (inv && inv.groupId) || null
+      groupId: (inv && inv.groupId) || null,
+      missionId: null
     };
   }
 
-  return { kind: 'unknown', wireType, body, object, contractId, groupId: null };
+  return { kind: 'unknown', wireType, body, object, contractId, groupId: null, missionId: null };
 }
 
 module.exports = {

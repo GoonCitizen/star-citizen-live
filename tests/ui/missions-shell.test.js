@@ -104,6 +104,7 @@ describe('Missions register UI', () => {
     page.state.claims = [];
     let text = textOf(page.render());
     assert.ok(text.includes('✔ Submit completion'));
+    assert.ok(text.includes('Share'));
 
     page.state.claims = [{
       id: 'c1',

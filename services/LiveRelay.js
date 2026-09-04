@@ -19,6 +19,7 @@ const EventEmitter = require('events');
 const fs = require('fs');
 const path = require('path');
 const readline = require('readline');
+const { randomUnit } = require('@fabric/core/functions/bytes');
 
 const { parseLine, RULES, shipName, parseSessionInfo, missionType, isNPC, missionFaction } = require('../functions/parser');
 const { channelFromPath } = require('../functions/locate');
@@ -51,6 +52,7 @@ const logCorpus = require('../functions/logCorpus');
 const fsBrowser = require('../functions/fsBrowser');
 const activityTree = require('../functions/activityTree');
 const gooncitizenGameState = require('../functions/gooncitizenGameState');
+const hubSidechainRsi = require('../functions/hubSidechainRsi');
 const eventChain = require('../functions/eventChain');
 const peerProfile = require('../functions/peerProfile');
 const hubBitcoinProxy = require('../functions/hubBitcoinProxy');
@@ -150,7 +152,10 @@ function identityLib () {
 // Collections a remote relay may push into via Fabric SCEventBatch (or legacy
 // HTTP POST …/events). 'chatmessages' / mission broadcasts also arrive as
 // dedicated wire types (P2P_CHAT_MESSAGE / MissionBroadcast).
-const INGEST_COLLECTIONS = ['activities', 'players', 'vehicles', 'kills', 'deaths', 'incaps', 'missionlog', 'chatmessages', 'missionbroadcasts'];
+const INGEST_COLLECTIONS = [
+  'activities', 'players', 'vehicles', 'kills', 'deaths', 'incaps',
+  'missionlog', 'quantum', 'crimestat', 'chatmessages', 'missionbroadcasts'
+];
 
 // Org Fabric seed peers (host:port). Removable in Peers; empty saved list is kept.
 // Both hubs selectively relay relevant Fabric messages for the network.
@@ -1619,7 +1624,7 @@ class StarCitizenService extends EventEmitter {
         username: opts.handle || (linked && linked.username) || 'operator'
       },
       object: {
-        id: 'app-dm-' + Date.now() + '-' + Math.floor(Math.random() * 1e6),
+        id: 'app-dm-' + Date.now() + '-' + crypto.randomBytes(4).toString('hex'),
         content: text,
         created: Date.now()
       },
@@ -1800,7 +1805,7 @@ class StarCitizenService extends EventEmitter {
 
     if (this._discordClaimPending.has(requestId)) return this._discordClaimPending.get(requestId).claim;
 
-    const jitter = 40 + Math.floor(Math.random() * 180);
+    const jitter = 40 + Math.floor(randomUnit() * 180);
     await new Promise((r) => setTimeout(r, jitter));
 
     const again = this._discordCoord.getWinningClaim(requestId);
@@ -2189,7 +2194,7 @@ class StarCitizenService extends EventEmitter {
     }
 
     if (!opts.localOrigin) {
-      const jitter = Math.floor(Math.random() * 35);
+      const jitter = Math.floor(randomUnit() * 35);
       if (jitter > 0) await new Promise((r) => setTimeout(r, jitter));
     }
 
@@ -3133,11 +3138,68 @@ class StarCitizenService extends EventEmitter {
   }
 
   _localProfile () {
-    return peerProfile.buildLocalProfile({
+    const pubkey = this._identity ? this._identity.pubkey : null;
+    const doc = peerProfile.buildLocalProfile({
       nickname: this._nickname,
       profile: this._profile,
-      pubkey: this._identity ? this._identity.pubkey : null
+      pubkey
     });
+    if (pubkey) {
+      const rsiOwnershipClaim = require('../functions/rsiOwnershipClaim');
+      doc.rsiClaim = rsiOwnershipClaim.ownershipClaimToken(pubkey);
+      doc.rsiClaimHint =
+        'Paste this token into your public RSI citizen biography to prove you control that handle.';
+    } else {
+      doc.rsiClaim = null;
+      doc.rsiClaimHint = null;
+    }
+    return doc;
+  }
+
+  /**
+   * Fetch RSI citizen bio and check for `g00n:<pubkeyhash[0:7]>`.
+   * @param {string} handle
+   * @param {string} pubkey
+   * @returns {Promise<object>}
+   */
+  async _verifyRsiOwnership (handle, pubkey) {
+    const rsiLookup = require('../functions/rsiLookup');
+    const rsiOwnershipClaim = require('../functions/rsiOwnershipClaim');
+    const claim = rsiOwnershipClaim.ownershipClaimToken(pubkey);
+    if (!claim) {
+      return {
+        ok: false,
+        status: 400,
+        error: 'invalid Fabric pubkey',
+        ownership: rsiOwnershipClaim.verifyOwnershipFromBio({ pubkey, handle, bio: null })
+      };
+    }
+    const out = await rsiLookup.lookupCitizen(handle);
+    if (!out.ok) {
+      return {
+        ok: false,
+        status: out.status || 502,
+        error: out.error || 'RSI citizen lookup failed',
+        ownership: rsiOwnershipClaim.verifyOwnershipFromBio({
+          pubkey,
+          handle,
+          bio: null
+        }),
+        citizen: null
+      };
+    }
+    const ownership = rsiOwnershipClaim.verifyOwnershipFromBio({
+      pubkey,
+      handle: (out.data && out.data.handle) || handle,
+      bio: out.data && out.data.bio
+    });
+    return {
+      ok: true,
+      status: 200,
+      ownership,
+      citizen: out.data,
+      cached: !!out.cached
+    };
   }
 
   /**
@@ -4902,6 +4964,7 @@ class StarCitizenService extends EventEmitter {
 
   _markHistoryDirty () {
     this._historyDirty = true;
+    this._analyticsCache = null;
     if (this._historyFlushTimer || this.settings.mode === 'server') return;
     this._historyFlushTimer = setTimeout(() => {
       this._historyFlushTimer = null;
@@ -5275,7 +5338,8 @@ class StarCitizenService extends EventEmitter {
         outcome: null,
         player: m.player || me,
         ts,
-        active: true
+        active: true,
+        source: 'local'
       });
     }
 
@@ -5619,6 +5683,7 @@ class StarCitizenService extends EventEmitter {
       if (!data || !data.name) throw Object.assign(new Error('players event requires name'), { code: 'BAD_EVENT' });
       const { player } = this.recordPlayer(data.name, data.timestamp || new Date().toISOString());
       player.source = player.source || source;
+      this._foldIngestedGameplay(source, 'players', data);
       return { id: player.id, created: false };
     }
     if (collection === 'chatmessages') {
@@ -5633,24 +5698,75 @@ class StarCitizenService extends EventEmitter {
     if (!existed) {
       this.state[collection][id] = Object.assign({ id, source }, data);
       if (collection === 'kills') this.emit('kill', this.state[collection][id]);
-      // Fold peer-sourced gameplay into cumulative analytics (desktop + hosted hub).
-      if (collection === 'deaths' || collection === 'missionlog') {
-        const kind = data.kind || (collection === 'deaths' ? 'player:death' : null);
-        if (kind === 'player:death' || kind === 'mission:end') {
-          this._applyHistoryEvent({
-            kind,
-            timestamp: data.timestamp,
-            player: data.player,
-            bodyId: data.bodyId,
-            completionType: data.completionType || data.outcome,
-            missionId: data.missionId,
-            generator: data.generator
-          }, { countHeat: false, force: true, handle: data.player || null, source: source || 'peer' });
-          this.emit('history:updated', { via: 'ingest', collection });
-        }
+      if (this._foldIngestedGameplay(source, collection, data)) {
+        this.emit('history:updated', { via: 'ingest', collection });
       }
     }
     return { id, created: !existed };
+  }
+
+  /**
+   * Fold a peer SCEventBatch row into durable history for All-logs analysis.
+   * Local Game.log ingest never uses this path — handleLogChange always applies.
+   * @returns {boolean} true when a history-shaped event was applied
+   */
+  _foldIngestedGameplay (source, collection, data) {
+    if (!data || typeof data !== 'object') return false;
+    const kind = data.kind || null;
+    let ev = null;
+    if (collection === 'deaths' || kind === 'player:death') {
+      ev = {
+        kind: 'player:death',
+        timestamp: data.timestamp,
+        player: data.player,
+        bodyId: data.bodyId
+      };
+    } else if (collection === 'incaps' || kind === 'player:incap') {
+      ev = {
+        kind: 'player:incap',
+        timestamp: data.timestamp,
+        player: data.player,
+        text: data.text
+      };
+    } else if (collection === 'missionlog') {
+      const endKind = kind || ((data.completionType || data.outcome) ? 'mission:end' : null);
+      if (endKind === 'mission:end') {
+        ev = {
+          kind: 'mission:end',
+          timestamp: data.timestamp,
+          player: data.player,
+          completionType: data.completionType || data.outcome,
+          missionId: data.missionId,
+          generator: data.generator
+        };
+      }
+    } else if (collection === 'quantum' || (kind && String(kind).indexOf('quantum:') === 0)) {
+      ev = {
+        kind: kind || 'quantum:select',
+        timestamp: data.timestamp,
+        player: data.player,
+        destination: data.destination,
+        vehicle: data.vehicle
+      };
+    } else if (collection === 'crimestat' || kind === 'player:crimestat') {
+      ev = {
+        kind: 'player:crimestat',
+        timestamp: data.timestamp,
+        player: data.player,
+        rating: data.rating,
+        delta: data.delta
+      };
+    } else if (collection === 'players' && data.name) {
+      ev = { kind: 'player:login', handle: data.name, timestamp: data.timestamp };
+    }
+    if (!ev) return false;
+    this._applyHistoryEvent(ev, {
+      countHeat: false,
+      force: true,
+      handle: data.player || data.name || data.handle || null,
+      source: source || 'peer'
+    });
+    return true;
   }
 
   /** Snapshot fields shared on MissionCreated / MissionBroadcast wire payloads. */
@@ -6465,6 +6581,96 @@ class StarCitizenService extends EventEmitter {
   }
 
   /**
+   * Sign a MissionBroadcast CONTRACT_MESSAGE for copy-paste (`fabric:` + raw bytes).
+   * Optionally relays the same bytes on the mesh (like group Share).
+   * @param {string} missionId
+   * @param {string} actor Creator pubkey
+   * @param {Object} [opts]
+   * @param {boolean} [opts.relay]
+   * @param {string} [opts.encoding]
+   * @param {string|number} [opts.expiresAt]
+   * @param {number} [opts.ttlMs]
+   * @param {number} [opts.expiresInMs]
+   * @param {number} [opts.expiresInSeconds]
+   * @param {number} [opts.expiresInDays]
+   */
+  async createMissionShare (missionId, actor, opts = {}) {
+    if (!this.missionManager) throw Object.assign(new Error('Mission system not available'), { code: 'UNAVAILABLE' });
+    const m = this.missionManager.getMission(missionId);
+    if (!m) throw Object.assign(new Error('Mission not found'), { code: 'NOT_FOUND' });
+    if (m.status !== 'open') throw new Error(`mission is ${m.status}, not open`);
+    if (!actor || m.createdBy !== actor) {
+      const err = new Error('forbidden: only the creator can share this mission');
+      err.code = 'FORBIDDEN';
+      throw err;
+    }
+    if (!this._identity) throw new Error('Unlock your identity to share');
+
+    const {
+      resolveShareExpiresAtMs,
+      assertExpiresAtInFuture,
+      expiresAtIso
+    } = require('../functions/inviteExpiry');
+    const { gooncitizenContractId } = require('../contracts/gooncitizen');
+    const expiresAtMs = assertExpiresAtInFuture(resolveShareExpiresAtMs({
+      expiresAt: opts.expiresAt,
+      ttlMs: opts.ttlMs,
+      expiresInMs: opts.expiresInMs,
+      expiresInSeconds: opts.expiresInSeconds,
+      expiresInDays: opts.expiresInDays
+    }));
+    const broadcastAt = new Date().toISOString();
+    const payload = {
+      '@type': 'MissionBroadcast',
+      missionId: m.id,
+      broadcastAt,
+      scope: 'global',
+      groupId: m.groupId || null,
+      handle: this._nickname || this._sessionHandle || null,
+      expiresAt: expiresAtIso(expiresAtMs),
+      mission: this._missionWireSnapshot(m)
+    };
+
+    await this._ensureFabric().catch(() => null);
+    if (!this.fabricNetwork) {
+      this.fabricNetwork = new FabricNetwork({
+        enable: false,
+        listen: false,
+        peers: [],
+        peersDb: null,
+        messageLog: this._fabricMessageLog
+      });
+    }
+    this.fabricNetwork.setIdentity(this._identity);
+    if (opts.relay !== false && !this.fabricNetwork.ready) {
+      await this._ensureFabric().catch(() => null);
+    }
+    const contractId = gooncitizenContractId();
+    const msg = this.fabricNetwork.signContractMessage(contractId, 'MissionBroadcast', payload, { relay: false });
+    const sent = this._clipboardAndRelay(msg, opts);
+    const encoded = sent.encoded;
+    const messageId = (msg && (msg.id || msg.hash))
+      ? String(msg.id || msg.hash).toLowerCase()
+      : null;
+    return {
+      kind: 'MissionBroadcast',
+      missionId: m.id,
+      broadcastAt,
+      expiresAt: payload.expiresAt,
+      messageId,
+      protocolUrl: encoded.protocolUrl,
+      protocolUrlHex: encoded.protocolUrlHex || encoded.protocolUrl,
+      protocolUrlBase64: encoded.protocolUrlBase64,
+      messageHex: encoded.messageHex,
+      messageBase64: encoded.messageBase64,
+      pagePath: `/missions/${m.id}`,
+      relayed: sent.relayed,
+      relayError: sent.relayError,
+      peers: sent.peers
+    };
+  }
+
+  /**
    * Ensure a group's Federation contract is persisted + published. Returns contractId.
    * @param {string} groupId
    * @returns {Promise<string|null>}
@@ -6576,6 +6782,15 @@ class StarCitizenService extends EventEmitter {
     const group = this.groupManager.getGroup(proposal.groupId);
     if (!group || !group.isSigner(identity.pubkey)) return null;
     const gcp = require('../functions/groupChangeProposal');
+    if (gcp.isInviteJoinProposal(proposal)) {
+      const { pubkeysMatch } = require('../functions/identity');
+      if (proposal.member && pubkeysMatch(proposal.member, identity.pubkey)) {
+        return null;
+      }
+      if (!this.groupManager.holdsInviteForJoinProposal(proposal)) {
+        return null;
+      }
+    }
     const existing = proposal.signatures && (
       proposal.signatures[identity.pubkey] ||
       proposal.signatures[String(identity.pubkey).toLowerCase()]
@@ -7105,6 +7320,8 @@ class StarCitizenService extends EventEmitter {
       // Must run before the SPA GET `/` branch so OPTIONS is not 404'd.
       const liveRelayPeeringHttp = require('../functions/liveRelayPeeringHttp');
       if (liveRelayPeeringHttp.tryHandlePeeringDiscovery(this, req, res, pathname)) return;
+      const mapStaticAssets = require('../functions/mapStaticAssets');
+      if (mapStaticAssets.tryServeMapStatic(req, res, pathname)) return;
       // GET /sessions → same dashboard (header SiteLogin buttons).
       const serveSpa = siteLogin === 'spa' ||
         (req.method === 'GET' && (pathname === '/' || pathname === `${base}/ui` ||
@@ -7303,6 +7520,11 @@ class StarCitizenService extends EventEmitter {
           kills: newest(this.kills),
           deaths: newest(this.deaths),
           feed,
+          sharing: {
+            logs: this._shareLogsGlobal === true,
+            logsActive: this._canShareLogs(),
+            logsTargets: this._logShareTargets()
+          },
           counts: {
             // Header / home default to cumulative (all-time local history).
             missions: cumulative.missions,
@@ -7565,6 +7787,8 @@ class StarCitizenService extends EventEmitter {
               runtime: {
                 primaryGroupId: this._primaryGroupId || null,
                 primaryGroupColor: this._primaryGroupColor(),
+                shareLogsGlobal: this._shareLogsGlobal === true,
+                shareLogsActive: this._canShareLogs(),
                 shareDiscordCatalog: this._shareDiscordCatalog === true,
                 sharePlaytimes: this._sharePlaytimes === true,
                 shareFiles: this._hasPinnedProfileFiles(),
@@ -7719,6 +7943,77 @@ class StarCitizenService extends EventEmitter {
           const detail = this._profileDetailByActor(decodeURIComponent(profileMatch[1]));
           if (!detail) return send(404, { error: 'Profile not found' });
           return send(200, { type: 'PeerProfileDetail', data: detail });
+        }
+        let rsiMatch;
+        if ((rsiMatch = pathname.match(new RegExp(`^${base}/rsi/orgs/([^/]+)$`))) && req.method === 'GET') {
+          if (!this._requireSession(req, send)) return;
+          const rsiLookup = require('../functions/rsiLookup');
+          const out = await rsiLookup.lookupOrg(decodeURIComponent(rsiMatch[1]));
+          if (!out.ok) return send(out.status || 502, { error: out.error || 'RSI org lookup failed' });
+          return send(200, { type: 'RsiOrganization', data: out.data, cached: !!out.cached });
+        }
+        if (pathname === `${base}/rsi/claim` && req.method === 'GET') {
+          if (!this._requireSession(req, send)) return;
+          const pk = (this._identity && this._identity.pubkey) ||
+            this._authPubkey(req) || null;
+          const rsiOwnershipClaim = require('../functions/rsiOwnershipClaim');
+          const token = pk ? rsiOwnershipClaim.ownershipClaimToken(pk) : null;
+          if (!token) return send(400, { error: 'unlocked Fabric identity required' });
+          return send(200, {
+            type: 'RsiOwnershipClaim',
+            data: {
+              claim: token,
+              pubkey: pk,
+              pubkeyHash: rsiOwnershipClaim.pubkeyHashHex(pk),
+              instructions:
+                'Add this exact token to your public RSI citizen biography (Account → Bio), then Verify.'
+            }
+          });
+        }
+        if ((rsiMatch = pathname.match(new RegExp(`^${base}/rsi/citizens/([^/]+)/verify$`))) &&
+            req.method === 'GET') {
+          if (!this._requireSession(req, send)) return;
+          const handle = decodeURIComponent(rsiMatch[1]);
+          const pk = String(url.searchParams.get('pubkey') ||
+            (this._identity && this._identity.pubkey) || '').trim();
+          if (!pk) return send(400, { error: 'pubkey query required (or unlock local identity)' });
+          const result = await this._verifyRsiOwnership(handle, pk);
+          if (!result.ok && !result.citizen) {
+            return send(result.status || 502, {
+              error: result.error,
+              type: 'RsiOwnershipVerification',
+              data: result.ownership
+            });
+          }
+          return send(200, {
+            type: 'RsiOwnershipVerification',
+            data: result.ownership,
+            citizen: result.citizen || null,
+            cached: !!result.cached
+          });
+        }
+        if ((rsiMatch = pathname.match(new RegExp(`^${base}/rsi/citizens/([^/]+)$`))) && req.method === 'GET') {
+          if (!this._requireSession(req, send)) return;
+          const rsiLookup = require('../functions/rsiLookup');
+          const handle = decodeURIComponent(rsiMatch[1]);
+          const out = await rsiLookup.lookupCitizen(handle);
+          if (!out.ok) return send(out.status || 502, { error: out.error || 'RSI citizen lookup failed' });
+          const pk = String(url.searchParams.get('pubkey') || '').trim();
+          let ownership = null;
+          if (pk) {
+            const rsiOwnershipClaim = require('../functions/rsiOwnershipClaim');
+            ownership = rsiOwnershipClaim.verifyOwnershipFromBio({
+              pubkey: pk,
+              handle: (out.data && out.data.handle) || handle,
+              bio: out.data && out.data.bio
+            });
+          }
+          return send(200, {
+            type: 'RsiCitizen',
+            data: out.data,
+            cached: !!out.cached,
+            ownership
+          });
         }
         if (pathname === `${base}/presence` || pathname === '/presence') {
           if (req.method === 'GET') {
@@ -8173,6 +8468,19 @@ class StarCitizenService extends EventEmitter {
         }
         if (pathname === `${base}/locations/map` || pathname === '/locations/map') {
           if (req.method === 'GET') {
+            const view = String(url.searchParams.get('view') || '').toLowerCase();
+            if (view === 'galaxy') {
+              const galaxy = starmapLayout.layoutGalaxy();
+              return send(200, { type: 'GalaxyMap', data: galaxy });
+            }
+            if (view === 'body') {
+              const system = url.searchParams.get('system') || 'STANTON';
+              const body = url.searchParams.get('body') || '';
+              const layout = starmapLayout.layoutBody(system, body, {
+                includeHidden: url.searchParams.get('hidden') === '1'
+              });
+              return send(200, { type: 'BodyMap', data: layout });
+            }
             const system = url.searchParams.get('system') || 'STANTON';
             const includeHotspots = url.searchParams.get('hotspots') !== '0';
             const destinations = url.searchParams.getAll('dest').map((raw) => {
@@ -9055,6 +9363,32 @@ class StarCitizenService extends EventEmitter {
           catch (e) { return send(e.code === 'FORBIDDEN' ? 403 : /not found/i.test(e.message) ? 404 : 400, { error: e.message }); }
         }
       }
+      if ((gmatch = pathname.match(new RegExp(`^${base}/groups/([^/]+)/rsi$`))) && req.method === 'GET') {
+        if (!gm) return send(503, { error: 'Group system not available' });
+        if (!this._requireSession(req, send)) return;
+        const group = gm.findGroup(gmatch[1]);
+        if (!group) return send(404, { error: 'Group not found' });
+        const view = gm.viewFor(group, viewer);
+        if (!view) return send(403, { error: 'forbidden: this group is private' });
+        const sid = group.rsiTag || null;
+        if (!sid) {
+          return send(200, {
+            type: 'RsiOrganization',
+            data: null,
+            error: 'group has no rsiTag'
+          });
+        }
+        const rsiLookup = require('../functions/rsiLookup');
+        const out = await rsiLookup.lookupOrg(sid);
+        if (!out.ok) return send(out.status || 502, { error: out.error || 'RSI org lookup failed', rsiTag: sid });
+        return send(200, {
+          type: 'RsiOrganization',
+          data: out.data,
+          cached: !!out.cached,
+          rsiTag: sid,
+          groupId: group.id
+        });
+      }
       if ((gmatch = pathname.match(new RegExp(`^${base}/groups/([^/]+)/fleets$`))) && req.method === 'GET') {
         if (!gm) return send(503, { error: 'Group system not available' });
         const group = gm.findGroup(gmatch[1]);
@@ -9413,6 +9747,27 @@ class StarCitizenService extends EventEmitter {
           return send(200, { type: 'MissionBroadcast', data });
         } catch (e) {
           return send(e.code === 'FORBIDDEN' ? 403 : e.code === 'NOT_FOUND' ? 404 : 400, { error: e.message });
+        }
+      }
+      // Opaque fabric: MissionBroadcast share (clipboard + optional mesh relay).
+      if ((mr = pathname.match(new RegExp(`^${base}/missions/([^/]+)/share$`))) && (req.method === 'GET' || req.method === 'POST')) {
+        if (!requireAuth()) return;
+        const actor = this._actor(req, null) || (this._identity && this._identity.pubkey) || null;
+        const d = req.method === 'POST' ? await body() : {};
+        try {
+          const data = await this.createMissionShare(mr[1], actor, {
+            relay: d.relay !== false,
+            encoding: d.encoding,
+            expiresAt: d.expiresAt,
+            ttlMs: d.ttlMs,
+            expiresInMs: d.expiresInMs,
+            expiresInSeconds: d.expiresInSeconds,
+            expiresInDays: d.expiresInDays
+          });
+          return send(200, { type: 'MissionShare', data });
+        } catch (e) {
+          const { inviteHttpStatus, inviteHttpBody } = require('../functions/inviteExpiry');
+          return send(inviteHttpStatus(e), inviteHttpBody(e));
         }
       }
       if (pathname === `${base}/missionbroadcasts` && req.method === 'GET') {
@@ -10045,6 +10400,27 @@ class StarCitizenService extends EventEmitter {
       default: break;
     }
 
+    if (ev.kind === 'quantum:select' || ev.kind === 'quantum:arrive') {
+      this.emit('quantum', {
+        id,
+        kind: ev.kind,
+        timestamp: ev.timestamp,
+        destination: ev.destination,
+        vehicle: ev.vehicle,
+        player: this._sessionHandle || null
+      });
+    }
+    if (ev.kind === 'player:crimestat') {
+      this.emit('crimestat', {
+        id,
+        kind: ev.kind,
+        timestamp: ev.timestamp,
+        player: this._sessionHandle || ev.player || null,
+        rating: ev.rating,
+        delta: ev.delta
+      });
+    }
+
     // Activity heat for other live lines (mission/death/login already applied above).
     if (this._historyApplyLive && ev.timestamp) {
       const folded = ev.kind === 'player:login' || ev.kind === 'player:death' ||
@@ -10657,7 +11033,7 @@ class StarCitizenService extends EventEmitter {
           const change = Object.assign({}, object, {
             contractId: object.contractId || (meta && meta.contract) || null
           });
-          this.groupManager.ingestGroupChange(change, resolveSignerPubkey(source) || source);
+          const result = this.groupManager.ingestGroupChange(change, resolveSignerPubkey(source) || source);
           // Retain inbound GroupChange as a Fabric-message journal row when possible.
           const contractId = change.contractId;
           const entryId = change.id;
@@ -10669,6 +11045,14 @@ class StarCitizenService extends EventEmitter {
                 hash: wire.hash,
                 toBuffer: () => Buffer.from(String(wire.hex), 'hex')
               }, 'GroupChange');
+            }
+          }
+          if (result && result.applied && String(change.action) === 'member.add' &&
+            !this._stopping && meta && meta.origin !== 'local') {
+            const cid = contractId || (result.group && result.group.contractId);
+            const gid = (result.group && result.group.id) || change.groupId || null;
+            if (cid) {
+              this._publishGroupStateTip(cid, gid).catch((e) => this.emit('error', e));
             }
           }
         } catch (e) { this.emit('error', e); }
@@ -11037,6 +11421,7 @@ class StarCitizenService extends EventEmitter {
     const fleet = starjumpFleet.parseStarjumpExport(raw, {
       name: data.name,
       ownerPubkey: owner || null,
+      owner: data.owner != null ? data.owner : undefined,
       sourceFile,
       visibility: data.visibility || 'private',
       keepExport: true
@@ -11861,6 +12246,8 @@ class StarCitizenService extends EventEmitter {
       this.on('player:incap', queue('incaps'));
       this.on('vehicle:destroy', queue('vehicles'));
       this.on('mission:event', queue('missionlog'));
+      this.on('quantum', queue('quantum'));
+      this.on('crimestat', queue('crimestat'));
       this.on('player:join', (p) => {
         if (!this._canShareLogs()) return;
         this._uplinkQueue.push({ collection: 'players', data: { name: p.name, timestamp: p.lastSeen } });
@@ -11889,8 +12276,57 @@ class StarCitizenService extends EventEmitter {
     const h = this.history || {};
     if (!(h.missions && h.missions.length) && !(h.deaths && h.deaths.length)) return null;
     const snap = await this.publishGameStateSnapshot();
-    if (snap) this._lastGameStatePublish = now;
+    if (snap) {
+      this._lastGameStatePublish = now;
+      await this._maybeSubmitGameStateToHubSidechain(snap);
+    }
     return snap;
+  }
+
+  /**
+   * Submit signed RSI sidechain patch to Hub when hubSidechainSync is enabled.
+   * @param {Object} snap
+   * @returns {Promise<object|null>}
+   */
+  async _maybeSubmitGameStateToHubSidechain (snap) {
+    if (!snap || typeof snap !== 'object') return null;
+    const enabled = process.env.FABRIC_HUB_SIDECHAIN_SYNC === '1' ||
+      this.settings.hubSidechainSync === true;
+    if (!enabled) return null;
+    const hubOrigin = (this.settings.bitcoin && this.settings.bitcoin.hub) ||
+      process.env.FABRIC_HUB_RPC_URL ||
+      'http://127.0.0.1:8080';
+    const envVals = process.env.FABRIC_DISTRIBUTED_FEDERATION_VALIDATORS;
+    const federationValidators = envVals && String(envVals).trim()
+      ? String(envVals).split(',').map((s) => s.trim()).filter(Boolean)
+      : [];
+    let signKey = null;
+    if (this._identity) {
+      try {
+        const { keyFromIdentity } = require('../functions/identity');
+        signKey = keyFromIdentity(this._identity);
+      } catch (_) { /* unlock required */ }
+    }
+    let adminToken = null;
+    if (!federationValidators.length) {
+      try {
+        const { resolveHubAdminToken } = require('../functions/hubAdminToken');
+        adminToken = resolveHubAdminToken(this.settings, process.env);
+      } catch (_) { /* optional */ }
+    }
+    try {
+      return await hubSidechainRsi.submitGameStateToHubSidechain({
+        hubOrigin,
+        snap,
+        signKey,
+        federationValidators,
+        federationThreshold: Number(process.env.FABRIC_DISTRIBUTED_FEDERATION_THRESHOLD) || 1,
+        adminToken
+      });
+    } catch (e) {
+      this.emit('error', e);
+      return null;
+    }
   }
 
   /**
@@ -12228,7 +12664,27 @@ class StarCitizenService extends EventEmitter {
       }
       return result;
     }
-    throw new Error(`unsupported share kind: ${classified.kind || 'unknown'} (expected ${GROUP_SHARE_KIND_OFFER})`);
+    if (classified.kind === 'MissionBroadcast') {
+      assertInviteNotExpired(classified.object);
+      const actor = classified.body && classified.body.actor;
+      const source = (actor && (actor.publicKey || actor.id)) ||
+        (classified.object && classified.object.mission && classified.object.mission.createdBy) ||
+        'opaque-share';
+      const ingested = this._ingestMissionBroadcast(source, classified.object || {});
+      const rec = ingested && ingested.id ? this._getMissionBroadcast(ingested.id) : null;
+      return {
+        kind: 'MissionBroadcast',
+        missionId: classified.missionId || (rec && rec.missionId) || null,
+        mission: (rec && rec.mission) || (classified.object && classified.object.mission) || null,
+        broadcast: rec,
+        broadcastId: ingested && ingested.id ? ingested.id : null,
+        created: !!(ingested && ingested.created),
+        filtered: !!(ingested && ingested.filtered),
+        pending: !!(rec && rec.status === 'pending'),
+        inbox: rec ? this._syncInboxMissionBroadcast(rec) : null
+      };
+    }
+    throw new Error(`unsupported share kind: ${classified.kind || 'unknown'} (expected ${GROUP_SHARE_KIND_OFFER} or MissionBroadcast)`);
   }
 
   _ingestGroupOffer (object, source, meta = {}) {
@@ -12666,8 +13122,9 @@ class StarCitizenService extends EventEmitter {
   }
 
   /**
-   * Accept or reject a FederationContractInvite. Accept adds the responder
-   * as a member via GroupChange (local + published).
+   * Accept or reject a FederationContractInvite. Accept joins locally and
+   * publishes a GroupChangeProposal carrying the invitation; existing
+   * signers adopt, then GroupChange + GroupStateJournal follow.
    */
   async respondToGroupFederationInvite (groupIdOrSlug, inviteId, actor, accept) {
     if (!this.groupManager) throw Object.assign(new Error('Group system not available'), { code: 'UNAVAILABLE' });
@@ -12897,26 +13354,34 @@ class StarCitizenService extends EventEmitter {
       const decision = registerInbox.entryFromFederationInviteDecision(response, stored, source);
       if (decision) this._appendInbox(decision);
     }
-    // When a peer accepts, add them as a member if we have the group locally.
-    // Prefer the unlocked member identity (the inviter) so GroupChange is signed
-    // by a current member; invitee self-join GroupChange is also authorized when
-    // this node holds a targeted outbound invite for that pubkey.
+    // When a peer accepts, open a GroupChangeProposal that embeds the invitation
+    // so existing members see the new pubkey. The inviter (holding the outbound
+    // invite) BIP340-signs; threshold adopt publishes GroupChange + state tip.
     if (response.accept && response.responderPubkey && this.groupManager) {
       const group = (stored && stored.groupId && this.groupManager.getGroup(stored.groupId))
         || (stored && stored.contractId && this.groupManager.getGroupByContractId(stored.contractId));
-      if (group && !group.includes(response.responderPubkey)) {
-        const me = this._identity && this._identity.pubkey;
-        const actor = (me && group.includes(me)) ? me : group.creator;
-        if (actor && group.includes(actor)) {
-          this.groupManager._appendGroupStatechain(group.id, {
-            id: `invite-resp:${response.inviteId}`,
-            type: 'FederationContractInviteResponse',
-            message: response,
-            acceptedAt: new Date().toISOString()
-          });
-          this.groupManager.addMember(group.id, response.responderPubkey, actor, {
-            role: (stored && stored.role) || 'signer'
-          }).catch((e) => this.emit('error', e));
+      if (group) {
+        this.groupManager._appendGroupStatechain(group.id, {
+          id: `invite-resp:${response.inviteId}`,
+          type: 'FederationContractInviteResponse',
+          message: response,
+          acceptedAt: new Date().toISOString()
+        });
+        if (stored) {
+          try {
+            const result = this.groupManager.proposeInviteJoin({
+              groupId: group.id,
+              invite: stored,
+              member: response.responderPubkey,
+              role: stored.role || 'signer'
+            });
+            const proposal = result && result.proposal;
+            if (proposal && proposal.status === 'pending') {
+              this._trySignLocalProposalVote(proposal).catch((e) => this.emit('error', e));
+            }
+          } catch (e) {
+            this.emit('error', e);
+          }
         }
       }
     }

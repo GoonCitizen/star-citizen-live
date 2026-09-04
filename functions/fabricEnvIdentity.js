@@ -29,6 +29,7 @@ function tryCore (name) {
 }
 
 const fabricKeyMaterial = tryCore('@fabric/core/functions/fabricKeyMaterial');
+const fabricOperatorIdentity = tryCore('@fabric/core/functions/fabricOperatorIdentity');
 const fabricHomeEnv = tryCore('@fabric/core/functions/fabricHomeEnv');
 const fabricWalletIdentity = tryCore('@fabric/core/functions/fabricWalletIdentity');
 
@@ -147,6 +148,16 @@ function loadFabricEnvIdentity (env = process.env, opts = {}) {
   const allowWallet = opts.allowWalletFallback != null
     ? opts.allowWalletFallback
     : env === process.env;
+
+  if (fabricOperatorIdentity && typeof fabricOperatorIdentity.resolveFabricOperatorKeySettings === 'function') {
+    const resolved = fabricOperatorIdentity.resolveFabricOperatorKeySettings(env, {
+      allowWalletFallback: allowWallet
+    });
+    if (resolved && resolved.key) {
+      const restored = restoreFromKeySettings(resolved.key);
+      if (restored) return restored;
+    }
+  }
 
   if (fabricKeyMaterial && typeof fabricKeyMaterial.keySettingsFromEnv === 'function') {
     const fromEnv = restoreFromKeySettings(fabricKeyMaterial.keySettingsFromEnv(env));

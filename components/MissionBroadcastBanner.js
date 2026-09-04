@@ -19,7 +19,7 @@ const LS_INBOX_SEEN = 'gc.inboxNotify.seen';
 const CSS = `
   .mbb-stack{position:fixed;left:16px;bottom:var(--chrome-inset,16px);z-index:32;display:flex;flex-direction:column;gap:10px;
     width:min(400px,calc(100vw - 28px));pointer-events:none}
-  .mbb-stack.raised{bottom:calc(var(--chrome-inset,16px) + 88px)}
+  .mbb-stack.raised{bottom:calc(var(--chrome-inset,16px) + 52px)}
   .mbb-card{pointer-events:auto;background:var(--panel);border:1px solid var(--line);border-radius:12px;
     box-shadow:0 12px 40px rgba(0,0,0,.45);padding:12px 14px;display:grid;gap:8px}
   .mbb-card h4{margin:0;font-size:13px;font-weight:650}

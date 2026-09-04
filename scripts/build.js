@@ -39,6 +39,10 @@ const CollectionRecord = require('../components/CollectionRecord');
 const FilePage = require('../components/FilePage');
 const LocationPage = require('../components/LocationPage');
 const MapPage = require('../components/MapPage');
+const UniverseMap = require('../components/UniverseMap');
+const GalaxyMap = require('../components/GalaxyMap');
+const BodyMap = require('../components/BodyMap');
+const UniverseExplorer = require('../components/UniverseExplorer');
 const Peers = require('../components/Peers');
 const FabricMessages = require('../components/FabricMessages');
 const GroupFabricInspector = require('../components/GroupFabricInspector');
@@ -131,6 +135,10 @@ ${CollectionRecord.CSS}
 ${FilePage.CSS || ''}
 ${LocationPage.CSS || ''}
 ${MapPage.CSS || ''}
+${UniverseMap.CSS || ''}
+${GalaxyMap.CSS || ''}
+${BodyMap.CSS || ''}
+${UniverseExplorer.CSS || ''}
 ${Peers.CSS}
 ${FabricMessages.CSS}
 ${GroupFabricInspector.CSS}

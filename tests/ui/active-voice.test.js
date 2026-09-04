@@ -34,12 +34,28 @@ describe('Active voice chrome', () => {
       members: [{ pubkey: '02aa', webrtcPeerId: 'gv-a', speaking: true }],
       settings: { mode: 'ptt', pttKey: { shift: true, code: 'Backquote' } }
     };
-    const text = textOf(panel.render());
-    assert.match(text, /Salvage Wing/);
-    assert.match(text, /Mute/);
-    assert.match(text, /Shift\+Backtick/);
-    assert.match(text, /Leave/);
-    const dots = findByClass(panel.render(), 'avp-dot');
+    const tree = panel.render();
+    const mute = findByClass(tree, 'avp-btn').find((n) =>
+      n.props && /Mute microphone/.test(n.props['aria-label'] || ''));
+    assert.ok(mute, 'mute icon');
+    assert.strictEqual(mute.props['data-tooltip'], 'Mute microphone');
+    const ptt = findByClass(tree, 'avp-btn').find((n) =>
+      n.props && /Hold to talk/.test(n.props['aria-label'] || ''));
+    assert.ok(ptt, 'ptt icon');
+    assert.match(ptt.props['data-tooltip'] || '', /Shift\+Backtick/);
+    const leave = findByClass(tree, 'avp-btn').find((n) =>
+      n.props && n.props['aria-label'] === 'Leave voice');
+    assert.ok(leave, 'leave icon');
+    assert.strictEqual(leave.props['data-tooltip'], 'Leave voice');
+    const group = findByClass(tree, 'avp-btn').find((n) =>
+      n.props && /Open group/.test(n.props['aria-label'] || ''));
+    assert.ok(group, 'group icon');
+    assert.match(group.props['data-tooltip'] || '', /Salvage Wing/);
+    assert.match(ActiveVoicePanel.CSS, /\.avp-row\{[^}]*width:\s*178px/);
+    assert.match(ActiveVoicePanel.CSS, /\.avp-btn\{[^}]*min-width:\s*34px/);
+    assert.match(ActiveVoicePanel.CSS, /\.chat-voice-btn,\s*\.gp-voice\{[^}]*min-width:\s*6\.75rem/);
+    assert.match(ActiveVoicePanel.CSS, /data-tooltip/);
+    const dots = findByClass(tree, 'avp-dot');
     assert.ok(dots.some((n) => classList(n).includes('on')));
   });
 

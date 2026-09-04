@@ -33,6 +33,16 @@ describe('inviteExpiry', () => {
     );
   });
 
+  it('rejects non-positive invitedAt / offeredAt (epoch 0)', () => {
+    const now = 1_700_000_000_000;
+    assert.equal(resolveShareExpiresAtMs({ invitedAt: 0 }, now), now + DEFAULT_INVITE_TTL_MS);
+    assert.equal(resolveShareExpiresAtMs({ invitedAt: null }, now), now + DEFAULT_INVITE_TTL_MS);
+    assert.equal(
+      resolveShareExpiresAtMs({ offeredAt: '1970-01-01T00:00:00.000Z' }, now),
+      now + DEFAULT_INVITE_TTL_MS
+    );
+  });
+
   it('treats missing expiresAt as valid and refuses a past stamp', () => {
     assert.equal(isInviteExpired({ inviteId: 'legacy' }), false);
     const past = { expiresAt: Date.now() - 1 };

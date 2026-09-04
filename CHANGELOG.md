@@ -27,7 +27,7 @@ All notable changes to this project will be documented in this file.
   ingest and Accept to `inviteePubkey`; Accept adds the member and journals
   GroupChange so both nodes update roster + Statechain.
 - **Linux `.desktop` association:** Root `desktopName` is `vc.goon.desktop` (same as `appId` / `WM_CLASS`) with `build.linux.syncDesktopName`.
-- **Fabric lettermark:** GoonCitizen desktop (`assets/icon.png` / `.ico` / `.icns`), tray glyphs, Android launcher, and dashboard favicons use the suite serif **f** on royal purple from `@fabric/http` `npm run make:icons`.
+- **GoonCitizen lettermark:** Desktop (`assets/icon.png` / `.ico` / `.icns`), tray glyphs, Android launcher, and dashboard favicons use serif lowercase **gc** on royal purple `#4C1D95`. Regenerate with `npm run make:icons` (`scripts/render-gooncitizen-icon.js`). Hub / goon.vc keep Fabric **f**.
 - **Downstream intel desk:** `docs/INTELLIGENCE.md` — Groups as orgs;
   `settings/local.js` whitelabel (`defaultGroupMessageId`, Discord, peers).
 - **Application basis:** `docs/APPLICATION.md` — why fork LiveRelay (contracts,

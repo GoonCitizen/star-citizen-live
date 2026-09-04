@@ -8,6 +8,10 @@
 const React = require('react');
 const RegisterEventLog = require('./RegisterEventLog');
 const { isMissionApprover } = require('../functions/missionRole');
+const {
+  shareClipboardText,
+  shareNotice
+} = require('../functions/groupJoinFlow');
 
 const BASE = '/services/star-citizen';
 
@@ -19,6 +23,7 @@ const CSS = `
   .mpage-hero{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:22px 24px}
   .mpage-hero h1{margin:0 0 8px;font-size:20px;display:flex;flex-wrap:wrap;gap:8px;align-items:center}
   .mpage-hero .sub{color:var(--muted);font-size:12.5px;line-height:1.5;word-break:break-all}
+  .mpage-actions{display:flex;flex-wrap:wrap;gap:8px;margin-top:14px}
   .mpage-panel{background:var(--panel);border:1px solid var(--line);border-radius:12px;overflow:hidden}
   .mpage-panel h2{font-size:13px;margin:0;padding:12px 16px;border-bottom:1px solid var(--line);font-weight:600}
   .mpage-panel .body{padding:14px 16px;display:grid;gap:10px}
@@ -216,6 +221,57 @@ class MissionPage extends React.Component {
     else window.location.href = '/#missions';
   }
 
+  shareUrl () {
+    const m = this.state.mission;
+    if (!m || typeof window === 'undefined') return '';
+    return `${window.location.origin}/missions/${encodeURIComponent(m.id)}`;
+  }
+
+  async share () {
+    const m = this.state.mission;
+    if (!m || this.state.busy) return;
+    this.setState({ busy: true, error: null, notice: null });
+    try {
+      const res = await fetch(`${BASE}/missions/${encodeURIComponent(m.id)}/share`, {
+        method: 'POST',
+        headers: this.headers(),
+        body: JSON.stringify({ relay: true })
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error || `HTTP ${res.status}`);
+      const data = json.data || {};
+      const url = shareClipboardText(data);
+      if (!url) throw new Error('no protocolUrl');
+      const page = this.shareUrl();
+      try {
+        await navigator.clipboard.writeText(url);
+        this.setState({
+          busy: false,
+          notice: shareNotice(data, page),
+          error: data.relayed ? null : (data.relayError || null)
+        });
+      } catch (_) {
+        this.setState({
+          busy: false,
+          notice: shareNotice(data, page) + ' ' + url,
+          error: data.relayed ? null : (data.relayError || null)
+        });
+      }
+    } catch (e) {
+      const url = this.shareUrl();
+      try {
+        await navigator.clipboard.writeText(url);
+        this.setState({
+          busy: false,
+          notice: 'Page link copied (Fabric share failed: ' + e.message + ').',
+          error: e.message
+        });
+      } catch (_) {
+        this.setState({ busy: false, error: e.message, notice: url });
+      }
+    }
+  }
+
   renderEscrow () {
     const m = this.state.mission;
     const e = m && m.escrow;
@@ -302,7 +358,17 @@ class MissionPage extends React.Component {
           React.createElement('span', { className: 'mpage-tag ' + (m.status || 'open') }, m.status || 'open'),
           m.reward ? React.createElement('span', { className: 'mpage-tag btc' }, '₿ ' + SATS(m.reward)) : null
         ),
-        React.createElement('div', { className: 'sub' }, m.id)
+        React.createElement('div', { className: 'sub' }, m.id),
+        m.status === 'open' && isCreator
+          ? React.createElement('div', { className: 'mpage-actions' },
+            React.createElement('button', {
+              className: 'mpage-btn',
+              disabled: this.state.busy,
+              title: 'Copy a fabric: share others paste via Import… to get a mission offer',
+              onClick: () => this.share()
+            }, 'Share')
+          )
+          : null
       ),
       this.state.error ? React.createElement('div', { className: 'mpage-err' }, this.state.error) : null,
       this.state.notice ? React.createElement('div', { className: 'mpage-ok' }, this.state.notice) : null,

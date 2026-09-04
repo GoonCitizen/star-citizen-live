@@ -1,12 +1,11 @@
 'use strict';
 
 /**
- * Dashboard Map tab — in-game starmap plus local location reports.
- * Click a point or search row to open `/locations/:slug`.
+ * Dashboard Map tab — hosts the continuous UniverseMap browser.
  */
 
 const React = require('react');
-const StarMap = require('./StarMap');
+const UniverseMap = require('./UniverseMap');
 
 const BASE = '/services/star-citizen';
 
@@ -47,6 +46,14 @@ function openLocation (pt) {
   if (href) window.location.href = href;
 }
 
+function systemCodeFromLoc (loc, fallback) {
+  const sys = String((loc && loc.system) || fallback || 'STANTON')
+    .replace(/\s+system$/i, '')
+    .toUpperCase();
+  if (sys === 'STANTON' || sys === 'PYRO' || sys === 'NYX') return sys;
+  return fallback || 'STANTON';
+}
+
 class MapPage extends React.Component {
   constructor (props) {
     super(props);
@@ -54,7 +61,13 @@ class MapPage extends React.Component {
       query: '',
       locations: [],
       reports: [],
-      error: null
+      error: null,
+      mapFocus: {
+        scale: 'galaxy',
+        system: 'STANTON',
+        body: null,
+        bodyName: null
+      }
     };
     this._searchTimer = null;
   }
@@ -105,26 +118,56 @@ class MapPage extends React.Component {
     }
   }
 
+  focusMap (partial) {
+    this.setState({
+      mapFocus: Object.assign({}, this.state.mapFocus, partial || {})
+    });
+  }
+
+  onSearchHit (loc) {
+    if (!loc) return;
+    const system = systemCodeFromLoc(loc, this.state.mapFocus.system);
+    if (/Planet|Moon|Star/i.test(loc.type || '')) {
+      this.focusMap({
+        scale: 'body',
+        system,
+        body: loc.name || loc.slug,
+        bodyName: loc.name || loc.slug
+      });
+      return;
+    }
+    if (loc.parent) {
+      this.focusMap({
+        scale: 'body',
+        system,
+        body: loc.parent,
+        bodyName: loc.parent
+      });
+      return;
+    }
+    openLocation(loc);
+  }
+
   render () {
     const q = this.state.query;
     return React.createElement('div', { className: 'mmap' },
       React.createElement('section', { className: 'mmap-hero' },
         React.createElement('h1', null, 'Map'),
         React.createElement('div', { className: 'sub' },
-          'Browse Stanton / Pyro / Nyx from the in-game starmap (landing zones, outposts, stations). Click a body or search a name to open its page. This node accumulates recent players from your Game.log QT hops and from presence your peers share — reports stay local until more data arrives.')
+          'One continuous browser from the universe down to a planetary surface: click a system, then a star or planet, then a POI. Zoom out to step back. Surfaces and starfields are procedural / CC0 — not RSI art.')
       ),
       this.state.error
         ? React.createElement('div', { className: 'mmap-err' }, this.state.error)
         : null,
       React.createElement('div', { className: 'mmap-grid' },
         React.createElement('section', { className: 'mmap-panel' },
-          React.createElement('h2', null, 'System map'),
+          React.createElement('h2', null, 'Universe map'),
           React.createElement('div', { className: 'body' },
-            React.createElement(StarMap, {
-              system: 'STANTON',
-              includeHotspots: true,
-              height: 360,
-              onSelect: (pt) => openLocation(pt)
+            React.createElement(UniverseMap, {
+              height: 400,
+              focus: this.state.mapFocus,
+              onNavigate: (nav) => this.focusMap(nav),
+              onOpenLocation: (pt) => openLocation(pt)
             })
           )
         ),
@@ -145,7 +188,7 @@ class MapPage extends React.Component {
                     React.createElement('button', {
                       type: 'button',
                       className: 'mmap-row',
-                      onClick: () => openLocation(loc)
+                      onClick: () => this.onSearchHit(loc)
                     },
                     React.createElement('span', { className: 'n' }, loc.name || loc.slug),
                     React.createElement('span', { className: 'meta' },
