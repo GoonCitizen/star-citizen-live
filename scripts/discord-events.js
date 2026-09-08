@@ -14,6 +14,7 @@
  *   node scripts/discord-events.js categorize [--ids id,id] [--json]
  *   node scripts/discord-events.js resolve <id> [<id>…]
  *   node scripts/discord-events.js graphic [--fetch] [--from-json FILE] [--out-dir DIR]
+ *       [--brand goon|permafleet] [--assets] [--png]
  *
  * Env:
  *   DISCORD_BOT_TOKEN, DISCORD_GUILD_ID, SC_SETTINGS_DIR, SC_REGISTER_DIR
@@ -47,10 +48,11 @@ function usage (code = 0) {
   node scripts/discord-events.js get <eventId> [--guild ID]
   node scripts/discord-events.js categorize [--ids id,id] [--json]
   node scripts/discord-events.js resolve <id> [<id>…] [--guild ID] [--json]
-  node scripts/discord-events.js graphic [--fetch] [--from-json FILE] [--out-dir DIR] [--assets] [--png]
+  node scripts/discord-events.js graphic [--fetch] [--from-json FILE] [--out-dir DIR] [--brand goon|permafleet] [--assets] [--png]
 
 Persists under discordcatalog key guild-events:<guildId>.
-Graphic writes goon-squad-schedule.svg + .html (optional PNG via Chrome).
+Graphic writes goon-squad-schedule (or permafleet-schedule) .svg + .html
+(optional PNG via Chrome). PERMAFLEET brand adds alliance org chips.
 Secrets: DISCORD_BOT_TOKEN or settingsDir/discord.secrets.json
 `;
   if (code) console.error(text);
@@ -73,6 +75,7 @@ function parseArgs (argv) {
     assets: false,
     fromJson: null,
     outDir: null,
+    brand: 'goon',
     rest: []
   };
   const list = argv.slice(2);
@@ -89,6 +92,7 @@ function parseArgs (argv) {
     } else if (a === '--out') args.out = list.shift();
     else if (a === '--out-dir') args.outDir = list.shift();
     else if (a === '--from-json') args.fromJson = list.shift();
+    else if (a === '--brand') args.brand = list.shift() || 'goon';
     else if (a === '--json') args.json = true;
     else if (a === '--fetch') args.fetch = true;
     else if (a === '--png') args.png = true;
@@ -472,12 +476,14 @@ async function cmdGraphic (args) {
     console.error('No scheduled events to render.');
     process.exit(1);
   }
+  const brand = graphic.resolveBrand(args.brand);
   const schedule = loaded.schedule || events.buildWeekSchedule(loaded.events);
   const rendered = graphic.renderWeekScheduleGraphic({
     events: loaded.events,
     schedule,
     fetchedAt: loaded.fetchedAt || schedule.generatedAt,
-    guildName: 'G00N SQUAD'
+    brand: brand.id,
+    guildName: brand.title
   });
   const cwd = path.join(__dirname, '..');
   const outDir = path.resolve(args.outDir || path.join(cwd, 'reports'));
@@ -503,12 +509,14 @@ async function cmdGraphic (args) {
       }
     }
   }
-  dumpProbe('goon-squad-schedule', {
-    title: 'G00N SQUAD weekly ops infographic',
+  dumpProbe(brand.baseName, {
+    title: brand.probeTitle,
+    brand: brand.id,
     guildId: loaded.guildId,
     source: loaded.source,
     fetchedAt: loaded.fetchedAt || schedule.generatedAt,
     count: loaded.events.length,
+    orgs: brand.orgs || null,
     files: {
       svg: written.svgPath,
       html: written.htmlPath
@@ -521,20 +529,17 @@ async function cmdGraphic (args) {
   if (args.json) {
     console.log(JSON.stringify({
       guildId: loaded.guildId,
+      brand: brand.id,
       count: loaded.events.length,
       svg: written.svgPath,
       html: written.htmlPath
     }, null, 2));
     return;
   }
-  console.log(`Wrote ${guildLabel(loaded)} infographic (${loaded.events.length} events)\n`);
+  console.log(`Wrote ${brand.title} (${loaded.guildId}) infographic (${loaded.events.length} events)\n`);
   console.log(`  SVG   ${written.svgPath}`);
   console.log(`  HTML  ${written.htmlPath}`);
-  console.log('Re-run: npm run discord:events -- graphic --fetch --png --assets');
-}
-
-function guildLabel (loaded) {
-  return 'G00N SQUAD (' + loaded.guildId + ')';
+  console.log(`Re-run: npm run discord:events -- graphic --brand ${brand.id} --fetch --png --assets`);
 }
 
 (async () => {

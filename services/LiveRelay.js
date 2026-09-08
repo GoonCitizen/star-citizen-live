@@ -49,6 +49,7 @@ try {
 const cumulativeHistory = require('../functions/cumulativeHistory');
 const gameLogMissionRegister = require('../functions/gameLogMissionRegister');
 const logCorpus = require('../functions/logCorpus');
+const historyLogShare = require('../functions/historyLogShare');
 const fsBrowser = require('../functions/fsBrowser');
 const activityTree = require('../functions/activityTree');
 const gooncitizenGameState = require('../functions/gooncitizenGameState');
@@ -571,6 +572,8 @@ class StarCitizenService extends EventEmitter {
     this._historySync = {
       status: 'idle', files: 0, fileIndex: 0, lines: 0, startedAt: null, finishedAt: null
     };
+    // When share is enabled during first-time corpus sync, flush history after sync.
+    this._pendingHistoricalShare = false;
     this._corpusCache = null;
     this._analyticsCache = null;
     this._discordFeedKeys = [];
@@ -653,6 +656,149 @@ class StarCitizenService extends EventEmitter {
       this._discordCatalogCache.inflight = null;
       throw e;
     }
+  }
+
+  /**
+   * Live Discord role catalog for one guild (optional full-roster holder counts).
+   * @param {string} guildId
+   * @param {Object} [opts]
+   * @param {boolean} [opts.force]
+   * @param {boolean} [opts.counts] default true — paginate members for holder counts
+   * @returns {Promise<object>}
+   */
+  async _discordGuildRoles (guildId, opts = {}) {
+    const id = guildId != null ? String(guildId).trim() : '';
+    if (!id) {
+      return { error: 'guild_id_required', guildId: null, roles: [] };
+    }
+    if (!this._rolesCatalogCache) {
+      this._rolesCatalogCache = Object.create(null);
+    }
+    const wantCounts = opts.counts !== false;
+    const cacheKey = id + ':' + (wantCounts ? 'counts' : 'nocounts');
+    const ttlMs = wantCounts ? 5 * 60 * 1000 : this._discordCatalogTtlMs;
+    const cached = this._rolesCatalogCache[cacheKey];
+    if (!opts.force && cached && cached.data && (Date.now() - cached.at) < ttlMs) {
+      return cached.data;
+    }
+    if (cached && cached.inflight) return cached.inflight;
+
+    const work = (async () => {
+      const client = this.discordBot && this.discordBot.client ? this.discordBot.client : null;
+      const botReady = this._discordBotReady === true &&
+        !!(client && (typeof client.isReady !== 'function' || client.isReady()));
+      if (!botReady || !client) {
+        return { error: 'bot_not_ready', guildId: id, roles: [], botReady: false };
+      }
+      let guild = null;
+      try {
+        if (client.guilds && client.guilds.cache && typeof client.guilds.cache.get === 'function') {
+          guild = client.guilds.cache.get(id) || null;
+        }
+        if (!guild && client.guilds && typeof client.guilds.fetch === 'function') {
+          guild = await client.guilds.fetch(id);
+        }
+      } catch (e) {
+        return {
+          error: 'guild_not_found',
+          guildId: id,
+          roles: [],
+          botReady: true,
+          detail: e && e.message ? e.message : String(e)
+        };
+      }
+      if (!guild) {
+        return { error: 'guild_not_found', guildId: id, roles: [], botReady: true };
+      }
+      try {
+        if (guild.roles && typeof guild.roles.fetch === 'function') {
+          await guild.roles.fetch();
+        }
+      } catch (e) {
+        return {
+          error: e && e.message ? e.message : String(e),
+          guildId: id,
+          roles: [],
+          botReady: true
+        };
+      }
+
+      let holderCounts = null;
+      let countsSource = 'none';
+      if (wantCounts) {
+        try {
+          const members = await this._fetchDiscordGuildMembersForRoles(guild);
+          holderCounts = discordGuildCatalog.countRoleHolders(members);
+          countsSource = 'rest_members';
+        } catch (e) {
+          this.emit('warning',
+            `[discord] role holder counts failed: ${e && e.message ? e.message : e}`);
+          holderCounts = discordGuildCatalog.countRoleHolders(guild.members);
+          countsSource = 'cache_partial';
+        }
+      }
+
+      const payload = discordGuildCatalog.buildGuildRolesPayload(guild, {
+        holderCounts,
+        countsSource,
+        botReady: true
+      });
+      return payload || {
+        error: 'serialize_failed',
+        guildId: id,
+        roles: [],
+        botReady: true
+      };
+    })();
+
+    this._rolesCatalogCache[cacheKey] = { at: 0, data: null, inflight: work };
+    try {
+      const data = await work;
+      this._rolesCatalogCache[cacheKey] = { at: Date.now(), data, inflight: null };
+      return data;
+    } catch (e) {
+      this._rolesCatalogCache[cacheKey] = { at: 0, data: null, inflight: null };
+      throw e;
+    }
+  }
+
+  /**
+   * Paginate Discord REST guild members (role id lists) for holder counts.
+   * @param {object} guild discord.js Guild
+   * @returns {Promise<Array<{roles: string[]}>>}
+   */
+  async _fetchDiscordGuildMembersForRoles (guild) {
+    const out = [];
+    const mgr = guild && guild.members;
+    if (!mgr) return out;
+    // Prefer discord.js list pagination when available (avoids gateway chunking).
+    if (typeof mgr.list === 'function') {
+      let after = undefined;
+      for (let page = 0; page < 20; page++) {
+        const batch = await mgr.list({ limit: 1000, after });
+        const rows = discordGuildCatalog.collectionValues(batch);
+        if (!rows.length) break;
+        for (const m of rows) {
+          const roleIds = m && m.roles
+            ? discordGuildCatalog.collectionValues(m.roles).map((r) => {
+              if (r == null) return null;
+              if (typeof r === 'string' || typeof r === 'number') return String(r);
+              return r.id != null ? String(r.id) : null;
+            }).filter(Boolean)
+            : [];
+          out.push({ roles: roleIds });
+        }
+        after = rows[rows.length - 1] && rows[rows.length - 1].id;
+        if (rows.length < 1000 || !after) break;
+        await new Promise((r) => setTimeout(r, 350));
+      }
+      return out;
+    }
+    if (typeof mgr.fetch === 'function') {
+      const all = await mgr.fetch();
+      return discordGuildCatalog.collectionValues(all);
+    }
+    return discordGuildCatalog.collectionValues(mgr);
   }
 
   /**
@@ -2934,6 +3080,12 @@ class StarCitizenService extends EventEmitter {
     return this.peers.some((p) => p && p.enabled !== false && p.shareLogs === true);
   }
 
+  /** Consent flag only — identity may still be locked (first unlock will flush). */
+  _hasLogShareConsent () {
+    if (this._shareLogsGlobal) return true;
+    return this.peers.some((p) => p && p.enabled !== false && p.shareLogs === true);
+  }
+
   /**
    * Publish options for log uplink: `{}` broadcasts (global), `{ to }` directs,
    * `null` means nothing authorized.
@@ -2945,6 +3097,55 @@ class StarCitizenService extends EventEmitter {
     if (targets === null) return {};
     if (!targets.length) return null;
     return { to: targets };
+  }
+
+  /**
+   * Operator just authorized log share (global or per-peer). If the first-time
+   * corpus sync has not finished (or identity is locked), wait; otherwise publish
+   * accumulated local history now so peers get historical logs, not only future
+   * live lines.
+   */
+  _requestHistoricalLogShare () {
+    if (!this._hasLogShareConsent()) return;
+    const syncStatus = this._historySync && this._historySync.status;
+    const syncPending = this._skipGameLog()
+      ? false
+      : (syncStatus !== 'done');
+    if (!this._identity || syncPending) {
+      this._pendingHistoricalShare = true;
+      return;
+    }
+    this._pendingHistoricalShare = false;
+    this._shareAccumulatedLogs().catch((e) => this.emit('error', e));
+  }
+
+  /**
+   * Queue local cumulative-history rows onto the Fabric uplink and publish a
+   * GameStateSnapshot. Idempotent for peers (content ids / snapshot merge).
+   * @returns {Promise<{ queued: number, snapshot: object|null, flushed: * }>}
+   */
+  async _shareAccumulatedLogs () {
+    if (!this._canShareLogs()) {
+      return { queued: 0, snapshot: null, flushed: null };
+    }
+    this._startFabricFlush();
+    const events = historyLogShare.eventsFromLocalHistory(this.history);
+    this._uplinkQueue = this._uplinkQueue || [];
+    for (const ev of events) {
+      this._uplinkQueue.push(ev);
+      if (this._uplinkQueue.length > 5000) this._uplinkQueue.shift();
+    }
+    // Do not wait for the periodic GameState interval — historical share is
+    // the point of enabling share after a first-time corpus load.
+    this._lastGameStatePublish = 0;
+    const snapshot = await this.publishGameStateSnapshot();
+    const flushed = await this._flushUplink();
+    this.emit('logs:historical-shared', {
+      queued: events.length,
+      snapshot: !!(snapshot && snapshot.digest),
+      flushed: flushed && flushed.created != null ? flushed.created : 0
+    });
+    return { queued: events.length, snapshot, flushed };
   }
 
   /**
@@ -4990,7 +5191,13 @@ class StarCitizenService extends EventEmitter {
    * mutate live session collections — seed/openLog still own the Live tab feed.
    */
   async _syncCumulativeHistory () {
-    if (this._skipGameLog()) return { changed: false, files: 0, lines: 0 };
+    if (this._skipGameLog()) {
+      this._historySync = {
+        status: 'done', files: 0, fileIndex: 0, lines: 0,
+        startedAt: null, finishedAt: new Date().toISOString()
+      };
+      return { changed: false, files: 0, lines: 0 };
+    }
 
     const explicitDirs = this.settings.reparse && Array.isArray(this.settings.reparse.dirs)
       ? this.settings.reparse.dirs
@@ -5020,10 +5227,21 @@ class StarCitizenService extends EventEmitter {
         extraFiles: this._corpusFiles()
       });
     } else {
+      this._historySync = {
+        status: 'done', files: 0, fileIndex: 0, lines: 0,
+        startedAt: null, finishedAt: new Date().toISOString()
+      };
       return { changed: false, files: 0, lines: 0 };
     }
 
-    if (!files.length) return { changed: false, files: 0, lines: 0 };
+    if (!files.length) {
+      this._historySync = {
+        status: 'done', files: 0, fileIndex: 0, lines: 0,
+        startedAt: null, finishedAt: new Date().toISOString()
+      };
+      if (this._pendingHistoricalShare) this._requestHistoricalLogShare();
+      return { changed: false, files: 0, lines: 0 };
+    }
 
     this._historySync = {
       status: 'running',
@@ -5068,6 +5286,7 @@ class StarCitizenService extends EventEmitter {
     if (this._sharePlaytimes === true || this._hasPinnedProfileFiles()) {
       this._publishGroupDataShareNow();
     }
+    if (this._pendingHistoricalShare) this._requestHistoricalLogShare();
     return Object.assign({}, result, { files: files.length });
   }
 
@@ -7663,7 +7882,12 @@ class StarCitizenService extends EventEmitter {
               requiresRestart = false;
             }
             if (sMatch[1] === 'uplinkIntervalMs') { this.settings.uplink.intervalMs = updated.uplinkIntervalMs || 5000; requiresRestart = false; }
-            if (sMatch[1] === 'shareLogsGlobal') { this._shareLogsGlobal = updated.shareLogsGlobal === true; requiresRestart = false; }
+            if (sMatch[1] === 'shareLogsGlobal') {
+              const was = this._shareLogsGlobal === true;
+              this._shareLogsGlobal = updated.shareLogsGlobal === true;
+              requiresRestart = false;
+              if (this._shareLogsGlobal && !was) this._requestHistoricalLogShare();
+            }
             if (sMatch[1] === 'groupChatSeal') { this._groupChatSeal = updated.groupChatSeal === true; requiresRestart = false; }
             if (sMatch[1] === 'requireSealedGroupChat') {
               this._requireSealedGroupChat = updated.requireSealedGroupChat === true;
@@ -8293,11 +8517,30 @@ class StarCitizenService extends EventEmitter {
           }
         }
         let discordGuildMatch;
-        if ((discordGuildMatch = pathname.match(new RegExp(`^(?:${base})?/discord/guilds/([^/]+)/(channels|members)$`))) &&
+        if ((discordGuildMatch = pathname.match(new RegExp(`^(?:${base})?/discord/guilds/([^/]+)/(channels|members|roles)$`))) &&
             req.method === 'GET') {
           if (!this._requireSession(req, send)) return;
           const guildId = decodeURIComponent(discordGuildMatch[1]);
           const slice = discordGuildMatch[2];
+          if (slice === 'roles') {
+            const rolesPayload = await this._discordGuildRoles(guildId, {
+              force: url.searchParams.get('refresh') === '1',
+              counts: url.searchParams.get('counts') !== '0'
+            });
+            if (rolesPayload.error === 'bot_not_ready') {
+              return send(503, { error: 'Discord bot not ready', data: rolesPayload });
+            }
+            if (rolesPayload.error === 'guild_not_found') {
+              return send(404, {
+                error: 'Guild not found (bot may not be in that server)',
+                data: rolesPayload
+              });
+            }
+            if (rolesPayload.error) {
+              return send(502, { error: rolesPayload.error, data: rolesPayload });
+            }
+            return send(200, { type: 'DiscordGuildRoles', data: rolesPayload });
+          }
           const catalog = await this._discordGuildCatalog({
             force: url.searchParams.get('refresh') === '1'
           });
@@ -8400,11 +8643,15 @@ class StarCitizenService extends EventEmitter {
           }
           if (req.method === 'POST') {
             const d = await body();
+            const wasShare = peer.shareLogs === true;
             if (d.enabled !== undefined) peer.enabled = !!d.enabled;
             if (d.label !== undefined) peer.label = d.label || null;
             if (d.shareLogs !== undefined) peer.shareLogs = !!d.shareLogs;
             this._persistPeers();
             this._refreshFabric().catch((e) => this.emit('error', e));
+            if (peer.shareLogs === true && !wasShare && !this._shareLogsGlobal) {
+              this._requestHistoricalLogShare();
+            }
             return send(200, { type: 'Peer', data: this._peersWithStatus().find((p) => p.id === peer.id) || peer });
           }
         }
@@ -9657,6 +9904,11 @@ class StarCitizenService extends EventEmitter {
       // Missions shared to a group are visible to its members only (hosted mode).
       // Membership spans the group tree (group + subgroups), matching the
       // broadcast receive filter and _listMissionBroadcasts.
+      // Hosted / shared-LAN: require a session before listing (adversary probes
+      // could otherwise scrape open missions without groupId).
+      if (pathname === `${base}/missions` && req.method === 'GET') {
+        if (!requireAuth()) return;
+      }
       const visible = (m) => {
         if (!m) return false;
         if (!serverMode || !m.groupId) return true;
@@ -9684,6 +9936,7 @@ class StarCitizenService extends EventEmitter {
       }
       const mMatch = pathname.match(new RegExp(`^${base}/missions/([^/]+)$`));
       if (mMatch && req.method === 'GET') {
+        if (!requireAuth()) return;
         if (!this.missionManager) return send(503, { error: 'Mission system not available' });
         const m = this.missionManager.getMission(mMatch[1]);
         if (!m || !visible(m)) return send(404, { error: 'Mission not found' });
@@ -10688,6 +10941,7 @@ class StarCitizenService extends EventEmitter {
       .catch((e) => this.emit('error', e));
     if (this._identity) {
       try { this._flushPendingFederationInvites(); } catch (e) { this.emit('error', e); }
+      if (this._pendingHistoricalShare) this._requestHistoricalLogShare();
     }
   }
 

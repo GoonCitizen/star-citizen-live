@@ -106,6 +106,28 @@ and what you saw.
 
 ---
 
+## Trusted mesh weeks (G00N / PERMAFLEET / friends)
+
+Run a **local desktop node** among operators you know. Fabric seeds
+(`hub.fabric.pub:7777`, `relay.goon.vc:7777`) relay chat, Groups, and mission
+broadcasts. This is **not** a claim that relays cannot read global shoutbox
+or that Hub is production-hardened against every adversary.
+
+**Kickoff checklist** (full detail: [`docs/THREAT-MODEL.md`](docs/THREAT-MODEL.md)
+“Trusted mesh weeks”):
+
+1. `npm i` → `npm start` or `npm run desktop` (Node **24.15.0**).
+2. Unlock identity; Peers tab shows a connection to hub and/or relay.
+3. Leave **Share logs globally** off; enable **Seal outbound group chat**.
+4. Keep HTTP on loopback (no LAN shared mode unless the LAN is trusted).
+5. Smoke: post to global chat, share/join one Group, broadcast one mission.
+6. Optional weekly health: `npm run playnet:deploy-gooncitizen -- --production --check-only`.
+7. Skip Hub `--accept` unless your `FABRIC_XPRV` is the Hub operator key.
+
+Public seed operators: [`docs/PRODUCTION.md`](docs/PRODUCTION.md).
+
+---
+
 ## For other organizations
 
 Fork it. Rebrand it. Run it on your Discord. Post missions your officers

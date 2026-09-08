@@ -185,7 +185,11 @@ class Notifications extends React.Component {
 
   async refresh () {
     try {
-      const res = await fetch(`${BASE}/inbox?scope=notifications`).then((r) => r.json());
+      if (!this.state.token) await this.ensureSession();
+      if (this.props.authToken && !this.state.token) {
+        this.setState({ token: this.props.authToken });
+      }
+      const res = await fetch(`${BASE}/inbox?scope=notifications`, { headers: this.headers() }).then((r) => r.json());
       const items = (res.data || []).slice()
         .sort((a, b) => String(b.ts || '').localeCompare(String(a.ts || '')));
       const pending = typeof res.pending === 'number'

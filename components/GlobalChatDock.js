@@ -174,9 +174,28 @@ class GlobalChatDock extends React.Component {
     });
   }
 
+  _authHeaders (extra) {
+    const h = Object.assign({ Accept: 'application/json' }, extra || {});
+    const tok = this.props && this.props.authToken;
+    if (tok) {
+      h.Authorization = 'Bearer ' + tok;
+      return h;
+    }
+    try {
+      const { readStoredSiteLoginToken } = require('../functions/goonCitizenClientEnvironment');
+      const t = readStoredSiteLoginToken();
+      if (t) h.Authorization = 'Bearer ' + t;
+    } catch (_) { /* ignore */ }
+    return h;
+  }
+
   async loadPrefs () {
     try {
-      const res = await fetch('/settings').then((r) => r.json());
+      const res = await fetch('/settings', { headers: this._authHeaders() }).then((r) => {
+        if (!r.ok) return null;
+        return r.json();
+      });
+      if (!res) return;
       const s = res.settings || {};
       this.setState({
         notifyPrefs: {
@@ -197,7 +216,9 @@ class GlobalChatDock extends React.Component {
 
   async refreshGlobal () {
     try {
-      const msgRes = await fetch(`${BASE}/chat/messages?channel=global&limit=80`).then((r) => r.json());
+      const msgRes = await fetch(`${BASE}/chat/messages?channel=global&limit=80`, {
+        headers: this._authHeaders()
+      }).then((r) => r.json());
       const messages = msgRes.data || [];
       const el = this._msgsRef.current;
       const pinned = el && (el.scrollHeight - el.scrollTop - el.clientHeight < 60);
@@ -227,7 +248,7 @@ class GlobalChatDock extends React.Component {
     const suppressOs = !prefs.notifyDesktop || (this._focused && !prefs.notifyWhenFocused);
 
     try {
-      const chRes = await fetch(`${BASE}/chat/channels`).then((r) => r.json());
+      const chRes = await fetch(`${BASE}/chat/channels`, { headers: this._authHeaders() }).then((r) => r.json());
       const channels = (chRes.data || []).filter((ch) => {
         if (ch.kind === 'global') return prefs.notifyChatGlobal !== false;
         if (ch.kind === 'group') return prefs.notifyChatGroups !== false;
@@ -236,7 +257,8 @@ class GlobalChatDock extends React.Component {
 
       for (const ch of channels) {
         const msgRes = await fetch(
-          `${BASE}/chat/messages?channel=${encodeURIComponent(ch.key)}&limit=30`
+          `${BASE}/chat/messages?channel=${encodeURIComponent(ch.key)}&limit=30`,
+          { headers: this._authHeaders() }
         ).then((r) => r.json());
         const messages = msgRes.data || [];
         if (!messages.length) continue;
@@ -293,7 +315,7 @@ class GlobalChatDock extends React.Component {
       }
       const res = await fetch(`${BASE}/chat/messages`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: this._authHeaders({ 'Content-Type': 'application/json' }),
         body: JSON.stringify(payload)
       });
       const json = await res.json();

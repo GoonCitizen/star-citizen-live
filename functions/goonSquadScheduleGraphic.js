@@ -1,13 +1,15 @@
 'use strict';
 
 /**
- * G00N SQUAD week-ops infographic (SVG + standalone HTML).
+ * Week-ops infographic (SVG + standalone HTML) for G00N SQUAD or PERMAFLEET.
  *
  * Regenerated from Discord Guild Scheduled Events:
  *   npm run discord:events -- graphic
+ *   npm run discord:events -- graphic --brand permafleet --png --assets
  *   npm run discord:events -- graphic --fetch
  *
  * Dark industrial red/black — not the Fabric purple lettermark.
+ * PERMAFLEET brand is the same board with alliance org mentions.
  */
 
 const { WEEKDAY, buildWeekSchedule, formatEventTimes } = require('./discordScheduledEvents');
@@ -26,8 +28,72 @@ const INK = {
   red: '#c81e1e',
   redDark: '#6e1010',
   redMid: '#9b1616',
-  cream: '#e8dcc8'
+  cream: '#e8dcc8',
+  chip: '#241111',
+  chipStroke: '#6e1010'
 };
+
+/**
+ * Alliance member orgs called out on the PERMAFLEET board
+ * (contracts/org.dot + Turtle Brigade rank path).
+ * @type {readonly string[]}
+ */
+const PERMAFLEET_ORGS = Object.freeze([
+  'G00N SQUAD',
+  'Infinity Industries',
+  'RAT',
+  'Transgalactic Trade',
+  'LEGACY',
+  'Black Exodus',
+  'Turtle Brigade',
+  'STARJUMP'
+]);
+
+/**
+ * @typedef {object} ScheduleBrand
+ * @property {string} id
+ * @property {string} title
+ * @property {string} subtitle
+ * @property {string} baseName
+ * @property {string} probeTitle
+ * @property {string[]} [orgs]
+ */
+
+/** @type {Record<string, ScheduleBrand>} */
+const BRANDS = Object.freeze({
+  goon: {
+    id: 'goon',
+    title: 'G00N SQUAD',
+    subtitle: 'PERMAFLEET · day theme + afternoon / evening blocks · Discord scheduled events',
+    baseName: 'goon-squad-schedule',
+    probeTitle: 'G00N SQUAD weekly ops infographic'
+  },
+  permafleet: {
+    id: 'permafleet',
+    title: 'PERMAFLEET',
+    subtitle: 'Alliance weekly ops · day theme + afternoon / evening blocks · Discord scheduled events',
+    baseName: 'permafleet-schedule',
+    probeTitle: 'PERMAFLEET weekly ops infographic',
+    orgs: PERMAFLEET_ORGS.slice()
+  }
+});
+
+/**
+ * @param {string} [raw]
+ * @returns {ScheduleBrand}
+ */
+function resolveBrand (raw) {
+  const key = String(raw || 'goon').trim().toLowerCase()
+    .replace(/\s+/g, '')
+    .replace(/_/g, '-');
+  if (key === 'permafleet' || key === 'pf' || key === 'alliance') {
+    return BRANDS.permafleet;
+  }
+  if (key === 'goon' || key === 'goonsquad' || key === 'g00n' || key === 'g00nsquad') {
+    return BRANDS.goon;
+  }
+  return BRANDS.goon;
+}
 
 const DAY_SHORT = Object.freeze({
   Monday: 'MON',
@@ -248,7 +314,9 @@ function roundRect (x, y, w, h, r, fill, extra) {
  * @param {Array<object>} [opts.events]
  * @param {string} [opts.fetchedAt]
  * @param {string} [opts.guildName]
- * @returns {{svg:string, width:number, height:number}}
+ * @param {string} [opts.brand] goon | permafleet
+ * @param {string[]} [opts.orgs] override alliance org labels (permafleet)
+ * @returns {{svg:string, width:number, height:number, brand:ScheduleBrand}}
  */
 function renderWeekScheduleSvg (opts = {}) {
   const events = opts.events || [];
@@ -257,10 +325,15 @@ function renderWeekScheduleSvg (opts = {}) {
     events
   );
   const fetchedAt = opts.fetchedAt || schedule.generatedAt || new Date().toISOString();
-  const guildName = opts.guildName || 'G00N SQUAD';
+  const brand = resolveBrand(opts.brand || (opts.guildName === 'PERMAFLEET' ? 'permafleet' : 'goon'));
+  const guildName = opts.guildName || brand.title;
+  const orgs = Array.isArray(opts.orgs) && opts.orgs.length
+    ? opts.orgs.map(String).filter(Boolean)
+    : (brand.orgs || []);
+  const showOrgs = orgs.length > 0;
 
   const margin = 28;
-  const headerH = 112;
+  const headerH = showOrgs ? 148 : 112;
   const footerH = 64;
   const gap = 14;
   const inner = WIDTH - margin * 2;
@@ -289,7 +362,24 @@ function renderWeekScheduleSvg (opts = {}) {
 
   parts.push(`<text x="${margin + 4}" y="${margin + 42}" fill="${INK.ink}" font-family="Arial Black, Helvetica Neue, Helvetica, Arial, sans-serif" font-size="38" letter-spacing="4">${escapeXml(guildName)}</text>`);
   parts.push(`<text x="${margin + 4}" y="${margin + 74}" fill="${INK.red}" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="18" font-weight="700" letter-spacing="6">WEEKLY OPS</text>`);
-  parts.push(`<text x="${margin + 4}" y="${margin + 98}" fill="${INK.muted}" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="13">PERMAFLEET · day theme + afternoon / evening blocks · Discord scheduled events</text>`);
+  parts.push(`<text x="${margin + 4}" y="${margin + 98}" fill="${INK.muted}" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="13">${escapeXml(brand.subtitle)}</text>`);
+
+  if (showOrgs) {
+    const chipY = margin + 114;
+    const chipH = 26;
+    let chipX = margin + 4;
+    parts.push(`<text x="${chipX}" y="${chipY + 18}" fill="${INK.faint}" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="11" font-weight="700" letter-spacing="2">ORGS</text>`);
+    chipX += 52;
+    for (const org of orgs) {
+      const label = String(org).toUpperCase();
+      const bw = Math.round(label.length * 7.4 + 20);
+      if (chipX + bw > WIDTH - margin - 280) break;
+      parts.push(roundRect(chipX, chipY, bw, chipH, 4, INK.chip, `stroke="${INK.chipStroke}" stroke-width="1"`));
+      parts.push(`<rect x="${chipX}" y="${chipY}" width="4" height="${chipH}" fill="${INK.red}" rx="1"/>`);
+      parts.push(`<text x="${chipX + bw / 2 + 1}" y="${chipY + 17}" text-anchor="middle" fill="${INK.cream}" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="11" font-weight="700" letter-spacing="0.6">${escapeXml(label)}</text>`);
+      chipX += bw + 8;
+    }
+  }
 
   parts.push(`<text x="${WIDTH - margin}" y="${margin + 48}" text-anchor="end" fill="${INK.cream}" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="16" font-weight="700">AMERICA/CHICAGO</text>`);
   parts.push(`<text x="${WIDTH - margin}" y="${margin + 72}" text-anchor="end" fill="${INK.muted}" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="13">As of ${escapeXml(asOfLabel(fetchedAt))}</text>`);
@@ -373,11 +463,14 @@ function renderWeekScheduleSvg (opts = {}) {
   });
 
   const fy = HEIGHT - margin - 18;
+  const orgFooter = showOrgs
+    ? '   ·   Alliance orgs on the board'
+    : '';
   parts.push(`<rect x="${margin}" y="${HEIGHT - footerH - margin + 16}" width="${WIDTH - margin * 2}" height="1" fill="${INK.line}"/>`);
-  parts.push(`<text x="${margin + 4}" y="${fy}" fill="${INK.muted}" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="12"><tspan fill="${INK.red}">&#9608;</tspan> Day theme   <tspan fill="#3f7d4e">&#9608;</tspan> Training   <tspan fill="${INK.redMid}">&#9608;</tspan> Special / ops / monthly   ·   Times in Central   ·   npm run discord:events -- graphic</text>`);
+  parts.push(`<text x="${margin + 4}" y="${fy}" fill="${INK.muted}" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="12"><tspan fill="${INK.red}">&#9608;</tspan> Day theme   <tspan fill="#3f7d4e">&#9608;</tspan> Training   <tspan fill="${INK.redMid}">&#9608;</tspan> Special / ops / monthly   ·   Times in Central${escapeXml(orgFooter)}   ·   npm run discord:events -- graphic --brand ${escapeXml(brand.id)}</text>`);
 
   parts.push('</svg>');
-  return { svg: parts.join('\n') + '\n', width: WIDTH, height: HEIGHT };
+  return { svg: parts.join('\n') + '\n', width: WIDTH, height: HEIGHT, brand };
 }
 
 /**
@@ -387,9 +480,10 @@ function renderWeekScheduleSvg (opts = {}) {
  */
 function renderWeekScheduleHtml (opts = {}) {
   const rendered = opts.svg
-    ? { svg: opts.svg, width: opts.width || WIDTH, height: opts.height || HEIGHT }
+    ? { svg: opts.svg, width: opts.width || WIDTH, height: opts.height || HEIGHT, brand: opts.brand }
     : renderWeekScheduleSvg(opts);
-  const title = (opts.guildName || 'G00N SQUAD') + ' Weekly Ops';
+  const brand = rendered.brand || resolveBrand(opts.brand);
+  const title = (opts.guildName || brand.title) + ' Weekly Ops';
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -412,7 +506,7 @@ function renderWeekScheduleHtml (opts = {}) {
 
 /**
  * @param {object} [opts]
- * @returns {{svg:string, html:string, width:number, height:number, baseName:string}}
+ * @returns {{svg:string, html:string, width:number, height:number, baseName:string, brand:ScheduleBrand}}
  */
 function renderWeekScheduleGraphic (opts = {}) {
   const svgDoc = renderWeekScheduleSvg(opts);
@@ -422,7 +516,8 @@ function renderWeekScheduleGraphic (opts = {}) {
     html,
     width: svgDoc.width,
     height: svgDoc.height,
-    baseName: 'goon-squad-schedule'
+    baseName: svgDoc.brand.baseName,
+    brand: svgDoc.brand
   };
 }
 
@@ -430,6 +525,9 @@ module.exports = {
   WIDTH,
   HEIGHT,
   INK,
+  BRANDS,
+  PERMAFLEET_ORGS,
+  resolveBrand,
   escapeXml,
   wrapWords,
   clockCt,

@@ -750,6 +750,14 @@ class Chat extends React.Component {
   async ensureAuth () {
     if (this.state.authToken) return this.state.authToken;
     if (this.props.authToken) return this.props.authToken;
+    try {
+      const { readStoredSiteLoginToken } = require('../functions/goonCitizenClientEnvironment');
+      const siteTok = readStoredSiteLoginToken();
+      if (siteTok) {
+        this.setState({ authToken: siteTok });
+        return siteTok;
+      }
+    } catch (_) { /* ignore */ }
     const bridge = identityBridge();
     if (!bridge) return null;
     try {

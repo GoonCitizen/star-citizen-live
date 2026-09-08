@@ -1,7 +1,15 @@
 # Outstanding (security-first)
 Living queue for this repo. Detail: [SECURITY.md](../SECURITY.md), [THREAT-MODEL.md](THREAT-MODEL.md). Suite march: [@fabric/core `docs/PRODUCTION_MARCH.md`](https://github.com/FabricLabs/fabric/blob/feature/rsi/docs/PRODUCTION_MARCH.md).
 
-**Last reviewed:** 2026-08-25 — suite quick-win pass on top of `00bb238` (Voice
+**Last reviewed:** 2026-09-07 — **Trusted mesh weeks:** ready for a small set of
+known operators using live Fabric seeds for chat / Groups / mission gossip
+(log share off, `groupChatSeal` on, HTTP loopback). Checklist:
+[THREAT-MODEL.md](THREAT-MODEL.md) + [DEVELOPERS.md](../DEVELOPERS.md). Quick wins:
+`settings/example.js` `bitcoin.enable` default **false**; hosted `GET …/missions`
+requires a session. **Not** closed: Hub live RSS/NOISE pin redeploy, `--accept`
+key alignment, mesh flood limits, DirectChat confidentiality.
+
+**Prior:** 2026-08-25 — suite quick-win pass on top of `00bb238` (Voice
 activity + invitation expiry). Full `npm test` was **green: 1244 pass / 0 fail**
 at the 2026-08-24 audit; this cut adds invite epoch-0 guards, Discord activity
 `created` positive-ms, and crypto claim jitter (see Closed). Prior scan notes
@@ -94,6 +102,7 @@ block alone reports 489, which is easy to mistake for the whole suite.
 - `FABRIC_SEED` raw hex restore + `~/.fabric/hub-admin-token` / `~/.fabric/env` via core `fabricHomeEnv` / `fabricKeyMaterial` / `fabricWalletIdentity` on pin `9938917` (local wrappers catch `MODULE_NOT_FOUND` only).
 - Shared shoutbox ingest via `@fabric/http/functions/fabricChatNormalize` (`functions/fabricChatNormalize.js` re-export). Global mesh remains UTF-8 `P2P_CHAT_MESSAGE`; Store still `{ channel, body, handle }`.
 - Shared-mode LAN **writes** require a session (`shouldEnforceRemoteAuth`). Hosted Home does not treat a 401 JSON body as cumulative analytics (`buildAnalyzeModel` / `fetchAnalytics`).
+- **Client capability chrome (2026-09-06):** Dashboard probes LiveRelay via peering/ships (`goonCitizenClientEnvironment`); static + unauthenticated hosted visitors soft-gate operator chrome; SiteLogin Bearer attaches to Dashboard/monitor and major tabs.
 - Public group JSON exposes publisher / contract / validators / `signerCount` without the member roster (`Group.toPublicJSON`). GroupPage hero uses `GroupContractSummary`; the members rail is Chat `peopleOnly` (signer vs reader tags, hover Message / Profile / Invite). Missions outcomes + top pilots sit side by side (`.mi-outcomes`).
 - Fabric Message collections — AMP hex collect/store/replay for journals, Discord packs, DeviceDataShare cluster catch-up, peer ring (`functions/fabricMessageCollection.js`, `functions/clusterSync.js`; `GET …/fabric/messages?format=collection`; `GET|POST …/identity/cluster/sync`). Core helper in `@fabric/core`. Durable outbound frames set AMP `parent` to the previous `Message.id` (D-020); session/peering/ping stay genesis zeros. Log rows expose `frameId` / `parent` / `genesis`. Inbound zeros still accepted.
 

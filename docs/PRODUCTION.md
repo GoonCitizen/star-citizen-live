@@ -273,6 +273,20 @@ npm run playnet:deploy-gooncitizen -- --production --check-only
 # npm run playnet:deploy-gooncitizen -- --production --accept
 ```
 
+## Trusted mesh leaf (desktop / friends)
+
+Not a public seed — operators dial hub + relay for chat and Groups. After
+`npm start` / desktop, Peers UI should show `hub.fabric.pub` and/or
+`relay.goon.vc`. Leave `shareLogsGlobal` off; turn on Settings → **Seal
+outbound group chat**. Keep HTTP loopback. Weekly health:
+
+```bash
+npm run playnet:deploy-gooncitizen -- --production --check-only
+```
+
+See [THREAT-MODEL.md](THREAT-MODEL.md) “Trusted mesh weeks” and
+[DEVELOPERS.md](../DEVELOPERS.md).
+
 ## Git pull / GitHub host keys
 
 `git pull` may prompt to trust GitHub’s host key (ECDSA vs IP). Confirm against

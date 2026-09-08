@@ -87,6 +87,7 @@ describe('goonSquadScheduleGraphic', () => {
     });
     assert.strictEqual(out.width, 1920);
     assert.strictEqual(out.height, 1080);
+    assert.strictEqual(out.baseName, 'goon-squad-schedule');
     assert.match(out.svg, /<svg /);
     assert.match(out.svg, /G00N SQUAD/);
     assert.match(out.svg, /WEEKLY OPS/);
@@ -102,5 +103,35 @@ describe('goonSquadScheduleGraphic', () => {
     assert.doesNotMatch(out.svg, /<script/i);
     assert.match(out.html, /<!DOCTYPE html>/);
     assert.match(out.html, /<svg /);
+  });
+
+  it('renders a PERMAFLEET-branded parallel board with alliance orgs', () => {
+    const out = graphic.renderWeekScheduleGraphic({
+      events: FIXTURE,
+      fetchedAt: '2026-08-21T00:18:57.239Z',
+      brand: 'permafleet'
+    });
+    assert.strictEqual(out.baseName, 'permafleet-schedule');
+    assert.strictEqual(out.brand.id, 'permafleet');
+    assert.match(out.svg, /PERMAFLEET/);
+    assert.match(out.svg, /WEEKLY OPS/);
+    assert.match(out.svg, /Alliance weekly ops/);
+    assert.match(out.svg, /ORGS/);
+    assert.match(out.svg, /G00N SQUAD/);
+    assert.match(out.svg, /INFINITY INDUSTRIES/);
+    assert.match(out.svg, /TURTLE BRIGADE/);
+    assert.match(out.svg, /STARJUMP/);
+    assert.match(out.svg, /BLACK EXODUS/);
+    assert.match(out.svg, /LEGACY/);
+    assert.match(out.svg, /MINING MONDAY/);
+    assert.match(out.html, /PERMAFLEET Weekly Ops/);
+    assert.doesNotMatch(out.svg, /<script/i);
+  });
+
+  it('resolveBrand maps aliases to goon / permafleet', () => {
+    assert.strictEqual(graphic.resolveBrand('goon').id, 'goon');
+    assert.strictEqual(graphic.resolveBrand('G00N').id, 'goon');
+    assert.strictEqual(graphic.resolveBrand('permafleet').id, 'permafleet');
+    assert.strictEqual(graphic.resolveBrand('alliance').title, 'PERMAFLEET');
   });
 });

@@ -74,9 +74,28 @@ Intel desk / Groups as orgs: [`INTELLIGENCE.md`](INTELLIGENCE.md).
 5. Prefer not to set `DISCORD_WEBHOOK_URL` if privacy matters.
 6. Extend `FABRIC_HUB_ALLOWLIST` only for hubs you control.
 7. Revoke a lost device from desktop/Passport as soon as you notice — until then it can act as you in groups and chat.
-8. Optional: enable `groupChatSeal` so outbound GroupChat uses hub-blind v2 wraps;
-   use `requireSealedGroupChat` only when all members can open seals (unlocked
+8. **Trusted mesh weeks:** enable `groupChatSeal` (recommended) so GroupChat is
+   hub-blind at relays; leave `requireSealedGroupChat` off until every member
+   can open seals. Global shoutbox stays cleartext by design.
+9. Optional: `requireSealedGroupChat` only when all members can open seals (unlocked
    identity for v2; shared tip for legacy v1 peers).
+
+## Trusted mesh weeks (few weeks among known operators)
+
+Ready for chat / Groups / mission broadcasts over live Fabric seeds
+(`hub.fabric.pub:7777`, `relay.goon.vc:7777`) — **not** an adversarial
+confidentiality claim.
+
+| Do | Don't |
+|----|-------|
+| Desktop/local Peer, HTTP loopback | `httpSharedMode` / LAN bind unless everyone trusts the LAN |
+| Seeds: hub + relay (Peers UI shows connected) | Expect Hub `--accept` unless `FABRIC_XPRV` matches Hub `_rootKey` |
+| `shareLogsGlobal` / per-peer log share **off** | Publish Game.log events to the mesh |
+| `groupChatSeal` **on** | Rely on global shoutbox for secrets |
+| Smoke: global chat + one group share + one mission broadcast | Treat Beacon Accept / peg vault as required for these weeks |
+| Weekly: `npm run playnet:deploy-gooncitizen -- --production --check-only` | Blind-copy `bitcoin.enable: true` onto a public relay |
+
+Hub/RSI health is the shared dependency (relay when NAT blocks peer dials). Prefer Hub pin aligned with this tree’s `@fabric/core` lockfile before multi-week runs. See [OUTSTANDING.md](OUTSTANDING.md) Playnet Hub RSS/NOISE.
 
 ## Follow-ups (not this release)
 - Shared-bind GET privacy (settings / Discord catalog / peers) without breaking the LAN dashboard

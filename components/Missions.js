@@ -142,6 +142,17 @@ class Missions extends React.Component {
         }
       } catch (_) { /* locked */ }
     }
+    if (!this.state.token) {
+      const propTok = this.props && this.props.authToken;
+      if (propTok) this.setState({ token: propTok });
+      else {
+        try {
+          const { readStoredSiteLoginToken } = require('../functions/goonCitizenClientEnvironment');
+          const siteTok = readStoredSiteLoginToken();
+          if (siteTok) this.setState({ token: siteTok });
+        } catch (_) { /* ignore */ }
+      }
+    }
     await this.refresh();
   }
 

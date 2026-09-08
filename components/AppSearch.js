@@ -152,7 +152,21 @@ class AppSearch extends React.Component {
     try {
       const res = await fetch(
         `${BASE}/search?q=${encodeURIComponent(query)}&limit=24`,
-        { headers: { Accept: 'application/json' } }
+        {
+          headers: (() => {
+            const h = { Accept: 'application/json' };
+            const tok = this.props && this.props.authToken;
+            if (tok) h.Authorization = 'Bearer ' + tok;
+            else {
+              try {
+                const { readStoredSiteLoginToken } = require('../functions/goonCitizenClientEnvironment');
+                const t = readStoredSiteLoginToken();
+                if (t) h.Authorization = 'Bearer ' + t;
+              } catch (_) { /* ignore */ }
+            }
+            return h;
+          })()
+        }
       );
       const json = await res.json().catch(() => ({}));
       if (seq !== this._seq) return;

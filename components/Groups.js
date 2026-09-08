@@ -387,28 +387,44 @@ class Groups extends React.Component {
     await this.refresh(token);
   }
 
-  /** Schnorr login via the Electron identity bridge; null when unavailable. */
+  /** Schnorr login via the Electron identity bridge; SiteLogin Bearer fallback. */
   async login () {
     const bridge = identityBridge();
-    if (!bridge) return null;
-    try {
-      const info = await bridge.get();
-      if (!info || !info.unlocked) return null;
-      const envelope = await bridge.signEnvelope({ intent: 'login', ts: new Date().toISOString() });
-      if (!envelope || envelope.error) return null;
-      const res = await fetch(`${BASE}/auth`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(envelope)
-      });
-      if (!res.ok) return null;
-      const json = await res.json();
-      const token = json.data && json.data.token;
-      this.setState({ token, pubkey: json.data && json.data.pubkey });
-      return token;
-    } catch (_) {
-      return null;
+    if (bridge) {
+      try {
+        const info = await bridge.get();
+        if (info && info.unlocked) {
+          const envelope = await bridge.signEnvelope({ intent: 'login', ts: new Date().toISOString() });
+          if (envelope && !envelope.error) {
+            const res = await fetch(`${BASE}/auth`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(envelope)
+            });
+            if (res.ok) {
+              const json = await res.json();
+              const token = json.data && json.data.token;
+              this.setState({ token, pubkey: json.data && json.data.pubkey });
+              return token;
+            }
+          }
+        }
+      } catch (_) { /* fall through */ }
     }
+    const propTok = this.props && this.props.authToken;
+    if (propTok) {
+      this.setState({ token: propTok });
+      return propTok;
+    }
+    try {
+      const { readStoredSiteLoginToken } = require('../functions/goonCitizenClientEnvironment');
+      const siteTok = readStoredSiteLoginToken();
+      if (siteTok) {
+        this.setState({ token: siteTok });
+        return siteTok;
+      }
+    } catch (_) { /* ignore */ }
+    return null;
   }
 
   headers (token) {

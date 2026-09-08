@@ -47,13 +47,12 @@ module.exports = {
     // FABRIC_ADVERTISE_HOST (required on relay.goon.vc so it does not dial itself).
   },
 
-  // Personal Wallet tab (Hub-backed L1). When enable is true, LiveRelay proxies
-  // /services/star-citizen/bitcoin/* to hub HTTP — the app's Hub-shaped API surface.
-  // Operator admin token stays server-side (env / adminTokenFile / ~/.fabric/hub-admin-token);
-  // the UI never holds FABRIC_HUB_ADMIN_TOKEN. Identity xpub is watch-only for
-  // balance / receive / history; Send spends the Hub bitcoind wallet via that token.
+  // Personal Wallet tab (Hub-backed L1). Default **off** for mesh-leaf / public
+  // relay copies — enable in settings/local.js only when you intentionally proxy
+  // /services/star-citizen/bitcoin/* to a local Hub. Public relay.goon.vc leaves
+  // this false (see docs/PRODUCTION.md).
   bitcoin: {
-    enable: true,
+    enable: false,
     hub: process.env.SC_BITCOIN_HUB || 'http://127.0.0.1:8080',
     network: process.env.SC_BTC_NETWORK || 'regtest',
     adminToken: process.env.FABRIC_HUB_ADMIN_TOKEN || null,

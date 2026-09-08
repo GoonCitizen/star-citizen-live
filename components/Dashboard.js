@@ -48,6 +48,15 @@ const {
   androidDashboardTabVisible
 } = require('../functions/androidSurface');
 const { offerPassportDeviceLink } = require('../functions/fabricDeviceLinkOffer');
+const {
+  GC_UI_RUNTIME_LIVE,
+  GC_UI_RUNTIME_STATIC,
+  classifyLiveRelayProbe,
+  readStoredSiteLoginToken,
+  readStoredSiteLoginSession,
+  isGoonCitizenVisitor
+} = require('../functions/goonCitizenClientEnvironment');
+const { dashboardAuthHeaders } = require('../functions/dashboardAuthHeaders');
 const { canonicalChatAuthor } = require('../functions/identity');
 const featureEnabled = (key) => FEATURES[key] !== false;
 
@@ -710,32 +719,147 @@ class Dashboard extends React.Component {
       azTree: null,
       azTreeShowLeaves: false,
       azGroupTreeTip: null,
-      historySync: null
+      historySync: null,
+      /** liveRelay | static | null until first probe */
+      apiRuntime: null,
+      apiRuntimeReason: null,
+      siteToken: null,
+      capabilityChecked: false
     };
     this._timer = null;
     this._copiedTimers = {};
     this._identityUnsub = null;
     this._feedRef = React.createRef();
+    this._onStorageAuth = null;
+  }
+
+  authHeaders (extra) {
+    return dashboardAuthHeaders({
+      token: this.state.siteToken,
+      headers: Object.assign({ Accept: 'application/json' }, extra || {})
+    });
+  }
+
+  refreshSiteAuth () {
+    const siteToken = readStoredSiteLoginToken();
+    const siteSession = readStoredSiteLoginSession();
+    this.setState({
+      siteToken: siteToken || null,
+      identityExists: !!(this.state.identityExists || siteSession),
+      identityPubkey: this.state.identityPubkey ||
+        (siteSession && (siteSession.pubkeyHex || (siteSession.identity && siteSession.identity.id))) ||
+        null
+    });
+    return siteToken;
+  }
+
+  isStaticClient () {
+    return this.state.apiRuntime === GC_UI_RUNTIME_STATIC;
+  }
+
+  isPublicVisitor () {
+    if (typeof window !== 'undefined' && window.electronAPI && window.electronAPI.identity) {
+      return false;
+    }
+    // Until the peering/ships probe finishes, keep operator chrome (desktop/local default).
+    if (!this.state.capabilityChecked) return false;
+    return isGoonCitizenVisitor({
+      runtime: this.state.apiRuntime || GC_UI_RUNTIME_LIVE,
+      auth: {
+        electronUnlocked: !!(this.state.identityPubkey && !this.state.identityLocked),
+        siteToken: this.state.siteToken,
+        siteSession: this.state.siteToken ? { delegationToken: this.state.siteToken } : null
+      }
+    });
+  }
+
+  async probeApiRuntime () {
+    const tryProbe = async (url) => {
+      const res = await fetch(url, {
+        headers: { Accept: 'application/json' },
+        cache: 'no-store'
+      });
+      const text = await res.text();
+      let json = null;
+      if (text && !String(text).trim().startsWith('<')) {
+        try { json = JSON.parse(text); } catch (_) { json = null; }
+      }
+      const contentType = (res.headers && typeof res.headers.get === 'function')
+        ? (res.headers.get('content-type') || '')
+        : '';
+      return classifyLiveRelayProbe({
+        status: res.status,
+        contentType,
+        bodyText: text,
+        json
+      });
+    };
+    try {
+      let classified = await tryProbe('/services/peering');
+      if (classified.runtime !== GC_UI_RUNTIME_LIVE) {
+        classified = await tryProbe('/services/star-citizen/ships');
+      }
+      this.setState({
+        apiRuntime: classified.runtime,
+        apiRuntimeReason: classified.reason,
+        capabilityChecked: true
+      });
+      return classified.runtime;
+    } catch (e) {
+      this.setState({
+        apiRuntime: GC_UI_RUNTIME_STATIC,
+        apiRuntimeReason: 'unreachable',
+        capabilityChecked: true
+      });
+      return GC_UI_RUNTIME_STATIC;
+    }
+  }
+
+  renderSignInPrompt (title) {
+    return React.createElement('div', {
+      className: 'panel',
+      'data-testid': 'gc-signin-prompt',
+      style: { maxWidth: '36rem', margin: '2em auto', padding: '1.25em' }
+    },
+    React.createElement('h2', { style: { marginTop: 0 } }, title || 'Sign in to use this desk'),
+    React.createElement('p', { style: { color: 'var(--muted)', lineHeight: 1.5 } },
+      this.isStaticClient()
+        ? 'This origin is only serving the HTML client. Point a browser at a live GoonCitizen / LiveRelay HTTP API.'
+        : 'This hosted relay needs a Fabric site login (Passport or GoonCitizen) before session-backed tabs work.'),
+    React.createElement(SiteLogin, {
+      onSignedIn: () => {
+        this.refreshSiteAuth();
+        this.poll();
+      }
+    })
+    );
   }
 
   componentDidMount () {
-    this.poll();
-    if (androidSurface('heatmap')) {
-      this.fetchAnalytics(); // cumulative stats available on every tab by default
-      this.fetchRules();
-    }
-    this.loadNickname();
-    this.loadPresenceChip();
+    this.refreshSiteAuth();
+    this.probeApiRuntime().then(() => {
+      if (!this.isStaticClient() && !this.isPublicVisitor()) {
+        this.poll();
+        if (androidSurface('heatmap')) {
+          this.fetchAnalytics();
+          this.fetchRules();
+        }
+        this.loadNickname();
+        this.loadPresenceChip();
+      }
+    });
     this.syncChatFillClass();
     this._timer = setInterval(() => {
-      if (this.state.auto) this.poll();
+      if (this.state.auto && !this.isStaticClient() && !this.isPublicVisitor()) this.poll();
     }, 2000);
     this._analyticsTimer = androidSurface('heatmap')
       ? setInterval(() => {
-        if (this.state.auto) this.fetchAnalytics();
+        if (this.state.auto && !this.isStaticClient() && !this.isPublicVisitor()) this.fetchAnalytics();
       }, 15000)
       : null;
-    this._presenceTimer = setInterval(() => this.loadPresenceChip(), 15000);
+    this._presenceTimer = setInterval(() => {
+      if (!this.isStaticClient() && !this.isPublicVisitor()) this.loadPresenceChip();
+    }, 15000);
     this._onHash = () => {
       if (offerPassportDeviceLink()) return;
       const h = String(window.location.hash || '').replace(/^#/, '');
@@ -755,6 +879,8 @@ class Dashboard extends React.Component {
       if (this.state.showIdFlyout) this.setState({ showIdFlyout: false });
     };
     document.addEventListener('click', this._onDocClick);
+    this._onStorageAuth = () => this.refreshSiteAuth();
+    window.addEventListener('storage', this._onStorageAuth);
     // Live lock-state from the desktop shell (auto-lock, manual lock, forget).
     const idBridge = (window.electronAPI && window.electronAPI.identity) || null;
     if (idBridge && idBridge.onChanged) {
@@ -779,6 +905,7 @@ class Dashboard extends React.Component {
   componentWillUnmount () {
     if (this._onHash) window.removeEventListener('hashchange', this._onHash);
     if (this._onDocClick) document.removeEventListener('click', this._onDocClick);
+    if (this._onStorageAuth) window.removeEventListener('storage', this._onStorageAuth);
     if (this._identityUnsub) this._identityUnsub();
     if (this._timer) clearInterval(this._timer);
     if (this._analyticsTimer) clearInterval(this._analyticsTimer);
@@ -800,6 +927,7 @@ class Dashboard extends React.Component {
   }
 
   walletVisible () {
+    if (this.isStaticClient() || this.isPublicVisitor()) return false;
     if (!androidDashboardTabVisible('wallet')) return false;
     if (!featureEnabled('wallet')) return false;
     if (this.state.bitcoinEnable === false) return false;
@@ -807,6 +935,7 @@ class Dashboard extends React.Component {
   }
 
   documentsVisible () {
+    if (this.isStaticClient() || this.isPublicVisitor()) return false;
     if (!androidDashboardTabVisible('documents')) return false;
     if (!featureEnabled('documents')) return false;
     if (!this.state.advancedMode) return false;
@@ -815,8 +944,13 @@ class Dashboard extends React.Component {
   }
 
   async loadNickname () {
+    if (this.isStaticClient() || this.isPublicVisitor()) return;
     try {
-      const res = await fetch('/settings').then((r) => r.json());
+      const res = await fetch('/settings', { headers: this.authHeaders() }).then((r) => {
+        if (!r.ok) return null;
+        return r.json();
+      });
+      if (!res) return;
       const bitcoin = (res.runtime && res.runtime.bitcoin) || null;
       const documents = (res.runtime && res.runtime.documents) || null;
       const primaryColor = (res.runtime && res.runtime.primaryGroupColor) || null;
@@ -1151,7 +1285,9 @@ class Dashboard extends React.Component {
 
   async poll () {
     try {
-      const r = await fetch('/services/star-citizen/monitor?limit=300');
+      const r = await fetch('/services/star-citizen/monitor?limit=300', {
+        headers: this.authHeaders()
+      });
       if (!r.ok) return;
       const d = await r.json();
       const s = d.session || {};
@@ -3010,6 +3146,17 @@ class Dashboard extends React.Component {
   }
 
   renderTab () {
+    if (this.isStaticClient() && this.state.tab !== 'map') {
+      return this.renderSignInPrompt('This view needs a LiveRelay');
+    }
+    const visitor = this.isPublicVisitor();
+    const sessionTabs = new Set([
+      'home', 'live', 'network', 'peers', 'messages', 'missions', 'wallet', 'documents',
+      'library', 'fleet', 'chat', 'groups', 'notifications', 'keys', 'devices', 'security', 'privacy'
+    ]);
+    if (visitor && sessionTabs.has(this.state.tab) && this.state.tab !== 'map') {
+      return this.renderSignInPrompt();
+    }
     switch (this.state.tab) {
       case 'network':
       case 'live':
@@ -3018,7 +3165,8 @@ class Dashboard extends React.Component {
         return this.renderNetwork();
       case 'missions': return React.createElement(Missions, {
         identityPubkey: this.state.identityPubkey,
-        analytics: this.state.analytics
+        analytics: this.state.analytics,
+        authToken: this.state.siteToken
       });
       case 'wallet': return this.walletVisible()
         ? React.createElement(Wallet, {
@@ -3050,7 +3198,8 @@ class Dashboard extends React.Component {
         nickname: this.state.nickname,
         documentsEnable: this.state.documentsEnable === true,
         documentsDefaultPriceSats: (this.state.documentsRuntime &&
-          this.state.documentsRuntime.defaultPriceSats) || 25
+          this.state.documentsRuntime.defaultPriceSats) || 25,
+        authToken: this.state.siteToken
       });
       case 'groups': return React.createElement(Groups, {
         identityPubkey: this.state.identityPubkey,
@@ -3058,10 +3207,12 @@ class Dashboard extends React.Component {
         advancedMode: this.state.advancedMode,
         bitcoinEnable: this.state.bitcoinEnable === true,
         onPrimaryGroupTheme: (hex) => this.applyPrimaryGroupTheme(hex),
-        onRequestImport: () => this.setState({ showFabricImport: true })
+        onRequestImport: () => this.setState({ showFabricImport: true }),
+        authToken: this.state.siteToken
       });
       case 'map': return React.createElement(MapPage, null);
       case 'notifications': return React.createElement(Notifications, {
+        authToken: this.state.siteToken,
         onPendingCount: (n) => {
           if (n !== this.state.notifyPending) this.setState({ notifyPending: n });
         }
@@ -3078,9 +3229,11 @@ class Dashboard extends React.Component {
           onForget: () => this.setState({ identityPubkey: null, identityExists: false, identityLocked: false }),
           onNicknameChange: (n) => this.setState({ nickname: n || null }),
           onPresenceChange: (p) => this.applyPresenceChip(p),
-          onOpenSettings: () => this.setState({ showSettings: true })
+          onOpenSettings: () => this.setState({ showSettings: true }),
+          authToken: this.state.siteToken
         });
-      default: return this.renderHome();
+      default:
+        return this.renderHome();
     }
   }
 
@@ -3199,13 +3352,16 @@ class Dashboard extends React.Component {
                 ` · pilots · ${c.sessions || 0} sessions · session logins: ${sess.logins || 0}`
             }, 'players ', React.createElement('b', null, c.players))
           ),
-          React.createElement('div', { className: 'ctrl' },
-            React.createElement('button', {
-              type: 'button',
-              className: 'btn',
-              title: 'Paste a group invite or fabric: share',
-              onClick: () => this.setState({ showFabricImport: true })
-            }, 'Import…'),
+                    React.createElement('div', { className: 'ctrl' },
+            !(this.isStaticClient() || this.isPublicVisitor())
+              ? React.createElement('button', {
+                type: 'button',
+                className: 'btn',
+                title: 'Paste a group invite or fabric: share',
+                'data-testid': 'gc-import-btn',
+                onClick: () => this.setState({ showFabricImport: true })
+              }, 'Import…')
+              : null,
             this.canToggleOverlay()
               ? React.createElement('button', {
                 type: 'button',
@@ -3217,27 +3373,32 @@ class Dashboard extends React.Component {
               }, this.state.groupOverlay ? 'Overlay on' : 'Overlay')
               : null,
             this.qrScanButton(),
-            React.createElement(DataSyncStatus, {
-              variant: 'compact',
-              onAddDevice: () => {
-                this.openAccount('devices');
+            !(this.isStaticClient() || this.isPublicVisitor())
+              ? React.createElement(DataSyncStatus, {
+                variant: 'compact',
+                authToken: this.state.siteToken,
+                onAddDevice: () => {
+                  this.openAccount('devices');
+                },
+                onManageDevices: () => this.openAccount('devices')
+              })
+              : null,
+            !(this.isStaticClient() || this.isPublicVisitor())
+              ? React.createElement('button', {
+                type: 'button',
+                className: 'bell' + (this.state.tab === 'notifications' ? ' on' : ''),
+                title: this.state.notifyPending
+                  ? `${this.state.notifyPending} pending notification${this.state.notifyPending === 1 ? '' : 's'} — open history`
+                  : 'Notifications — inbound mission shares, join requests, and invites',
+                onClick: () => this.showTab('notifications')
               },
-              onManageDevices: () => this.openAccount('devices')
-            }),
-            React.createElement('button', {
-              type: 'button',
-              className: 'bell' + (this.state.tab === 'notifications' ? ' on' : ''),
-              title: this.state.notifyPending
-                ? `${this.state.notifyPending} pending notification${this.state.notifyPending === 1 ? '' : 's'} — open history`
-                : 'Notifications — inbound mission shares, join requests, and invites',
-              onClick: () => this.showTab('notifications')
-            },
-            '🔔',
-            this.state.notifyPending
-              ? React.createElement('span', { className: 'dot' },
-                this.state.notifyPending > 99 ? '99+' : this.state.notifyPending)
-              : null
-            ),
+              '🔔',
+              this.state.notifyPending
+                ? React.createElement('span', { className: 'dot' },
+                  this.state.notifyPending > 99 ? '99+' : this.state.notifyPending)
+                : null
+              )
+              : null,
             (window.electronAPI && window.electronAPI.identity)
               ? React.createElement('div', { className: 'idchip-wrap' },
                 React.createElement('button', {
@@ -3292,18 +3453,27 @@ class Dashboard extends React.Component {
                 ),
                 this.renderIdentityFlyout()
               )
-              : React.createElement(SiteLogin, null),
-            React.createElement('button', {
-              type: 'button',
-              className: 'gear',
-              title: this.preferAccountPages()
-                ? 'Privacy, security, keys'
-                : 'Settings — Privacy, log path, Fabric, runtime',
-              onClick: () => {
-                if (this.preferAccountPages()) this.openAccount('privacy');
-                else this.setState({ showSettings: true });
-              }
-            }, '⚙️')
+              : React.createElement(SiteLogin, {
+                onSignedIn: () => {
+                  this.refreshSiteAuth();
+                  this.poll();
+                  this.loadNickname();
+                }
+              }),
+            !(this.isStaticClient() || this.isPublicVisitor())
+              ? React.createElement('button', {
+                type: 'button',
+                className: 'gear',
+                'data-testid': 'gc-settings-gear',
+                title: this.preferAccountPages()
+                  ? 'Privacy, security, keys'
+                  : 'Settings — Privacy, log path, Fabric, runtime',
+                onClick: () => {
+                  if (this.preferAccountPages()) this.openAccount('privacy');
+                  else this.setState({ showSettings: true });
+                }
+              }, '⚙️')
+              : null
           )
         ),
         React.createElement('div', { className: 'header-nav' },
@@ -3311,7 +3481,8 @@ class Dashboard extends React.Component {
             TABS.filter(([key]) => (this.state.advancedMode || !ADVANCED_TABS.has(key)) &&
               (key !== 'wallet' || this.walletVisible()) &&
               (key !== 'documents' || this.documentsVisible()) &&
-              androidDashboardTabVisible(key)).map(([key, label]) => React.createElement('button', {
+              androidDashboardTabVisible(key) &&
+              (!(this.isStaticClient() || this.isPublicVisitor()) || key === 'map' || key === 'home')).map(([key, label]) => React.createElement('button', {
               key,
               type: 'button',
               className: 'tab ' + (this.state.tab === key ? 'on' : ''),
@@ -3324,9 +3495,12 @@ class Dashboard extends React.Component {
               : null
             ))
           ),
-          React.createElement(AppSearch, {
-            onNavigate: (hit, dest) => this.openSearchHit(hit, dest)
-          })
+          !(this.isStaticClient() || this.isPublicVisitor())
+            ? React.createElement(AppSearch, {
+              authToken: this.state.siteToken,
+              onNavigate: (hit, dest) => this.openSearchHit(hit, dest)
+            })
+            : null
         ),
       ),
       this.renderTab(),
@@ -3342,7 +3516,8 @@ class Dashboard extends React.Component {
       React.createElement(GlobalChatDock, {
         identityPubkey: this.state.meshPubkey || this.state.identityPubkey,
         nickname: this.state.nickname,
-        hide: this.state.tab === 'chat',
+        hide: this.state.tab === 'chat' || this.isStaticClient() || this.isPublicVisitor(),
+        authToken: this.state.siteToken,
         documentsEnable: this.state.documentsEnable === true,
         documentsDefaultPriceSats: (this.state.documentsRuntime &&
           this.state.documentsRuntime.defaultPriceSats) || 25,
@@ -3351,8 +3526,9 @@ class Dashboard extends React.Component {
         }
       }),
       React.createElement(MissionBroadcastBanner, {
-        hide: this.state.tab === 'notifications',
+        hide: this.state.tab === 'notifications' || this.isStaticClient() || this.isPublicVisitor(),
         raised: this.state.voiceJoined,
+        authToken: this.state.siteToken,
         onResolved: () => {
           if (this.state.tab === 'missions') this.showTab('missions');
         },

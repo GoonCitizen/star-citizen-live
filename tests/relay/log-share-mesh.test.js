@@ -178,6 +178,10 @@ test('two sharing peers acquire each other\'s Game.log analytics', { timeout: 60
     nodeA._startFabricFlush();
     nodeB._startFabricFlush();
 
+    // Enabling share must publish pre-consent history (not only future lines).
+    await waitFor(() => hasPilot(nodeB.history, 'AlphaPilot'));
+    assert.strictEqual(sourceOf(nodeB.history, 'AlphaPilot'), String(alice.pubkey).toLowerCase());
+
     playLines(nodeB, [
       loginLine('2026-08-21T12:00:00.000Z', 'BravoPilot'),
       missionEndLine('2026-08-21T12:10:00.000Z', 'bbbb2222-150d-4ec1-bd99-bbb000000002', 'BravoPilot', 'Complete'),
@@ -192,10 +196,8 @@ test('two sharing peers acquire each other\'s Game.log analytics', { timeout: 60
     assert.ok(await nodeA.publishGameStateSnapshot(), 'alice snapshot published');
     assert.ok(await nodeB.publishGameStateSnapshot(), 'bob snapshot published');
 
-    await waitFor(() => hasPilot(nodeB.history, 'AlphaPilot'));
     await waitFor(() => hasPilot(nodeA.history, 'BravoPilot'));
 
-    assert.strictEqual(sourceOf(nodeB.history, 'AlphaPilot'), String(alice.pubkey).toLowerCase());
     assert.strictEqual(sourceOf(nodeA.history, 'BravoPilot'), String(bob.pubkey).toLowerCase());
     assert.strictEqual(sourceOf(nodeA.history, 'AlphaPilot'), 'local');
     assert.strictEqual(sourceOf(nodeB.history, 'BravoPilot'), 'local');

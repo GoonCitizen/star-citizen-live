@@ -180,6 +180,7 @@ describe('hosted relay privacy HTTP', () => {
     assert.strictEqual((await request(port, 'GET', `${BASE}/corpus`)).status, 401);
     assert.strictEqual((await request(port, 'GET', `${BASE}/combat`)).status, 401);
     assert.strictEqual((await request(port, 'GET', `${BASE}/activity-tree`)).status, 401);
+    assert.strictEqual((await request(port, 'GET', `${BASE}/missions`)).status, 401);
   });
 
   it('authenticated operator can read gameplay GETs', async () => {
@@ -187,6 +188,7 @@ describe('hosted relay privacy HTTP', () => {
     assert.strictEqual((await request(port, 'GET', `${BASE}/corpus`, null, token)).status, 200);
     assert.strictEqual((await request(port, 'GET', `${BASE}/combat`, null, token)).status, 200);
     assert.strictEqual((await request(port, 'GET', `${BASE}/activity-tree`, null, token)).status, 200);
+    assert.strictEqual((await request(port, 'GET', `${BASE}/missions`, null, token)).status, 200);
   });
 
   it('GET document bytes without a session is 401', async () => {

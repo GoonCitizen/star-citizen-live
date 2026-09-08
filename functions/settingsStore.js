@@ -31,7 +31,7 @@ const ALLOWED_KEYS = [
   'openAtLogin',
   'identityAutoLockMinutes', // 0 = off; default 30 (mirrors Hub identity lock prefs)
   'shareLogsGlobal',         // broadcast parsed log events to all connected peers (default false; prefer per-peer shareLogs)
-  'groupChatSeal',           // seal outbound GroupChat with tip-bound AES-GCM (default false)
+  'groupChatSeal',           // seal outbound GroupChat (default false; enable for trusted-mesh weeks)
   'requireSealedGroupChat',  // drop inbound GroupChat without a decryptable seal (default false)
   'httpSharedMode',          // LAN opt-in: bind dashboard HTTP on 0.0.0.0 (default false → 127.0.0.1)
   'snapshotsEnabled',        // periodic screen snapshots (opt-in; desktop only)

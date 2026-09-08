@@ -141,6 +141,7 @@ npm run link:fabric       # repair empty npm 12 `@fabric/{core,http,hub}` dirs (
 npm run replay /path/to/Game.log
 npm run discord:events -- fetch   # pull Guild Scheduled Events → discordcatalog (needs bot token)
 npm run discord:events -- graphic --fetch --png --assets  # G00N week infographic (SVG/HTML/PNG)
+npm run discord:roles-guide       # G00N Discord roles HTML guide (+ probe JSON)
 npm run probes:publish            # copy reports/probes/*.json → $SC_AGENT_STATIC_ROOT/probes/
 npm run build:desktop     # installers for the current OS
 npm run build:installers  # Windows x64 + Debian x64 + macOS
@@ -160,8 +161,16 @@ npm run publish:builds    # SPA + dist/ installers + APKs → local Files catalo
   `$SC_AGENT_STATIC_ROOT/probes/` when set — live URL
   `https://relay.goon.vc/probes/` after nginx/Caddy is updated).
   Re-render the shareable week board:
-  `npm run discord:events -- graphic --fetch --png --assets` (or
-  `--from-json reports/discord-scheduled-events.json`).
+`npm run discord:events -- graphic --fetch --png --assets` (or
+`--from-json reports/discord-scheduled-events.json`). Alliance parallel:
+`npm run discord:events -- graphic --brand permafleet --png --assets`
+  (writes `permafleet-schedule.*` with org chips).
+- `npm run discord:roles-guide` — `scripts/goon-squad-roles-guide.js` +
+  `functions/goonSquadRolesGuide.js`. Prefers local GoonCitizen
+  `GET /services/star-citizen/discord/guilds/<id>/roles?counts=1` (LiveRelay),
+  then Discord REST, then cached `reports/probes/goon-squad-discord-roster.json`.
+  Writes `reports/goon-squad-roles.html` (+ `assets/` with `--assets`) and probe
+  `goon-squad-roles.json`. Ladder taxonomy matches `goon.vc/contracts/roles.dot`.
 - `npm run probes:publish` — `functions/agentProbeExport.js` /
   `scripts/publish-agent-probes.js`. Copies local probe dumps to the relay
   static document root. Adversary probes (`scripts/adversary-local-probe.js`)
@@ -426,6 +435,11 @@ npm run publish:builds    # SPA + dist/ installers + APKs → local Files catalo
   interchangeable with Fabric Passport (`components/FabricLoginModal.js`).
   Browser monitor (non-Electron) uses `components/SiteLogin.js`. Successful
   completion issues a Bearer `delegationToken` for hosted API auth.
+  **Client capability chrome:** `functions/goonCitizenClientEnvironment.js`
+  probes `GET /services/peering` (or ships) — **not** `/settings` (unmounted on
+  hosted). Static origins and unauthenticated hosted visitors hide Import /
+  Settings / Wallet / session tabs behind a sign-in prompt; Dashboard attaches
+  `fabric.delegation` Bearer via `functions/dashboardAuthHeaders.js`.
 - **Device link (D-013):** mutual Schnorr attestation with separate seeds.
   **Peer-equivalent:** Passport, Android, desktop, and Hub browser can each
   **create or accept** a `fabric://link` (Identity / **Devices** → **Add a device**,

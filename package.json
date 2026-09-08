@@ -52,6 +52,8 @@
     "replay": "node scripts/replay.js",
     "discord:events": "node scripts/discord-events.js",
     "discord:events:graphic": "node scripts/discord-events.js graphic --assets --png",
+    "discord:events:graphic:permafleet": "node scripts/discord-events.js graphic --brand permafleet --assets --png",
+    "discord:roles-guide": "node scripts/goon-squad-roles-guide.js --assets",
     "probes:publish": "node scripts/publish-agent-probes.js",
     "report:install": "rm -rf node_modules && mkdir -p reports && rm -f package-lock.json && echo \"$ npm i --allow-git=all\" > reports/install.log && npm i --allow-git=all >> reports/install.log 2>&1",
     "report:todo": "grep --exclude package.json --exclude-dir=.env --exclude-dir=.git --exclude-dir=_book --exclude-dir=stores --exclude-dir=assets --exclude-dir=node_modules --exclude-dir=reports --exclude-dir=coverage --exclude-dir=docs --exclude-dir=libraries -rEI \"TODO|FIXME\" . | sed 's/\\([^:]*:\\)[ ]*/\\1 /' > reports/TODO.txt",

@@ -248,6 +248,124 @@ function uniqueUsersFromGuilds (guilds) {
 }
 
 /**
+ * @param {object} role discord.js Role-like or REST role
+ * @returns {object|null}
+ */
+function serializeRole (role) {
+  if (!role || role.id == null) return null;
+  const colorRaw = role.color != null
+    ? Number(role.color)
+    : (role.colors && role.colors.primary != null ? Number(role.colors.primary) : 0);
+  const color = Number.isFinite(colorRaw) ? colorRaw : 0;
+  const hex = color > 0
+    ? ('#' + color.toString(16).padStart(6, '0'))
+    : null;
+  return {
+    id: String(role.id),
+    name: String(role.name || role.id),
+    position: Number.isFinite(Number(role.position)) ? Number(role.position) : 0,
+    color,
+    colorHex: hex,
+    hoist: role.hoist === true,
+    managed: role.managed === true,
+    mentionable: role.mentionable === true
+  };
+}
+
+/**
+ * Guild role catalog sorted by Discord hierarchy (position desc).
+ * @param {object} guild discord.js Guild-like
+ * @returns {Array<object>}
+ */
+function serializeGuildRoles (guild) {
+  if (!guild) return [];
+  const rows = collectionValues(guild.roles)
+    .map(serializeRole)
+    .filter(Boolean);
+  rows.sort((a, b) => {
+    if (b.position !== a.position) return b.position - a.position;
+    return String(a.name).localeCompare(String(b.name));
+  });
+  return rows;
+}
+
+/**
+ * Count how many guild members hold each role id.
+ * Accepts discord.js GuildMember collections (Role managers) or REST rows
+ * with `roles: string[]`. Incomplete when only a bounded cache is present.
+ *
+ * @param {Iterable|Array|object} members
+ * @returns {Record<string, number>}
+ */
+function countRoleHolders (members) {
+  const counts = Object.create(null);
+  for (const m of collectionValues(members)) {
+    if (!m) continue;
+    let ids = [];
+    if (Array.isArray(m.roles)) {
+      ids = m.roles.map((r) => (r != null ? String(r) : null)).filter(Boolean);
+    } else if (m.roles) {
+      ids = collectionValues(m.roles).map((r) => {
+        if (r == null) return null;
+        if (typeof r === 'string' || typeof r === 'number') return String(r);
+        return r.id != null ? String(r.id) : null;
+      }).filter(Boolean);
+    }
+    const seen = new Set();
+    for (const id of ids) {
+      if (!id || seen.has(id)) continue;
+      seen.add(id);
+      counts[id] = (counts[id] || 0) + 1;
+    }
+  }
+  return counts;
+}
+
+/**
+ * Build a DiscordGuildRoles payload from a live guild (+ optional holder map).
+ * @param {object} guild
+ * @param {Object} [opts]
+ * @param {Record<string, number>} [opts.holderCounts] roleId → count
+ * @param {string} [opts.countsSource] how counts were derived
+ * @param {boolean} [opts.botReady]
+ * @returns {object|null}
+ */
+function buildGuildRolesPayload (guild, opts = {}) {
+  if (!guild || guild.id == null) return null;
+  const roles = serializeGuildRoles(guild);
+  const holderCounts = opts.holderCounts && typeof opts.holderCounts === 'object'
+    ? opts.holderCounts
+    : null;
+  const catalog = roles.map((r) => {
+    const holders = holderCounts && holderCounts[r.id] != null
+      ? Number(holderCounts[r.id]) || 0
+      : null;
+    return Object.assign({}, r, {
+      holders,
+      managed: r.managed === true
+    });
+  });
+  const byName = Object.create(null);
+  for (const r of catalog) {
+    if (r.holders == null) continue;
+    byName[r.name] = (byName[r.name] || 0) + r.holders;
+  }
+  return {
+    guildId: String(guild.id),
+    guildName: String(guild.name || guild.id),
+    memberCount: Number.isFinite(Number(guild.memberCount))
+      ? Number(guild.memberCount)
+      : null,
+    roleCount: catalog.length,
+    countsSource: opts.countsSource || (holderCounts ? 'provided' : 'none'),
+    botReady: opts.botReady !== false,
+    roles: catalog,
+    roleCounts: holderCounts ? byName : {},
+    observedAt: new Date().toISOString()
+  };
+}
+
+/**
  * @param {object} guild discord.js Guild-like
  * @param {Object} [opts]
  * @param {number} [opts.memberLimit]
@@ -599,6 +717,10 @@ module.exports = {
   serializeMember,
   serializeMessage,
   serializeMessages,
+  serializeRole,
+  serializeGuildRoles,
+  countRoleHolders,
+  buildGuildRolesPayload,
   serializeGuild,
   refreshDiscordCaches,
   buildDiscordGuildCatalog,
