@@ -23,6 +23,8 @@ test('buildGameStateSnapshot is deterministic for same history', async () => {
   assert.ok(a.contractId);
   assert.strictEqual(a.counts.missions, 3);
   assert.strictEqual(a.counts.deaths, 2);
+  assert.ok(a.missions.some((m) => m.missionId), 'snapshot keeps Game.log missionId');
+  assert.ok(a.deaths.some((d) => d.bodyId), 'snapshot keeps corpse bodyId');
   assert.strictEqual(a.digest, b.digest);
   const patches = gooncitizenGameState.patchesForGameState({}, a);
   assert.strictEqual(patches[0].op, 'add');
@@ -58,6 +60,7 @@ test('LiveRelay server mode aggregates GameStateSnapshot into durable history', 
     const r = svc.ingestGameStateSnapshot('02abc', snap);
     assert.strictEqual(r.changed, true);
     assert.ok(svc.history.missions.length >= 3);
+    assert.ok(svc.history.missions.every((m) => m.source === '02abc'));
     const built = svc.buildGameStateSnapshot();
     assert.ok(built.digest);
     assert.ok(built.counts.missions >= 3);

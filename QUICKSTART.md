@@ -1,6 +1,11 @@
 # Quick Start Guide
 Get Star Citizen Live running with Discord integration in 5 minutes.
 
+> **Current surface** is LiveRelay + a Fabric Peer (`AGENTS.md` §3), not a
+> zero-dependency `app/` server. **Contributors and other orgs:**
+> [`DEVELOPERS.md`](DEVELOPERS.md). Public seed: [`docs/PRODUCTION.md`](docs/PRODUCTION.md).
+> Desktop installer: [`ELECTRON_BUILD.md`](ELECTRON_BUILD.md).
+
 ## Prerequisites
 
 - Node.js 24.15.0 or higher

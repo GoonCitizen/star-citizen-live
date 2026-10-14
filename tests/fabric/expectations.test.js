@@ -64,7 +64,128 @@ describe('Fabric expectations: GoonCitizen re-exports @fabric/http', () => {
   });
 
   it('federationContractInvite re-exports http', () => {
-    assert.equal(gcInvite, httpInvite);
+    // Behaviour, not reference identity: on http pins predating
+    // `resolveFederationInviteExpiresAt` the local module wraps the builder to
+    // stamp `expiresAt`. Same convention as tests/fabric/peer-host.test.js.
+    assert.equal(gcInvite.parseFederationContractInvite, httpInvite.parseFederationContractInvite);
+    assert.equal(gcInvite.FEDERATION_CONTRACT_INVITE, httpInvite.FEDERATION_CONTRACT_INVITE);
+    if (typeof httpInvite.resolveFederationInviteExpiresAt === 'function') {
+      assert.equal(gcInvite, httpInvite);
+    }
+    const invite = gcInvite.buildFederationContractInvite({
+      inviteId: 'i1',
+      inviterHubId: 'hub1',
+      contractId: 'c1',
+      invitedAt: 1000
+    });
+    assert.equal(invite.expiresAt, 1000 + gcInvite.DEFAULT_FEDERATION_INVITE_TTL_MS);
+    assert.equal(gcInvite.DEFAULT_FEDERATION_INVITE_TTL_MS, 7 * 24 * 60 * 60 * 1000);
+    const explicit = gcInvite.buildFederationContractInvite({
+      inviteId: 'i2',
+      invitedAt: 1000,
+      ttlMs: 5000
+    });
+    assert.equal(explicit.expiresAt, 6000);
+  });
+});
+
+describe('Fabric expectations: IdentityCrossSign (local, lockstep strings)', () => {
+  it('canonical strings match the Hub/Passport gossip format', () => {
+    const gcSign = require('../../functions/identityCrossSign');
+    assert.equal(gcSign.SIGN_TYPE, 'IdentityCrossSign');
+    assert.equal(gcSign.REVOKE_TYPE, 'IdentityCrossSignRevoke');
+    const nonce = 'ab'.repeat(32);
+    const local = '11'.repeat(32);
+    const peer = '22'.repeat(32);
+    const msg = gcSign.buildCrossSignMessage(nonce, local, peer);
+    assert.equal(msg, `fabric:identity-cross-sign:1:${nonce}:${local}:${peer}`);
+    const parsed = gcSign.parseCrossSignMessage(msg);
+    assert.equal(parsed.nonce, nonce);
+    assert.equal(parsed.localPubkey, local);
+    assert.equal(parsed.peerPubkey, peer);
+    // Core pin `5557a2bf` ships these files. Keep the local copy so the
+    // dashboard webpack bundle does not pull `@fabric/core`.
+    const coreSign = require('@fabric/core/functions/identityCrossSign');
+    assert.equal(
+      gcSign.buildCrossSignMessage(nonce, local, peer),
+      coreSign.buildCrossSignMessage(nonce, local, peer)
+    );
+    assert.equal(gcSign.buildCrossSignMessage(nonce, 'aa:bb', peer), null);
+    assert.equal(coreSign.buildCrossSignMessage(nonce, 'aa:bb', peer), null);
+
+    // Lockstep is a hand-maintained copy, so assert it over the whole shared
+    // surface rather than one happy path. A silent divergence on the revoke
+    // strings would mean device revocations stop verifying across the mesh.
+    for (const name of ['CROSS_SIGN_PREFIX', 'REVOKE_PREFIX', 'SIGN_TYPE', 'REVOKE_TYPE']) {
+      assert.equal(gcSign[name], coreSign[name], `${name} drifted from @fabric/core`);
+    }
+    const revoke = gcSign.buildRevokeMessage(nonce, local, peer);
+    assert.equal(revoke, `fabric:identity-cross-sign-revoke:1:${nonce}:${local}:${peer}`);
+    assert.equal(revoke, coreSign.buildRevokeMessage(nonce, local, peer));
+    assert.equal(gcSign.buildRevokeMessage(nonce, 'aa:bb', peer), null);
+    assert.equal(coreSign.buildRevokeMessage(nonce, 'aa:bb', peer), null);
+    assert.deepEqual(gcSign.parseRevokeMessage(revoke), coreSign.parseRevokeMessage(revoke));
+    assert.equal(gcSign.parseRevokeMessage(msg), null);
+    assert.equal(gcSign.parseCrossSignMessage(revoke), null);
+    for (const type of [gcSign.SIGN_TYPE, gcSign.REVOKE_TYPE, 'Nope', '']) {
+      assert.equal(gcSign.isCrossSignType(type), coreSign.isCrossSignType(type), type);
+    }
+
+    // Core may add exports; the local copy must not fall behind. The reverse is
+    // allowed — `coerceCrossSignObject` unwraps CONTRACT_MESSAGE bodies and is
+    // GoonCitizen-only until it lands upstream.
+    const missing = Object.keys(coreSign).filter((k) => !(k in gcSign));
+    assert.deepEqual(missing, [], `local copy missing @fabric/core exports: ${missing.join(', ')}`);
+    assert.equal(typeof gcSign.coerceCrossSignObject, 'function');
+  });
+});
+
+describe('Fabric expectations: @fabric/discord pin', () => {
+  it('OAuth callback is fail-closed (501; CSRF 400 when the pin emits state)', async () => {
+    const Discord = require('@fabric/discord');
+    const discord = new Discord({
+      autoCommands: false,
+      app: { id: '111', secret: 'x' },
+      authority: '127.0.0.1'
+    });
+    const mockRes = () => {
+      const res = {
+        statusCode: 200,
+        body: null,
+        status (code) {
+          this.statusCode = code;
+          return this;
+        },
+        json (obj) {
+          this.body = obj;
+          return this;
+        },
+        send (msg) {
+          this.body = msg;
+          return this;
+        }
+      };
+      return res;
+    };
+    const url = discord.generateAuthorizeLink();
+    const state = new URL(url).searchParams.get('state');
+    const empty = mockRes();
+    await discord._handleOAuthCallback({}, empty);
+    assert.equal(empty.body && empty.body.status, 'error');
+    if (state) {
+      assert.equal(empty.statusCode, 400);
+      const unimplemented = mockRes();
+      await discord._handleOAuthCallback({ query: { code: 'stolen', state } }, unimplemented);
+      assert.equal(unimplemented.statusCode, 501);
+      const replay = mockRes();
+      await discord._handleOAuthCallback({ query: { code: 'stolen', state } }, replay);
+      assert.equal(replay.statusCode, 400);
+    } else {
+      assert.equal(empty.statusCode, 501);
+    }
+    if (discord.client && typeof discord.client.destroy === 'function') {
+      await discord.client.destroy();
+    }
   });
 });
 
@@ -126,6 +247,14 @@ describe('Fabric expectations: application namespaces', () => {
     assert.equal(FabricNetwork.isKnownAppRelayType('DirectChat'), true);
     const groupChat = gcNamespaces.CONTRACT_BODY_TYPES.GroupChat || 'GroupChat';
     assert.equal(FabricNetwork.isKnownAppRelayType(groupChat), true);
+    assert.equal(FabricNetwork.isKnownAppRelayType('NoteShare'), true);
+    assert.equal(FabricNetwork.isKnownAppRelayType('NoteUpdate'), true);
+    assert.equal(FabricNetwork.isKnownAppRelayType('DiscordCatalogShare'), true);
+    assert.equal(FabricNetwork.isKnownAppRelayType('GroupDataShare'), true);
+    assert.equal(FabricNetwork.isKnownAppRelayType('IdentityCrossSign'), true);
+    assert.equal(FabricNetwork.isKnownAppRelayType('IdentityCrossSignRevoke'), true);
+    assert.equal(FabricNetwork.isKnownAppRelayType('MissionClaim'), true);
+    assert.equal(FabricNetwork.isKnownAppRelayType('MissionClaimDecision'), true);
     assert.equal(FabricNetwork.isKnownAppRelayType('NotARealType_XYZ'), false);
   });
 });

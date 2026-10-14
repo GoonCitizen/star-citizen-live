@@ -7,6 +7,7 @@
 
 const React = require('react');
 const FabricMessages = require('./FabricMessages');
+const { fabricMessageHref } = require('../functions/collectionRecords');
 
 const BASE = '/services/star-citizen';
 
@@ -36,6 +37,8 @@ const CSS = `
   .gfi-row{padding:7px 10px;border-bottom:1px solid #20262f;cursor:pointer}
   .gfi-row:hover,.gfi-row.open{background:rgba(56,139,253,.06)}
   .gfi-row .top{display:flex;flex-wrap:wrap;gap:8px;align-items:baseline}
+  .gfi-row .gfi-actions{margin-left:auto;display:flex;gap:6px}
+  .gfi-row .gfi-actions .gfi-btn{padding:2px 8px;font-size:11px;text-decoration:none}
   .gfi-type{font-weight:600;color:var(--text)}
   .gfi-ts{color:var(--muted);margin-left:auto;font-size:11px}
   .gfi-detail{margin-top:6px;padding:8px;background:var(--panel);border:1px solid var(--line);border-radius:6px;
@@ -84,7 +87,7 @@ class GroupFabricInspector extends React.Component {
       openJournalId: null,
       showLeaves: false,
       codecInput: '',
-      codecEncoding: 'hex',
+      codecEncoding: 'base64',
       codecResult: null,
       codecError: null
     };
@@ -148,7 +151,7 @@ class GroupFabricInspector extends React.Component {
   async decodeCodec () {
     const raw = String(this.state.codecInput || '').trim();
     if (!raw) {
-      this.setState({ codecError: 'Paste a fabric:<hex>, fabric:base64,…, or raw hex/base64 payload.', codecResult: null });
+      this.setState({ codecError: 'Paste a fabric: message, or raw hex/base64 payload.', codecResult: null });
       return;
     }
     this.setState({ busy: true, codecError: null, codecResult: null, notice: null });
@@ -181,9 +184,7 @@ class GroupFabricInspector extends React.Component {
     const hex = result.hex || result.messageHex;
     const b64 = result.base64 || result.messageBase64;
     const enc = encoding === 'base64' ? 'base64' : 'hex';
-    const protocolUrl = enc === 'base64'
-      ? ('fabric:base64,' + (b64 || ''))
-      : ('fabric:' + (hex || ''));
+    const protocolUrl = 'fabric:' + (enc === 'base64' ? (b64 || '') : (hex || ''));
     if ((enc === 'hex' && !hex) || (enc === 'base64' && !b64)) {
       this.setState({ codecError: 'Decoded payload is missing ' + enc + ' bytes.' });
       return;
@@ -192,7 +193,7 @@ class GroupFabricInspector extends React.Component {
       encoding: enc,
       protocolUrl,
       protocolUrlHex: hex ? ('fabric:' + hex) : (result.protocolUrlHex || null),
-      protocolUrlBase64: b64 ? ('fabric:base64,' + b64) : (result.protocolUrlBase64 || null)
+      protocolUrlBase64: b64 ? ('fabric:' + b64) : (result.protocolUrlBase64 || null)
     });
     this.setState({
       codecEncoding: enc,
@@ -202,7 +203,7 @@ class GroupFabricInspector extends React.Component {
     });
     try {
       await navigator.clipboard.writeText(protocolUrl);
-      this.setState({ notice: `Copied fabric:${enc === 'base64' ? 'base64,…' : '<hex>'} to clipboard.` });
+      this.setState({ notice: `Copied fabric: (${enc} body) to clipboard.` });
     } catch (_) { /* ignore */ }
   }
 
@@ -253,7 +254,33 @@ class GroupFabricInspector extends React.Component {
             React.createElement('div', { className: 'top' },
               React.createElement('span', { className: 'gfi-type' }, e.type || 'Entry'),
               e.clock != null ? React.createElement('span', { style: { color: 'var(--muted)' } }, `c${e.clock}`) : null,
-              React.createElement('span', { className: 'gfi-ts' }, shortTime(e.acceptedAt))
+              React.createElement('span', { className: 'gfi-ts' }, shortTime(e.acceptedAt)),
+              React.createElement('span', {
+                className: 'gfi-actions',
+                onClick: (ev) => ev.stopPropagation()
+              },
+                React.createElement('button', {
+                  type: 'button',
+                  className: 'gfi-btn',
+                  title: 'Show the journal payload',
+                  onClick: (ev) => {
+                    ev.stopPropagation();
+                    this.setState({ openJournalId: open ? null : key });
+                  }
+                }, open ? 'Hide' : 'Data'),
+                (e.fabricMessage && e.fabricMessage.hash)
+                  ? React.createElement('a', {
+                    className: 'gfi-btn',
+                    href: fabricMessageHref(e.fabricMessage.hash),
+                    title: 'Open the corresponding Fabric AMP message'
+                  }, 'Fabric')
+                  : React.createElement('button', {
+                    type: 'button',
+                    className: 'gfi-btn',
+                    disabled: true,
+                    title: 'No Fabric message hash on this journal row yet'
+                  }, 'Fabric')
+              )
             ),
             open
               ? React.createElement('pre', { className: 'gfi-detail' },
@@ -342,13 +369,11 @@ class GroupFabricInspector extends React.Component {
     return React.createElement('div', { className: 'gfi-codec' },
       React.createElement('p', { className: 'gfi-hint' },
         'Decode opaque Fabric Messages from ',
-        React.createElement('code', null, 'fabric:<hex>'),
-        ' or ',
-        React.createElement('code', null, 'fabric:base64,…'),
-        ' (raw hex/base64 also works). Re-encode and copy either form.'),
+        React.createElement('code', null, 'fabric:'),
+        ' (hex or base64 body). Raw hex/base64 also works. Re-encode and copy either form.'),
       React.createElement('textarea', {
         value: this.state.codecInput,
-        placeholder: 'fabric:<hex> or fabric:base64,…',
+        placeholder: 'fabric:…',
         spellCheck: false,
         onChange: (e) => this.setState({ codecInput: e.target.value, codecError: null })
       }),
@@ -391,7 +416,7 @@ class GroupFabricInspector extends React.Component {
           React.createElement('pre', null, JSON.stringify({
             protocolUrl: result.protocolUrl || null,
             protocolUrlHex: result.protocolUrlHex || (result.hex || result.messageHex ? ('fabric:' + (result.hex || result.messageHex)) : null),
-            protocolUrlBase64: result.protocolUrlBase64 || (result.base64 || result.messageBase64 ? ('fabric:base64,' + (result.base64 || result.messageBase64)) : null),
+            protocolUrlBase64: result.protocolUrlBase64 || (result.base64 || result.messageBase64 ? ('fabric:' + (result.base64 || result.messageBase64)) : null),
             kind: result.kind || null,
             type: result.type || result.wireType || null,
             contractId: result.contractId || null,

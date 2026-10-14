@@ -13,6 +13,15 @@ const {
   formatFabricEnvExports
 } = require('../../functions/fabricEnvIdentity');
 
+test('loadFabricEnvIdentity accepts raw seed hex in FABRIC_SEED', () => {
+  const id = createIdentity();
+  const bip39 = require('@fabric/core/functions/bip39');
+  const hex = bip39.mnemonicToSeedSync(id.mnemonic).toString('hex');
+  const loaded = loadFabricEnvIdentity({ FABRIC_SEED: hex });
+  assert.strictEqual(loaded.xprv, id.xprv);
+  assert.strictEqual(loaded.pubkey, id.pubkey);
+});
+
 test('loadFabricEnvIdentity prefers FABRIC_XPRV', () => {
   const id = createIdentity();
   const env = { FABRIC_XPRV: id.xprv, FABRIC_SEED: 'should not use' };
@@ -60,6 +69,15 @@ test('env FABRIC_SEED wins over local operator identity file', () => {
     null
   );
   fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test('core pin exports fabricHomeEnv / fabricKeyMaterial', () => {
+  const home = require('@fabric/core/functions/fabricHomeEnv');
+  const material = require('@fabric/core/functions/fabricKeyMaterial');
+  assert.strictEqual(typeof home.loadFabricHomeEnv, 'function');
+  assert.strictEqual(typeof material.parseRawSeedHex, 'function');
+  assert.strictEqual(typeof material.keySettingsFromEnv, 'function');
+  assert.strictEqual(material.classifyFabricKeyMaterial('aa'.repeat(32)).kind, 'seedHex');
 });
 
 test('loadFabricEnvIdentity returns null when unset', () => {

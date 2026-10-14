@@ -114,4 +114,31 @@ test('quantum:select vehicle updates detected ship shape', () => {
   assert.equal(ev.kind, 'quantum:select');
   const ship = presence.buildDetectedShip(ev.vehicle, null, ev.timestamp);
   assert.ok(/clipper/i.test(ship.name || ''));
+  const dest = presence.buildDetectedPlace(ev.destination, ev.timestamp);
+  assert.ok(dest);
+  assert.match(dest.name, /Ambitious Dream Station/i);
+});
+
+test('buildPresenceDocument publishes location and destination', () => {
+  const recent = new Date(Date.now() - 60000).toISOString();
+  const doc = presence.buildPresenceDocument({
+    lastEventAt: recent,
+    detectedLocation: presence.buildDetectedPlace('Daymar', recent),
+    detectedDestination: presence.buildDetectedPlace('rs_ext_cru-leo1', recent)
+  });
+  assert.ok(doc.location);
+  assert.match(doc.location.name, /Daymar/i);
+  assert.ok(doc.destination);
+  assert.match(doc.destination.name, /Ambitious Dream Station/i);
+});
+
+test('cleared location override suppresses QT autodetect', () => {
+  const recent = new Date(Date.now() - 60000).toISOString();
+  const cleared = presence.buildPlaceOverride(presence.PLACE_NONE_SLUG);
+  const doc = presence.buildPresenceDocument({
+    lastEventAt: recent,
+    detectedLocation: presence.buildDetectedPlace('Daymar', recent),
+    locationOverride: cleared
+  });
+  assert.equal(doc.location, null);
 });

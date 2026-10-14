@@ -136,6 +136,13 @@ test('bitcoin.enable true → status/wallet/receive/transactions/send via mock H
         transactions: [{ txid: 'ab'.repeat(32), confirmations: 1, ourAmount: 0.0001 }]
       });
     }
+    if (req.method === 'GET' && url.pathname === '/services/bitcoin/xpub/utxos') {
+      assert.ok(url.searchParams.get('xpub'));
+      return json(200, {
+        network: 'regtest',
+        utxos: [{ txid: 'ab'.repeat(32), vout: 0, amountSats: 12345 }]
+      });
+    }
     if (req.method === 'POST' && url.pathname === '/payments') {
       assert.ok(body && body.adminToken === 'test-admin');
       assert.ok(body.to);
@@ -194,6 +201,12 @@ test('bitcoin.enable true → status/wallet/receive/transactions/send via mock H
       `${BASE}/bitcoin/transactions?xpub=${encodeURIComponent(id.xpub)}`);
     assert.strictEqual(txs.status, 200);
     assert.strictEqual(txs.body.data.transactions.length, 1);
+
+    const utxos = await request(port, 'GET',
+      `${BASE}/bitcoin/utxos?xpub=${encodeURIComponent(id.xpub)}`);
+    assert.strictEqual(utxos.status, 200);
+    assert.strictEqual(utxos.body.data.utxos.length, 1);
+    assert.strictEqual(utxos.body.data.utxos[0].amountSats, 12345);
 
     const faucetDisc = await request(port, 'GET', `${BASE}/bitcoin/faucet`);
     assert.strictEqual(faucetDisc.status, 200);

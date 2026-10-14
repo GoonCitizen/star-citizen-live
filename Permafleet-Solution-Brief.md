@@ -259,4 +259,4 @@ Deliberately not needed: no blockchain, no cryptocurrency, no paid database, no 
 
 ---
 
-*Source and living technical docs (`DESIGN-missions-mvp.md`, `DECISIONS.md`, `PROGRESS.md`) are in the repository. A formatted Word version is `Permafleet-Solution-Brief.docx`.*
+*Source and living technical docs (`DESIGN-missions-mvp.md`, `DECISIONS.md`, `PROGRESS.md`) are in the repository. A formatted Word version is `Permafleet-Solution-Brief.docx`. What runs today: `AGENTS.md` §3. Call for G00N SQUAD, PERMAFLEET, and other orgs: `DEVELOPERS.md`.*

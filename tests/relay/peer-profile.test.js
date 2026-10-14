@@ -301,6 +301,13 @@ test('GET /peers/:id returns local profile detail + profile settings', async () 
     const badPk = await request(port, 'GET', '/services/star-citizen/profiles/not-a-key');
     assert.strictEqual(badPk.status, 404);
 
+    const discord = await request(port, 'GET',
+      '/services/star-citizen/profiles/' + encodeURIComponent('discord:u1'));
+    assert.strictEqual(discord.status, 200, JSON.stringify(discord.body));
+    assert.ok(discord.body.data.actor);
+    assert.ok(discord.body.data.actor.platforms.some((p) => p.platform === 'discord'));
+    assert.strictEqual(discord.body.data.pubkey, 'discord:u1');
+
     async function spaGet (reqPath) {
       return new Promise((resolve, reject) => {
         http.get({ host: '127.0.0.1', port, path: reqPath }, (res) => {
@@ -316,6 +323,15 @@ test('GET /peers/:id returns local profile detail + profile settings', async () 
     const spaMission = await spaGet('/missions/example-mission-id');
     assert.strictEqual(spaMission.status, 200);
     assert.match(spaMission.type || '', /text\/html/);
+    const spaCollection = await spaGet('/collections/note/n1');
+    assert.strictEqual(spaCollection.status, 200);
+    assert.match(spaCollection.type || '', /text\/html/);
+    const spaWalletConstruct = await spaGet('/wallet/construct');
+    assert.strictEqual(spaWalletConstruct.status, 200);
+    assert.match(spaWalletConstruct.type || '', /text\/html/);
+    const spaDiscord = await spaGet('/profiles/' + encodeURIComponent('discord:u1'));
+    assert.strictEqual(spaDiscord.status, 200);
+    assert.match(spaDiscord.type || '', /text\/html/);
 
     // Gossip discovery promotes non-hub peers onto the roster (logs off).
     svc._considerDiscoveredPeers(['wingmate.example:7777', 'hub.fabric.pub:7777'], 'gossip');

@@ -6,7 +6,13 @@
  */
 
 const React = require('react');
+const { readOfflineMode } = require('../functions/offlineMode');
 const RegisterEventLog = require('./RegisterEventLog');
+const { isMissionApprover } = require('../functions/missionRole');
+const {
+  shareClipboardText,
+  shareNotice
+} = require('../functions/groupJoinFlow');
 
 const BASE = '/services/star-citizen';
 
@@ -18,6 +24,7 @@ const CSS = `
   .mpage-hero{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:22px 24px}
   .mpage-hero h1{margin:0 0 8px;font-size:20px;display:flex;flex-wrap:wrap;gap:8px;align-items:center}
   .mpage-hero .sub{color:var(--muted);font-size:12.5px;line-height:1.5;word-break:break-all}
+  .mpage-actions{display:flex;flex-wrap:wrap;gap:8px;margin-top:14px}
   .mpage-panel{background:var(--panel);border:1px solid var(--line);border-radius:12px;overflow:hidden}
   .mpage-panel h2{font-size:13px;margin:0;padding:12px 16px;border-bottom:1px solid var(--line);font-weight:600}
   .mpage-panel .body{padding:14px 16px;display:grid;gap:10px}
@@ -34,6 +41,7 @@ const CSS = `
   .mpage-btn:disabled{opacity:.45;cursor:default}
   .mpage-btn.ghost{background:var(--panel2);border:1px solid var(--line);color:var(--text)}
   .mpage-btn.good{background:var(--good)}
+  .mpage-btn.warn{background:transparent;border:1px solid rgba(248,81,73,.45);color:var(--kill)}
   .mpage-row{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
   .mpage-kv{font-size:12.5px;color:var(--muted)}
   .mpage-kv b{color:var(--text);font-weight:600}
@@ -71,7 +79,9 @@ class MissionPage extends React.Component {
       groups: [],
       claimGroup: '',
       claimNote: '',
-      claimOpen: false
+      claimOpen: false,
+      reviewNote: {},
+      offlineMode: false
     };
   }
 
@@ -91,6 +101,8 @@ class MissionPage extends React.Component {
   }
 
   async boot () {
+    const offline = await readOfflineMode();
+    this.setState({ offlineMode: offline === true });
     const b = identityBridge();
     if (b) {
       try {
@@ -169,6 +181,10 @@ class MissionPage extends React.Component {
     }
   }
 
+  me () {
+    return this.state.pubkey || this.props.identityPubkey || null;
+  }
+
   approve (claim) {
     const m = this.state.mission;
     if (!m || !claim) return;
@@ -187,15 +203,77 @@ class MissionPage extends React.Component {
       await this.post(`/claims/${claim.id}/validate`, {
         decision: 'approve',
         signatures: { [signed.pubkey]: signed.signature },
-        officerId: this.state.pubkey
+        officerId: this.me(),
+        note: (this.state.reviewNote[claim.id] || '').trim() || undefined
       });
     }, 'Completion approved — reward unlocked.');
+  }
+
+  reject (claim) {
+    return this.act(async () => {
+      await this.post(`/claims/${claim.id}/validate`, {
+        decision: 'reject',
+        note: (this.state.reviewNote[claim.id] || '').trim() || undefined,
+        officerId: this.me()
+      });
+    }, 'Completion rejected — claimant may resubmit.');
   }
 
   goBack () {
     if (typeof window === 'undefined') return;
     if (window.history.length > 1) window.history.back();
     else window.location.href = '/#missions';
+  }
+
+  shareUrl () {
+    const m = this.state.mission;
+    if (!m || typeof window === 'undefined') return '';
+    return `${window.location.origin}/missions/${encodeURIComponent(m.id)}`;
+  }
+
+  async share () {
+    const m = this.state.mission;
+    if (!m || this.state.busy) return;
+    this.setState({ busy: true, error: null, notice: null });
+    try {
+      const res = await fetch(`${BASE}/missions/${encodeURIComponent(m.id)}/share`, {
+        method: 'POST',
+        headers: this.headers(),
+        body: JSON.stringify({ relay: true })
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error || `HTTP ${res.status}`);
+      const data = json.data || {};
+      const url = shareClipboardText(data);
+      if (!url) throw new Error('no protocolUrl');
+      const page = this.shareUrl();
+      try {
+        await navigator.clipboard.writeText(url);
+        this.setState({
+          busy: false,
+          notice: shareNotice(data, page),
+          error: data.relayed ? null : (data.relayError || null)
+        });
+      } catch (_) {
+        this.setState({
+          busy: false,
+          notice: shareNotice(data, page) + ' ' + url,
+          error: data.relayed ? null : (data.relayError || null)
+        });
+      }
+    } catch (e) {
+      const url = this.shareUrl();
+      try {
+        await navigator.clipboard.writeText(url);
+        this.setState({
+          busy: false,
+          notice: 'Page link copied (Fabric share failed: ' + e.message + ').',
+          error: e.message
+        });
+      } catch (_) {
+        this.setState({ busy: false, error: e.message, notice: url });
+      }
+    }
   }
 
   renderEscrow () {
@@ -260,7 +338,7 @@ class MissionPage extends React.Component {
       );
     }
     const m = this.state.mission;
-    const me = this.state.pubkey;
+    const me = this.me();
     const apps = this.state.applications.filter((a) => a.status === 'pending');
     const pendingClaims = this.state.claims.filter((c) => c.status === 'pending');
     const participants = Array.isArray(m.participantIds) && m.participantIds.length
@@ -268,10 +346,12 @@ class MissionPage extends React.Component {
       : (m.assigneeId ? [m.assigneeId] : []);
     const isCreator = me && m.createdBy === me;
     const isParticipant = me && participants.includes(me);
-    const isAuthority = me && m.authorities && (m.authorities.keys || []).includes(me);
+    const isApprover = isMissionApprover(m, me);
     const applied = this.state.applications.some((a) => a.applicantId === me && a.status === 'pending');
-    const joinable = m.status === 'open' || m.status === 'assigned' || m.status === 'in_progress';
+    const joinable = m.source !== 'gamelog' && (m.status === 'open' || m.status === 'assigned' || m.status === 'in_progress');
     const myPendingClaim = pendingClaims.find((c) => c.claimantId === me);
+    const canSubmit = joinable && me && !myPendingClaim && m.status !== 'completed' &&
+      (isParticipant || isCreator);
     const myGroups = (this.state.groups || []).filter((g) => me && Array.isArray(g.members) && g.members.includes(me));
 
     return React.createElement('div', { className: 'mpage' },
@@ -282,7 +362,17 @@ class MissionPage extends React.Component {
           React.createElement('span', { className: 'mpage-tag ' + (m.status || 'open') }, m.status || 'open'),
           m.reward ? React.createElement('span', { className: 'mpage-tag btc' }, '₿ ' + SATS(m.reward)) : null
         ),
-        React.createElement('div', { className: 'sub' }, m.id)
+        React.createElement('div', { className: 'sub' }, m.id),
+        m.status === 'open' && isCreator && !this.state.offlineMode
+          ? React.createElement('div', { className: 'mpage-actions' },
+            React.createElement('button', {
+              className: 'mpage-btn',
+              disabled: this.state.busy,
+              title: 'Copy a fabric: share others paste via Import… to get a mission offer',
+              onClick: () => this.share()
+            }, 'Share')
+          )
+          : null
       ),
       this.state.error ? React.createElement('div', { className: 'mpage-err' }, this.state.error) : null,
       this.state.notice ? React.createElement('div', { className: 'mpage-ok' }, this.state.notice) : null,
@@ -313,7 +403,7 @@ class MissionPage extends React.Component {
         React.createElement('h2', null, 'Actions'),
         React.createElement('div', { className: 'body' },
           React.createElement('div', { className: 'mpage-row' },
-            joinable && isCreator
+            joinable && isCreator && !this.state.offlineMode
               ? React.createElement(React.Fragment, null,
                 React.createElement('button', {
                   className: 'mpage-btn ghost',
@@ -349,7 +439,7 @@ class MissionPage extends React.Component {
             isParticipant && joinable
               ? React.createElement('span', { style: { color: 'var(--good)', fontSize: 12 } }, 'You’re in')
               : null,
-            ...apps.map((a) => (isCreator || isAuthority)
+            ...apps.map((a) => (isCreator || isApprover)
               ? React.createElement('button', {
                 className: 'mpage-btn',
                 key: a.id,
@@ -360,24 +450,15 @@ class MissionPage extends React.Component {
                 )
               }, `Accept ${shortKey(a.applicantId)}`)
               : null),
-            joinable && isParticipant && !myPendingClaim && m.status !== 'completed'
+            canSubmit
               ? React.createElement('button', {
                 className: 'mpage-btn',
                 disabled: this.state.busy,
                 onClick: () => this.setState({ claimOpen: true })
               }, '✔ Submit completion')
               : null,
-            ...pendingClaims.map((c) => (isAuthority
-              ? React.createElement('button', {
-                className: 'mpage-btn good',
-                key: c.id,
-                disabled: this.state.busy,
-                onClick: () => this.approve(c)
-              }, `✓ Approve ${shortKey(c.claimantId)}${c.completionGroupId ? ' (group)' : ''}`)
-              : null)),
-            pendingClaims.length && !isAuthority
-              ? React.createElement('span', { style: { color: 'var(--muted)', fontSize: 12 } },
-                `${pendingClaims.length} completion(s) awaiting authority signatures`)
+            myPendingClaim
+              ? React.createElement('span', { style: { color: 'var(--warn)', fontSize: 12 } }, 'Completion submitted — awaiting review')
               : null
           ),
           this.state.claimOpen
@@ -423,6 +504,45 @@ class MissionPage extends React.Component {
                   onClick: () => this.setState({ claimOpen: false })
                 }, 'Cancel')
               )
+            )
+            : null,
+          pendingClaims.length
+            ? React.createElement('div', { className: 'mpage-esc' },
+              React.createElement('div', { className: 'mpage-kv' },
+                React.createElement('b', null, isApprover ? 'Review completions' : 'Pending completions')),
+              ...pendingClaims.map((c) => React.createElement('div', { key: c.id, style: { display: 'grid', gap: 6 } },
+                React.createElement('div', { className: 'mpage-code' },
+                  shortKey(c.claimantId),
+                  c.note ? ` — ${String(c.note).slice(0, 200)}` : ' — (no note)'
+                ),
+                isApprover
+                  ? React.createElement(React.Fragment, null,
+                    React.createElement('input', {
+                      value: this.state.reviewNote[c.id] || '',
+                      placeholder: 'Review note (optional)',
+                      onChange: (e) => this.setState({
+                        reviewNote: Object.assign({}, this.state.reviewNote, { [c.id]: e.target.value })
+                      }),
+                      style: {
+                        background: 'var(--panel)', border: '1px solid var(--line)',
+                        color: 'var(--text)', borderRadius: 7, padding: '7px 10px', fontSize: 12
+                      }
+                    }),
+                    React.createElement('div', { className: 'mpage-row' },
+                      React.createElement('button', {
+                        className: 'mpage-btn good',
+                        disabled: this.state.busy,
+                        onClick: () => this.approve(c)
+                      }, 'Approve'),
+                      React.createElement('button', {
+                        className: 'mpage-btn warn',
+                        disabled: this.state.busy,
+                        onClick: () => this.reject(c)
+                      }, 'Reject')
+                    )
+                  )
+                  : React.createElement('div', { className: 'mpage-kv' }, 'Awaiting authority review')
+              ))
             )
             : null
         )

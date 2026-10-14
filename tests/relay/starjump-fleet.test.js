@@ -41,6 +41,64 @@ function request (port, method, reqPath, body) {
   });
 }
 
+test('ownerFromSourceFile + owner-tagged extract/filter', () => {
+  assert.equal(starjumpFleet.ownerFromSourceFile('starjump-kersa.json'), 'kersa');
+  assert.equal(starjumpFleet.ownerFromSourceFile('STARJUMP_FleetViewer-crescendo.json'), 'crescendo');
+  assert.equal(starjumpFleet.ownerFromSourceFile('starjump-crescendo-only.json'), 'crescendo');
+  assert.equal(starjumpFleet.ownerFromSourceFile('Leonheart23 Fleet.json'), 'Leonheart23');
+  assert.equal(starjumpFleet.ownerFromSourceFile('fleetviewer-thejohnram.json'), 'thejohnram');
+  assert.equal(starjumpFleet.ownerFromSourceFile('starjump-permafleet-all.json'), null);
+  assert.equal(starjumpFleet.ownerFromSourceFile('starjump-all.json'), null);
+
+  assert.ok(fs.existsSync(SAMPLE), 'sample fleet JSON should exist');
+  const raw = JSON.parse(fs.readFileSync(SAMPLE, 'utf8'));
+  const fleet = starjumpFleet.parseStarjumpExport(raw, {
+    name: 'John',
+    sourceFile: 'fleetviewer-thejohnram.json'
+  });
+  assert.ok(fleet.ships.every((s) => s.owner === 'thejohnram'));
+  assert.equal(fleet.ownerCount, 1);
+  assert.deepEqual(fleet.owners || starjumpFleet.listOwners(fleet.ships), ['thejohnram']);
+
+  const merged = starjumpFleet.normalizeShips([
+    ...fleet.ships,
+    { slug: 'rsi-polaris', name: 'Polaris', owner: 'kersa', count: 2 },
+    { slug: 'rsi-polaris', name: 'Polaris', owner: 'kersa', count: 1 },
+    { slug: 'rsi-polaris', name: 'Polaris', owner: 'gelly', count: 1 }
+  ]);
+  const polarisLines = merged.filter((s) => s.slug === 'rsi-polaris' || /polaris/i.test(s.slug));
+  assert.ok(polarisLines.length >= 2, 'same hull under different owners stays separate');
+  const kersaPolaris = polarisLines.find((s) => s.owner === 'kersa');
+  assert.ok(kersaPolaris);
+  assert.equal(kersaPolaris.count, 3);
+
+  const byOwner = starjumpFleet.filterSortShips(merged, { owner: 'kersa', sort: 'count' });
+  assert.ok(byOwner.length >= 1);
+  assert.ok(byOwner.every((s) => s.owner === 'kersa'));
+  const byQty = starjumpFleet.filterSortShips(merged, { minCount: 2, sort: 'count' });
+  assert.ok(byQty.every((s) => (s.count || 1) >= 2));
+  const search = starjumpFleet.filterSortShips(merged, { q: 'thejohnram' });
+  assert.ok(search.every((s) => /thejohnram/i.test(s.owner || '')));
+
+  const byHull = starjumpFleet.filterSortShips(merged, { consolidate: 'hull', sort: 'count' });
+  const polarisHull = byHull.find((s) => /polaris/i.test(s.slug) || /polaris/i.test(s.name || ''));
+  assert.ok(polarisHull, 'hull consolidate should include polaris');
+  assert.equal(polarisHull.consolidated, 'hull');
+  assert.ok(polarisHull.count >= 4, 'polaris counts from kersa+gelly should sum');
+  assert.ok(Array.isArray(polarisHull.owners) && polarisHull.owners.length >= 2);
+
+  const byClass = starjumpFleet.consolidateShips([
+    { slug: 'a', name: 'A', type: 'Fighter', owner: 'kersa', count: 2 },
+    { slug: 'b', name: 'B', type: 'Fighter', owner: 'gelly', count: 3 },
+    { slug: 'c', name: 'C', type: 'Capital', owner: 'kersa', count: 1 }
+  ], 'type');
+  assert.equal(byClass.length, 2);
+  const fighters = byClass.find((s) => s.name === 'Fighter');
+  assert.ok(fighters);
+  assert.equal(fighters.count, 5);
+  assert.equal(fighters.uniqueHulls, 2);
+});
+
 test('parseStarjumpExport extracts ships from sample', () => {
   assert.ok(fs.existsSync(SAMPLE), 'sample fleet JSON should exist');
   const raw = JSON.parse(fs.readFileSync(SAMPLE, 'utf8'));

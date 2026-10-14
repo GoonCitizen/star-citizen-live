@@ -1,0 +1,45 @@
+name: Good first issue
+description: A small, reversible contribution — especially from G00N SQUAD or PERMAFLEET.
+title: "[good first] "
+labels:
+  - good first issue
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Read [DEVELOPERS.md](https://github.com/GoonCitizen/star-citizen-live/blob/feature/rsi/DEVELOPERS.md) first.
+        Branch from `feature/rsi`. Do not merge to `master`. The owner reviews PRs.
+
+        If this is a **parser** change, attach a real `Game.log` line (redact handles if you want) and the game version. Do not invent CIG formats.
+  - type: dropdown
+    id: audience
+    attributes:
+      label: Who is this from?
+      options:
+        - G00N SQUAD
+        - PERMAFLEET
+        - Another org / fork
+        - Independent
+    validations:
+      required: true
+  - type: textarea
+    id: what
+    attributes:
+      label: What did you run, and what did you see?
+      description: Commands, OS, SC channel (LIVE/PTU/…), and the unexpected result. Screenshots help for UI.
+    validations:
+      required: true
+  - type: textarea
+    id: proposed
+    attributes:
+      label: Proposed change (optional)
+      description: Keep it small. Include where a test would live (`tests/unit`, `tests/relay`, `tests/ui`, …).
+  - type: checkboxes
+    id: hygiene
+    attributes:
+      label: Hygiene
+      options:
+        - label: I will not commit secrets (Discord tokens, webhooks, seeds, `settings/local.js`).
+          required: true
+        - label: I understand the Game.log path is read-only.
+          required: true

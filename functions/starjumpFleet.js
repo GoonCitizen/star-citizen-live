@@ -9,13 +9,17 @@
  */
 
 const crypto = require('crypto');
+const path = require('path');
 const shipCatalog = require('./shipCatalog');
 
 const FLEET_SHARE_TYPE = 'FleetShare';
 const STARJUMP_TYPE = 'starjumpFleetviewer';
 const NAME_MAX = 80;
+const OWNER_MAX = 64;
 const VISIBILITIES = new Set(['private', 'peers', 'groups', 'public']);
-const MAX_SHIP_LINES = 500;
+const MAX_SHIP_LINES = 2000;
+/** Aggregate / org-wide Starjump dumps — do not treat the filename as a pilot. */
+const AGGREGATE_SOURCE_RE = /^(starjump-)?(permafleet-)?(all|full|merged)(-|$)|permafleet-(all|full)|starjump-all|starjump-merged/i;
 
 /**
  * @param {*} value
@@ -29,11 +33,251 @@ function isStarjumpExport (value) {
 }
 
 /**
- * Extract unique ships (by slug+variant) from a Starjump export.
- * @param {object} exportDoc
- * @returns {{ slug: string, name: string, variant: string|null, count: number }[]}
+ * Pilot / hangar owner handle for a ship line (not the fleet document's Fabric pubkey).
+ * @param {*} value
+ * @returns {string|null}
  */
-function extractShips (exportDoc) {
+function sanitizeOwner (value) {
+  if (value === undefined || value === null || value === '') return null;
+  const s = String(value)
+    .replace(/[\u0000-\u001f\u007f]+/g, ' ')
+    .trim()
+    .replace(/\s+/g, ' ')
+    .slice(0, OWNER_MAX);
+  return s || null;
+}
+
+/**
+ * Derive a pilot handle from a Starjump / FleetViewer filename.
+ * `starjump-kersa.json` → `kersa`; `STARJUMP_FleetViewer-crescendo.json` → `crescendo`.
+ * Aggregate dumps (`starjump-permafleet-all.json`) return null.
+ * @param {string|null|undefined} sourceFile
+ * @returns {string|null}
+ */
+function ownerFromSourceFile (sourceFile) {
+  if (!sourceFile) return null;
+  let base = path.basename(String(sourceFile)).replace(/\.json$/i, '');
+  base = base.replace(/\s*\(\d+\)\s*$/, '').trim();
+  if (!base || AGGREGATE_SOURCE_RE.test(base)) return null;
+  let handle = base
+    .replace(/^STARJUMP_FleetViewer[-_]?/i, '')
+    .replace(/^fleetviewer[-_]?/i, '')
+    .replace(/^fleetview[-_]?/i, '')
+    .replace(/^starjump[-_]?/i, '')
+    .replace(/^STARJUMP[-_]?/i, '')
+    .replace(/\s+Fleet$/i, '')
+    .replace(/[-_]?only$/i, '')
+    .trim();
+  if (!handle || /^FleetViewer$/i.test(handle) || AGGREGATE_SOURCE_RE.test(handle)) return null;
+  return sanitizeOwner(handle);
+}
+
+/**
+ * Stable map key for a roster line (slug + variant + owner).
+ * @param {{ slug?: string, variant?: string|null, owner?: string|null }} entry
+ * @returns {string}
+ */
+function shipLineKey (entry = {}) {
+  return String(entry.slug || '') + '\0' + (entry.variant || '') + '\0' + (entry.owner || '');
+}
+
+/**
+ * Count unique hull types (slug+variant), ignoring owner splits.
+ * @param {object[]} ships
+ * @returns {number}
+ */
+function uniqueHullCount (ships) {
+  const keys = new Set();
+  for (const s of Array.isArray(ships) ? ships : []) {
+    if (!s || !s.slug) continue;
+    keys.add(String(s.slug) + '\0' + (s.variant || ''));
+  }
+  return keys.size;
+}
+
+/**
+ * Distinct pilot handles on a roster (sorted).
+ * @param {object[]} ships
+ * @returns {string[]}
+ */
+function listOwners (ships) {
+  const set = new Set();
+  for (const s of Array.isArray(ships) ? ships : []) {
+    const o = sanitizeOwner(s && s.owner);
+    if (o) set.add(o);
+  }
+  return [...set].sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }));
+}
+
+/**
+ * Roll up roster lines by hull (slug+variant) or catalog class (`type`).
+ * Preserves an `owners` breakdown `[{ owner, count }]` on each row.
+ * @param {object[]} ships
+ * @param {'hull'|'type'|false|null|string} [mode]
+ * @returns {object[]}
+ */
+function consolidateShips (ships, mode = 'hull') {
+  const m = String(mode || '').toLowerCase();
+  if (!m || m === 'none' || m === 'owner' || m === 'false') {
+    return Array.isArray(ships) ? ships.slice() : [];
+  }
+  const byKey = new Map();
+  for (const raw of Array.isArray(ships) ? ships : []) {
+    if (!raw || !raw.slug) continue;
+    const slug = String(raw.slug);
+    const variant = raw.variant || null;
+    const shipType = raw.type ? String(raw.type) : null;
+    const key = m === 'type' || m === 'class'
+      ? (shipType || '\0unknown')
+      : (slug + '\0' + (variant || ''));
+    const count = Math.max(1, Math.floor(Number(raw.count) || 1));
+    const owner = sanitizeOwner(raw.owner);
+    let row = byKey.get(key);
+    if (!row) {
+      row = {
+        slug: m === 'type' || m === 'class' ? (shipType ? shipCatalog.slugify(shipType) : 'unknown') : slug,
+        name: m === 'type' || m === 'class'
+          ? (shipType || 'Unclassified')
+          : String(raw.name || slug),
+        variant: m === 'type' || m === 'class' ? null : variant,
+        owner: null,
+        manufacturer: raw.manufacturer || null,
+        type: shipType,
+        size: raw.size || null,
+        count: 0,
+        owners: [],
+        consolidated: m === 'type' || m === 'class' ? 'type' : 'hull'
+      };
+      byKey.set(key, row);
+    }
+    row.count = Math.min(9999, row.count + count);
+    if (raw.name && String(raw.name).length >= String(row.name).length && row.consolidated === 'hull') {
+      row.name = String(raw.name);
+    }
+    if (raw.manufacturer && !row.manufacturer) row.manufacturer = raw.manufacturer;
+    if (raw.type && !row.type) row.type = raw.type;
+    if (raw.size && !row.size) row.size = raw.size;
+    if (m === 'type' || m === 'class') {
+      // Track distinct hulls under this class.
+      if (!row._hulls) row._hulls = new Set();
+      row._hulls.add(slug + '\0' + (variant || ''));
+    }
+    if (owner) {
+      const prev = row.owners.find((o) => o.owner === owner);
+      if (prev) prev.count = Math.min(9999, prev.count + count);
+      else row.owners.push({ owner, count });
+    } else {
+      const prev = row.owners.find((o) => o.owner === null);
+      if (prev) prev.count = Math.min(9999, prev.count + count);
+      else row.owners.push({ owner: null, count });
+    }
+  }
+  const out = [];
+  for (const row of byKey.values()) {
+    if (row._hulls) {
+      row.uniqueHulls = row._hulls.size;
+      delete row._hulls;
+    }
+    row.owners.sort((a, b) => {
+      const ao = a.owner || '\uffff';
+      const bo = b.owner || '\uffff';
+      return String(ao).localeCompare(String(bo), undefined, { sensitivity: 'base' });
+    });
+    const named = row.owners.filter((o) => o.owner).map((o) => o.owner);
+    row.ownerCount = named.length;
+    // Compact label for search / display when consolidated.
+    row.ownerSummary = named.length
+      ? (named.length <= 3 ? named.join(', ') : named.slice(0, 2).join(', ') + ` +${named.length - 2}`)
+      : null;
+    out.push(row);
+  }
+  return out;
+}
+
+/**
+ * Filter + sort a roster for UI (search, owner, quantity bounds, optional consolidate).
+ * @param {object[]} ships
+ * @param {Object} [opts]
+ * @param {string} [opts.q] Free-text over name / slug / variant / owner / manufacturer
+ * @param {string} [opts.owner] Exact owner handle (case-insensitive); `__none__` = unowned lines
+ * @param {number} [opts.minCount]
+ * @param {number} [opts.maxCount]
+ * @param {string} [opts.sort] `name` | `count` | `count-asc` | `owner` | `owner-desc`
+ * @param {string} [opts.consolidate] `none` | `hull` | `type` — roll up after owner filter
+ * @returns {object[]}
+ */
+function filterSortShips (ships, opts = {}) {
+  let rows = Array.isArray(ships) ? ships.slice() : [];
+  const q = String(opts.q || '').trim().toLowerCase();
+  const ownerFilter = opts.owner != null && opts.owner !== '' ? String(opts.owner) : null;
+  if (ownerFilter === '__none__') {
+    rows = rows.filter((s) => !sanitizeOwner(s.owner));
+  } else if (ownerFilter) {
+    const want = ownerFilter.toLowerCase();
+    rows = rows.filter((s) => String(s.owner || '').toLowerCase() === want);
+  }
+  // Consolidate after owner filter so "kersa's hull totals" still works.
+  const consolidate = opts.consolidate != null ? opts.consolidate : 'none';
+  if (consolidate && consolidate !== 'none' && consolidate !== false) {
+    rows = consolidateShips(rows, consolidate);
+  }
+  if (q) {
+    rows = rows.filter((s) => {
+      const ownerBits = Array.isArray(s.owners)
+        ? s.owners.map((o) => o && o.owner).filter(Boolean).join(' ')
+        : '';
+      const hay = [
+        s.name, s.slug, s.variant, s.owner, s.ownerSummary, s.manufacturer, s.type, s.size, ownerBits
+      ].filter(Boolean).join(' ').toLowerCase();
+      return hay.includes(q);
+    });
+  }
+  const minCount = opts.minCount != null ? Number(opts.minCount) : null;
+  const maxCount = opts.maxCount != null ? Number(opts.maxCount) : null;
+  if (Number.isFinite(minCount)) {
+    rows = rows.filter((s) => (s.count || 1) >= minCount);
+  }
+  if (Number.isFinite(maxCount)) {
+    rows = rows.filter((s) => (s.count || 1) <= maxCount);
+  }
+  const sort = String(opts.sort || 'name').toLowerCase();
+  rows.sort((a, b) => {
+    if (sort === 'count' || sort === 'count-desc') {
+      const d = (b.count || 1) - (a.count || 1);
+      if (d) return d;
+    } else if (sort === 'count-asc') {
+      const d = (a.count || 1) - (b.count || 1);
+      if (d) return d;
+    } else if (sort === 'owner' || sort === 'owner-asc') {
+      const ao = a.ownerSummary || a.owner || '\uffff';
+      const bo = b.ownerSummary || b.owner || '\uffff';
+      const d = String(ao).localeCompare(String(bo), undefined, { sensitivity: 'base' });
+      if (d) return d;
+    } else if (sort === 'owner-desc') {
+      const ao = a.ownerSummary || a.owner || '';
+      const bo = b.ownerSummary || b.owner || '';
+      const d = String(bo).localeCompare(String(ao), undefined, { sensitivity: 'base' });
+      if (d) return d;
+    } else if (sort === 'type') {
+      const d = String(a.type || '\uffff').localeCompare(String(b.type || '\uffff'), undefined, { sensitivity: 'base' });
+      if (d) return d;
+    }
+    const byName = String(a.name || a.slug || '').localeCompare(String(b.name || b.slug || ''), undefined, { sensitivity: 'base' });
+    if (byName) return byName;
+    return String(a.owner || '').localeCompare(String(b.owner || ''), undefined, { sensitivity: 'base' });
+  });
+  return rows;
+}
+
+/**
+ * Extract ships from a Starjump export, optionally tagged with a pilot owner.
+ * Lines are unique by slug + variant + owner.
+ * @param {object} exportDoc
+ * @param {{ owner?: string|null }} [opts]
+ * @returns {{ slug: string, name: string, variant: string|null, owner: string|null, count: number }[]}
+ */
+function extractShips (exportDoc, opts = {}) {
+  const owner = sanitizeOwner(opts.owner);
   const items = Array.isArray(exportDoc && exportDoc.canvasItems) ? exportDoc.canvasItems : [];
   const byKey = new Map();
   for (const item of items) {
@@ -41,8 +285,8 @@ function extractShips (exportDoc) {
     const slug = String(item.shipSlug || '').trim();
     if (!slug) continue;
     const variant = String(item.variantSlug || '').trim() || null;
-    const name = String(item.defaultText || slug).trim() || slug;
-    const key = slug + '\0' + (variant || '');
+    const name = String(item.defaultText || slug).trim().split(/\n/)[0].trim() || slug;
+    const key = shipLineKey({ slug, variant, owner });
     const prev = byKey.get(key);
     if (prev) prev.count += 1;
     else {
@@ -51,6 +295,7 @@ function extractShips (exportDoc) {
         slug: (known && known.slug) || slug,
         name: name || (known && known.name) || slug,
         variant,
+        owner,
         manufacturer: (known && known.manufacturer) || null,
         type: (known && known.type) || null,
         size: (known && known.size) || null,
@@ -58,7 +303,11 @@ function extractShips (exportDoc) {
       });
     }
   }
-  return [...byKey.values()].sort((a, b) => a.name.localeCompare(b.name));
+  return [...byKey.values()].sort((a, b) => {
+    const byName = a.name.localeCompare(b.name);
+    if (byName) return byName;
+    return String(a.owner || '').localeCompare(String(b.owner || ''));
+  });
 }
 
 /**
@@ -111,6 +360,7 @@ function fleetIdFor (doc = {}) {
     ships: (doc.ships || []).map((s) => ({
       slug: s.slug,
       variant: s.variant || null,
+      owner: s.owner || null,
       count: s.count || 1
     }))
   };
@@ -125,7 +375,7 @@ function newFleetId () {
 /**
  * Normalize a ship roster entry; fill name/manufacturer/type from the catalog when known.
  * @param {*} entry
- * @returns {{ slug: string, name: string, variant: string|null, manufacturer: string|null, type: string|null, size: string|null, count: number }|null}
+ * @returns {{ slug: string, name: string, variant: string|null, owner: string|null, manufacturer: string|null, type: string|null, size: string|null, count: number }|null}
  */
 function normalizeShipEntry (entry) {
   if (!entry || typeof entry !== 'object') return null;
@@ -137,12 +387,15 @@ function normalizeShipEntry (entry) {
   const variant = entry.variant != null && String(entry.variant).trim()
     ? String(entry.variant).trim()
     : null;
+  const owner = sanitizeOwner(entry.owner);
   const count = Math.max(0, Math.min(9999, Math.floor(Number(entry.count) || 0)));
   if (count <= 0) return null;
+  const nameRaw = String(entry.name || (known && known.name) || slug).trim() || slug;
   return {
     slug,
-    name: String(entry.name || (known && known.name) || slug).trim() || slug,
+    name: nameRaw.split(/\n/)[0].trim() || slug,
     variant,
+    owner,
     manufacturer: entry.manufacturer
       ? String(entry.manufacturer)
       : ((known && known.manufacturer) || null),
@@ -157,16 +410,16 @@ function normalizeShipEntry (entry) {
 }
 
 /**
- * Merge/normalize a ships array (aggregate counts by slug+variant).
+ * Merge/normalize a ships array (aggregate counts by slug+variant+owner).
  * @param {*} list
- * @returns {{ slug: string, name: string, variant: string|null, manufacturer: string|null, count: number }[]}
+ * @returns {{ slug: string, name: string, variant: string|null, owner: string|null, manufacturer: string|null, count: number }[]}
  */
 function normalizeShips (list) {
   const byKey = new Map();
   for (const raw of Array.isArray(list) ? list : []) {
     const s = normalizeShipEntry(raw);
     if (!s) continue;
-    const key = s.slug + '\0' + (s.variant || '');
+    const key = shipLineKey(s);
     const prev = byKey.get(key);
     if (prev) {
       prev.count = Math.min(9999, prev.count + s.count);
@@ -179,7 +432,11 @@ function normalizeShips (list) {
     }
   }
   return [...byKey.values()]
-    .sort((a, b) => a.name.localeCompare(b.name))
+    .sort((a, b) => {
+      const byName = a.name.localeCompare(b.name);
+      if (byName) return byName;
+      return String(a.owner || '').localeCompare(String(b.owner || ''));
+    })
     .slice(0, MAX_SHIP_LINES);
 }
 
@@ -204,7 +461,8 @@ function createCustomFleet (opts = {}) {
     groupIds: Array.isArray(opts.groupIds) ? opts.groupIds.map(String).filter(Boolean) : [],
     ships,
     shipCount: ships.reduce((n, s) => n + (s.count || 1), 0),
-    uniqueShips: ships.length,
+    uniqueShips: uniqueHullCount(ships),
+    ownerCount: listOwners(ships).length,
     importedAt: now,
     updatedAt: now,
     sharedAt: null,
@@ -227,7 +485,8 @@ function setFleetShips (fleet, ships, opts = {}) {
     fleet.ships = next;
   }
   fleet.shipCount = fleet.ships.reduce((n, s) => n + (s.count || 1), 0);
-  fleet.uniqueShips = fleet.ships.length;
+  fleet.uniqueShips = uniqueHullCount(fleet.ships);
+  fleet.ownerCount = listOwners(fleet.ships).length;
   fleet.updatedAt = new Date().toISOString();
   // Custom edits diverge from the original canvas layout.
   if (fleet.source === 'starjump' && opts.replace !== false) {
@@ -240,7 +499,7 @@ function setFleetShips (fleet, ships, opts = {}) {
 /**
  * Add / set count / remove one ship line.
  * @param {object} fleet
- * @param {{ slug?: string, name?: string, variant?: string|null, count?: number, remove?: boolean }} op
+ * @param {{ slug?: string, name?: string, variant?: string|null, owner?: string|null, count?: number, remove?: boolean }} op
  */
 function applyShipOp (fleet, op = {}) {
   if (!fleet) throw new Error('fleet required');
@@ -254,7 +513,10 @@ function applyShipOp (fleet, op = {}) {
     throw err;
   }
   const variant = op.variant != null && String(op.variant).trim() ? String(op.variant).trim() : null;
-  const idx = ships.findIndex((s) => s.slug === slug && (s.variant || null) === variant);
+  const owner = sanitizeOwner(op.owner);
+  const idx = ships.findIndex((s) => s.slug === slug
+    && (s.variant || null) === variant
+    && (sanitizeOwner(s.owner) || null) === owner);
   if (op.remove === true || Number(op.count) === 0) {
     if (idx >= 0) ships.splice(idx, 1);
   } else {
@@ -263,6 +525,7 @@ function applyShipOp (fleet, op = {}) {
       slug,
       name: op.name || (known && known.name) || (idx >= 0 ? ships[idx].name : slug),
       variant,
+      owner,
       manufacturer: op.manufacturer || (known && known.manufacturer) || null,
       type: op.type || (known && known.type) || null,
       size: op.size || (known && known.size) || null,
@@ -282,7 +545,7 @@ function applyShipOp (fleet, op = {}) {
 /**
  * Parse a Starjump / FleetViewer JSON export into a fleet record.
  * @param {object|string} raw JSON object or string
- * @param {{ name?: string, ownerPubkey?: string|null, sourceFile?: string|null, visibility?: string, keepExport?: boolean, id?: string }} [opts]
+ * @param {{ name?: string, ownerPubkey?: string|null, owner?: string|null, sourceFile?: string|null, visibility?: string, keepExport?: boolean, id?: string }} [opts]
  */
 function parseStarjumpExport (raw, opts = {}) {
   let doc = raw;
@@ -299,7 +562,8 @@ function parseStarjumpExport (raw, opts = {}) {
     throw err;
   }
   const exportDoc = sanitizeExport(doc);
-  const ships = extractShips(exportDoc);
+  const owner = sanitizeOwner(opts.owner) || ownerFromSourceFile(opts.sourceFile);
+  const ships = extractShips(exportDoc, { owner });
   if (!ships.length) {
     const err = new Error('export contains no SHIP items');
     err.code = 'EMPTY_FLEET';
@@ -323,7 +587,8 @@ function parseStarjumpExport (raw, opts = {}) {
     groupIds: Array.isArray(opts.groupIds) ? opts.groupIds.map(String).filter(Boolean) : [],
     ships,
     shipCount: ships.reduce((n, s) => n + (s.count || 1), 0),
-    uniqueShips: ships.length,
+    uniqueShips: uniqueHullCount(ships),
+    ownerCount: listOwners(ships).length,
     importedAt: opts.importedAt || now,
     updatedAt: now,
     sharedAt: null,
@@ -342,6 +607,7 @@ function parseStarjumpExport (raw, opts = {}) {
  */
 function summarizeFleet (fleet) {
   if (!fleet || typeof fleet !== 'object') return null;
+  const ships = Array.isArray(fleet.ships) ? fleet.ships : [];
   return {
     id: fleet.id,
     type: fleet.type || 'GoonCitizenFleet',
@@ -351,9 +617,11 @@ function summarizeFleet (fleet) {
     sourceFile: fleet.sourceFile || null,
     visibility: sanitizeVisibility(fleet.visibility),
     groupIds: Array.isArray(fleet.groupIds) ? fleet.groupIds.slice() : [],
-    ships: Array.isArray(fleet.ships) ? fleet.ships : [],
-    shipCount: fleet.shipCount != null ? fleet.shipCount : (fleet.ships || []).reduce((n, s) => n + (s.count || 1), 0),
-    uniqueShips: fleet.uniqueShips != null ? fleet.uniqueShips : (fleet.ships || []).length,
+    ships,
+    shipCount: fleet.shipCount != null ? fleet.shipCount : ships.reduce((n, s) => n + (s.count || 1), 0),
+    uniqueShips: fleet.uniqueShips != null ? fleet.uniqueShips : uniqueHullCount(ships),
+    ownerCount: fleet.ownerCount != null ? fleet.ownerCount : listOwners(ships).length,
+    owners: listOwners(ships),
     importedAt: fleet.importedAt || null,
     updatedAt: fleet.updatedAt || null,
     sharedAt: fleet.sharedAt || null,
@@ -433,7 +701,8 @@ function fleetFromShareObject (object, sourcePubkey = null) {
     groupIds: Array.isArray(object.groupIds) ? object.groupIds.map(String).filter(Boolean) : [],
     ships,
     shipCount: ships.reduce((n, s) => n + (s.count || 1), 0),
-    uniqueShips: ships.length,
+    uniqueShips: uniqueHullCount(ships),
+    ownerCount: listOwners(ships).length,
     importedAt: object.sharedAt || now,
     updatedAt: now,
     sharedAt: object.sharedAt || now,
@@ -477,7 +746,14 @@ module.exports = {
   extractShips,
   sanitizeExport,
   sanitizeName,
+  sanitizeOwner,
   sanitizeVisibility,
+  ownerFromSourceFile,
+  shipLineKey,
+  uniqueHullCount,
+  listOwners,
+  consolidateShips,
+  filterSortShips,
   fleetIdFor,
   newFleetId,
   normalizeShipEntry,

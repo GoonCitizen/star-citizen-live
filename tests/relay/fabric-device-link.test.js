@@ -8,6 +8,7 @@ const Identity = require('@fabric/core/types/identity');
 const { parseFabricDeviceLinkUrl } = require('../../functions/fabricDeviceLinkProtocol');
 const {
   buildLinkMessage,
+  cancelDeviceLinkSession,
   completeDeviceLinkAsResponder,
   fetchPendingDeviceLink
 } = require('../../functions/fabricDeviceLinkClient');
@@ -105,5 +106,28 @@ describe('fabricDeviceLinkClient', () => {
     assert.equal(res.ok, true);
     assert.equal(res.status, 'pending');
     assert.equal(res.label, 'Hub');
+  });
+
+  it('treats HTTP 404 cancel as success', async () => {
+    const out = await cancelDeviceLinkSession('https://relay.goon.vc', 'aa'.repeat(24), {
+      fetchImpl: async () => ({
+        ok: false,
+        status: 404,
+        json: async () => ({ ok: false, error: 'unknown or expired device link' })
+      })
+    });
+    assert.equal(out.ok, true);
+    assert.equal(out.cancelled, true);
+  });
+
+  it('returns ok: false when fetchImpl rejects', async () => {
+    const out = await cancelDeviceLinkSession('https://relay.goon.vc', 'aa'.repeat(24), {
+      fetchImpl: async () => {
+        throw new Error('hub unreachable');
+      }
+    });
+    assert.equal(out.ok, false);
+    assert.equal(out.cancelled, false);
+    assert.match(String(out.error), /hub unreachable/);
   });
 });

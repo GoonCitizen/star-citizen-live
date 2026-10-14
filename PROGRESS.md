@@ -9,6 +9,267 @@ next. Each milestone closes with a short retro. Newest at the top.
 
 ---
 
+## When you fly on own profile
+**Date:** 2026-08-21 · branch `feature/rsi`
+
+The Home **When you fly** heatmap is now on the operator’s own profile
+(identity chip → **My profile**), visible only when viewing yourself. A
+**Publish when I fly** checkbox (`sharePlaytimes`, still default off) gossips
+the compact weekday×hour grid to Federation groups. Other profiles still show
+only a pack they opted to share. Identity / Peers inspect cards point at that
+profile instead of embedding the local heatmap.
+
+---
+
+## Group voice PTT rebind + overlay
+**Date:** 2026-08-21 · branch `feature/rsi`
+
+Chat ⚙ now has a **Voice** tab: enable/disable push-to-talk, rebind the hold
+key (default **Shift+Tab**). Desktop polls OS key state so PTT hold works while
+Star Citizen is focused. The primary-group overlay shows joined voice status
+and uses a more transparent panel so it does not cover the game.
+
+---
+
+## Group voice join (unlocked wallet vs FABRIC_XPRV)
+**Date:** 2026-08-21 · branch `feature/rsi`
+
+Join voice was 403 `forbidden: members only` for groups created from the
+dashboard whenever `FABRIC_XPRV` owned LiveRelay `_identity`. Create/Share use
+the unlocked wallet Bearer session (or `d.creator`); voice join used only the
+process key and skipped `Authorization`. Join now tries the session, the
+unlocked wallet pubkey, and the publishing identity (identity-cluster aware)
+and the Join control sends the same Bearer token as Groups/Chat.
+
+---
+
+## Group invitations (same Fabric message + destination key)
+**Date:** 2026-08-21 · branch `feature/rsi`
+
+Network GroupOffer / FederationContractInvite frames are the same signed AMP
+bytes as the clipboard `fabric:` clip (sign once, relay that Message). Direct
+invites set `inviteePubkey`: only that identity can ingest or Accept. Accept
+adds the member locally, publishes GroupChange (`via: FederationContractInvite`),
+and the inviter applies that change when they hold the matching outbound invite
+so roster + Statechain converge.
+
+---
+
+## Group voice (PTT + Hub WebRTC)
+**Date:** 2026-08-21 · branch `feature/rsi`
+
+Opt-in per Federation group (not the shoutbox). Join from Chat / Groups /
+the group page. Bottom-left **active voice** bar (mute, Shift+Tab PTT,
+deafen, leave) while joined. Presence is `GroupVoiceJoin` / `Leave` /
+`Speaking` on the group contract — not genesis, not Statechain. ICE/SDP goes
+to public Hub `https://hub.fabric.pub` (`RegisterWebRTCPeer` /
+`SendWebRTCSignal`, `fabric-webrtc-v2`). Audio is renderer `RTCPeerConnection`
+(Opus). LiveRelay does not host ICE. Discord voice remains a later bridge.
+
+---
+
+## Fabric Message parents (D-020)
+**Date:** 2026-08-20 · branch `feature/rsi`
+
+Durable outbound AMP frames now set header `parent` to the previous signed
+`Message.id` (`FabricNetwork._signMessage`). Ping, session, and peering stay
+genesis zeros. Inbound zeros still accepted. Log summaries expose `frameId` /
+`parent`; group journals store the same. Core `Tree` (`sortLeaves: true`) plus
+collection `merkleRoot` / `walkParentChain` give Bitcoin-style inclusion and
+adjacent-leaf non-inclusion proofs. Follow-up: per-journal tips, Hub/http
+originate, then fail-closed ingest once the mesh emits parents.
+
+---
+
+## Downstream intel desk (Groups as orgs, local.js)
+**Date:** 2026-08-16 · branch `feature/rsi`
+
+[`docs/INTELLIGENCE.md`](docs/INTELLIGENCE.md) — Federation Groups are the org;
+`settings/local.js` (`defaultGroupMessageId`, `name`, Discord as *your* bot,
+`fabric.peers`) is the whitelabel. Copy [`settings/example.js`](settings/example.js).
+
+---
+
+## Application basis doc (LiveRelay vs Hub)
+**Date:** 2026-08-16 · branch `feature/rsi`
+
+[`docs/APPLICATION.md`](docs/APPLICATION.md) catalogs the reusable artifacts
+(frozen genesis, Group Federation contracts, LiveRelay composition, login /
+device-link, packaging) so a second app or competing org starts here instead of
+subclassing Hub or a blank Peer. Linked from `DEVELOPERS.md`.
+
+---
+
+## Per-device sync inventory chips ✅
+**Date:** 2026-08-15 · branch `feature/rsi`
+
+The Devices page now shows counts on each paired card: notes, groups, local tags,
+chat, opted-in files, Game.log files (`history.meta.files`), missions, and
+sessions. This node's totals come from the Store + cumulative history; a sibling
+shows the last inbound `DeviceDataShare` (`account.stats` plus pack lengths).
+No Game.log lines ride the share — counts only. Snapshot field:
+`GET /identity/cluster/sync` `inventory.local` / `outbound` / `inbound`.
+
+## Dedicated Devices page + Hub WebRTC coordinator ✅
+**Date:** 2026-08-15 · branch `feature/rsi`
+
+Device-link has a dedicated **Devices** manager (`#devices`, `components/LinkedDevices.js`)
+on Android and desktop. Pairing stays `fabric://link`. After that, both sides must
+publish Fabric `IdentityCrossSign` (one-way shows **waiting-cross-sign** — that is
+why DeviceDataShare did not fire from a single gossip). Node LiveRelay then
+registers LAN `:7777` candidates on Hub `RegisterWebRTCPeer` (coordinator, not ICE)
+and TCP-dials allowlisted siblings from `ListWebRTCPeers`. Golden egg remains
+`DeviceDataShare` over the Fabric Protocol. Coordinator origin is
+`https://hub.fabric.pub` (`functions/clusterMesh.js`); `relay.goon.vc` stays pairing
+rendezvous. Tests: `tests/unit/clusterMesh.test.js`, `tests/unit/clusterDevices.test.js`,
+`tests/ui/linked-devices.test.js`.
+
+## Files disk upload + identity-cluster file sync ✅
+**Date:** 2026-08-15 · branch `feature/rsi`
+
+The Files create form accepts a disk picker in addition to the UTF-8 textarea
+(`contentBase64` POST, 32 MiB UI cap). Each local catalog row can **Sync to my
+devices** (`POST …/files/:id/cluster-sync`). That flag rides `DeviceDataShare`
+`account.files` as metadata only; bytes copy to other keys in the same identity
+cluster as `P2P_FILE_SEND` after LAN/advertise TCP lands. Not a public listing
+and not profile pin.
+
+## Cluster sync (DeviceDataShare + LAN dial + collection replay) ✅
+**Date:** 2026-08-15 · branch `feature/rsi`
+
+After identity-link, one actor's devices share account data as
+`DeviceDataShare` CONTRACT_MESSAGE frames inside a `FabricMessageCollection`
+(`functions/clusterSync.js`). The `account.peers` pack advertises RFC1918
+`host:port` plus `fabricAdvertiseHost` so a phone and desktop on the same LAN
+TCP-dial `:7777` (no /24 scan). Hub seeds still relay when NAT blocks LAN;
+Passport / Hub browser uses Hub WebRTC (`webrtc-hub` last). Session HTTP:
+`GET|POST /identity/cluster/sync`. Tests: `tests/unit/clusterSync.test.js`,
+`tests/relay/device-data-share.test.js`, `tests/relay/identity-cluster-http.test.js`.
+
+## Fabric Message collections (AMP hex replay) ✅
+**Date:** 2026-08-15 · branch `feature/rsi`
+
+Canonical share format for contract journals, Discord `GroupDataShare` packs,
+and peer catch-up is an ordered list of bit-identical AMP frames
+(`Message.toBuffer()` hex) — not JSON application objects. Core helper
+`@fabric/core/functions/fabricMessageCollection` (CLI `npm run messages`);
+GoonCitizen re-exports it, stores `hex` on the Fabric message ring, and
+exports `GET …/fabric/messages?format=collection`. Tests: core
+`tests/functions.fabricMessageCollection.js`, GoonCitizen
+`tests/unit/fabricMessageCollection.test.js`.
+
+## 🔒 Hosted HTTP privacy gates + suite test lock ✅
+**Date:** 2026-08-14 · branch `feature/rsi`
+
+Audit H1–H7 / M1–M6 on hosted `SC_MODE=server` are gated: missing session is
+anonymous (never `_identity.pubkey`); notes, local tags, Discord link, gameplay
+GETs, documents, snapshots, settings, offers, and private groups stay behind
+`_requireSession` / `_requestViewer`. `shareDiscordCatalog` defaults off.
+`/lookup` omits local tags. Non-loopback HTTP bind warns
+(`functions/httpBindWarning.js`). Tests: `tests/relay/privacy-http-auth.test.js`.
+Staged write-up: `reports/security-privacy-audit-2026-08-14.md` (not a commit).
+Suite PR-comment locks live in each repo’s `docs/OUTSTANDING.md`. Remaining:
+DirectChat / `P2P_FORWARD`, login redeem possession proof (http), mesh flood
+limits. Production HTTP must still be loopback-behind-Caddy.
+
+## 📣 Call for developers (G00N / PERMAFLEET / other orgs)
+**Date:** 2026-08-14 · branch `feature/rsi`
+
+Staged a public contributor call: [`DEVELOPERS.md`](DEVELOPERS.md) (GitHub
+[`CONTRIBUTING.md`](CONTRIBUTING.md) + issue templates). Two audiences — G00N
+SQUAD and PERMAFLEET to staff the node we fly; other orgs (including
+competitors) to fork, rebrand, and still speak Fabric. Not a ship list. PRs
+stay on `feature/rsi`.
+
+---
+
+## 🔗 Fabric pins after discord `eac4633` ✅
+**Date:** 2026-08-14 · branch `feature/rsi`
+
+`npm run report:install` against GitHub `feature/rsi`: core `488a87da1`
+([#185](https://github.com/FabricLabs/fabric/pull/185)), http `5161e76`, hub
+`4c1cd14` ([#15](https://github.com/FabricLabs/hub.fabric.pub/pull/15)), discord
+`eac4633` ([#2](https://github.com/FabricLabs/fabric-discord/pull/2): OAuth
+callback 501). Core / http / hub SHAs unchanged. Local IdentityCrossSign copy
+still matches core `_normPubkey`.
+
+## 🔗 Stale hub NIC `:7778` dials (live rsi-error.log) ✅
+**Date:** 2026-08-14 · branch `feature/rsi`
+
+Production RSI err log was mostly `ECONNREFUSED` to `65.21.231.149:7778` /
+`65.21.231.166:7778` (historical port plan), not a pm2 crash loop. Canonicalize
+now maps those dedicated IPs to `relay.goon.vc` / `hub.fabric.pub` on `:7777`
+and still drops self. Live snapshot: [downstream.agents.md](https://relay.goon.vc/downstream.agents.md).
+
+## 🔗 Fabric pins after Hub `4c1cd14` / http `5161e76` / core `488a87da1` ✅
+**Date:** 2026-08-14 · branch `feature/rsi`
+
+`npm run report:install` against GitHub `feature/rsi`: core `488a87da1`
+([#185](https://github.com/FabricLabs/fabric/pull/185)), http `5161e76`, hub
+`4c1cd14` ([#15](https://github.com/FabricLabs/hub.fabric.pub/pull/15)), discord
+`f8708e27`. Local IdentityCrossSign copy matches core `_normPubkey`. Hub cluster
+keys are hex-only.
+
+## 🔗 Fabric pins after Hub `da0d16f` / http `270ebbb` / core #185 ✅
+**Date:** 2026-08-14 · branch `feature/rsi`
+
+`npm run report:install` against GitHub `feature/rsi`: core `ab0acf77b`
+([#185](https://github.com/FabricLabs/fabric/pull/185)), http `270ebbb`, hub
+`da0d16f`, discord `f8708e27`. Dashboard keeps a local browser-safe
+IdentityCrossSign copy (core now ships the same strings). Device-link responder
+fetch uses http `deviceLinkHeaders`. Shared-mode write gate and production
+relay docs unchanged.
+
+## 🔗 Fabric pins after Hub / http / core RSI tips ✅
+**Date:** 2026-08-14 · branch `feature/rsi`
+
+`npm run report:install` against GitHub `feature/rsi`: core `4d7351ee3`, http
+`f88da9c`, hub `3cc43d1`, discord `f8708e27`. IdentityCrossSign stays local
+(core still omits those files). Shared-mode write gate and production relay
+docs unchanged.
+
+## 🔗 Public relay operators + server-mode Fabric Peer ✅
+**Date:** 2026-08-14 · branch `feature/rsi`
+
+`docs/PRODUCTION.md` (nvm 24.15 + pm2 + Caddy or Nginx) for `relay.goon.vc`. `SC_MODE=server`
+now keeps a Fabric Peer unless `SC_FABRIC=0`, seeds hubs minus self
+(`FABRIC_PUBLIC_HOST`), and binds HTTP loopback by default so Caddy/Nginx cannot inherit
+the unlocked-identity write path. Templates: `deploy/env.relay.goon.vc.example`,
+`deploy/ecosystem.config.cjs`, `deploy/Caddyfile.example`, `deploy/nginx-relay.example.conf`.
+
+## 🔗 Fabric pins + shared-mode write gate ✅
+**Date:** 2026-08-14 · branch `feature/rsi`
+
+Re-pin to suite tips Hub is running: core `39bfbcb7b`, http `17abf49`, hub
+`c4efe57`, discord `f8708e27`. Non-loopback `httpSharedMode` writes now require
+a Schnorr/Bearer session (`functions/httpRemoteAuth.js`) so LAN clients cannot
+speak as the unlocked identity. Loopback desktop path unchanged. Unauth GETs on
+a shared bind remain an information leak.
+
+## 🔗 Fabric pins + LiveRelay RSI cut ✅
+**Date:** 2026-08-13 · branch `feature/rsi`
+
+`npm i --allow-git=all` against GitHub `feature/rsi` tips: core `3745041e`, http
+`e167d8e`, hub `5441f838`, discord `f8708e27`. `functions/identityCluster.js`
+re-exports `@fabric/hub`; `identityCrossSign.js` stays local (browser-safe).
+`npm test` green (fabric + unit + relay + integration + ui). Playnet after Hub
+is up: `npm run playnet:deploy-gooncitizen -- --production --accept`.
+
+---
+
+## 📝 AGENTS.md sync — LiveRelay is what runs (docs) ✅
+**Date:** 2026-08-13 · branch `feature/rsi`
+
+Evaluated multi-repo “release posture” AGENTS updates. Highest leverage was local:
+`AGENTS.md` §4/§10 still pointed at a deleted **`app/`** Fabric-free skeleton and
+claimed Fabric was gone, while §3 already described LiveRelay + Fabric Peer.
+Surgical fix: Release posture block, §4 structure → `LiveRelay` / `functions/parser`,
+softened §5 milestones, deps convention, §10 ground truths (D-002 vs D-009/D-010),
+and `REVIEW.md` dated findings. Hub/core AGENTS rewrites deferred. **Owner still
+needs to name the release cut** before AGENTS can list real ship blockers.
+
+---
+
 ## 🔎 Sourced issuer→type fallback — type-"Other" 45% → 14% ✅
 **Date:** 2026-06-19 · branch `feature/faction-dimension`
 

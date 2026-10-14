@@ -1,12 +1,13 @@
 'use strict';
 
 /**
- * Chat DocumentPublish attachments — Hub-aligned wire encoding.
+ * Chat DocumentPublish attachments — local catalog + wire encoding.
  *
- * Global `P2P_CHAT_MESSAGE` is UTF-8 text only, so priced file shares ride a
- * magic first line (`fabric-doc:{…json…}`) plus an optional caption. Group /
- * DM may also carry a structured `attachment` field; the wire line stays the
- * source of truth for id convergence.
+ * Files live on this node (`functions/localDocuments.js`). Global
+ * `P2P_CHAT_MESSAGE` is UTF-8 text only, so priced shares ride a magic first
+ * line (`fabric-doc:{…json…}`) plus an optional caption. Discord / bridged
+ * channels get the caption only (the bot relays as itself); the Fabric
+ * ChatMessage keeps the `fabric-doc:` line.
  *
  * Default list price matches Hub DocumentView (`DEFAULT_PUBLISH_PRICE_SATS`).
  */
@@ -19,13 +20,18 @@ const WIRE_PREFIX = 'fabric-doc:';
 const SLASH_COMMANDS = [
   {
     cmd: '/file',
-    hint: 'Attach a file (publish to inventory on send)',
+    hint: 'Attach a file (this node\'s catalog)',
     action: 'attach'
   },
   {
     cmd: '/price',
     hint: 'Set download fee in sats for the next attach (default 25)',
     action: 'price'
+  },
+  {
+    cmd: '/lookup',
+    hint: 'Master lookup report — players, groups, fleets, peers, Discord (race to answer)',
+    action: 'lookup'
   },
   {
     cmd: '/help',
@@ -66,7 +72,6 @@ function normalizeAttachment (raw) {
     purchasePriceSats,
     sealed
   };
-  if (raw.hub) out.hub = String(raw.hub).slice(0, 256);
   if (raw.size != null && Number.isFinite(Number(raw.size))) out.size = Number(raw.size);
   return out;
 }
@@ -138,6 +143,21 @@ function messageAttachment (message) {
   return normalizeAttachment(message.attachment) || decodeWireBody(message.body).attachment;
 }
 
+/**
+ * Plain-text Discord caption (no fabric-doc wire). The bot relays this as itself.
+ * @param {string} [body]
+ * @param {object} [attachment]
+ * @returns {string}
+ */
+function discordCaptionForAttach (body, attachment) {
+  const caption = String(body || '').trim();
+  const att = normalizeAttachment(attachment);
+  if (!att) return caption;
+  const tag = '📎 ' + att.name;
+  if (!caption || caption === tag) return tag;
+  return (caption + '\n' + tag).slice(0, 1800);
+}
+
 function defaultAttachPriceSats (settings = {}) {
   const d = (settings && settings.documents) || {};
   if (d.defaultPriceSats != null && Number.isFinite(Number(d.defaultPriceSats))) {
@@ -159,5 +179,6 @@ module.exports = {
   decodeWireBody,
   displayCaption,
   messageAttachment,
+  discordCaptionForAttach,
   defaultAttachPriceSats
 };

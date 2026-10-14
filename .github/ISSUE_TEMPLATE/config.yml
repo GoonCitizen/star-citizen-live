@@ -1,0 +1,17 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Call for developers
+    url: https://github.com/GoonCitizen/star-citizen-live/blob/feature/rsi/DEVELOPERS.md
+    about: G00N SQUAD, PERMAFLEET, and other orgs — contribute, fork, or run your own node.
+  - name: Application basis (fork / second app)
+    url: https://github.com/GoonCitizen/star-citizen-live/blob/feature/rsi/docs/APPLICATION.md
+    about: Why start from LiveRelay (contracts, Groups, login) rather than Hub or a blank Peer.
+  - name: Intelligence desk / whitelabel
+    url: https://github.com/GoonCitizen/star-citizen-live/blob/feature/rsi/docs/INTELLIGENCE.md
+    about: Groups as orgs. Copy settings/example.js → local.js (gitignored).
+  - name: Public relay operators
+    url: https://github.com/GoonCitizen/star-citizen-live/blob/feature/rsi/docs/PRODUCTION.md
+    about: Host a Fabric seed (nvm, pm2, Caddy or Nginx). Do not copy another operator’s NIC.
+  - name: Current product surface
+    url: https://github.com/GoonCitizen/star-citizen-live/blob/feature/rsi/AGENTS.md
+    about: What actually runs (LiveRelay + Fabric Peer). Prefer §3–§4 over the README body.

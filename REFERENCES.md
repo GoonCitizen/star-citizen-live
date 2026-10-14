@@ -4,6 +4,10 @@ tooling** we can draw on for this project's goals (log relay → Discord/API, mi
 register + officer validation, mission-type classification, player-down/combat
 signals, metrics, cross-platform packaging, friendly-name enrichment).
 
+To run or fork **this** tree (G00N SQUAD, PERMAFLEET, other orgs), start at
+[`DEVELOPERS.md`](DEVELOPERS.md). This catalog is for borrowing ideas, not a
+second product.
+
 > **Verify before you borrow.** Licences below are unconfirmed unless noted — check
 > each repo's LICENSE before copying code (MIT/Apache/BSD = reusable with notice;
 > GPL/AGPL = copyleft, treat as *ideas only*; none = ideas only). Also check the last
@@ -45,7 +49,7 @@ signals, metrics, cross-platform packaging, friendly-name enrichment).
 | [dolkensp/unp4k](https://github.com/dolkensp/unp4k) | C# | **tool** | Extracts `Data.p4k` (global.ini, DataForge). The local, durable way to map mission/ship codenames → names. |
 | [Dymerz/StarCitizen-GameData](https://github.com/Dymerz/StarCitizen-GameData) | C# | **tool/data** | Converts game data XML → JSON/SQL — turns DataForge into a usable lookup table. |
 | [StarCitizenWiki/API](https://github.com/StarCitizenWiki/API) | PHP | **live API** | Scraped game data + public API (ships, missions). Enrichment source (community-run → fragility caveat). |
-| [Dymerz/RSI-Scraper](https://github.com/Dymerz/RSI-Scraper) | Python | idea | Scrape RSI org members/fleet — roster import. |
+| [Dymerz/RSI-Scraper](https://github.com/Dymerz/RSI-Scraper) | Python | idea | Scrape RSI org members/fleet — roster import. Local: `functions/rsiLookup.js` fetches public `/orgs/<SID>` + `/citizens/<handle>` HTML for basic fields (group `rsiTag`, profile `scHandle`). |
 | [dolkensp/Spectrum.Net](https://github.com/dolkensp/Spectrum.Net) | C# | idea | RSI Spectrum API wrapper — identity/integration idea. |
 | UEXcorp API · SCMDB (non-GitHub) | — | live API | Trade/contract catalogs (from earlier research). |
 

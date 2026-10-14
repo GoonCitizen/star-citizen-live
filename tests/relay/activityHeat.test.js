@@ -43,6 +43,14 @@ test('resolveHeatcells uses aggregate heat or rebuilds for a player', () => {
   const scoped = activityHeat.resolveHeatcells(analytics, { player: 'Neorion' });
   assert.ok(scoped.length >= 1);
   assert.strictEqual(scoped.reduce((s, c) => s + c.n, 0), 1);
+
+  analytics.missions[1].source = '02peer';
+  analytics.missions[0].source = 'local';
+  const localOnly = activityHeat.resolveHeatcells(analytics, {
+    rebuild: true,
+    keep: (row) => !row.source || row.source === 'local'
+  });
+  assert.strictEqual(localOnly.reduce((s, c) => s + c.n, 0), 1);
 });
 
 test('renderHeatSvg returns empty or SVG', () => {

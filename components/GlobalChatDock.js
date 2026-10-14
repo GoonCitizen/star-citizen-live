@@ -1,12 +1,13 @@
 'use strict';
 
 /**
- * Always-available global chat dock + desktop notification watcher.
+ * Always-available public mesh shoutbox dock + desktop notification watcher.
  *
  * The dedicated Chat tab remains the full channel browser (global + groups).
- * This dock keeps the network `global` channel one click away on every other
- * tab, and polls for new messages so desktop notifications can fire per
- * operator settings (Settings → Desktop notifications).
+ * This dock keeps the network `global` channel (cleartext `P2P_CHAT_MESSAGE`
+ * flood) one click away on every other tab, and polls for new messages so
+ * desktop notifications can fire per operator settings
+ * (Settings → Desktop notifications).
  */
 
 const React = require('react');
@@ -23,7 +24,7 @@ const LS_ACKED = 'gc.chatDock.acked';
 const LS_NOTIFIED = 'gc.chatNotify.seen';
 
 const CSS = `
-  .gcdock{position:fixed;right:16px;bottom:16px;z-index:30;width:min(380px,calc(100vw - 28px));
+  .gcdock{position:fixed;right:16px;bottom:var(--chrome-inset,16px);z-index:30;width:min(380px,calc(100vw - 28px));
     font-family:inherit;pointer-events:none}
   .gcdock *{pointer-events:auto}
   .gcdock-toggle{display:flex;align-items:center;gap:8px;width:100%;background:var(--panel);
@@ -130,7 +131,9 @@ class GlobalChatDock extends React.Component {
     this._acked = loadIdMap(LS_ACKED);       // dock unread cursor
     this._notified = loadIdMap(LS_NOTIFIED); // OS notification cursor
     this._bootstrapped = false;
-    this._focused = typeof document !== 'undefined' ? document.hasFocus() : true;
+    this._focused = (typeof document !== 'undefined' && typeof document.hasFocus === 'function')
+      ? document.hasFocus()
+      : true;
     this._onFocus = () => { this._focused = true; };
     this._onBlur = () => { this._focused = false; };
   }
@@ -171,9 +174,28 @@ class GlobalChatDock extends React.Component {
     });
   }
 
+  _authHeaders (extra) {
+    const h = Object.assign({ Accept: 'application/json' }, extra || {});
+    const tok = this.props && this.props.authToken;
+    if (tok) {
+      h.Authorization = 'Bearer ' + tok;
+      return h;
+    }
+    try {
+      const { readStoredSiteLoginToken } = require('../functions/goonCitizenClientEnvironment');
+      const t = readStoredSiteLoginToken();
+      if (t) h.Authorization = 'Bearer ' + t;
+    } catch (_) { /* ignore */ }
+    return h;
+  }
+
   async loadPrefs () {
     try {
-      const res = await fetch('/settings').then((r) => r.json());
+      const res = await fetch('/settings', { headers: this._authHeaders() }).then((r) => {
+        if (!r.ok) return null;
+        return r.json();
+      });
+      if (!res) return;
       const s = res.settings || {};
       this.setState({
         notifyPrefs: {
@@ -194,7 +216,9 @@ class GlobalChatDock extends React.Component {
 
   async refreshGlobal () {
     try {
-      const msgRes = await fetch(`${BASE}/chat/messages?channel=global&limit=80`).then((r) => r.json());
+      const msgRes = await fetch(`${BASE}/chat/messages?channel=global&limit=80`, {
+        headers: this._authHeaders()
+      }).then((r) => r.json());
       const messages = msgRes.data || [];
       const el = this._msgsRef.current;
       const pinned = el && (el.scrollHeight - el.scrollTop - el.clientHeight < 60);
@@ -224,7 +248,7 @@ class GlobalChatDock extends React.Component {
     const suppressOs = !prefs.notifyDesktop || (this._focused && !prefs.notifyWhenFocused);
 
     try {
-      const chRes = await fetch(`${BASE}/chat/channels`).then((r) => r.json());
+      const chRes = await fetch(`${BASE}/chat/channels`, { headers: this._authHeaders() }).then((r) => r.json());
       const channels = (chRes.data || []).filter((ch) => {
         if (ch.kind === 'global') return prefs.notifyChatGlobal !== false;
         if (ch.kind === 'group') return prefs.notifyChatGroups !== false;
@@ -233,7 +257,8 @@ class GlobalChatDock extends React.Component {
 
       for (const ch of channels) {
         const msgRes = await fetch(
-          `${BASE}/chat/messages?channel=${encodeURIComponent(ch.key)}&limit=30`
+          `${BASE}/chat/messages?channel=${encodeURIComponent(ch.key)}&limit=30`,
+          { headers: this._authHeaders() }
         ).then((r) => r.json());
         const messages = msgRes.data || [];
         if (!messages.length) continue;
@@ -251,7 +276,7 @@ class GlobalChatDock extends React.Component {
 
         for (const m of fresh.slice(-3)) {
           const who = m.handle || shortKey(m.author);
-          const label = ch.kind === 'global' ? 'Global chat' : (ch.label || 'Group chat');
+          const label = ch.kind === 'global' ? 'Public shoutbox' : (ch.label || 'Group chat');
           const body = String(m.body || '').slice(0, 180);
           await showDesktopNotification({
             title: `${label} · ${who}`,
@@ -280,9 +305,6 @@ class GlobalChatDock extends React.Component {
         body: body || (pending ? `📎 ${pending.name}` : '')
       };
       if (pending) {
-        if (this.props.documentsEnable === false) {
-          throw new Error('File attach requires settings.documents.enable');
-        }
         payload.file = {
           name: pending.name,
           mime: pending.mime,
@@ -293,7 +315,7 @@ class GlobalChatDock extends React.Component {
       }
       const res = await fetch(`${BASE}/chat/messages`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: this._authHeaders({ 'Content-Type': 'application/json' }),
         body: JSON.stringify(payload)
       });
       const json = await res.json();
@@ -307,10 +329,6 @@ class GlobalChatDock extends React.Component {
   }
 
   openFilePicker () {
-    if (this.props.documentsEnable === false) {
-      this.setState({ error: 'Enable settings.documents.enable to attach files' });
-      return;
-    }
     const el = this._fileRef.current;
     if (el) el.click();
   }
@@ -349,7 +367,7 @@ class GlobalChatDock extends React.Component {
           className: 'gcdock-toggle',
           onClick: () => this.setOpen(true)
         },
-        React.createElement('span', null, '💬 Global chat'),
+        React.createElement('span', null, '💬 Public shoutbox'),
         this.state.unread
           ? React.createElement('span', { className: 'badge' }, this.state.unread > 99 ? '99+' : this.state.unread)
           : null,
@@ -361,8 +379,8 @@ class GlobalChatDock extends React.Component {
     return React.createElement('div', { className: 'gcdock' },
       React.createElement('div', { className: 'gcdock-panel' },
         React.createElement('div', { className: 'gcdock-head' },
-          React.createElement('span', null, '💬 Global'),
-          React.createElement('span', { className: 'sub' }, 'always on · network'),
+          React.createElement('span', null, '💬 Public shoutbox'),
+          React.createElement('span', { className: 'sub' }, 'cleartext mesh · always on'),
           React.createElement('button', {
             type: 'button',
             title: 'Open full Chat (global + groups)',
@@ -378,9 +396,16 @@ class GlobalChatDock extends React.Component {
           this.state.messages.length
             ? this.state.messages.map((m) => React.createElement('div', { className: 'gcdock-msg', key: m.id },
               React.createElement('div', { className: 'm' },
-                React.createElement('span', { className: 'who' + (me && m.author === me ? ' me' : '') },
-                  m.handle || shortKey(m.author)),
-                React.createElement('span', { className: 'key', title: m.author }, shortKey(m.author)),
+                React.createElement('span', {
+                  className: 'who' + (me && m.author === me ? ' me' : ''),
+                  title: m.author || undefined
+                },
+                m.handle || shortKey(m.author)),
+                // Only show the muted key chip when a nickname is present —
+                // otherwise who already is the short pubkey.
+                (m.handle && String(m.handle).trim())
+                  ? React.createElement('span', { className: 'key', title: m.author }, shortKey(m.author))
+                  : null,
                 React.createElement('span', { className: 't' }, shortTime(m.ts))
               ),
               React.createElement('div', { className: 'b' }, displayCaption(m)),
@@ -425,7 +450,7 @@ class GlobalChatDock extends React.Component {
             value: this.state.draft,
             placeholder: me
               ? ('Message as ' + (this.props.nickname || shortKey(me)) + '…')
-              : 'Unlock identity to chat…',
+              : 'Unlock identity (Desktop / Passport) to chat…',
             onChange: (e) => this.setState({ draft: e.target.value }),
             onKeyDown: (e) => { if (e.key === 'Enter') this.send(); }
           }),

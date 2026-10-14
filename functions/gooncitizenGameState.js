@@ -39,16 +39,20 @@ function buildGameStateSnapshot (history, opts = {}) {
   const counts = cumulativeHistory.cumulativeCounts(h);
   const missions = (h.missions || []).slice(-MAX_MISSIONS).map((m) => ({
     id: m.id || null,
+    missionId: m.missionId || null,
     type: m.type || null,
     faction: m.faction || null,
     outcome: m.outcome || null,
     player: m.player || null,
-    ts: m.ts || null
+    ts: m.ts || null,
+    source: m.source || null
   }));
   const deaths = (h.deaths || []).slice(-MAX_DEATHS).map((d) => ({
     id: d.id || null,
     player: d.player || null,
-    ts: d.ts || null
+    ts: d.ts || null,
+    bodyId: d.bodyId || null,
+    source: d.source || null
   }));
 
   const body = {
@@ -168,7 +172,8 @@ function mergeSnapshotIntoHistory (history, index, snap, sourcePubkey) {
     if (cumulativeHistory.applyEvent(history, index, ev, {
       handle: m.player || handleHint,
       generators: {},
-      countHeat: false
+      countHeat: false,
+      source: sourcePubkey || 'peer'
     })) changed = true;
   }
   for (const d of snap.deaths || []) {
@@ -178,10 +183,13 @@ function mergeSnapshotIntoHistory (history, index, snap, sourcePubkey) {
       timestamp: d.ts,
       player: d.player,
       bodyId: d.bodyId || null
-    }, { handle: d.player, countHeat: false })) changed = true;
+    }, { handle: d.player, countHeat: false, source: sourcePubkey || 'peer' })) changed = true;
   }
   for (const p of snap.pilots || []) {
-    if (cumulativeHistory.applyEvent(history, index, { kind: 'player:login', handle: p }, { countHeat: false })) {
+    if (cumulativeHistory.applyEvent(history, index, { kind: 'player:login', handle: p }, {
+      countHeat: false,
+      source: sourcePubkey || 'peer'
+    })) {
       changed = true;
     }
   }

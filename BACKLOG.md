@@ -4,6 +4,10 @@ Parked ideas not yet scheduled. Each notes *what*, *why*, and an honest
 limits well — see `sc-log` findings in `PROGRESS.md` / memory). Promote to a
 milestone in `PROGRESS.md` when picked up.
 
+To send a patch or run a node instead of parking an idea, see
+[`DEVELOPERS.md`](DEVELOPERS.md). Parser honesty still applies here: do not
+invent log formats.
+
 ---
 
 ## B-001 — Op participation & loot-split metrics (time-on-site, time-on-mission, ship used)

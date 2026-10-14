@@ -1,9 +1,9 @@
 'use strict';
 
 /**
- * Hub Document Exchange proxy for GoonCitizen LiveRelay.
- * Calls Hub JSON-RPC (`POST /services/rpc`) for list / create / publish /
- * purchase / claim. Reuses hubRequest from hubBitcoinProxy.
+ * Document runtime flags for GoonCitizen LiveRelay.
+ * The Files catalog is always this node (`functions/localDocuments.js`).
+ * Legacy Hub JSON-RPC helpers below are unused by the catalog path.
  */
 
 const hubBitcoinProxy = require('./hubBitcoinProxy');
@@ -16,12 +16,17 @@ function normalizeHubBase (hub) {
 
 function documentsRuntimeForSettings (settings = {}) {
   const d = (settings && settings.documents) || {};
-  const b = (settings && settings.bitcoin) || {};
   const chatAttachment = require('./chatAttachment');
   return {
     enable: d.enable === true,
-    hub: normalizeHubBase(d.hub || b.hub || DEFAULT_HUB),
-    defaultPriceSats: chatAttachment.defaultAttachPriceSats(settings)
+    local: true,
+    defaultPriceSats: chatAttachment.defaultAttachPriceSats(settings),
+    satsPerKiB: d.satsPerKiB != null && Number.isFinite(Number(d.satsPerKiB))
+      ? Math.max(0, Number(d.satsPerKiB))
+      : 1,
+    satsPerByte: d.satsPerByte != null && Number.isFinite(Number(d.satsPerByte))
+      ? Math.max(0, Number(d.satsPerByte))
+      : null
   };
 }
 

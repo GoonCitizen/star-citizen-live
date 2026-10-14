@@ -11,7 +11,7 @@ const FEATURES = {
   // Wallet tab; runtime settings.bitcoin.enable can still hide it when false.
   wallet: true,
   // Files tab (advanced UI); runtime settings.documents.enable + Advanced mode.
-  // Chat 📎 attach uses the same documents.enable flag for all users.
+  // Chat 📎 attach uses the same local catalog (always, not a remote Hub).
   documents: true,
   library: false
 };

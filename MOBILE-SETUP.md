@@ -3,6 +3,9 @@ This project syncs between computers through **GitHub**. One machine *pushes*
 (uploads) changes; the other *pulls* (downloads) them. As long as you do that,
 all your machines stay in sync.
 
+This is **not** the Android APK — that is [`ANDROID.md`](ANDROID.md). Contributor
+call: [`DEVELOPERS.md`](DEVELOPERS.md).
+
 > **Golden rule:** _pull before you start, push before you walk away._
 
 ---
@@ -25,9 +28,10 @@ npm install -g @anthropic-ai/claude-code
 
 ### 3. Clone this repo and install dependencies
 ```bash
-git clone -b feature/fabric-free-m1 https://github.com/Neorion/star-citizen-live.git
+git clone -b feature/rsi https://github.com/GoonCitizen/star-citizen-live.git
 cd star-citizen-live
-npm install
+# Node.js 24.15.0 — see .nvmrc
+npm i
 ```
 
 ### 4. Launch Claude inside the project

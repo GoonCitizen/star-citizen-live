@@ -161,3 +161,69 @@ test('broadcast over Fabric reaches a peer; Accept applies and Ignore dismisses'
     fs.rmSync(localDir, { recursive: true, force: true });
   }
 });
+
+test('mission Share copies opaque fabric: clip; Import ingests MissionBroadcast offer', async () => {
+  const alice = createIdentity();
+  const bob = createIdentity();
+  const aliceDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sc-ms-a-'));
+  const bobDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sc-ms-b-'));
+
+  const aliceNode = new LiveRelay({
+    port: 0,
+    missions: { enable: true },
+    settingsDir: aliceDir,
+    peers: [],
+    fabric: { enable: false, listen: false, peers: [] }
+  });
+  const bobNode = new LiveRelay({
+    port: 0,
+    missions: { enable: true },
+    settingsDir: bobDir,
+    peers: [],
+    fabric: { enable: false, listen: false, peers: [] }
+  });
+
+  try {
+    await aliceNode.start();
+    await bobNode.start();
+    aliceNode.setIdentity(alice);
+    bobNode.setIdentity(bob);
+    const alicePort = aliceNode.server.address().port;
+    const bobPort = bobNode.server.address().port;
+    const aliceToken = await login(alicePort, alice);
+    const bobToken = await login(bobPort, bob);
+
+    const created = await request(alicePort, 'POST', `${BASE}/missions`, {
+      title: 'Clipboard bounty',
+      reward: 2500,
+      createdBy: alice.pubkey
+    }, aliceToken);
+    assert.strictEqual(created.status, 200, JSON.stringify(created.body));
+    const missionId = created.body.data.id;
+
+    const shared = await request(alicePort, 'POST', `${BASE}/missions/${missionId}/share`, {
+      relay: false
+    }, aliceToken);
+    assert.strictEqual(shared.status, 200, JSON.stringify(shared.body));
+    assert.strictEqual(shared.body.data.kind, 'MissionBroadcast');
+    assert.ok(shared.body.data.protocolUrl);
+    assert.match(shared.body.data.protocolUrl, /^fabric:/);
+    assert.ok(shared.body.data.expiresAt);
+
+    const ingest = await request(bobPort, 'POST', `${BASE}/groups/share/ingest`, {
+      protocolUrl: shared.body.data.protocolUrl
+    }, bobToken);
+    assert.strictEqual(ingest.status, 200, JSON.stringify(ingest.body));
+    assert.strictEqual(ingest.body.data.kind, 'MissionBroadcast');
+    assert.strictEqual(ingest.body.data.missionId, missionId);
+    assert.strictEqual(ingest.body.data.pending, true);
+
+    const pending = bobNode._listMissionBroadcasts({ pendingOnly: true });
+    assert.ok(pending.some((b) => b.missionId === missionId && b.status === 'pending'));
+  } finally {
+    await aliceNode.stop();
+    await bobNode.stop();
+    fs.rmSync(aliceDir, { recursive: true, force: true });
+    fs.rmSync(bobDir, { recursive: true, force: true });
+  }
+});

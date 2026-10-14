@@ -41,7 +41,11 @@ describe('group roles + taproot spend ladder', () => {
       validators: [alice.pubkey, bob.pubkey],
       threshold: 2
     };
-    const a1 = groupTaprootWallet(base, { network: 'regtest' }).address;
+    const w1 = groupTaprootWallet(base, { network: 'regtest' });
+    assert.equal(w1.mode, 'taproot');
+    assert.equal(w1.treasury.role, 'alliance-treasury');
+    assert.equal(w1.treasury.custody, 'org-node');
+    const a1 = w1.address;
     const withReader = Object.assign({}, base, {
       members: [alice.pubkey, bob.pubkey, carol.pubkey],
       validators: [alice.pubkey, bob.pubkey]

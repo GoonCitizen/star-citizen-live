@@ -1,7 +1,7 @@
 'use strict';
 
 /**
- * Activity heatmap helpers shared by Home ("When you fly") and player profiles.
+ * Activity heatmap helpers shared by the operator profile ("When you fly") and peer profiles.
  * Cells are { ym, d, h, n } — Monday-first weekday index (0–6), hour 0–23.
  */
 
@@ -36,16 +36,19 @@ function heatcellsFromEvents (events, opts = {}) {
 }
 
 /**
- * Collect heatcells from an analytics payload, optionally scoped to one pilot.
- * When `player` is set, rebuild from event streams (aggregate heat has no player).
+ * Collect heatcells from an analytics payload, optionally scoped to one pilot
+ * or a keep() predicate (rebuild from local-origin rows for "My logs").
+ * When `player` or `rebuild` is set, rebuild from event streams (aggregate heat
+ * has no player / provenance).
  * @param {object|null} analytics
- * @param {{ player?: string|null, months?: Set<string>|null }} [opts]
+ * @param {{ player?: string|null, months?: Set<string>|null, rebuild?: boolean, keep?: function }} [opts]
  */
 function resolveHeatcells (analytics, opts = {}) {
   const player = opts.player ? String(opts.player) : null;
+  const rebuild = !!(player || opts.rebuild);
   let cells;
-  if (player && analytics) {
-    const streams = [].concat(
+  if (rebuild && analytics) {
+    let streams = [].concat(
       analytics.missions || [],
       analytics.sessions || [],
       analytics.deaths || [],
@@ -53,6 +56,7 @@ function resolveHeatcells (analytics, opts = {}) {
       analytics.incap || [],
       analytics.crimestat || []
     );
+    if (typeof opts.keep === 'function') streams = streams.filter(opts.keep);
     cells = heatcellsFromEvents(streams, { player });
   } else {
     cells = Array.isArray(analytics && analytics.heatcells) ? analytics.heatcells.slice() : [];

@@ -11,3 +11,6 @@
 See **[AGENTS.md](./AGENTS.md)** for: what this project is, build/run/test
 commands, project structure, the REST API, current state, conventions, secrets
 handling, the documentation map, and how to move work between Claude Code and Codex.
+
+Human contributors (G00N SQUAD, PERMAFLEET, other orgs) start at
+**[DEVELOPERS.md](./DEVELOPERS.md)**.

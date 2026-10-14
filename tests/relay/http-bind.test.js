@@ -133,3 +133,24 @@ test('relay without shared mode binds 127.0.0.1', async () => {
   assert.ok(addr.address === '127.0.0.1' || addr.address === '::ffff:127.0.0.1' || addr.address === '::1');
   await svc.stop();
 });
+
+test('shared-mode LAN writes do not inherit the unlocked identity', () => {
+  const { createIdentity } = require('../../functions/identity');
+  const id = createIdentity();
+  const svc = new LiveRelay({
+    port: 0,
+    peers: [],
+    fabric: { enable: false },
+    discord: { enable: false }
+  });
+  svc._httpSharedMode = true;
+  svc._identity = { pubkey: id.pubkey };
+  const lan = { socket: { remoteAddress: '192.168.1.50' }, headers: {} };
+  const loop = { socket: { remoteAddress: '127.0.0.1' }, headers: {} };
+  assert.strictEqual(svc._enforceRemoteAuth(lan), true);
+  assert.strictEqual(svc._enforceRemoteAuth(loop), false);
+  assert.strictEqual(svc._actor(lan, 'spoof'), null);
+  assert.strictEqual(svc._actor(loop, 'spoof'), 'spoof');
+  assert.strictEqual(svc._operatorActor(lan), null);
+  assert.strictEqual(svc._operatorActor(loop), id.pubkey);
+});

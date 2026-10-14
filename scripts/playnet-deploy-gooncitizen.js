@@ -7,15 +7,17 @@
  * that shells here — prefer running from this tree.
  *
  * Usage:
- *   npm run playnet:deploy-gooncitizen -- [--accept] [--hub <url>] [peer…]
+ *   npm run playnet:deploy-gooncitizen -- [--accept] [--production] [--hub <url>] [peer…]
  *   npm run publish:gooncitizen -- …   (alias)
  *
  * Env:
  *   FABRIC_XPRV                 preferred operator key (same across Fabric suite)
- *   FABRIC_SEED / FABRIC_MNEMONIC  BIP39 alternative (or xprv string in FABRIC_SEED)
+ *   FABRIC_SEED                 raw BIP32 seed hex (legacy: mnemonic or xprv string)
+ *   FABRIC_MNEMONIC             BIP39 phrase
  *   FABRIC_HUB_RPC_URL          default http://127.0.0.1:8080
- *   FABRIC_HUB_ADMIN_TOKEN      required for --accept
+ *   FABRIC_HUB_ADMIN_TOKEN      optional --accept fallback (else mint from operator key / ~/.fabric/hub-admin-token)
  *   FABRIC_PLAYNET_PEERS
+ *   FABRIC_PLAYNET_PRODUCTION=1   same as --production (hub.fabric.pub + relay.goon.vc)
  */
 
 const path = require('path');
@@ -27,23 +29,46 @@ const {
 } = require('../contracts/gooncitizen');
 const {
   loadPeerKeySettings,
-  loadAdminToken,
+  listAcceptAdminTokenCandidates,
+  classifyPlaynetPosture,
+  planLocalHubRegistryTakeover,
+  assertLocalRegistryTakeoverSafe,
+  preflightOperatorAlignment,
+  acceptTrackedWithTokenCascade,
   hubRpcBase,
+  productionPlaynetTarget,
+  LOCAL_HUB_HTTP_DEFAULT,
+  LOCAL_HUB_PEER_DEFAULT,
   hubRpc,
   playnetPeers,
   waitForPeerConnections
 } = require('../functions/playnetDeploy');
+const {
+  loadRepoDotEnv,
+  loadFabricHomeEnv
+} = require('../functions/fabricEnvIdentity');
+
+loadRepoDotEnv();
+loadFabricHomeEnv();
 
 function printHelp () {
   console.log(`Usage:
-  npm run playnet:deploy-gooncitizen -- [--accept] [--hub <url>] [--hold-ms <n>] [peer…]
+  npm run playnet:deploy-gooncitizen -- [--accept] [--hub <url>] [--production] [--hold-ms <n>] [peer…]
 
   --accept           Call AcceptTrackedApplicationContract after publish
   --hub <url>        Hub HTTP base (default FABRIC_HUB_RPC_URL / http://127.0.0.1:8080)
+  --production       Target https://hub.fabric.pub and hub.fabric.pub:7777,relay.goon.vc:7777
+                     Local machine uses the same FABRIC_XPRV config as Hub (operator publish).
+  --local-registry   Local Hub takes over as playnet registry: Accept only on loopback
+                     Hub HTTP; Fabric peers prefer 127.0.0.1:7777 and omit hub.fabric.pub.
   --hold-ms <n>      Keep peer up after publish (default 4000)
   --check-only       Skip publish; only print contract id + ListTracked status
+  --adversary        Mark posture adversarial (does not change targets; for probes/CI)
 
-Env: FABRIC_XPRV (preferred), FABRIC_SEED / FABRIC_MNEMONIC, FABRIC_HUB_ADMIN_TOKEN, FABRIC_PLAYNET_PEERS
+Env: FABRIC_XPRV (preferred), FABRIC_SEED / FABRIC_MNEMONIC. --accept tries Hub
+     admin tokens in order: FABRIC_HUB_ADMIN_TOKEN / ~/.fabric/hub-admin-token,
+     then mint from operator FABRIC_XPRV (same key as Hub _rootKey when aligned).
+     FABRIC_PLAYNET_PEERS, FABRIC_PLAYNET_PRODUCTION=1
 `);
 }
 
@@ -88,6 +113,10 @@ async function main () {
 
   let doAccept = false;
   let checkOnly = false;
+  let localRegistry = process.env.FABRIC_PLAYNET_LOCAL_REGISTRY === '1' ||
+    process.env.FABRIC_PLAYNET_LOCAL_REGISTRY === 'true';
+  let production = process.env.FABRIC_PLAYNET_PRODUCTION === '1' ||
+    process.env.FABRIC_PLAYNET_PRODUCTION === 'true';
   let hubUrl = hubRpcBase();
   let holdMs = Number(process.env.FABRIC_DEPLOY_HOLD_MS || 4000);
   const positional = [];
@@ -96,6 +125,9 @@ async function main () {
     const a = argv[i];
     if (a === '--accept') doAccept = true;
     else if (a === '--check-only') checkOnly = true;
+    else if (a === '--production') production = true;
+    else if (a === '--local-registry') localRegistry = true;
+    else if (a === '--adversary') { /* classified via classifyPlaynetPosture(argv) */ }
     else if (a === '--hub') hubUrl = String(argv[++i] || '').replace(/\/$/, '');
     else if (a === '--hold-ms') holdMs = Number(argv[++i] || holdMs);
     else if (!a.startsWith('-')) positional.push(a);
@@ -104,6 +136,59 @@ async function main () {
       printHelp();
       process.exit(1);
     }
+  }
+
+  let registryPlan = null;
+  if (localRegistry) {
+    registryPlan = planLocalHubRegistryTakeover({
+      argv,
+      hubUrl: (hubUrl && hubUrl !== hubRpcBase()) ? hubUrl : LOCAL_HUB_HTTP_DEFAULT,
+      localPeer: LOCAL_HUB_PEER_DEFAULT,
+      includeRelay: true,
+      extraPeers: positional
+    });
+    assertLocalRegistryTakeoverSafe(registryPlan);
+    hubUrl = registryPlan.registryHubUrl;
+    if (!positional.length) positional.push(...registryPlan.fabricPeers);
+    console.log('[playnet:deploy] local-registry takeover', {
+      hub: registryPlan.registryHubUrl,
+      peers: registryPlan.fabricPeers,
+      acceptAllowed: registryPlan.accept.allowed,
+      steps: registryPlan.steps.length
+    });
+  } else if (production) {
+    const prod = productionPlaynetTarget();
+    if (!process.env.FABRIC_HUB_RPC_URL && !process.env.FABRIC_HUB_URL &&
+        hubUrl === hubRpcBase()) {
+      hubUrl = prod.hubUrl;
+    }
+    if (!positional.length && !process.env.FABRIC_PLAYNET_PEERS &&
+        !process.env.FABRIC_FLUSH_PEERS) {
+      positional.push(...prod.peers);
+    }
+  }
+
+  const peers = playnetPeers(positional);
+  const posture = classifyPlaynetPosture({
+    argv,
+    script: 'deploy',
+    peers,
+    httpTarget: hubUrl
+  });
+  console.log('[playnet:deploy] posture', {
+    posture: posture.posture,
+    treatAsOperatorPublish: posture.treatAsOperatorPublish,
+    treatAsAdversary: posture.treatAsAdversary,
+    reasons: posture.reasons
+  });
+  if (posture.posture === 'ambiguous') {
+    console.warn('[playnet:deploy] ambiguous posture — treating as operator publish (local config = production publisher)');
+  }
+  if (posture.treatAsAdversary && !posture.treatAsOperatorPublish) {
+    throw new Error('Refusing deploy in adversary posture. Drop --adversary / ADV_PRODUCTION, or use scripts/adversary-local-probe.js');
+  }
+  if (localRegistry && registryPlan) {
+    assertLocalRegistryTakeoverSafe(Object.assign({}, registryPlan, { posture }));
   }
 
   const gc = loadContract();
@@ -126,7 +211,18 @@ async function main () {
     throw new Error('FABRIC_XPRV (preferred) or FABRIC_SEED / FABRIC_MNEMONIC required');
   }
 
-  const peers = playnetPeers(positional);
+  const alignment = await preflightOperatorAlignment(peerKey, { baseUrl: hubUrl });
+  console.log('[playnet:deploy] operator alignment', {
+    aligned: alignment.aligned,
+    known: alignment.known,
+    local: alignment.localPubkeyPrefix,
+    hub: alignment.hubPubkeyPrefix,
+    error: alignment.error || undefined
+  });
+  if (alignment.known && !alignment.aligned) {
+    console.warn('[playnet:deploy] local FABRIC_XPRV pubkey ≠ Hub network identity — Accept will try stored Hub admin token before mint');
+  }
+
   const peer = new Peer({
     listen: false,
     networking: true,
@@ -165,6 +261,10 @@ async function main () {
   }
   console.log('[playnet:deploy] CONTRACT_PUBLISH sent', { contractId: gc.contractId, peers: conns.length });
 
+  const acceptCandidates = doAccept
+    ? listAcceptAdminTokenCandidates(peerKey, { derivedKey: peer.key, persist: true })
+    : [];
+
   await new Promise((r) => setTimeout(r, holdMs));
   await peer.stop();
 
@@ -173,15 +273,27 @@ async function main () {
   console.log('[playnet:deploy] tracked after publish', summarizeTracked(mid, gc.contractId));
 
   if (doAccept) {
-    const token = loadAdminToken();
-    if (!token) {
-      throw new Error('--accept requires FABRIC_HUB_ADMIN_TOKEN');
+    if (!acceptCandidates.length) {
+      throw new Error('--accept needs FABRIC_XPRV (to mint) or FABRIC_HUB_ADMIN_TOKEN');
     }
-    const accept = await hubRpc('AcceptTrackedApplicationContract', {
+    console.log('[playnet:deploy] accept candidates', acceptCandidates.map((c) => ({
+      source: c.source,
+      pubkey: c.pubkeyPrefix
+    })));
+    const accepted = await acceptTrackedWithTokenCascade({
       contractId: gc.contractId,
-      adminToken: token
-    }, { baseUrl: hubUrl });
-    console.log('[playnet:deploy] AcceptTrackedApplicationContract', accept);
+      baseUrl: hubUrl,
+      candidates: acceptCandidates
+    });
+    console.log('[playnet:deploy] AcceptTrackedApplicationContract', {
+      ok: accepted.ok,
+      source: accepted.source || null,
+      attempts: accepted.attempts,
+      result: accepted.accept || null
+    });
+    if (!accepted.ok) {
+      throw new Error(accepted.error || 'AcceptTrackedApplicationContract failed');
+    }
 
     try {
       const side = await hubRpc('GetContractSidechainState', { contractId: gc.contractId }, { baseUrl: hubUrl });

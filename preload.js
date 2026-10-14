@@ -27,6 +27,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
     importBackup: (backup, password, replace) => ipcRenderer.invoke('identity:import-backup', { backup, password, replace }),
     setAutoLock: (minutes) => ipcRenderer.invoke('identity:set-autolock', { minutes }),
     forget: (confirm) => ipcRenderer.invoke('identity:forget', { confirm: !!confirm }),
+    startDeviceLinkOffer: (opts) => ipcRenderer.invoke('identity:device-link-start', opts || {}),
+    tickDeviceLinkOffer: () => ipcRenderer.invoke('identity:device-link-tick'),
+    cancelDeviceLinkOffer: () => ipcRenderer.invoke('identity:device-link-cancel'),
+    openProtocolUrl: (url) => ipcRenderer.invoke('identity:open-protocol-url', url),
     onChanged: (handler) => {
       const listener = (_e, summary) => handler(summary);
       ipcRenderer.on('identity:changed', listener);
@@ -35,7 +39,13 @@ contextBridge.exposeInMainWorld('electronAPI', {
   },
   /** Fabric mesh publish helpers (prefer over HTTP when available). */
   fabric: {
-    deliveryReceipt: (opts) => ipcRenderer.invoke('fabric:delivery-receipt', opts || {})
+    deliveryReceipt: (opts) => ipcRenderer.invoke('fabric:delivery-receipt', opts || {}),
+    publishCrossSign: (opts) => ipcRenderer.invoke('fabric:publish-cross-sign', opts || {}),
+    identityCluster: (opts) => ipcRenderer.invoke('fabric:identity-cluster', opts || {}),
+    presenceStatus: () => ipcRenderer.invoke('fabric:presence-status'),
+    presenceRoster: () => ipcRenderer.invoke('fabric:presence-roster'),
+    setPresence: (patch) => ipcRenderer.invoke('fabric:presence-set', patch || {}),
+    setPresenceShip: (opts) => ipcRenderer.invoke('fabric:presence-ship', opts || {})
   },
   notify: (payload) => ipcRenderer.invoke('notify:show', payload || {}),
   onNotifyAction: (handler) => {
@@ -67,6 +77,15 @@ contextBridge.exposeInMainWorld('electronAPI', {
     },
     pullPending: () => ipcRenderer.invoke('fabric-group-share:pull-pending'),
     resolve: (opts) => ipcRenderer.invoke('fabric-group-share:resolve', opts || {})
+  },
+  /** Group voice PTT — OS key-state poll so hold works while the game is focused. */
+  voice: {
+    setPttBind: (bind) => ipcRenderer.invoke('voice:set-ptt-bind', bind || {}),
+    onPtt: (handler) => {
+      const listener = (_e, held) => handler(held);
+      ipcRenderer.on('voice:ptt', listener);
+      return () => ipcRenderer.removeListener('voice:ptt', listener);
+    }
   },
   /** Native OS pickers for importing log folders/files / selecting Game.log. */
   dialog: {

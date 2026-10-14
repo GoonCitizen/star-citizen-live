@@ -66,6 +66,7 @@ describe('discordContract', () => {
     assert.strictEqual(winningClaim(sameTimeA, sameTimeB).claimantPubkey, 'aa');
     assert.ok(claimIsActive(early, Date.parse(early.claimedAt) + 1000));
     assert.ok(!claimIsActive(early, Date.parse(early.claimedAt) + 60000));
+    assert.strictEqual(requestFromDiscordActivity({ type: 'DiscordMessage', object: {}, target: {} }), null);
   });
 
   it('builds claim/response and auditor sequence trees', () => {

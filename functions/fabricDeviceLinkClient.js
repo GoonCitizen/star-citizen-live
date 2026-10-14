@@ -6,7 +6,7 @@
  */
 
 const { keyFromIdentity } = require('./identity');
-const { fabricLoginRequestHeaders } = require('./fabricProtocolLogin');
+const { deviceLinkHeaders } = require('@fabric/http/functions/fabricDeviceLinkClient');
 const {
   buildFabricIdentitySignedPayload
 } = require('@fabric/http/functions/fabricSiteLoginVerify');
@@ -15,11 +15,50 @@ const {
   buildDeviceLinkMessage
 } = require('@fabric/http/functions/fabricDeviceLinkMessages');
 
+/**
+ * Drop a pending hub session. 404 / already-gone is success so Cancel is always
+ * safe. Fetch rejection is `ok: false` — the remote row may still exist (it ages
+ * out on SESSION_TTL_MS). Callers drop the local QR / overlay themselves.
+ */
+async function cancelDeviceLinkSession (hubBase, sessionId, opts = {}) {
+  const fetchImpl = opts.fetchImpl || globalThis.fetch;
+  const base = String(hubBase || '').replace(/\/$/, '');
+  const sid = String(sessionId || '').trim();
+  if (!base || !sid) return { ok: true, skipped: true };
+  const origin = String(opts.origin || base).trim().replace(/\/$/, '');
+  try {
+    const res = await fetchImpl(`${base}/device-links/${encodeURIComponent(sid)}`, {
+      method: 'DELETE',
+      headers: deviceLinkHeaders(origin, { pollSecret: opts.pollSecret }),
+      cache: 'no-store'
+    });
+    const data = await res.json().catch(() => ({}));
+    if (res.status === 404 || (res.ok && data && data.ok !== false)) {
+      return {
+        ...data,
+        ok: true,
+        cancelled: true,
+        existed: !!(data && data.existed)
+      };
+    }
+    if (res.status === 409) {
+      return { ok: true, cancelled: false, alreadyLinked: true };
+    }
+    return { ok: false, status: res.status, error: (data && data.error) || `HTTP ${res.status}` };
+  } catch (err) {
+    return {
+      ok: false,
+      cancelled: false,
+      error: (err && err.message) ? String(err.message) : 'cancel failed'
+    };
+  }
+}
+
 async function fetchPendingDeviceLink (hubBase, sessionId, opts = {}) {
   const fetchImpl = opts.fetchImpl || globalThis.fetch;
   const base = String(hubBase || '').replace(/\/$/, '');
   const res = await fetchImpl(`${base}/device-links/${encodeURIComponent(sessionId)}`, {
-    headers: fabricLoginRequestHeaders(base),
+    headers: deviceLinkHeaders(base),
     cache: 'no-store'
   });
   const data = await res.json().catch(() => ({}));
@@ -70,7 +109,7 @@ async function completeDeviceLinkAsResponder (identity, hubBase, session, opts =
   const base = String(hubBase || '').replace(/\/$/, '');
   const res = await fetchImpl(`${base}/device-links/${encodeURIComponent(session.sessionId)}/signatures`, {
     method: 'POST',
-    headers: fabricLoginRequestHeaders(base),
+    headers: deviceLinkHeaders(base),
     body: JSON.stringify({
       role: 'responder',
       signature: body.signature,
@@ -88,6 +127,7 @@ async function completeDeviceLinkAsResponder (identity, hubBase, session, opts =
     ...data,
     peerFabricId: session.initiator.id,
     peerXpub: session.initiator.xpub,
+    peerPubkeyHex: (session.initiator && session.initiator.pubkeyHex) || null,
     label: session.label
   };
 }
@@ -95,7 +135,9 @@ async function completeDeviceLinkAsResponder (identity, hubBase, session, opts =
 module.exports = {
   fetchPendingDeviceLink,
   completeDeviceLinkAsResponder,
+  cancelDeviceLinkSession,
   buildLinkMessage: buildDeviceLinkMessage,
   buildDeviceLinkMessage,
-  DEVICE_LINK_PREFIX
+  DEVICE_LINK_PREFIX,
+  deviceLinkHeaders
 };

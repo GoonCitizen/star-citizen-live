@@ -21,6 +21,7 @@ const {
   parsePeerDialInput,
   copyPeeringString
 } = require('../functions/peerPeeringString');
+const { androidSurface } = require('../functions/androidSurface');
 
 const CSS = `
   .pr-wrap{width:100%;max-width:none;margin:0;padding:12px 14px;display:grid;gap:16px;box-sizing:border-box}
@@ -56,6 +57,11 @@ const CSS = `
   .pr-tag.warn{background:rgba(210,153,34,.18);color:#d29922}
   .pr-tag.primary{background:rgba(56,139,253,.18);color:#58a6ff}
   .pr-tag.mut{background:rgba(110,118,129,.14);color:var(--muted);font-weight:600}
+  .pr-share{display:flex;flex-wrap:wrap;align-items:flex-start;gap:10px;margin-top:12px;padding:10px 12px;border:1px solid var(--line);border-radius:8px}
+  .pr-share.off{background:rgba(210,153,34,.1)}
+  .pr-share.on{background:rgba(63,185,80,.1)}
+  .pr-share .copy{flex:1;min-width:16em;font-size:12.5px;line-height:1.45}
+  .pr-share .copy .sub{display:block;margin-top:3px;color:var(--muted);font-size:12px}
   .pr-conns{margin-top:10px;font-size:11.5px;color:var(--muted)}
   .pr-conns code{color:var(--text);font-size:11px}
   .pr-hubs{display:grid;gap:8px;margin-top:10px}
@@ -117,7 +123,9 @@ class Peers extends React.Component {
       const [peersRes, settingsRes, observeRes] = await Promise.all([
         fetch('/peers').then((r) => (r.ok ? r.json() : Promise.reject(new Error(`HTTP ${r.status}`)))),
         fetch('/settings').then((r) => (r.ok ? r.json() : { runtime: {} })),
-        fetch('/network/observe').then((r) => (r.ok ? r.json() : null)).catch(() => null)
+        androidSurface('hubObserve')
+          ? fetch('/network/observe').then((r) => (r.ok ? r.json() : null)).catch(() => null)
+          : Promise.resolve(null)
       ]);
       const next = {
         loading: false,
@@ -224,6 +232,25 @@ class Peers extends React.Component {
     this.setState({ busy: true, error: null });
     try {
       await this.putSetting('broadcastPeering', next);
+      this.setState({ busy: false });
+      await this.load();
+    } catch (e) {
+      this.setState({ busy: false, error: e.message });
+    }
+  }
+
+  async toggleShareLogsGlobal () {
+    if (this.state.busy) return;
+    const next = !(this.state.runtime && this.state.runtime.shareLogsGlobal);
+    if (next && typeof window !== 'undefined' && window.confirm &&
+        !window.confirm(
+          'Share parsed Game.log activity with every connected Fabric peer?\n\nThis node always keeps a full local copy for analysis. Prefer per-peer “Share logs” below when you only trust specific nodes.'
+        )) {
+      return;
+    }
+    this.setState({ busy: true, error: null });
+    try {
+      await this.putSetting('shareLogsGlobal', next);
       this.setState({ busy: false });
       await this.load();
     } catch (e) {
@@ -441,30 +468,56 @@ class Peers extends React.Component {
               ? React.createElement('div', { className: 'pr-hint' },
                 'Linked device: ', d.linkedDevice.label || d.linkedDevice.peerFabricId)
               : null,
-            this.renderProfileActivity(d)
+            this.renderProfileActivity(d),
+            this.renderProfileFiles(d)
           )
       )
     );
   }
 
   renderProfileActivity (d) {
-    const show = this.props.showProfileActivity !== false &&
-      ActivityHeatmap.readShowProfileActivity();
-    if (!show || !d) return null;
-    const handle = (d.profile && d.profile.scHandle) || null;
-    if (!d.self && !handle) {
-      return React.createElement('div', { className: 'pr-hint' },
-        'No Star Citizen handle on this profile — activity graph needs a handle match in local history.');
+    if (!d) return null;
+    if (d.self) {
+      if (!androidSurface('heatmap')) return null;
+      const pk = d.pubkey;
+      return React.createElement('div', { className: 'pr-hint', style: { marginTop: 10 } },
+        'When you fly lives on ',
+        pk
+          ? React.createElement('a', { href: '/profiles/' + encodeURIComponent(pk) }, 'your profile')
+          : 'your profile',
+        ' (identity chip → My profile) — open it to view the heatmap and publish it to Federation groups.');
+    }
+    const cells = d.playtimes && Array.isArray(d.playtimes.cells) ? d.playtimes.cells : null;
+    if (!cells || !cells.length) {
+      return React.createElement('div', { className: 'pr-hint', style: { marginTop: 10 } },
+        'This player has not shared when they fly.');
     }
     return React.createElement(ActivityHeatmap, {
-      title: d.self ? 'When you fly' : 'When they fly (local history)',
-      subtitle: d.self
-        ? 'Your cumulative activity heatmap (Home → When you fly).'
-        : `Filtered to handle ${handle} from this machine’s cumulative logs — not remote telemetry.`,
-      analytics: this.props.analytics || null,
-      // Self: aggregate local heat. Peers: rebuild from events matching their SC handle.
-      player: d.self ? null : handle
+      title: 'When they fly',
+      subtitle: 'Common fly times shared with a Federation group.',
+      heatcells: cells
     });
+  }
+
+  renderProfileFiles (d) {
+    if (!d || d.self) return null;
+    const files = d.files && Array.isArray(d.files.files) ? d.files.files : null;
+    if (!files || !files.length) {
+      return React.createElement('div', { className: 'pr-hint', style: { marginTop: 10 } },
+        'This player has not pinned files to their profile.');
+    }
+    return React.createElement('div', { style: { marginTop: 10 } },
+      React.createElement('div', { className: 'pr-hint' }, 'Files pinned to their profile.'),
+      React.createElement('ul', { style: { margin: '6px 0 0', paddingLeft: 18, fontSize: 13 } },
+        files.slice(0, 12).map((f) => React.createElement('li', { key: f.id || f.name },
+          React.createElement('a', {
+            href: f.href || (f.id ? ('/files/' + encodeURIComponent(f.id)) : '#'),
+            style: { color: 'inherit' }
+          }, f.name || 'file'),
+          f.purchasePriceSats ? (' · ' + f.purchasePriceSats + ' sats') : ''
+        ))
+      )
+    );
   }
 
   render () {
@@ -511,6 +564,25 @@ class Peers extends React.Component {
             React.createElement('span', { className: 'pr-tag ' + (rt.uplinkActive ? 'on' : 'off') },
               rt.uplinkActive ? `event queue · ${rt.uplinkQueued || 0}` : 'event queue idle')
           ),
+          androidSurface('logShare')
+            ? React.createElement('div', {
+              className: 'pr-share ' + (shareActive ? 'on' : 'off')
+            },
+              React.createElement('div', { className: 'copy' },
+                shareActive
+                  ? 'Sharing parsed Game.log activity with the mesh.'
+                  : 'Game logs stay on this node.',
+                React.createElement('span', { className: 'sub' },
+                  'Always accumulated locally for analysis. Incoming shared logs from peers land in All logs. Per-peer “Share logs” below is the narrower grant.')
+              ),
+              React.createElement('button', {
+                type: 'button',
+                className: 'pr-btn ' + (shareActive ? 'ghost' : ''),
+                disabled: this.state.busy || !this.state.editable || !unlocked,
+                onClick: () => this.toggleShareLogsGlobal()
+              }, shareGlobal ? 'Sharing on' : 'Share with mesh')
+            )
+            : null,
           unlocked
             ? React.createElement('div', { className: 'pr-conns' },
               React.createElement('div', { className: 'pr-row', style: { marginTop: 0 } },
@@ -602,7 +674,7 @@ class Peers extends React.Component {
             : null
         )
       ),
-      this.renderObserve(),
+      androidSurface('hubObserve') ? this.renderObserve() : null,
       React.createElement('div', { className: 'pr-panel' },
         React.createElement('h2', null, `Connected peers (${this.state.peers.length})`),
         React.createElement('div', { className: 'body' },
@@ -657,10 +729,11 @@ class Peers extends React.Component {
                           ? React.createElement('span', null, 'last activity ' + String(p.lastSeen).slice(11, 19))
                           : null))
                   ),
-                  React.createElement('label', {
-                    className: 'share-row',
-                    onClick: (e) => e.stopPropagation()
-                  },
+                  androidSurface('logShare')
+                    ? React.createElement('label', {
+                      className: 'share-row',
+                      onClick: (e) => e.stopPropagation()
+                    },
                     React.createElement('input', {
                       type: 'checkbox',
                       checked: !!p.shareLogs,
@@ -670,6 +743,7 @@ class Peers extends React.Component {
                     shareGlobal
                       ? 'Share logs (covered by global setting)'
                       : 'Share my parsed game logs with this peer')
+                    : null
                 ),
                 React.createElement('div', { className: 'actions' },
                   React.createElement('button', {
@@ -711,14 +785,16 @@ class Peers extends React.Component {
               style: { flex: '1 1 120px' },
               onChange: (e) => this.setState({ newPeerLabel: e.target.value })
             }),
-            React.createElement('label', { className: 'share-new' },
-              React.createElement('input', {
-                type: 'checkbox',
-                checked: this.state.newPeerShareLogs,
-                onChange: (e) => this.setState({ newPeerShareLogs: e.target.checked })
-              }),
-              'Share logs'
-            ),
+            androidSurface('logShare')
+              ? React.createElement('label', { className: 'share-new' },
+                React.createElement('input', {
+                  type: 'checkbox',
+                  checked: this.state.newPeerShareLogs,
+                  onChange: (e) => this.setState({ newPeerShareLogs: e.target.checked })
+                }),
+                'Share logs'
+              )
+              : null,
             React.createElement('button', {
               className: 'pr-btn',
               disabled: !parsePeerDialInput(this.state.newPeerUrl.trim()) || this.state.busy,

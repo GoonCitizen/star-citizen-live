@@ -91,6 +91,17 @@ describe('Fabric expectations: fabricPubkey + chat normalize', () => {
     assert.equal(ChatManager.canonicalChatAuthor(key.pubkey), x);
     const n = httpChat.normalizeP2pChatMessage({ text: 'ping' }, { signer: key.pubkey });
     assert.equal(n.actor.id, x);
+    assert.equal(httpChat.chatTextOf({ text: 'mesh' }), 'mesh');
+    assert.equal(httpChat.chatTextOf({ object: { content: 'hub' } }), 'hub');
+    const gcChat = require('../../functions/fabricChatNormalize');
+    assert.equal(gcChat.chatTextOf({ object: { body: 'app' } }), 'app');
+    const coreChat = require('@fabric/core/functions/fabricChatText');
+    // Nested `@fabric/http` may load its own `@fabric/core` copy after
+    // `report:install`; shoutbox text must still match the app-root pin.
+    assert.equal(coreChat.chatTextOf({ text: 'mesh' }), 'mesh');
+    assert.equal(coreChat.chatTextOf({ object: { content: 'hub' } }), 'hub');
+    assert.equal(gcChat.chatTextOf({ text: 'mesh' }), 'mesh');
+    assert.equal(gcChat.chatTextOf({ object: { content: 'hub' } }), 'hub');
   });
 });
 

@@ -56,7 +56,15 @@ function kindLabel (kind) {
     GroupChangeProposal: 'proposal',
     GroupChangeVote: 'vote',
     GroupIngest: 'received',
-    GroupCreated: 'created'
+    GroupCreated: 'created',
+    LocalGroupCreate: 'local tag',
+    LocalGroupMemberAdd: 'tagged',
+    LocalGroupMemberRemove: 'untagged',
+    LocalGroupDelete: 'tag deleted',
+    LocalGroupRename: 'tag renamed',
+    IdentityNote: 'note',
+    IdentityNoteUpdate: 'note update',
+    NoteShare: 'note share'
   };
   return map[kind] || (kind || 'event');
 }

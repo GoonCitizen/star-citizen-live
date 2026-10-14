@@ -11,6 +11,8 @@ const LiveRelay = require('../../services/LiveRelay');
 const FabricNetwork = require('../../services/FabricNetwork');
 const { createIdentity } = require('../../functions/identity');
 const { gooncitizenContractId } = require('../../contracts/gooncitizen');
+const settingsStore = require('../../functions/settingsStore');
+const { Store } = require('../../types/Store');
 
 const BASE = '/services/star-citizen';
 
@@ -495,5 +497,62 @@ test('publishing chat with nickname set does not re-enter ensureFabric', async (
   } finally {
     await svc.stop();
     fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('hosted server mode with fabric.enable runs a Peer and skips self seed', async () => {
+  const alice = createIdentity();
+  const port = fabricPort();
+  const dir = tmpDir('sc-fab-server-');
+  const store = new Store({ path: path.join(dir, 'register') });
+  await store.start();
+  settingsStore.putSetting(store, 'fabricAdvertiseHost', 'relay.goon.vc');
+  const svc = new LiveRelay({
+    port: 0,
+    mode: 'server',
+    settingsDir: dir,
+    store,
+    peers: [
+      { address: 'hub.fabric.pub:7777', enabled: false },
+      { address: 'relay.goon.vc:7777', enabled: true }
+    ],
+    fabric: { enable: true, listen: true, port, interface: '127.0.0.1' },
+    missions: { enable: false }
+  });
+  svc.setIdentity(alice);
+  await svc.start();
+  try {
+    assert.strictEqual(svc.settings.fabric.enable, true);
+    await waitFor(() => svc.fabricNetwork && svc.fabricNetwork.ready);
+    const addrs = svc.peers.map((p) => p.address);
+    assert.ok(addrs.includes('hub.fabric.pub:7777'), `expected hub seed, got ${addrs.join(',')}`);
+    assert.ok(!addrs.includes('relay.goon.vc:7777'), 'must not self-dial the public hostname');
+    const httpPort = svc.server.address().port;
+    const unauth = await request(httpPort, 'POST', `${BASE}/chat/messages`, {
+      channel: 'global',
+      body: 'nope'
+    });
+    assert.ok(unauth.status === 401 || unauth.status === 403, `expected 401/403, got ${unauth.status}`);
+  } finally {
+    await svc.stop();
+    await store.stop();
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('hosted server mode leaves Fabric down when fabric.enable is false', async () => {
+  const svc = new LiveRelay({
+    port: 0,
+    mode: 'server',
+    peers: [],
+    fabric: { enable: false },
+    missions: { enable: false }
+  });
+  await svc.start();
+  try {
+    assert.strictEqual(svc.settings.fabric.enable, false);
+    assert.ok(!svc.fabricNetwork || svc.fabricNetwork.settings.enable === false);
+  } finally {
+    await svc.stop();
   }
 });

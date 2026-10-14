@@ -2,10 +2,11 @@
 
 > **Status:** Design. Implements **D-005**. Plain-English summary lives in
 > `SOLUTION-BRIEF.md`; this is the technical plan.
-> **Builds on:** `services/MissionManager.js` (stub interface), `app/server.js`
-> (REST + collections + events), `types/Mission.js` (crypto/multisig, used at M6).
+> **Builds on:** `services/MissionManager.js` (the live register — not the retired
+> `app/server.js` path). Crypto/multisig types remain in `types/Mission.js`.
 > **Principle:** centralized, **officer-validated**; the log relay is *evidence*,
 > never proof (D-005). Zero new runtime deps where possible.
+> **Contributors:** [`DEVELOPERS.md`](DEVELOPERS.md). What runs: [`AGENTS.md`](AGENTS.md) §3.
 
 ---
 

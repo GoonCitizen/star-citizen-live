@@ -6,6 +6,10 @@
  */
 
 const React = require('react');
+const PubkeyEmoji = require('./PubkeyEmoji');
+const {
+  DEVICE_LINK_APPROVE_TIMEOUT_MS
+} = require('../functions/deviceLinkLifecycle');
 
 const CSS = `
   .fl-overlay{position:fixed;inset:0;z-index:60;background:rgba(8,10,14,.8);
@@ -28,6 +32,16 @@ const CSS = `
   .fl-err{background:rgba(248,81,73,.12);color:var(--kill);border-radius:7px;padding:8px 11px;font-size:12.5px;margin-top:10px}
   .fl-warn{background:rgba(210,153,34,.12);color:var(--warn);border-radius:7px;padding:9px 12px;font-size:12.5px;line-height:1.5;margin-bottom:10px}
 `;
+
+function withTimeout (promise, ms, message) {
+  let timer;
+  const timeout = new Promise((_, reject) => {
+    timer = setTimeout(() => reject(new Error(message)), ms);
+  });
+  return Promise.race([promise, timeout]).finally(() => {
+    if (timer) clearTimeout(timer);
+  });
+}
 
 function short (s, n = 20) {
   const t = String(s || '');
@@ -53,7 +67,9 @@ class FabricLoginModal extends React.Component {
       this._unsub = api.onPrompt((payload) => this._setPrompt(payload));
     }
     if (typeof api.pullPending === 'function') {
-      void api.pullPending().then((p) => this._setPrompt(p)).catch(() => {});
+      void api.pullPending().then((p) => {
+        if (p && p.sessionId) this._setPrompt(p);
+      }).catch(() => {});
     }
   }
 
@@ -62,7 +78,10 @@ class FabricLoginModal extends React.Component {
   }
 
   _setPrompt (payload) {
-    if (!payload || !payload.sessionId) return;
+    if (!payload || !payload.sessionId) {
+      this.setState({ prompt: null, error: null, busy: false });
+      return;
+    }
     this.setState({ prompt: payload, error: null, busy: false });
   }
 
@@ -73,7 +92,14 @@ class FabricLoginModal extends React.Component {
     if (!api || typeof api.resolve !== 'function') return;
     this.setState({ busy: true, error: null });
     try {
-      const res = await api.resolve({ approve: !!approve, sessionId: prompt.sessionId });
+      const work = api.resolve({ approve: !!approve, sessionId: prompt.sessionId });
+      const res = approve
+        ? await withTimeout(
+          work,
+          DEVICE_LINK_APPROVE_TIMEOUT_MS,
+          'Hub did not answer. Dismiss and scan a fresh QR.'
+        )
+        : await work;
       if (!approve) {
         this.setState({ prompt: null, busy: false });
         return;
@@ -95,6 +121,7 @@ class FabricLoginModal extends React.Component {
     const origin = prompt.origin || prompt.hubBase || '';
     const locked = !!prompt.identityLocked;
     const peerId = prompt.initiator && prompt.initiator.id;
+    const shownError = error || prompt.error;
 
     return React.createElement(React.Fragment, null,
       React.createElement('style', null, CSS),
@@ -105,8 +132,12 @@ class FabricLoginModal extends React.Component {
           React.createElement('div', { className: 'fl-body' },
             React.createElement('p', null,
               isLink
-                ? 'Another Fabric app wants a mutual identity link (separate seeds, dual Schnorr). Approve only if you started this on the other device.'
-                : 'A site is asking GoonCitizen to prove your Fabric identity. Approve only if you started this login.'),
+                ? 'Another Fabric app wants a mutual identity link (separate seeds). Match the emoji with the QR screen on the other device, then approve. Chat and account data sync over Fabric after that.'
+                : 'A website is asking this app to prove your Fabric identity (Passport and GoonCitizen are interchangeable here). This does not link a new device. Approve only if you started this login.'),
+            React.createElement('p', { className: 'muted' },
+              isLink
+                ? ('Purpose: device link · Hub: ' + (origin || 'unknown'))
+                : ('Purpose: site login · Hub: ' + (origin || 'unknown'))),
             locked
               ? React.createElement('div', { className: 'fl-warn' },
                 'Your identity is locked. Unlock it in Settings / Identity, then approve again (or reopen the link).')
@@ -114,6 +145,12 @@ class FabricLoginModal extends React.Component {
             React.createElement('div', { className: 'fl-kv' },
               React.createElement('b', null, isLink ? 'Hub' : 'Site'),
               React.createElement('div', null, origin || '—')),
+            isLink
+              ? React.createElement(PubkeyEmoji, {
+                from: prompt,
+                label: 'These emoji must match the Add-a-device QR on the other screen. They fingerprint that device’s Fabric key — not a seed.'
+              })
+              : null,
             isLink && prompt.label
               ? React.createElement('div', { className: 'fl-kv' },
                 React.createElement('b', null, 'Offer label'),
@@ -132,20 +169,20 @@ class FabricLoginModal extends React.Component {
                 React.createElement('b', null, 'Challenge'),
                 React.createElement('div', { className: 'muted', title: prompt.message }, short(prompt.message, 96)))
               : null,
-            error ? React.createElement('div', { className: 'fl-err' }, error) : null,
+            shownError ? React.createElement('div', { className: 'fl-err' }, shownError) : null,
             React.createElement('div', { className: 'fl-row' },
               React.createElement('button', {
                 type: 'button',
                 className: 'fl-btn',
-                disabled: busy || locked,
+                disabled: busy || locked || !!(prompt.error && !prompt.initiator),
                 onClick: () => void this._resolve(true)
               }, busy ? (isLink ? 'Linking…' : 'Signing…') : (isLink ? 'Approve & link' : 'Approve & sign')),
               React.createElement('button', {
                 type: 'button',
                 className: 'fl-btn ghost',
-                disabled: busy,
+                disabled: false,
                 onClick: () => void this._resolve(false)
-              }, 'Ignore'))))));
+              }, busy ? 'Dismiss' : 'Ignore'))))));
   }
 }
 

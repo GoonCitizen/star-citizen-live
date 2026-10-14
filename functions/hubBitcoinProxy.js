@@ -227,6 +227,17 @@ async function fetchWalletSummary (btc = {}, { xpub } = {}) {
   return hubRequest(btc.hub, `/services/bitcoin/xpub?${qs.toString()}`, { method: 'GET' });
 }
 
+async function fetchUtxos (btc = {}, { xpub } = {}) {
+  const key = String(xpub || '').trim();
+  if (!key) {
+    const err = new Error('xpub is required');
+    err.status = 400;
+    throw err;
+  }
+  const qs = new URLSearchParams({ xpub: key });
+  return hubRequest(btc.hub, `/services/bitcoin/xpub/utxos?${qs.toString()}`, { method: 'GET' });
+}
+
 async function fetchTransactions (btc = {}, { xpub, limit = 50 } = {}) {
   const key = String(xpub || '').trim();
   if (!key) {
@@ -239,6 +250,46 @@ async function fetchTransactions (btc = {}, { xpub, limit = 50 } = {}) {
     limit: String(Math.max(1, Math.min(100, Number(limit) || 50)))
   });
   return hubRequest(btc.hub, `/services/bitcoin/xpub/transactions?${qs.toString()}`, { method: 'GET' });
+}
+
+/**
+ * Watch balance for a single on-chain address (Hub scantxoutset / explorer).
+ * @param {object} btc
+ * @param {string} address
+ * @returns {Promise<object>}
+ */
+async function fetchAddressBalance (btc = {}, address = '') {
+  const addr = String(address || '').trim();
+  if (!addr) {
+    const err = new Error('address is required');
+    err.status = 400;
+    throw err;
+  }
+  return hubRequest(
+    btc.hub,
+    `/services/bitcoin/addresses/${encodeURIComponent(addr)}/balance`,
+    { method: 'GET' }
+  );
+}
+
+/**
+ * Optional address info (UTXOs / history when Hub exposes it).
+ * @param {object} btc
+ * @param {string} address
+ * @returns {Promise<object>}
+ */
+async function fetchAddressInfo (btc = {}, address = '') {
+  const addr = String(address || '').trim();
+  if (!addr) {
+    const err = new Error('address is required');
+    err.status = 400;
+    throw err;
+  }
+  return hubRequest(
+    btc.hub,
+    `/services/bitcoin/addresses/${encodeURIComponent(addr)}`,
+    { method: 'GET' }
+  );
 }
 
 /**
@@ -431,7 +482,10 @@ module.exports = {
   hubRequest,
   fetchStatus,
   fetchWalletSummary,
+  fetchUtxos,
   fetchTransactions,
+  fetchAddressBalance,
+  fetchAddressInfo,
   sendHubPayment,
   FAUCET_ENDPOINT,
   FAUCET_MAX_SATS,

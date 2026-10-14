@@ -19,7 +19,9 @@
  * `./applicationMessageTypes.js`.
  */
 
-const Actor = require('@fabric/core/types/actor');
+function _actorType () {
+  return require('@fabric/core/types/actor');
+}
 
 /** Bump when the wire-visible contract shape changes (new id on purpose). */
 const GOONCITIZEN_CONTRACT_VERSION = 1;
@@ -50,6 +52,7 @@ let _cachedId = null;
  */
 function gooncitizenContractId () {
   if (_cachedId) return _cachedId;
+  const Actor = _actorType();
   _cachedId = new Actor(gooncitizenContractDefinition()).id;
   return _cachedId;
 }

@@ -10,7 +10,10 @@
  */
 
 const crypto = require('crypto');
-const Actor = require('@fabric/core/types/actor');
+
+function _actorType () {
+  return require('@fabric/core/types/actor');
+}
 const { gooncitizenContractId } = require('./gooncitizen');
 const { CONTRACT_BODY_TYPES, isKnownContractBodyType } = require('./applicationMessageTypes');
 
@@ -177,6 +180,7 @@ function groupContractId (definition) {
   const def = definition && definition.name === GROUP_CONTRACT_NAME
     ? definition
     : groupContractDefinition(definition || {});
+  const Actor = _actorType();
   return new Actor(def).id;
 }
 

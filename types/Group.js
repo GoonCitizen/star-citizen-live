@@ -46,6 +46,18 @@ class Group {
     this.policyFingerprint = data.policyFingerprint || null;
     this.spendLadder = data.spendLadder || null;
     this.primaryColor = data.primaryColor || null;
+    {
+      const { sanitizeRsiTag } = require('../functions/rsiLookup');
+      this.rsiTag = sanitizeRsiTag(data.rsiTag) || null;
+    }
+    {
+      const { sanitizePinnedChannels } = require('../functions/groupPinnedChannels');
+      this.pinnedChannels = sanitizePinnedChannels(data.pinnedChannels);
+    }
+    {
+      const { sanitizePinnedMessageIds } = require('../functions/chatMessagePins');
+      this.pinnedMessages = sanitizePinnedMessageIds(data.pinnedMessages);
+    }
     this._federation = null;
   }
 
@@ -174,6 +186,9 @@ class Group {
       policyFingerprint: this.policyFingerprint || null,
       spendLadder: this.spendLadder || null,
       primaryColor: this.primaryColor || null,
+      rsiTag: this.rsiTag || null,
+      pinnedChannels: Array.isArray(this.pinnedChannels) ? this.pinnedChannels.slice() : [],
+      pinnedMessages: Array.isArray(this.pinnedMessages) ? this.pinnedMessages.slice() : [],
       commitment: this.commitment()
     };
   }
@@ -185,6 +200,7 @@ class Group {
       creator: this.creator,
       memberCount: this.members.length,
       signerCount: this.validators.length,
+      validators: this.validators.slice(),
       threshold: this.threshold,
       visibility: this.visibility,
       slug: this.slug,
@@ -192,7 +208,11 @@ class Group {
       path: this.pagePath(),
       createdAt: this.createdAt,
       contractId: this.contractId || null,
-      primaryColor: this.primaryColor || null
+      policyFingerprint: this.policyFingerprint || null,
+      primaryColor: this.primaryColor || null,
+      rsiTag: this.rsiTag || null,
+      pinnedChannels: Array.isArray(this.pinnedChannels) ? this.pinnedChannels.slice() : [],
+      pinnedMessages: Array.isArray(this.pinnedMessages) ? this.pinnedMessages.slice() : []
     };
   }
 }

@@ -491,7 +491,8 @@ npm test tests/missions-multisig.js
 ## Support
 
 For issues, questions, or contributions related to the Mission system:
+- Contributor / org call: [`DEVELOPERS.md`](DEVELOPERS.md)
 - GitHub Issues: https://github.com/GoonCitizen/star-citizen-live/issues
-- Discord: [Join our community]
-- Email: support@fabric.pub
+- Design: [`DESIGN-missions-mvp.md`](DESIGN-missions-mvp.md) (D-005; officer validates)
+- What runs: [`AGENTS.md`](AGENTS.md) §3
 

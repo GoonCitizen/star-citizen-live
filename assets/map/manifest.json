@@ -1,0 +1,74 @@
+{
+  "version": 3,
+  "defaults": {
+    "starfield": "tiles/starfield-01.png",
+    "nebula": "tiles/nebula-blue-01.png",
+    "tint": "#0b0e14"
+  },
+  "systems": {
+    "STANTON": {
+      "starfield": "tiles/starfield-01.png",
+      "nebula": "tiles/nebula-blue-01.png",
+      "tint": "#1a2a4a"
+    },
+    "PYRO": {
+      "starfield": "tiles/starfield-02.png",
+      "nebula": "tiles/nebula-purple-01.png",
+      "tint": "#3a1020"
+    },
+    "NYX": {
+      "starfield": "tiles/starfield-01.png",
+      "nebula": "tiles/nebula-green-01.png",
+      "tint": "#102818"
+    }
+  },
+  "surfaces": {
+    "rocky": "tiles/surface-rocky.png",
+    "ice": "tiles/surface-ice.png",
+    "gas": "tiles/surface-gas.png",
+    "arid": "tiles/surface-arid.png",
+    "volcanic": "tiles/surface-volcanic.png",
+    "industrial": "tiles/surface-industrial.png",
+    "star": "tiles/surface-star.png"
+  },
+  "bodies": {
+    "aberdeen": "tiles/bodies/aberdeen.png",
+    "adir": "tiles/bodies/adir.png",
+    "arccorp": "tiles/bodies/arccorp.png",
+    "arial": "tiles/bodies/arial.png",
+    "bloom": "tiles/bodies/bloom.png",
+    "calliope": "tiles/bodies/calliope.png",
+    "cellin": "tiles/bodies/cellin.png",
+    "clio": "tiles/bodies/clio.png",
+    "crusader": "tiles/bodies/crusader.png",
+    "daymar": "tiles/bodies/daymar.png",
+    "delamar": "tiles/bodies/delamar.png",
+    "earth": "tiles/bodies/earth.png",
+    "ellis3": "tiles/bodies/ellis3.png",
+    "euterpe": "tiles/bodies/euterpe.png",
+    "fairo": "tiles/bodies/fairo.png",
+    "fuego": "tiles/bodies/fuego.png",
+    "hurston": "tiles/bodies/hurston.png",
+    "ignis": "tiles/bodies/ignis.png",
+    "ita": "tiles/bodies/ita.png",
+    "lyria": "tiles/bodies/lyria.png",
+    "magda": "tiles/bodies/magda.png",
+    "microtech": "tiles/bodies/microtech.png",
+    "monox": "tiles/bodies/monox.png",
+    "nyx-star": "tiles/bodies/nyx-star.png",
+    "nyx1": "tiles/bodies/nyx1.png",
+    "nyx2": "tiles/bodies/nyx2.png",
+    "nyx3": "tiles/bodies/nyx3.png",
+    "pyro-star": "tiles/bodies/pyro-star.png",
+    "pyro1": "tiles/bodies/pyro1.png",
+    "pyro4": "tiles/bodies/pyro4.png",
+    "pyro5": "tiles/bodies/pyro5.png",
+    "stanton-star": "tiles/bodies/stanton-star.png",
+    "terminus": "tiles/bodies/terminus.png",
+    "vatra": "tiles/bodies/vatra.png",
+    "vuur": "tiles/bodies/vuur.png",
+    "wala": "tiles/bodies/wala.png",
+    "yela": "tiles/bodies/yela.png"
+  },
+  "projection": "equirectangular"
+}

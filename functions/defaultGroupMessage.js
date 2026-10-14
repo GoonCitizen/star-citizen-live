@@ -5,7 +5,7 @@
  * default (primary) group id for this instance.
  *
  * Accepted paste forms:
- * - opaque `fabric:<hex>` / `fabric:base64,…` GroupOffer / invite / publish
+ * - opaque `fabric:<payload>` GroupOffer / invite / publish (hex or base64 body)
  * - raw AMP Message hex/base64 (same as Import share)
  * - AMP message hash / id (64 hex) — looked up in the Fabric message log
  * - group id (8–128 `[a-zA-Z0-9_-]`)

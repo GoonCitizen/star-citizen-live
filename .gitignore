@@ -54,3 +54,13 @@ reports/brief/*.svg
 # Local Fabric operator identity (never commit)
 local/fabric-operator-identity.json
 local/cursor-agent-fabric-identity.json
+
+.tmp-android-noble/
+
+# Generated Android stage (scripts/android-stage.js / cap sync)
+android-www/nodejs/app/
+android-www/nodejs/node_modules/
+android/app/src/main/assets/builtin_modules/
+
+# Leftover webpack dump beside assets/index.html (do not npm-pack)
+/browser.min.js

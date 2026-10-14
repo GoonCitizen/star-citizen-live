@@ -9,9 +9,11 @@ const { createIdentity, signEnvelope } = require('../../functions/identity');
 
 const BASE = '/services/star-citizen';
 
-function request (port, method, path, payload) {
+function request (port, method, path, payload, token) {
   return new Promise((resolve, reject) => {
-    const req = http.request({ host: '127.0.0.1', port, method, path, headers: { 'Content-Type': 'application/json' } }, (res) => {
+    const headers = { 'Content-Type': 'application/json' };
+    if (token) headers.Authorization = `Bearer ${token}`;
+    const req = http.request({ host: '127.0.0.1', port, method, path, headers }, (res) => {
       let buf = '';
       res.on('data', (c) => { buf += c; });
       res.on('end', () => resolve({ status: res.statusCode, body: buf ? JSON.parse(buf) : null }));
@@ -20,6 +22,15 @@ function request (port, method, path, payload) {
     if (payload) req.write(JSON.stringify(payload));
     req.end();
   });
+}
+
+// Hosted gameplay GETs are session-gated (see tests/relay/privacy-http-auth.js).
+// Reading back an ingested batch therefore needs a Bearer session.
+async function login (port, identity) {
+  const envelope = signEnvelope(identity, { intent: 'login', ts: new Date().toISOString() });
+  const res = await request(port, 'POST', `${BASE}/auth`, envelope);
+  assert.strictEqual(res.status, 200, `login should succeed: ${JSON.stringify(res.body)}`);
+  return res.body.data.token;
 }
 
 async function startServer (extra = {}) {
@@ -68,11 +79,14 @@ test('server mode accepts a signed batch, tags source, and is idempotent', async
     assert.strictEqual(second.status, 200);
     assert.strictEqual(second.body.created, 0, 'replay is idempotent');
 
-    const kills = await request(port, 'GET', `${BASE}/kills`);
+    const token = await login(port, identity);
+    const kills = await request(port, 'GET', `${BASE}/kills`, null, token);
+    assert.strictEqual(kills.status, 200, JSON.stringify(kills.body));
     assert.strictEqual(kills.body.data.length, 1);
     assert.strictEqual(kills.body.data[0].source, identity.pubkey, 'kill tagged with sender pubkey');
 
-    const players = await request(port, 'GET', `${BASE}/players`);
+    const players = await request(port, 'GET', `${BASE}/players`, null, token);
+    assert.strictEqual(players.status, 200, JSON.stringify(players.body));
     assert.strictEqual(players.body.data.length, 1);
     assert.strictEqual(players.body.data[0].name, 'Alice');
   } finally { await svc.stop(); }
@@ -174,7 +188,9 @@ test('hosted HTTP ingest still accepts Schnorr-signed event batches (legacy/test
     assert.strictEqual(posted.status, 200, JSON.stringify(posted.body));
     assert.ok(posted.body.created >= 1);
 
-    const kills = await request(port, 'GET', `${BASE}/kills`);
+    const token = await login(port, identity);
+    const kills = await request(port, 'GET', `${BASE}/kills`, null, token);
+    assert.strictEqual(kills.status, 200, JSON.stringify(kills.body));
     assert.strictEqual(kills.body.data[0].source, identity.pubkey);
   } finally {
     await server.stop();

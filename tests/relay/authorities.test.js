@@ -81,6 +81,26 @@ test('acceptance requires k-of-n authority signatures and unlocks payout event',
   assert.strictEqual(mm.verifyAudit(), false, 'tampered authorization fails verifyAudit');
 });
 
+test('group authority can reject without being on the officer allowlist', async () => {
+  const creator = createIdentity();
+  const authority = createIdentity();
+  const mm = new MissionManager({ officers: [creator.pubkey] });
+  const m = await mm.createMission({
+    title: 'Escort',
+    createdBy: creator.pubkey,
+    authorities: { keys: [creator.pubkey, authority.pubkey], threshold: 1 }
+  });
+  await mm.joinMission({ missionId: m.id, applicantId: 'pilot-9' });
+  const claim = await mm.submitClaim({ missionId: m.id, claimantId: 'pilot-9' });
+  await mm.validateClaim({
+    claimId: claim.id,
+    officerId: authority.pubkey,
+    decision: 'reject',
+    note: 'no proof'
+  });
+  assert.strictEqual(mm.store.get('claims', claim.id).status, 'rejected');
+});
+
 test('missions without authorities keep the officer-allowlist path', async () => {
   const mm = new MissionManager({ officers: ['officer-1'] });
   const m = await mm.createMission({ title: 'Plain', createdBy: 'officer-1' });

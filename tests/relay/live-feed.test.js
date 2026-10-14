@@ -35,6 +35,8 @@ test('categoryForKind maps parser and social kinds', () => {
   assert.strictEqual(categoryForKind('player:death'), 'combat');
   assert.strictEqual(categoryForKind('quantum:jump'), 'quantum');
   assert.strictEqual(categoryForKind('ChatMessage'), 'chat');
+  assert.strictEqual(categoryForKind('NoteShare'), 'note');
+  assert.strictEqual(categoryForKind('LocalGroupCreate'), 'note');
   assert.strictEqual(categoryForKind('log:raw'), 'log');
 });
 
@@ -142,6 +144,9 @@ test('summarizeRecent is user-friendly; raw stays on hasRaw items', () => {
   const localAndPeer = filterLiveFeed(feed.items, { sources: new Set(['local', 'peer']) });
   assert.ok(localAndPeer.every((i) => i.source === 'local' || i.source === 'peer'));
   assert.ok(!localAndPeer.some((i) => i.source === 'group'));
+  const byKeyword = filterLiveFeed(feed.items, { keywords: ['form up'] });
+  assert.ok(byKeyword.some((i) => i.id === 'chat:c2'));
+  assert.ok(byKeyword.every((i) => /form up/i.test(i.body)));
 });
 
 test('GET /monitor includes feed; GET /feed returns LiveFeed', async () => {
