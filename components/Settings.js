@@ -107,6 +107,7 @@ class Settings extends React.Component {
       identityCluster: null,
       fabricReady: false,
       fabricConnected: 0,
+      offlineMode: false,
       discordBotEnable: false,
       discordAppId: '',
       discordChannel: '',
@@ -176,6 +177,7 @@ class Settings extends React.Component {
         linkedDevices: Array.isArray(s.linkedDevices) ? s.linkedDevices : [],
         identityCluster: null,
         fabricReady: !!(settingsRes.runtime && settingsRes.runtime.fabricReady),
+        offlineMode: s.offlineMode === true || (settingsRes.runtime && settingsRes.runtime.offlineMode === true),
         fabricConnected: Number(settingsRes.runtime && settingsRes.runtime.fabricConnected) || 0,
         discordBotEnable: s.discordBotEnable === true,
         discordAppId: s.discordAppId || (settingsRes.runtime && settingsRes.runtime.discord && settingsRes.runtime.discord.appId) || '',
@@ -266,6 +268,8 @@ class Settings extends React.Component {
   async putBool (key, value) {
     if (value === true) {
       const confirms = {
+        offlineMode:
+          'Turn on Offline Mode?\n\nFabric, Discord, voice, LAN access, and every share stop. Chat, Groups, Network, Wallet, and Files leave this window. Your saved share settings stay and apply again when you turn this off.',
         shareLogsGlobal:
           'Share parsed Game.log events with EVERY connected Fabric peer?\n\nThis node always keeps a full local copy for analysis. Prefer per-peer “Share logs” on Network → Peers when possible.',
         shareDiscordCatalog:
@@ -292,6 +296,9 @@ class Settings extends React.Component {
     this.setState({ [key]: value, error: null, busy: true });
     try {
       await this.put(key, value);
+      if (key === 'offlineMode' && typeof this.props.onOfflineModeChange === 'function') {
+        this.props.onOfflineModeChange(value === true);
+      }
       this.setState({ busy: false });
       await this.load();
     } catch (err) {
@@ -351,6 +358,26 @@ class Settings extends React.Component {
       className: 'st-chip' + (on ? ' on' : '') + (warn ? ' warn' : ''),
       title: label
     }, label);
+  }
+
+  renderOfflineMode () {
+    return React.createElement('div', { className: 'st-sec', id: 'settings-offline' },
+      React.createElement('h3', null, 'Offline Mode'),
+      React.createElement('div', { className: 'd' },
+        'One switch for this desktop. On: Fabric, Discord, voice, LAN access, and every share stop. Chat, Groups, Network, Wallet, and Files leave the window. Game.log, missions, the map, and fleets stay on this machine.'),
+      React.createElement('label', {
+        style: { display: 'flex', gap: 8, alignItems: 'center', fontSize: 13, cursor: 'pointer' }
+      },
+      React.createElement('input', {
+        type: 'checkbox',
+        'data-testid': 'settings-offline-mode',
+        checked: this.state.offlineMode === true,
+        disabled: !this.state.editable || this.state.busy,
+        onChange: (e) => this.putBool('offlineMode', e.target.checked)
+      }),
+      'Offline Mode'
+      )
+    );
   }
 
   renderPrivacy () {
@@ -892,14 +919,16 @@ class Settings extends React.Component {
 
   renderEmbedded () {
     const android = isAndroidCompanion();
+    const offline = this.state.offlineMode === true;
     return React.createElement('div', { className: 'st-embedded' },
       this.state.loading
         ? React.createElement('div', { className: 'st-sec' }, 'loading…')
         : React.createElement(React.Fragment, null,
           this.state.error ? React.createElement('div', { className: 'st-sec' }, React.createElement('div', { className: 'st-err' }, this.state.error)) : null,
           this.state.notice ? React.createElement('div', { className: 'st-sec' }, React.createElement('div', { className: 'st-ok' }, this.state.notice)) : null,
-          this.renderFabricNetworkSection({ embedded: true }),
-          android ? null : this.renderLanBindSection()
+          this.renderOfflineMode(),
+          offline ? null : this.renderFabricNetworkSection({ embedded: true }),
+          offline || android ? null : this.renderLanBindSection()
         )
     );
   }
@@ -908,6 +937,7 @@ class Settings extends React.Component {
     if (this.props.embedded) return this.renderEmbedded();
     const rt = this.state.runtime;
     const android = isAndroidCompanion();
+    const offline = this.state.offlineMode === true;
     return React.createElement('div', { className: 'st-overlay', onClick: (e) => { if (e.target === e.currentTarget && typeof this.props.onClose === 'function') this.props.onClose(); } },
       React.createElement('div', { className: 'st-card' },
         React.createElement('div', { className: 'st-head' },
@@ -920,7 +950,8 @@ class Settings extends React.Component {
             this.state.error ? React.createElement('div', { className: 'st-sec' }, React.createElement('div', { className: 'st-err' }, this.state.error)) : null,
             this.state.notice ? React.createElement('div', { className: 'st-sec' }, React.createElement('div', { className: 'st-ok' }, this.state.notice)) : null,
 
-            this.renderPrivacy(),
+            this.renderOfflineMode(),
+            offline ? null : this.renderPrivacy(),
 
             android ? null : React.createElement('div', { className: 'st-sec' },
               React.createElement('h3', null, 'Relay'),
@@ -943,7 +974,7 @@ class Settings extends React.Component {
                 ' / ',
                 React.createElement('code', null, 'DISCORD_WEBHOOK_URL'),
                 '). Secrets are not stored in the Fabric Store.'),
-              React.createElement('label', { style: { display: 'flex', gap: 8, alignItems: 'center', fontSize: 13, cursor: 'pointer', marginBottom: 10 } },
+              offline ? null : React.createElement('label', { style: { display: 'flex', gap: 8, alignItems: 'center', fontSize: 13, cursor: 'pointer', marginBottom: 10 } },
                 React.createElement('input', {
                   type: 'checkbox',
                   checked: this.state.httpSharedMode,
@@ -952,7 +983,7 @@ class Settings extends React.Component {
                 }),
                 'Allow LAN access to the dashboard (bind all interfaces)'
               ),
-              React.createElement('div', { className: 'd', style: { marginTop: -4, marginBottom: 10 } },
+              offline ? null : React.createElement('div', { className: 'd', style: { marginTop: -4, marginBottom: 10 } },
                 'Off by default — the dashboard listens on 127.0.0.1 only. Enable only when you want other machines on your network to open this UI (firewall permitting). LAN writes require a Schnorr/Bearer session; loopback still uses the unlocked identity. Hosted server mode always binds all interfaces. Override with FABRIC_HUB_INTERFACE.'),
               React.createElement('div', { className: 'st-row' },
                 React.createElement('button', { className: 'st-btn', disabled: !this.state.editable || this.state.busy, onClick: () => this.save() }, this.state.busy ? 'Saving…' : 'Save'),
@@ -967,7 +998,7 @@ class Settings extends React.Component {
                 : null
             ),
 
-            android ? null : React.createElement('div', { className: 'st-sec' },
+            android || offline ? null : React.createElement('div', { className: 'st-sec' },
               React.createElement('h3', null, 'Discord bot'),
               React.createElement('div', { className: 'd' },
                 'Local ',
@@ -1174,7 +1205,7 @@ class Settings extends React.Component {
                 : null
             ),
 
-            android ? null : React.createElement('div', { className: 'st-sec' },
+            android || offline ? null : React.createElement('div', { className: 'st-sec' },
               React.createElement('h3', null, 'Primary group overlay'),
               React.createElement('div', { className: 'd' },
                 'Pin your primary group’s members and ships in a small always-on-top panel (top-right). Designed for Windows while Star Citizen is focused — clicks pass through to the game. Pick a primary group on the Groups tab, or paste a Fabric message id below.'),
@@ -1250,9 +1281,9 @@ class Settings extends React.Component {
               )
             ),
 
-            this.renderVoice(),
+            offline ? null : this.renderVoice(),
 
-            React.createElement('div', { className: 'st-sec' },
+            offline ? null : React.createElement('div', { className: 'st-sec' },
               React.createElement('h3', null, 'Desktop notifications'),
               React.createElement('div', { className: 'd' },
                 'OS notifications for new chat messages. The public shoutbox dock stays available on every tab; the Chat page still covers all channels.'),
@@ -1310,13 +1341,13 @@ class Settings extends React.Component {
               )
             ),
 
-            React.createElement('div', { className: 'st-sec' },
+            offline ? null : React.createElement('div', { className: 'st-sec' },
               React.createElement('h3', null, 'When you fly'),
               React.createElement('div', { className: 'd' },
                 'The weekday × hour heatmap is on your own profile (identity chip → My profile). Publishing is off until you check “Publish when I fly” there. That pack rides Federation GroupDataShare with other group data — it is not a local heatmap of someone else’s handle from this machine’s logs.')
             ),
 
-            React.createElement('div', { className: 'st-sec' },
+            offline ? null : React.createElement('div', { className: 'st-sec' },
               React.createElement('h3', null, 'Files on your profile'),
               React.createElement('div', { className: 'd' },
                 'Pin individual files with 📌 (“Pin to profile”) on the file page. Only pinned listings gossip to Federation groups — names, sizes, and prices, not the bytes. A local developer install uses the same pin to share GoonCitizen builds over Fabric.')
@@ -1340,7 +1371,7 @@ class Settings extends React.Component {
               )
             ),
 
-            this.renderFabricNetworkSection(),
+            offline ? null : this.renderFabricNetworkSection(),
 
             React.createElement('div', { className: 'st-sec' },
               React.createElement('h3', null, 'Runtime'),

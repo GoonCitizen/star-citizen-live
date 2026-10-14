@@ -6,6 +6,7 @@
  */
 
 const React = require('react');
+const { readOfflineMode } = require('../functions/offlineMode');
 const RegisterEventLog = require('./RegisterEventLog');
 const { isMissionApprover } = require('../functions/missionRole');
 const {
@@ -79,7 +80,8 @@ class MissionPage extends React.Component {
       claimGroup: '',
       claimNote: '',
       claimOpen: false,
-      reviewNote: {}
+      reviewNote: {},
+      offlineMode: false
     };
   }
 
@@ -99,6 +101,8 @@ class MissionPage extends React.Component {
   }
 
   async boot () {
+    const offline = await readOfflineMode();
+    this.setState({ offlineMode: offline === true });
     const b = identityBridge();
     if (b) {
       try {
@@ -359,7 +363,7 @@ class MissionPage extends React.Component {
           m.reward ? React.createElement('span', { className: 'mpage-tag btc' }, '₿ ' + SATS(m.reward)) : null
         ),
         React.createElement('div', { className: 'sub' }, m.id),
-        m.status === 'open' && isCreator
+        m.status === 'open' && isCreator && !this.state.offlineMode
           ? React.createElement('div', { className: 'mpage-actions' },
             React.createElement('button', {
               className: 'mpage-btn',
@@ -399,7 +403,7 @@ class MissionPage extends React.Component {
         React.createElement('h2', null, 'Actions'),
         React.createElement('div', { className: 'body' },
           React.createElement('div', { className: 'mpage-row' },
-            joinable && isCreator
+            joinable && isCreator && !this.state.offlineMode
               ? React.createElement(React.Fragment, null,
                 React.createElement('button', {
                   className: 'mpage-btn ghost',

@@ -9,6 +9,8 @@
  */
 
 const React = require('react');
+const { readOfflineMode } = require('../functions/offlineMode');
+const OfflineNotice = require('./OfflineNotice');
 const Chat = require('./Chat');
 const { JoinVoiceButton } = require('./ActiveVoicePanel');
 const GroupFabricInspector = require('./GroupFabricInspector');
@@ -133,7 +135,8 @@ class GroupPage extends React.Component {
       rsiOrgError: null,
       discordChannels: [],
       busy: false,
-      newFleetName: ''
+      newFleetName: '',
+      offlineMode: false
     };
   }
 
@@ -144,7 +147,6 @@ class GroupPage extends React.Component {
 
   componentDidMount () {
     this.boot();
-    this.loadDiscordCatalog();
     window.addEventListener('popstate', this._onPop);
   }
 
@@ -184,7 +186,12 @@ class GroupPage extends React.Component {
   }
 
   async boot () {
-    this.setState({ loading: true, error: null });
+    if (await readOfflineMode()) {
+      this.setState({ loading: false, offlineMode: true, error: null });
+      return;
+    }
+    this.setState({ loading: true, error: null, offlineMode: false });
+    this.loadDiscordCatalog();
     const token = await this.login();
     await this.load(token);
   }
@@ -951,6 +958,9 @@ class GroupPage extends React.Component {
   }
 
   render () {
+    if (this.state.offlineMode) {
+      return React.createElement(OfflineNotice, { backHref: '/', backLabel: '← Home' });
+    }
     if (this.state.loading) {
       return React.createElement('div', { className: 'gpage' }, React.createElement('div', { style: { color: 'var(--muted)' } }, 'Loading group…'));
     }

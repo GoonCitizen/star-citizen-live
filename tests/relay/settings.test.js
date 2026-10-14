@@ -378,3 +378,52 @@ test('SCEventBatch over Fabric delivers log events to a peer', async () => {
     await serverA.stop();
   }
 });
+
+test('PUT /settings/offlineMode stops sharing and keeps saved share prefs', async () => {
+  const dir = tmpDir();
+  const svc = new LiveRelay({
+    port: 0,
+    settingsDir: dir,
+    missions: { enable: false },
+    fabric: { enable: false }
+  });
+  await svc.start();
+  const port = svc.server.address().port;
+  try {
+    const share = await request(port, 'PUT', '/settings/shareLogsGlobal', { value: true });
+    assert.strictEqual(share.status, 200);
+    assert.strictEqual(share.body.settings.shareLogsGlobal, true);
+    svc._identity = { pubkey: '02' + 'ab'.repeat(32) };
+    assert.strictEqual(svc._canShareLogs(), true);
+
+    const on = await request(port, 'PUT', '/settings/offlineMode', { value: true });
+    assert.strictEqual(on.status, 200);
+    assert.strictEqual(on.body.requiresRestart, false);
+    assert.strictEqual(on.body.runtime.offlineMode, true);
+    assert.strictEqual(on.body.settings.shareLogsGlobal, true);
+    assert.strictEqual(svc._offlineMode, true);
+    assert.strictEqual(svc._canShareLogs(), false);
+
+    const listed = await request(port, 'GET', '/settings');
+    assert.strictEqual(listed.body.runtime.offlineMode, true);
+    assert.strictEqual(listed.body.settings.offlineMode, true);
+    assert.strictEqual(listed.body.settings.shareLogsGlobal, true);
+
+    const links = await request(port, 'POST', '/device-links', {});
+    assert.strictEqual(links.status, 503);
+    assert.match(links.body.error, /Offline Mode/);
+    const peers = await request(port, 'POST', '/peers', { address: 'relay.goon.vc:7777' });
+    assert.strictEqual(peers.status, 503);
+
+    const off = await request(port, 'PUT', '/settings/offlineMode', { value: false });
+    assert.strictEqual(off.status, 200);
+    assert.strictEqual(off.body.runtime.offlineMode, false);
+    assert.strictEqual(off.body.settings.shareLogsGlobal, true);
+    assert.strictEqual(svc._canShareLogs(), true);
+    assert.strictEqual(settingsStore.loadSettings(svc.registerStore).shareLogsGlobal, true);
+    assert.strictEqual(settingsStore.loadSettings(svc.registerStore).offlineMode, false);
+  } finally {
+    await svc.stop();
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});

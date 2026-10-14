@@ -48,6 +48,7 @@ const {
   androidDashboardTabVisible
 } = require('../functions/androidSurface');
 const { offerPassportDeviceLink } = require('../functions/fabricDeviceLinkOffer');
+const offlineMode = require('../functions/offlineMode');
 const {
   GC_UI_RUNTIME_LIVE,
   GC_UI_RUNTIME_STATIC,
@@ -618,13 +619,15 @@ class Dashboard extends React.Component {
   constructor (props) {
     super(props);
     const advancedMode = readAdvancedMode();
+    const offlineBoot = offlineMode.readOfflinePref();
     const resolved = resolveHash(
       (typeof window !== 'undefined' && window.location.hash) || '',
       advancedMode
     );
     this.state = {
       advancedMode,
-      tab: resolved.tab,
+      offlineMode: offlineBoot,
+      tab: (offlineBoot && offlineMode.tabHidden(resolved.tab)) ? 'home' : resolved.tab,
       networkView: resolved.networkView || 'feed',
       status: '…',
       online: false,
@@ -861,7 +864,7 @@ class Dashboard extends React.Component {
       if (!this.isStaticClient() && !this.isPublicVisitor()) this.loadPresenceChip();
     }, 15000);
     this._onHash = () => {
-      if (offerPassportDeviceLink()) return;
+      if (!this.state.offlineMode && offerPassportDeviceLink()) return;
       const h = String(window.location.hash || '').replace(/^#/, '');
       if (h === 'analyze') {
         try { history.replaceState(null, '', window.location.pathname + window.location.search); } catch (_) { /* ignore */ }
@@ -874,7 +877,7 @@ class Dashboard extends React.Component {
       }
     };
     window.addEventListener('hashchange', this._onHash);
-    offerPassportDeviceLink();
+    if (!offlineMode.readOfflinePref()) offerPassportDeviceLink();
     this._onDocClick = () => {
       if (this.state.showIdFlyout) this.setState({ showIdFlyout: false });
     };
@@ -926,7 +929,28 @@ class Dashboard extends React.Component {
     } catch (_) { /* ignore */ }
   }
 
+  isOfflineMode () {
+    return this.state.offlineMode === true;
+  }
+
+  tabHiddenOffline (tab) {
+    return this.isOfflineMode() && offlineMode.tabHidden(tab);
+  }
+
+  applyOfflineMode (on) {
+    const enabled = on === true;
+    offlineMode.writeOfflinePref(enabled);
+    this.setState({ offlineMode: enabled }, () => {
+      if (enabled && offlineMode.tabHidden(this.state.tab)) this.showTab('home');
+      const api = (typeof window !== 'undefined' && window.electronAPI) || null;
+      if (!api || typeof api.setGroupOverlay !== 'function') return;
+      if (enabled) api.setGroupOverlay(false);
+      else if (this.state.groupOverlay) api.setGroupOverlay(true);
+    });
+  }
+
   walletVisible () {
+    if (this.isOfflineMode()) return false;
     if (this.isStaticClient() || this.isPublicVisitor()) return false;
     if (!androidDashboardTabVisible('wallet')) return false;
     if (!featureEnabled('wallet')) return false;
@@ -935,6 +959,7 @@ class Dashboard extends React.Component {
   }
 
   documentsVisible () {
+    if (this.isOfflineMode()) return false;
     if (this.isStaticClient() || this.isPublicVisitor()) return false;
     if (!androidDashboardTabVisible('documents')) return false;
     if (!featureEnabled('documents')) return false;
@@ -954,6 +979,9 @@ class Dashboard extends React.Component {
       const bitcoin = (res.runtime && res.runtime.bitcoin) || null;
       const documents = (res.runtime && res.runtime.documents) || null;
       const primaryColor = (res.runtime && res.runtime.primaryGroupColor) || null;
+      const nextOffline = (res.settings && res.settings.offlineMode) === true ||
+        (res.runtime && res.runtime.offlineMode) === true;
+      offlineMode.writeOfflinePref(nextOffline);
       this.setState({
         nickname: (res.settings && res.settings.nickname) || null,
         meshPubkey: (res.runtime && res.runtime.identity) || this.state.meshPubkey || null,
@@ -961,9 +989,12 @@ class Dashboard extends React.Component {
         documentsEnable: documents ? documents.enable === true : null,
         documentsRuntime: documents,
         primaryGroupColor: primaryColor,
+        offlineMode: nextOffline,
         shareLogsGlobal: (res.runtime && res.runtime.shareLogsGlobal) === true
           || (res.settings && res.settings.shareLogsGlobal) === true,
         shareLogsActive: (res.runtime && res.runtime.shareLogsActive) === true
+      }, () => {
+        if (nextOffline && offlineMode.tabHidden(this.state.tab)) this.showTab('home');
       });
       this.applyPrimaryGroupTheme(primaryColor);
     } catch (_) { /* ignore */ }
@@ -1158,7 +1189,10 @@ class Dashboard extends React.Component {
       className: 'id-flyout',
       onClick: (e) => e.stopPropagation()
     },
-    React.createElement('div', { className: 'ff' },
+    this.state.offlineMode
+      ? React.createElement('div', { className: 'hint' },
+        'Offline Mode is on. Presence and device link stay on this machine.')
+      : React.createElement('div', { className: 'ff' },
       React.createElement('label', null, 'Online'),
       React.createElement('select', {
         value: this.state.presenceAvailability || 'auto',
@@ -1183,14 +1217,14 @@ class Dashboard extends React.Component {
       React.createElement('option', { value: 'offline' }, 'Offline')
       )
     ),
-    React.createElement(ShipPicker, {
+    this.state.offlineMode ? null : React.createElement(ShipPicker, {
       compact: true,
       disabled: busy || !pk,
       overrideShip: this.state.shipOverride,
       detectedShip: this.state.detectedShip,
       onSelect: (slug) => this.setPublishedShipQuick(slug)
     }),
-    React.createElement(LocationPicker, {
+    this.state.offlineMode ? null : React.createElement(LocationPicker, {
       compact: true,
       label: 'Location',
       noun: 'Location',
@@ -1199,7 +1233,7 @@ class Dashboard extends React.Component {
       detectedPlace: this.state.detectedLocation,
       onSelect: (slug) => this.setPublishedPlaceQuick('location', slug)
     }),
-    React.createElement(LocationPicker, {
+    this.state.offlineMode ? null : React.createElement(LocationPicker, {
       compact: true,
       label: 'Destination',
       noun: 'Destination',
@@ -1208,7 +1242,7 @@ class Dashboard extends React.Component {
       detectedPlace: this.state.detectedDestination,
       onSelect: (slug) => this.setPublishedPlaceQuick('destination', slug)
     }),
-    React.createElement('div', { className: 'ff' },
+    this.state.offlineMode ? null : React.createElement('div', { className: 'ff' },
       React.createElement('label', null, 'Status'),
       React.createElement('div', { className: 'ff-inline' },
         React.createElement('input', {
@@ -1231,7 +1265,7 @@ class Dashboard extends React.Component {
         }, 'Set')
       )
     ),
-    React.createElement('div', { className: 'hint' },
+    this.state.offlineMode ? null : React.createElement('div', { className: 'hint' },
       this.state.presenceSharing ? 'Sharing on mesh' : 'Local until Online/Offline'),
     React.createElement('div', { className: 'actions' },
       React.createElement('button', {
@@ -1252,7 +1286,7 @@ class Dashboard extends React.Component {
           if (href) window.location.href = href;
         }
       }, this.preferAccountPages() ? 'Profile & privacy' : 'My profile'),
-      React.createElement('button', {
+      this.state.offlineMode ? null : React.createElement('button', {
         type: 'button',
         className: 'btn',
         onClick: () => {
@@ -1318,11 +1352,14 @@ class Dashboard extends React.Component {
         loginfo: d.loginfo || null,
         corpus: d.corpus || this.state.corpus,
         reparse: d.reparse || null,
-        historySync: d.historySync || this.state.historySync
+        historySync: d.historySync || this.state.historySync,
+        offlineMode: d.sharing ? d.sharing.offline === true : this.state.offlineMode
       }, () => {
+        if (d.sharing) offlineMode.writeOfflinePref(d.sharing.offline === true);
         if (pinnedTop && this._feedRef.current) {
           this._feedRef.current.scrollTop = 0;
         }
+        if (this.state.offlineMode && offlineMode.tabHidden(this.state.tab)) this.showTab('home');
       });
     } catch (_) {
       this.setState({ status: 'OFFLINE', online: false });
@@ -1520,7 +1557,9 @@ class Dashboard extends React.Component {
     );
   }
 
-  showTab (tab, { fromHash = false, networkView = null } = {}) {
+  showTab (tab, opts = {}) {
+    let fromHash = opts.fromHash === true;
+    let networkView = opts.networkView == null ? null : opts.networkView;
     if (tab === 'analyze') tab = 'home';
     if (tab === 'live' || tab === 'feed') {
       tab = 'network';
@@ -1531,6 +1570,11 @@ class Dashboard extends React.Component {
     } else if (tab === 'messages') {
       tab = 'network';
       networkView = networkView || 'messages';
+    }
+    if (this.tabHiddenOffline(tab)) {
+      tab = 'home';
+      networkView = null;
+      fromHash = false;
     }
     const patch = { tab };
     if (tab === 'network') {
@@ -2977,7 +3021,7 @@ class Dashboard extends React.Component {
           : `${sess.missions || 0} missions · ${sess.deaths || 0} deaths this session · Feed + Peers`],
       ['library', '📸 Library', 'Periodic reduced-size snapshots of your play sessions — browsable history, ready for image analysis.',
         'opt-in · configurable interval · auto-purge']
-    ].filter(([tab]) => featureEnabled(tab) &&
+    ].filter(([tab]) => !this.tabHiddenOffline(tab) && featureEnabled(tab) &&
       androidDashboardTabVisible(tab) &&
       (tab !== 'wallet' || this.walletVisible()) &&
       (tab !== 'documents' || this.documentsVisible()));
@@ -2992,9 +3036,11 @@ class Dashboard extends React.Component {
           React.createElement('span', { className: 'home-title' },
             '🛰️ GoonCitizen ',
             React.createElement('span', { className: 'sub' },
-              '— ' + (androidSurface('heatmap')
-                ? 'cumulative history on this node (your Game.log + shared peer intel)'
-                : 'this device’s node (groups, chat, missions, peers)'))
+              '— ' + (this.state.offlineMode
+                ? 'cumulative history on this machine'
+                : (androidSurface('heatmap')
+                  ? 'cumulative history on this node (your Game.log + shared peer intel)'
+                  : 'this device’s node (groups, chat, missions, peers)')))
           ),
           androidSurface('heatmap')
             ? React.createElement('span', { className: 'home-tools' },
@@ -3049,9 +3095,11 @@ class Dashboard extends React.Component {
       !view
         ? React.createElement('section', { className: 'panel full' },
           React.createElement('h2', null, 'Features ',
-            React.createElement('span', { className: 'sub' }, isAndroidCompanion()
-              ? '— Map, Groups, Missions, Fleets, Chat, Network'
-              : '— jump to Map, Documents, Groups, Missions, Fleets, Chat, Wallet, Network')
+            React.createElement('span', { className: 'sub' }, this.state.offlineMode
+              ? '— Map, Missions, Fleets'
+              : (isAndroidCompanion()
+                ? '— Map, Groups, Missions, Fleets, Chat, Network'
+                : '— jump to Map, Documents, Groups, Missions, Fleets, Chat, Wallet, Network'))
           ),
           React.createElement('div', { className: 'home-grid' },
             cards.map(([tab, title, desc, stat]) => React.createElement('button', {
@@ -3106,6 +3154,7 @@ class Dashboard extends React.Component {
         ? React.createElement(Settings, {
           embedded: true,
           variant: 'network',
+          onOfflineModeChange: (on) => this.applyOfflineMode(on),
           onClose: () => this.setNetworkView('feed'),
           onOpenNetwork: (next) => this.setNetworkView(next || 'peers'),
           onOpenIdentity: (section) => {
@@ -3146,6 +3195,7 @@ class Dashboard extends React.Component {
   }
 
   renderTab () {
+    if (this.tabHiddenOffline(this.state.tab)) return this.renderHome();
     if (this.isStaticClient() && this.state.tab !== 'map') {
       return this.renderSignInPrompt('This view needs a LiveRelay');
     }
@@ -3164,6 +3214,7 @@ class Dashboard extends React.Component {
       case 'messages':
         return this.renderNetwork();
       case 'missions': return React.createElement(Missions, {
+        offlineMode: this.state.offlineMode === true,
         identityPubkey: this.state.identityPubkey,
         analytics: this.state.analytics,
         authToken: this.state.siteToken
@@ -3185,6 +3236,7 @@ class Dashboard extends React.Component {
         ? React.createElement(Library, null)
         : this.renderHome();
       case 'fleet': return React.createElement(Fleet, {
+        offlineMode: this.state.offlineMode === true,
         identityPubkey: this.state.identityPubkey,
         onOpenIdentity: () => {
           if (this.preferAccountPages()) this.openAccount('keys');
@@ -3284,6 +3336,7 @@ class Dashboard extends React.Component {
       this.renderMyLogsModal(),
       this.state.showSettings
         ? React.createElement(Settings, {
+          onOfflineModeChange: (on) => this.applyOfflineMode(on),
           onClose: () => this.setState({ showSettings: false }),
           onOpenIdentity: (section) => {
             this.setState({ showSettings: false });
@@ -3318,6 +3371,7 @@ class Dashboard extends React.Component {
         : null,
       this.state.showIdentity && !this.preferAccountPages()
         ? React.createElement(Identity, {
+          offlineMode: this.state.offlineMode === true,
           onClose: () => {
             this.setState({ showIdentity: false });
             this.loadPresenceChip();
@@ -3336,6 +3390,12 @@ class Dashboard extends React.Component {
         React.createElement('div', { className: 'row' },
           React.createElement('h1', null, '🛰️ GoonCitizen'),
           React.createElement('span', { className: 'pill ' + (this.state.online ? 'on' : 'off') }, this.state.status),
+          this.state.offlineMode
+            ? React.createElement('span', {
+              className: 'pill off',
+              title: 'Offline Mode — Fabric, Discord, voice, and sharing are off'
+            }, 'Offline Mode')
+            : null,
           // Compact stat strip — cumulative by default (Analyze has the full breakdown).
           React.createElement('div', { className: 'counts' },
             React.createElement('span', {
@@ -3353,7 +3413,7 @@ class Dashboard extends React.Component {
             }, 'players ', React.createElement('b', null, c.players))
           ),
                     React.createElement('div', { className: 'ctrl' },
-            !(this.isStaticClient() || this.isPublicVisitor())
+            !(this.isOfflineMode() || this.isStaticClient() || this.isPublicVisitor())
               ? React.createElement('button', {
                 type: 'button',
                 className: 'btn',
@@ -3362,7 +3422,7 @@ class Dashboard extends React.Component {
                 onClick: () => this.setState({ showFabricImport: true })
               }, 'Import…')
               : null,
-            this.canToggleOverlay()
+            this.canToggleOverlay() && !this.isOfflineMode()
               ? React.createElement('button', {
                 type: 'button',
                 className: 'ov-btn' + (this.state.groupOverlay ? ' on' : ''),
@@ -3372,8 +3432,8 @@ class Dashboard extends React.Component {
                 onClick: () => this.toggleGroupOverlay()
               }, this.state.groupOverlay ? 'Overlay on' : 'Overlay')
               : null,
-            this.qrScanButton(),
-            !(this.isStaticClient() || this.isPublicVisitor())
+            this.isOfflineMode() ? null : this.qrScanButton(),
+            !(this.isOfflineMode() || this.isStaticClient() || this.isPublicVisitor())
               ? React.createElement(DataSyncStatus, {
                 variant: 'compact',
                 authToken: this.state.siteToken,
@@ -3383,7 +3443,7 @@ class Dashboard extends React.Component {
                 onManageDevices: () => this.openAccount('devices')
               })
               : null,
-            !(this.isStaticClient() || this.isPublicVisitor())
+            !(this.isOfflineMode() || this.isStaticClient() || this.isPublicVisitor())
               ? React.createElement('button', {
                 type: 'button',
                 className: 'bell' + (this.state.tab === 'notifications' ? ' on' : ''),
@@ -3478,7 +3538,8 @@ class Dashboard extends React.Component {
         ),
         React.createElement('div', { className: 'header-nav' },
           React.createElement('div', { className: 'row tabs' },
-            TABS.filter(([key]) => (this.state.advancedMode || !ADVANCED_TABS.has(key)) &&
+            TABS.filter(([key]) => !this.tabHiddenOffline(key) &&
+              (this.state.advancedMode || !ADVANCED_TABS.has(key)) &&
               (key !== 'wallet' || this.walletVisible()) &&
               (key !== 'documents' || this.documentsVisible()) &&
               androidDashboardTabVisible(key) &&
@@ -3504,7 +3565,7 @@ class Dashboard extends React.Component {
         ),
       ),
       this.renderTab(),
-      React.createElement(ActiveVoicePanel, {
+      this.isOfflineMode() ? null : React.createElement(ActiveVoicePanel, {
         identityPubkey: this.state.identityPubkey,
         onVoice: (voice) => {
           const joined = !!(voice && voice.joined);
@@ -3513,7 +3574,7 @@ class Dashboard extends React.Component {
           if (joined) this.ensureGroupOverlayOpen();
         }
       }),
-      React.createElement(GlobalChatDock, {
+      this.isOfflineMode() ? null : React.createElement(GlobalChatDock, {
         identityPubkey: this.state.meshPubkey || this.state.identityPubkey,
         nickname: this.state.nickname,
         hide: this.state.tab === 'chat' || this.isStaticClient() || this.isPublicVisitor(),
@@ -3525,7 +3586,7 @@ class Dashboard extends React.Component {
           if (n !== this.state.chatUnread) this.setState({ chatUnread: n });
         }
       }),
-      React.createElement(MissionBroadcastBanner, {
+      this.isOfflineMode() ? null : React.createElement(MissionBroadcastBanner, {
         hide: this.state.tab === 'notifications' || this.isStaticClient() || this.isPublicVisitor(),
         raised: this.state.voiceJoined,
         authToken: this.state.siteToken,

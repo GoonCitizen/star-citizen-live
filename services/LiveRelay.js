@@ -24,6 +24,7 @@ const { randomUnit } = require('@fabric/core/functions/bytes');
 const { parseLine, RULES, shipName, parseSessionInfo, missionType, isNPC, missionFaction } = require('../functions/parser');
 const { channelFromPath } = require('../functions/locate');
 const settingsStore = require('../functions/settingsStore');
+const offlineMode = require('../functions/offlineMode');
 const { isHttpSharedModeEnabled, resolveHttpListenHost } = require('../functions/httpSharedMode');
 const { shouldEnforceRemoteAuth } = require('../functions/httpRemoteAuth');
 const { httpBindWarning } = require('../functions/httpBindWarning');
@@ -359,6 +360,8 @@ class StarCitizenService extends EventEmitter {
     this._fabricEnsureInflight = null;
     this._seq = 0;
     this._shareLogsGlobal = false;
+    /** Desktop Offline Mode: no Fabric, Discord, voice, LAN share, or mesh publish. */
+    this._offlineMode = false;
     this._voiceSettings = groupVoiceSettings.defaultVoiceSettings();
     groupVoiceHttp.ensureState(this);
     /** Seal outbound GroupChat with tip-bound AES-GCM (default off; plaintext still accepted). */
@@ -375,6 +378,12 @@ class StarCitizenService extends EventEmitter {
     this._identity = null;      // decrypted player identity (uplink signing)
     /** Unlocked wallet pubkey when `_identity` is FABRIC_XPRV (desktop). */
     this._unlockedPubkey = null;
+    /**
+     * Signs with the unlocked UI identity. Desktop keeps that key in the main
+     * process when FABRIC_XPRV is the publishing identity (`_identity`).
+     * @type {((message: string) => { pubkey?: string, signature?: string })|null}
+     */
+    this._localSigner = null;
     this._uplinkQueue = [];     // events awaiting signed push to the uplink
     this._uplinkTimer = null;
     this._uplinkWired = false;
@@ -1474,16 +1483,22 @@ class StarCitizenService extends EventEmitter {
     }
   }
 
+  async _stopDiscordBot () {
+    if (!this.discordBot) {
+      this._discordBotReady = false;
+      return;
+    }
+    try { await this.discordBot.stop(); } catch (_) { /* ignore */ }
+    this.discordBot = null;
+    this._discordBotReady = false;
+    this._discordCatalogCache = { at: 0, data: null, inflight: null };
+    if (this._discordChannelInsightCache) this._discordChannelInsightCache.clear();
+  }
+
   async _startDiscordBot () {
     const cfg = this._applyDiscordConfig();
-    if (!cfg.enable || !cfg.token) {
-      if (this.discordBot) {
-        try { await this.discordBot.stop(); } catch (_) { /* ignore */ }
-        this.discordBot = null;
-        this._discordBotReady = false;
-        this._discordCatalogCache = { at: 0, data: null, inflight: null };
-        if (this._discordChannelInsightCache) this._discordChannelInsightCache.clear();
-      }
+    if (this._offlineMode || !cfg.enable || !cfg.token) {
+      await this._stopDiscordBot();
       return null;
     }
     const Discord = loadFabricDiscord();
@@ -1491,11 +1506,7 @@ class StarCitizenService extends EventEmitter {
       this.emit('error', new Error('@fabric/discord is not installed — cannot start Discord bot'));
       return null;
     }
-    if (this.discordBot) {
-      try { await this.discordBot.stop(); } catch (_) { /* ignore */ }
-      this.discordBot = null;
-      this._discordBotReady = false;
-    }
+    if (this.discordBot) await this._stopDiscordBot();
     const bot = new Discord({
       token: cfg.token,
       channel: cfg.channel,
@@ -2729,6 +2740,7 @@ class StarCitizenService extends EventEmitter {
     }
     // Sharing parsed log events: default OFF (explicit authorize on Peers / Settings).
     this._shareLogsGlobal = persisted.shareLogsGlobal === true;
+    this._offlineMode = persisted.offlineMode === true;
     this._voiceSettings = groupVoiceSettings.sanitizeVoiceSettings(persisted.voice);
     this._groupChatSeal = persisted.groupChatSeal === true;
     this._requireSealedGroupChat = persisted.requireSealedGroupChat === true;
@@ -2889,11 +2901,56 @@ class StarCitizenService extends EventEmitter {
    * @returns {string}
    */
   _httpListenHost () {
+    const shared = (this._offlineMode === true && this.settings.mode !== 'server')
+      ? false
+      : this._httpSharedMode;
     return resolveHttpListenHost({
       mode: this.settings.mode,
-      httpSharedMode: this._httpSharedMode,
+      httpSharedMode: shared,
       host: this.settings.httpHost
     });
+  }
+
+  /**
+   * Rebind dashboard HTTP only when Offline Mode (or LAN) changed the listen host.
+   * @returns {Promise<void>}
+   */
+  async _rebindHttpIfNeeded () {
+    if (this.settings.mode === 'server' || this.settings.listen === false || !this.server) return;
+    const host = this._httpListenHost();
+    const addr = this.server.address();
+    const current = addr && typeof addr === 'object' ? addr.address : null;
+    if (current && host && current === host) return;
+    await this._rebindHttpListener();
+  }
+
+  /**
+   * Apply or lift Offline Mode: stop the peer and Discord, or bring them back.
+   * Share preferences in the Store are left as the operator saved them.
+   * @returns {Promise<void>}
+   */
+  async _applyOfflineMode () {
+    if (this._offlineMode) {
+      this._pendingHistoricalShare = false;
+      await this._stopFabric();
+      await this._stopDiscordBot();
+    } else {
+      if (this._identity && this.settings.fabric.enable !== false) {
+        await this._refreshFabric();
+      }
+      await this._startDiscordBot();
+    }
+    await this._rebindHttpIfNeeded();
+  }
+
+  /**
+   * @param {Function} send
+   * @returns {boolean} true when the response was sent
+   */
+  _offlineResponse (send) {
+    if (this._offlineMode !== true) return false;
+    send(503, { error: offlineMode.OFFLINE_ERROR, code: 'OFFLINE' });
+    return true;
   }
 
   /**
@@ -3075,6 +3132,7 @@ class StarCitizenService extends EventEmitter {
 
   /** True when identity unlocked and at least one share path is authorized. */
   _canShareLogs () {
+    if (this._offlineMode) return false;
     if (!this._identity) return false;
     if (this._shareLogsGlobal) return true;
     return this.peers.some((p) => p && p.enabled !== false && p.shareLogs === true);
@@ -3082,6 +3140,7 @@ class StarCitizenService extends EventEmitter {
 
   /** Consent flag only — identity may still be locked (first unlock will flush). */
   _hasLogShareConsent () {
+    if (this._offlineMode) return false;
     if (this._shareLogsGlobal) return true;
     return this.peers.some((p) => p && p.enabled !== false && p.shareLogs === true);
   }
@@ -3983,6 +4042,7 @@ class StarCitizenService extends EventEmitter {
    * @param {boolean} [opts.resetTries]
    */
   _scheduleAccountDataReplay (opts = {}) {
+    if (this._offlineMode) return;
     if (opts.resetTries === true) this._accountReplayTries = 0;
     if (this._accountReplayTimer) {
       if (opts.nudge !== true && !(Number(opts.delay) > 0)) return;
@@ -4132,6 +4192,7 @@ class StarCitizenService extends EventEmitter {
    * linked device can catch up without HTTPS.
    */
   _replayAccountDataOverFabric () {
+    if (this._offlineMode) return null;
     if (!this._identity) return null;
     if (!this.fabricNetwork || !this.fabricNetwork.ready) {
       this._rescheduleAccountDataReplay();
@@ -4501,6 +4562,7 @@ class StarCitizenService extends EventEmitter {
   }
 
   _startClusterMeshTimer () {
+    if (this._offlineMode) return;
     if (this._clusterMeshTimer) return;
     if (this.settings.fabric && this.settings.fabric.enable === false) return;
     this._clusterMeshTick();
@@ -4519,6 +4581,7 @@ class StarCitizenService extends EventEmitter {
    * Advertise LAN hints on Hub WebRTC (coordinator only) and TCP-dial siblings.
    */
   _clusterMeshTick () {
+    if (this._offlineMode) return null;
     if (this._clusterMeshInflight || this._stopping) return this._clusterMeshInflight;
     if (!this._identity) return null;
     if (this.settings.fabric && this.settings.fabric.enable === false) return null;
@@ -4817,6 +4880,7 @@ class StarCitizenService extends EventEmitter {
    * @param {boolean} [opts.force]
    */
   async _refreshHubObserve (opts = {}) {
+    if (this._offlineMode) return null;
     if (this._hubObserveInflight) return this._hubObserveInflight;
     const age = this._hubObserve && this._hubObserve.summary && this._hubObserve.summary.fetchedAt
       ? Date.now() - Date.parse(this._hubObserve.summary.fetchedAt)
@@ -4870,6 +4934,7 @@ class StarCitizenService extends EventEmitter {
   }
 
   _startHubObserveTimer () {
+    if (this._offlineMode) return;
     if (this._hubObserveTimer || this.settings.mode === 'server' || this._isAndroidMode()) return;
     this._refreshHubObserve().catch(() => {});
     this._hubObserveTimer = setInterval(() => {
@@ -4989,6 +5054,15 @@ class StarCitizenService extends EventEmitter {
   }
 
   _queryPeerInventories () {
+    if (this._offlineMode) {
+      return {
+        requested: 0,
+        peers: [],
+        ready: false,
+        offline: true,
+        offers: documentOffers.list(this.registerStore)
+      };
+    }
     const net = this.fabricNetwork;
     const peer = net && net.peer;
     const asked = documentOffers.requestConnectedInventories(peer);
@@ -6740,6 +6814,7 @@ class StarCitizenService extends EventEmitter {
    * @param {string} [opts.groupId]
    */
   async broadcastMission (missionId, actor, opts = {}) {
+    if (this._offlineMode) throw Object.assign(new Error(offlineMode.OFFLINE_ERROR), { code: 'OFFLINE' });
     if (!this.missionManager) throw Object.assign(new Error('Mission system not available'), { code: 'UNAVAILABLE' });
     const m = this.missionManager.getMission(missionId);
     if (!m) throw Object.assign(new Error('Mission not found'), { code: 'NOT_FOUND' });
@@ -6814,6 +6889,7 @@ class StarCitizenService extends EventEmitter {
    * @param {number} [opts.expiresInDays]
    */
   async createMissionShare (missionId, actor, opts = {}) {
+    if (this._offlineMode) throw Object.assign(new Error(offlineMode.OFFLINE_ERROR), { code: 'OFFLINE' });
     if (!this.missionManager) throw Object.assign(new Error('Mission system not available'), { code: 'UNAVAILABLE' });
     const m = this.missionManager.getMission(missionId);
     if (!m) throw Object.assign(new Error('Mission not found'), { code: 'NOT_FOUND' });
@@ -7532,6 +7608,9 @@ class StarCitizenService extends EventEmitter {
       const siteLogin = await tryHandleSiteLogin(this, req, res, pathname, body);
       if (siteLogin === true) return;
       const { tryHandleDeviceLink } = require('../functions/fabricDeviceLinkRelay');
+      if (this._offlineMode && String(pathname || '').startsWith('/device-links')) {
+        return send(503, { error: offlineMode.OFFLINE_ERROR, code: 'OFFLINE' });
+      }
       if (await tryHandleDeviceLink(this, req, res, pathname, body)) return;
       const { tryHandleDeviceLinkLocal } = require('../functions/fabricDeviceLinkLocalHttp');
       if (await tryHandleDeviceLinkLocal(this, req, res, pathname, body, send)) return;
@@ -7739,10 +7818,11 @@ class StarCitizenService extends EventEmitter {
           kills: newest(this.kills),
           deaths: newest(this.deaths),
           feed,
-          sharing: {
+            sharing: {
             logs: this._shareLogsGlobal === true,
             logsActive: this._canShareLogs(),
-            logsTargets: this._logShareTargets()
+            logsTargets: this._logShareTargets(),
+            offline: this._offlineMode === true
           },
           counts: {
             // Header / home default to cumulative (all-time local history).
@@ -7812,6 +7892,7 @@ class StarCitizenService extends EventEmitter {
               port: this.settings.port,
               httpHost: this._httpListenHost(),
               httpSharedMode: this._httpSharedMode === true,
+              offlineMode: this._offlineMode === true,
               mode: this.settings.mode,
               identity: this._identity ? this._identity.pubkey : null,
               uplinkActive: !!this._uplinkTimer,
@@ -7899,7 +7980,14 @@ class StarCitizenService extends EventEmitter {
               // Rebind after this response finishes — closing the server while the
               // PUT is still open would deadlock server.close().
               res.once('finish', () => {
-                this._rebindHttpListener().catch((e) => this.emit('error', e));
+                this._rebindHttpIfNeeded().catch((e) => this.emit('error', e));
+              });
+            }
+            if (sMatch[1] === 'offlineMode') {
+              this._offlineMode = updated.offlineMode === true;
+              requiresRestart = false;
+              res.once('finish', () => {
+                this._applyOfflineMode().catch((e) => this.emit('error', e));
               });
             }
             if (sMatch[1] === 'nickname') {
@@ -8012,6 +8100,7 @@ class StarCitizenService extends EventEmitter {
                 primaryGroupId: this._primaryGroupId || null,
                 primaryGroupColor: this._primaryGroupColor(),
                 shareLogsGlobal: this._shareLogsGlobal === true,
+                offlineMode: this._offlineMode === true,
                 shareLogsActive: this._canShareLogs(),
                 shareDiscordCatalog: this._shareDiscordCatalog === true,
                 sharePlaytimes: this._sharePlaytimes === true,
@@ -8067,6 +8156,7 @@ class StarCitizenService extends EventEmitter {
           if (!this._requireSession(req, send)) return;
           if (req.method === 'GET') return send(200, { type: 'Collection', data: this._peersWithStatus() });
           if (req.method === 'POST') {
+            if (this._offlineResponse(send)) return;
             const d = await body();
             const raw = d.address || d.url || d.peering || '';
             const parsed = peerPeeringString.parsePeerDialInput(raw) ||
@@ -8103,6 +8193,7 @@ class StarCitizenService extends EventEmitter {
         }
         if (pathname === `${base}/peers/announce` || pathname === '/peers/announce') {
           if (req.method === 'POST') {
+            if (this._offlineResponse(send)) return;
             if (!this._requireSession(req, send)) return;
             if (!this._identity) {
               return send(400, { error: 'Unlock your identity to announce peering' });
@@ -8482,6 +8573,7 @@ class StarCitizenService extends EventEmitter {
           return send(200, { type: 'FileRecord', data });
         }
         if ((fileMatch = pathname.match(new RegExp(`^${base}/files/([^/]+)/pin$`))) && req.method === 'POST') {
+          if (this._offlineResponse(send)) return;
           if (!this._requireSession(req, send)) return;
           if (!this.registerStore) return send(503, { error: 'document store unavailable' });
           const d = await body();
@@ -8501,6 +8593,7 @@ class StarCitizenService extends EventEmitter {
           }
         }
         if ((fileMatch = pathname.match(new RegExp(`^${base}/files/([^/]+)/cluster-sync$`))) && req.method === 'POST') {
+          if (this._offlineResponse(send)) return;
           if (!this._requireSession(req, send)) return;
           if (!this.registerStore) return send(503, { error: 'document store unavailable' });
           const d = await body();
@@ -8880,7 +8973,8 @@ class StarCitizenService extends EventEmitter {
             const result = await this.shareFleet(decodeURIComponent(fleetMatch[1]), d || {});
             return send(200, { type: 'FleetShare', data: result });
           } catch (e) {
-            const code = e.code === 'NOT_FOUND' ? 404 : (e.code === 'FORBIDDEN' ? 403 : 400);
+            const code = e.code === 'NOT_FOUND' ? 404
+              : (e.code === 'FORBIDDEN' ? 403 : (e.code === 'OFFLINE' ? 503 : 400));
             return send(code, { error: e.message, code: e.code || null });
           }
         }
@@ -8937,6 +9031,7 @@ class StarCitizenService extends EventEmitter {
       }
       if (pathname === `${base}/identity/cluster/sync` || pathname === '/identity/cluster/sync') {
         if (!this._requireSession(req, send)) return;
+        if (req.method === 'POST' && this._offlineResponse(send)) return;
         if (req.method === 'GET') {
           return send(200, this._clusterSyncSnapshot());
         }
@@ -9037,6 +9132,9 @@ class StarCitizenService extends EventEmitter {
         return send(code, { error: e.message || String(e) });
       };
 
+      if (this._offlineMode && /\/voice(?:\/|$)/.test(pathname)) {
+        return send(503, { error: offlineMode.OFFLINE_ERROR, code: 'OFFLINE' });
+      }
       const voiceHandled = await groupVoiceHttp.tryHandleGroupVoice(this, {
         base, pathname, req, send, body, requireAuth, viewer, gm, remoteAuth
       });
@@ -9225,6 +9323,7 @@ class StarCitizenService extends EventEmitter {
           return send(200, { type: 'Collection', data: rows });
         }
         if (req.method === 'POST') {
+          if (this._offlineResponse(send)) return;
           // Hosted chat authenticates via the Schnorr envelope (message of record).
           // Local / shared-mode still needs a session so LAN clients cannot speak
           // as the unlocked identity.
@@ -9771,15 +9870,23 @@ class StarCitizenService extends EventEmitter {
         const proposal = gm.getProposal(gmatch[2]);
         if (!proposal || proposal.groupId !== group.id) return send(404, { error: 'proposal not found' });
         const d = await body();
-        const actor = viewer || d.actor;
+        const actor = viewer || d.actor || (
+          remoteAuth ? null : (this._unlockedPubkey || (this._identity && this._identity.pubkey) || null)
+        );
         try {
           let signature = d.signature || null;
-          if (!signature && this._identity && this._identity.pubkey) {
-            const { pubkeysMatch } = require('../functions/identity');
-            if (pubkeysMatch(this._identity.pubkey, actor)) {
-              const gcp = require('../functions/groupChangeProposal');
-              signature = gcp.signProposalVote(this._identity, proposal).signature;
+          const { pubkeysMatch } = require('../functions/identity');
+          const gcp = require('../functions/groupChangeProposal');
+          if (!signature && actor && this._localSigner &&
+              this._unlockedPubkey && pubkeysMatch(this._unlockedPubkey, actor)) {
+            const signed = this._localSigner(gcp.signingStringForGroupChangeProposal(proposal));
+            if (signed && signed.signature && pubkeysMatch(signed.pubkey, actor)) {
+              signature = signed.signature;
             }
+          }
+          if (!signature && actor && this._identity && this._identity.pubkey &&
+              pubkeysMatch(this._identity.pubkey, actor)) {
+            signature = gcp.signProposalVote(this._identity, proposal).signature;
           }
           if (!signature) return send(400, { error: 'signature required (or unlock identity)' });
           const result = gm.castVote(proposal.id, actor, signature, {
@@ -9989,6 +10096,7 @@ class StarCitizenService extends EventEmitter {
         const d = await body(); return run(() => reg.applyToMission(Object.assign({}, d, { missionId: mr[1], applicantId: this._actor(req, d.applicantId) })), 'Application');
       }
       if ((mr = pathname.match(new RegExp(`^${base}/missions/([^/]+)/broadcast$`))) && req.method === 'POST') {
+        if (this._offlineResponse(send)) return;
         if (!requireAuth()) return;
         const actor = this._actor(req, null) || (this._identity && this._identity.pubkey) || null;
         const d = await body();
@@ -10004,6 +10112,7 @@ class StarCitizenService extends EventEmitter {
       }
       // Opaque fabric: MissionBroadcast share (clipboard + optional mesh relay).
       if ((mr = pathname.match(new RegExp(`^${base}/missions/([^/]+)/share$`))) && (req.method === 'GET' || req.method === 'POST')) {
+        if (this._offlineResponse(send)) return;
         if (!requireAuth()) return;
         const actor = this._actor(req, null) || (this._identity && this._identity.pubkey) || null;
         const d = req.method === 'POST' ? await body() : {};
@@ -10152,6 +10261,7 @@ class StarCitizenService extends EventEmitter {
       // ---- Hub-backed personal Bitcoin (proxy; identity xpub watch + Hub-wallet send) ----
       const btcPath = `${base}/bitcoin`;
       if (pathname === `${btcPath}/status` || pathname.startsWith(`${btcPath}/`)) {
+        if (this._offlineResponse(send)) return;
         const btcCfg = Object.assign({}, this.settings.bitcoin || {});
         if (!hubBitcoinProxy.isBitcoinEnabled(this.settings)) {
           return send(503, { error: 'Bitcoin wallet disabled (settings.bitcoin.enable)' });
@@ -10297,6 +10407,7 @@ class StarCitizenService extends EventEmitter {
             });
           }
           if (pathname === `${docsPath}/inventory` && req.method === 'POST') {
+            if (this._offlineResponse(send)) return;
             if (!requireAuth()) return;
             const queried = this._queryPeerInventories();
             return send(200, { type: 'DocumentInventory', data: queried, local: true });
@@ -10333,6 +10444,7 @@ class StarCitizenService extends EventEmitter {
           }
           docMatch = pathname.match(new RegExp(`^${docsPath}/([^/]+)/cluster-sync$`));
           if (docMatch && req.method === 'POST') {
+            if (this._offlineResponse(send)) return;
             if (!requireAuth()) return;
             const d = await body();
             const on = !(d && (d.clusterSync === false || d.sync === false || d.enabled === false));
@@ -10889,6 +11001,7 @@ class StarCitizenService extends EventEmitter {
   }
 
   async postToDiscord (payload) {
+    if (this._offlineMode) return null;
     if (!this.settings.discord || !this.settings.discord.enable) return null;
     const channel = String(this.settings.discord.channel || '').trim();
     if (this.discordBot && this._discordBotReady && channel) {
@@ -10939,10 +11052,19 @@ class StarCitizenService extends EventEmitter {
     this._fabricTransition = prevTransition
       .then(() => (this._identity ? this._refreshFabric() : this._stopFabric()))
       .catch((e) => this.emit('error', e));
-    if (this._identity) {
+    if (this._identity && !this._offlineMode) {
       try { this._flushPendingFederationInvites(); } catch (e) { this.emit('error', e); }
       if (this._pendingHistoricalShare) this._requestHistoricalLogShare();
     }
+  }
+
+  /**
+   * Signer for the unlocked UI identity when it is not `_identity`
+   * (desktop FABRIC_XPRV publishing key). Pass null on lock.
+   * @param {Function|null} signer `(message) => { pubkey, signature }`
+   */
+  setLocalSigner (signer) {
+    this._localSigner = typeof signer === 'function' ? signer : null;
   }
 
   /** @deprecated Use {@link #_fabricPeerAddresses}; kept for older tests. */
@@ -11822,6 +11944,9 @@ class StarCitizenService extends EventEmitter {
     if (visibility === 'private') {
       return { fleet: starjumpFleet.summarizeFleet(fleet), published, share: shareObject };
     }
+    if (this._offlineMode) {
+      throw Object.assign(new Error(offlineMode.OFFLINE_ERROR), { code: 'OFFLINE' });
+    }
 
     await this._ensureFabric().catch(() => null);
     if (!this.fabricNetwork || !this.fabricNetwork.ready) {
@@ -12239,6 +12364,9 @@ class StarCitizenService extends EventEmitter {
    * Publish PeerPresence to peers / groups per visibility settings.
    */
   async publishPresence () {
+    if (this._offlineMode) {
+      return { presence: this.getPresenceStatus(), published: { peers: false, groups: [], public: false }, offline: true };
+    }
     if (!this._sharePresence) {
       return { presence: this.getPresenceStatus(), published: { peers: false, groups: [], public: false } };
     }
@@ -12315,6 +12443,7 @@ class StarCitizenService extends EventEmitter {
 
   async _ensureFabricBody () {
     if (this._stopping) return null;
+    if (this._offlineMode) return null;
     if (this.settings.fabric.enable === false) return null;
     if (!this._identity) return null;
     if (!this.fabricNetwork) {
@@ -12449,6 +12578,10 @@ class StarCitizenService extends EventEmitter {
   }
 
   async _refreshFabric () {
+    if (this._offlineMode) {
+      await this._stopFabric();
+      return;
+    }
     if (!this._identity || this.settings.fabric.enable === false) {
       await this._stopFabric();
       return;
@@ -13726,6 +13859,9 @@ class StarCitizenService extends EventEmitter {
       }
     }
     this._loadPersistedSettings(); // peers + uplink cadence from the Fabric Store
+    if (this._offlineMode && listenEarly && this.server) {
+      await this._rebindHttpIfNeeded();
+    }
     this._loadIdentityCluster();
     try {
       const { restorePendingDeviceLinkOffer } = require('../functions/fabricDeviceLinkLocalHttp');

@@ -7,6 +7,7 @@
  */
 
 const React = require('react');
+const { readOfflineMode } = require('../functions/offlineMode');
 const { fileHref } = require('../functions/profileFiles');
 const { profileHref } = require('../functions/identityActor');
 
@@ -70,7 +71,8 @@ class FilePage extends React.Component {
       notice: null,
       detail: null,
       pinBusy: false,
-      clusterBusy: false
+      clusterBusy: false,
+      offlineMode: false
     };
   }
 
@@ -90,10 +92,13 @@ class FilePage extends React.Component {
     }
     this.setState({ loading: true, error: null });
     try {
-      const res = await fetch(`${BASE}/files/${encodeURIComponent(id)}`);
+      const [res, offline] = await Promise.all([
+        fetch(`${BASE}/files/${encodeURIComponent(id)}`),
+        readOfflineMode()
+      ]);
       const j = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error((j && j.error) || 'File unavailable');
-      this.setState({ loading: false, detail: j.data || j, error: null });
+      this.setState({ loading: false, detail: j.data || j, error: null, offlineMode: offline === true });
     } catch (e) {
       this.setState({ loading: false, error: e.message || String(e) });
     }
@@ -169,7 +174,7 @@ class FilePage extends React.Component {
     const id = rec.id || d.id || this.fileId;
     const pinned = d.profilePinned === true || rec.profilePinned === true;
     const clusterSync = d.clusterSync === true || rec.clusterSync === true;
-    const canPin = d.self === true && d.local !== false;
+    const canPin = this.state.offlineMode !== true && d.self === true && d.local !== false;
     const canCluster = canPin;
     const publisher = d.publisher || rec.publisher || null;
     const publisherHref = publisher ? (profileHref(publisher) || ('/profiles/' + encodeURIComponent(publisher))) : null;
@@ -270,7 +275,7 @@ class FilePage extends React.Component {
             : null
         )
       ),
-      offers.length
+      !this.state.offlineMode && offers.length
         ? React.createElement('div', { className: 'fpage-panel' },
           React.createElement('h2', null, 'Offers'),
           React.createElement('div', { className: 'body' },

@@ -438,7 +438,7 @@ class Missions extends React.Component {
         onClick: () => { window.location.href = `/missions/${encodeURIComponent(m.id)}`; }
       }, m.id + (isParticipant || isCreator ? ' · you’re in' : '')),
       React.createElement('div', { className: 'mi-row' },
-        joinable && isCreator
+        joinable && isCreator && !this.props.offlineMode
           ? React.createElement(React.Fragment, { key: 'bcast' },
             React.createElement('button', {
               className: 'mi-btn ghost',

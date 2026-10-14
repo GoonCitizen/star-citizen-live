@@ -7,6 +7,7 @@
  */
 
 const React = require('react');
+const { readOfflineMode } = require('../functions/offlineMode');
 const ActivityHeatmap = require('./ActivityHeatmap');
 const Identity = require('./Identity');
 const Settings = require('./Settings');
@@ -115,6 +116,7 @@ class ProfilePage extends React.Component {
       showIdentity: false,
       advancedMode: readAdvancedMode(),
       sharePlaytimes: false,
+      offlineMode: false,
       rsiCitizen: null,
       rsiCitizenError: null,
       rsiOwnership: null
@@ -138,11 +140,12 @@ class ProfilePage extends React.Component {
     }
     this.setState({ loading: true, error: null });
     try {
-      const [profRes, azRes] = await Promise.all([
+      const [profRes, azRes, offline] = await Promise.all([
         fetch(`${BASE}/profiles/${encodeURIComponent(pubkey)}`).then((r) => r.json().then((j) => ({ ok: r.ok, j }))),
         androidSurface('heatmap')
           ? fetch(`${BASE}/analytics`).then((r) => (r.ok ? r.json() : null)).catch(() => null)
-          : Promise.resolve(null)
+          : Promise.resolve(null),
+        readOfflineMode()
       ]);
       if (!profRes.ok) throw new Error((profRes.j && profRes.j.error) || 'Profile unavailable');
       this.setState({
@@ -150,6 +153,7 @@ class ProfilePage extends React.Component {
         detail: profRes.j.data || null,
         analytics: azRes,
         sharePlaytimes: !!(profRes.j.data && profRes.j.data.sharePlaytimes),
+        offlineMode: offline === true,
         error: null
       });
       const handle = profRes.j.data &&
@@ -294,7 +298,7 @@ class ProfilePage extends React.Component {
             subtitle: 'Day & hour (local); darker = busier. Publishing shares a weekday × hour grid with Federation groups — not missions or sessions.',
             analytics: this.state.analytics
           }),
-          React.createElement('label', { className: 'ppage-share' },
+          this.state.offlineMode ? null : React.createElement('label', { className: 'ppage-share' },
             React.createElement('input', {
               type: 'checkbox',
               checked: this.state.sharePlaytimes === true,
@@ -714,6 +718,7 @@ class ProfilePage extends React.Component {
       this.renderMyNotes(d),
       this.state.showSettings
         ? React.createElement(Settings, {
+          onOfflineModeChange: (on) => this.setState({ offlineMode: on === true }),
           onClose: () => this.setState({ showSettings: false }),
           onOpenIdentity: () => this.setState({ showSettings: false, showIdentity: true }),
           advancedMode: this.state.advancedMode,
@@ -725,6 +730,7 @@ class ProfilePage extends React.Component {
         : null,
       this.state.showIdentity
         ? React.createElement(Identity, {
+          offlineMode: this.state.offlineMode === true,
           onClose: () => {
             this.setState({ showIdentity: false });
             this.load();

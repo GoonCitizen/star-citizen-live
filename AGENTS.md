@@ -520,6 +520,8 @@ npm run publish:builds    # SPA + dist/ installers + APKs → local Files catalo
 | `FABRIC_PUBLIC_HOST` / `FABRIC_ADVERTISE_HOST` | Hostname for peering offers / self-dial filter (`relay.goon.vc` on that host). Legacy alias: `SC_FABRIC_PUBLIC_HOST` (mapped at boot). |
 | `FABRIC_HUB_INTERFACE` / `INTERFACE` / `FABRIC_HTTP_INTERFACE` | HTTP dashboard bind. Desktop default loopback unless shared mode. `SC_MODE=server` via `scripts/node.js` also defaults loopback (`127.0.0.1`) for Caddy; set this to the public NIC only for bare HTTP. Legacy aliases: `SC_HTTP_HOST` / `SC_HTTP_INTERFACE` (mapped at boot via `functions/goonCitizenEnvAliases.js`). |
 
+Settings ⚙ **Offline Mode** (`offlineMode`, default off) stops Fabric, Discord, voice, LAN, Hub wallet and document calls, and device-link, and hides Chat, Groups, Network, Wallet, Files, and share chrome. Saved share preferences stay in the Store and apply again when the switch is off.
+
 Snapshot settings (Settings ⚙ → Snapshots; stored in the Fabric Store, applied
 live): `snapshotsEnabled` (opt-in, default off), `snapshotIntervalSeconds`
 (default 10, min 2), `snapshotAutoPurge` (default on), `snapshotMaxMB` (default

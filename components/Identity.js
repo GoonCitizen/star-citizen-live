@@ -1099,7 +1099,10 @@ class Identity extends React.Component {
               this.state.shipOverride ? ' (override)' : '')
             : React.createElement('span', { style: { fontSize: 12, color: 'var(--muted)' } }, 'No ship detected yet'))
       ),
-      React.createElement('label', { style: { display: 'flex', gap: 8, alignItems: 'center', fontSize: 13, cursor: 'pointer', marginBottom: 10 } },
+      this.props.offlineMode
+        ? React.createElement('div', { className: 'd', style: { marginBottom: 10 } },
+          'Offline Mode is on — presence stays on this machine.')
+        : React.createElement('label', { style: { display: 'flex', gap: 8, alignItems: 'center', fontSize: 13, cursor: 'pointer', marginBottom: 10 } },
         React.createElement('input', {
           type: 'checkbox',
           checked: this.state.sharePresence,
@@ -1108,7 +1111,7 @@ class Identity extends React.Component {
         }),
         'Share online status (and published ship) on the Fabric mesh'
       ),
-      React.createElement('div', { className: 'id-field' },
+      this.props.offlineMode ? null : React.createElement('div', { className: 'id-field' },
         React.createElement('label', null, 'Visibility'),
         React.createElement('select', {
           value: this.state.presenceVisibility,
@@ -1121,7 +1124,7 @@ class Identity extends React.Component {
         React.createElement('option', { value: 'public' }, 'Public (mesh + groups)')
         )
       ),
-      (this.state.presenceVisibility === 'groups' || this.state.presenceVisibility === 'public')
+      !this.props.offlineMode && (this.state.presenceVisibility === 'groups' || this.state.presenceVisibility === 'public')
         ? React.createElement('div', { style: { marginBottom: 10 } },
           React.createElement('div', { className: 'd', style: { marginBottom: 6 } },
             'Groups that receive your presence (empty = all groups you belong to):'),

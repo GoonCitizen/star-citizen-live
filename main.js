@@ -1111,6 +1111,17 @@ function applyIdentityToService () {
     starCitizenService.setIdentity(envPublishingIdentity || unlockedIdentity, {
       unlockedPubkey: unlockedIdentity ? unlockedIdentity.pubkey : null
     });
+    if (typeof starCitizenService.setLocalSigner === 'function') {
+      starCitizenService.setLocalSigner(unlockedIdentity
+        ? (message) => {
+          const key = identityLib.keyFromIdentity(unlockedIdentity);
+          return {
+            pubkey: key.pubkey,
+            signature: Buffer.from(key.signSchnorr(Buffer.from(message))).toString('hex')
+          };
+        }
+        : null);
+    }
   }
 }
 

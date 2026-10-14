@@ -7,6 +7,8 @@
  */
 
 const React = require('react');
+const { readOfflineMode } = require('../functions/offlineMode');
+const OfflineNotice = require('./OfflineNotice');
 const {
   blankOutput,
   constructHref,
@@ -88,7 +90,8 @@ class WalletConstruct extends React.Component {
       feeSats: '',
       memo: this.props.memo != null ? String(this.props.memo) : q.memo,
       error: null,
-      notice: null
+      notice: null,
+      offlineMode: false
     };
   }
 
@@ -107,6 +110,10 @@ class WalletConstruct extends React.Component {
   }
 
   async bootstrap () {
+    if (await readOfflineMode()) {
+      this.setState({ offlineMode: true });
+      return;
+    }
     const xpub = await this.resolveXpub();
     this.setState({ xpub }, () => this.refresh());
   }
@@ -215,6 +222,9 @@ class WalletConstruct extends React.Component {
   }
 
   render () {
+    if (this.state.offlineMode) {
+      return React.createElement(OfflineNotice, { backHref: '/', backLabel: '← Home' });
+    }
     const preview = previewDraft(this.draft());
     const st = this.state.status || {};
     const network = st.network || '—';

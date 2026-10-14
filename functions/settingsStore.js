@@ -34,6 +34,7 @@ const ALLOWED_KEYS = [
   'groupChatSeal',           // seal outbound GroupChat (default false; enable for trusted-mesh weeks)
   'requireSealedGroupChat',  // drop inbound GroupChat without a decryptable seal (default false)
   'httpSharedMode',          // LAN opt-in: bind dashboard HTTP on 0.0.0.0 (default false → 127.0.0.1)
+  'offlineMode',             // desktop: stop Fabric, Discord, voice, LAN, and every share (default false)
   'snapshotsEnabled',        // periodic screen snapshots (opt-in; desktop only)
   'snapshotIntervalSeconds', // capture cadence (default 10, min 2)
   'snapshotAutoPurge',       // delete oldest snapshots beyond the disk cap (default true)
@@ -179,6 +180,7 @@ function putSetting (store, key, value) {
   }
   if (key === 'broadcastPeering') next = next === true;
   if (key === 'httpSharedMode') next = next === true;
+  if (key === 'offlineMode') next = next === true;
   if (key === 'shareLogsGlobal') next = next === true;
   if (key === 'shareDiscordCatalog') next = next === true;
   if (key === 'sharePlaytimes') next = next === true;

@@ -756,7 +756,7 @@ class Fleet extends React.Component {
               onChange: (e) => this.setState({ name: e.target.value })
             })
           ),
-          React.createElement('label', null, 'Visibility',
+          this.props.offlineMode ? null : React.createElement('label', null, 'Visibility',
             React.createElement('select', {
               value: this.state.visibility,
               onChange: (e) => this.setState({ visibility: e.target.value })
@@ -767,7 +767,7 @@ class Fleet extends React.Component {
             React.createElement('option', { value: 'public' }, 'Public (mesh + optional groups)')
             )
           ),
-          (this.state.visibility === 'groups' || this.state.visibility === 'public')
+          !this.props.offlineMode && (this.state.visibility === 'groups' || this.state.visibility === 'public')
             ? React.createElement('div', null,
               React.createElement('div', { className: 'fl-hint', style: { marginBottom: 6 } },
                 this.state.visibility === 'groups'
@@ -792,7 +792,7 @@ class Fleet extends React.Component {
               type: 'button', className: 'fl-btn ghost', disabled: this.state.busy,
               onClick: () => this.saveMeta()
             }, 'Save'),
-            React.createElement('button', {
+            this.props.offlineMode ? null : React.createElement('button', {
               type: 'button',
               className: 'fl-btn',
               disabled: this.state.busy ||
@@ -873,7 +873,7 @@ class Fleet extends React.Component {
           React.createElement('span', { className: 'sub' },
             '— custom rosters + Starjump / FleetViewer imports')),
         React.createElement('div', { className: 'body' },
-          this.renderPresence(),
+          this.props.offlineMode ? null : this.renderPresence(),
           this.state.error ? React.createElement('div', { className: 'fl-err' }, this.state.error) : null,
           this.state.notice
             ? React.createElement('div', { className: 'fl-ok' },
