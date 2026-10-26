@@ -21,7 +21,7 @@ describe('browserCrypto (Android dashboard shim)', () => {
   it('createIdentity and vault mnemonic still generate keys', () => {
     const ident = createIdentity();
     assert.match(ident.mnemonic, /\S+/);
-    assert.equal(ident.mnemonic.trim().split(/\s+/).length, 12);
+    assert.equal(ident.mnemonic.trim().split(/\s+/).length, 24);
     assert.match(ident.pubkey, /^0[23][0-9a-f]{64}$/i);
     const vault = generateVaultMnemonic();
     assert.ok(vault.split(/\s+/).length >= 12);

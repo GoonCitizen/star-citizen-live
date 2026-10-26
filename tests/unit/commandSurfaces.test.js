@@ -51,7 +51,8 @@ describe('command surfaces (IPC vs HTTP vs Fabric)', () => {
       'fabric:presence-ship',
       'identity:get',
       'identity:sign-envelope',
-      'fabric-login:resolve',
+      'identity:sign-in-relay',
+      'device-link:resolve',
       'fabric-group-share:resolve'
     ]) {
       assert.ok(channels.includes(need), `missing ${need}`);
@@ -69,6 +70,7 @@ describe('command surfaces (IPC vs HTTP vs Fabric)', () => {
     assert.match(preload, /presenceRoster:/);
     assert.match(preload, /setPresence:/);
     assert.match(preload, /setPresenceShip:/);
+    assert.doesNotMatch(preload, /fabric-login:/);
   });
 
   it('main.js Fabric IPC calls LiveRelay in-process, not HTTP', () => {

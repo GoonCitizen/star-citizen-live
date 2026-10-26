@@ -157,13 +157,6 @@ class AppSearch extends React.Component {
             const h = { Accept: 'application/json' };
             const tok = this.props && this.props.authToken;
             if (tok) h.Authorization = 'Bearer ' + tok;
-            else {
-              try {
-                const { readStoredSiteLoginToken } = require('../functions/goonCitizenClientEnvironment');
-                const t = readStoredSiteLoginToken();
-                if (t) h.Authorization = 'Bearer ' + t;
-              } catch (_) { /* ignore */ }
-            }
             return h;
           })()
         }

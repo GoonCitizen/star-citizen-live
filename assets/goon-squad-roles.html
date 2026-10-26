@@ -1,0 +1,498 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <title>G00N SQUAD — Discord Roles Guide</title>
+  <style>
+    :root {
+      --bg: #0c0c0d;
+      --panel: #161618;
+      --panel-alt: #1c1c1f;
+      --line: #2c2c30;
+      --ink: #f4f1ea;
+      --muted: #9a9488;
+      --faint: #6b665c;
+      --red: #c81e1e;
+      --red-dark: #6e1010;
+      --cream: #e8dcc8;
+    }
+    * { box-sizing: border-box; }
+    html, body {
+      margin: 0; padding: 0;
+      background:
+        radial-gradient(1200px 600px at 10% -10%, #2a1010 0%, transparent 55%),
+        radial-gradient(900px 500px at 100% 0%, #1a1210 0%, transparent 50%),
+        var(--bg);
+      color: var(--ink);
+      font-family: "Helvetica Neue", Helvetica, Arial, sans-serif;
+      line-height: 1.45;
+    }
+    .wrap { max-width: 980px; margin: 0 auto; padding: 48px 24px 96px; }
+    .hero {
+      border-bottom: 1px solid var(--line);
+      padding-bottom: 28px;
+      margin-bottom: 36px;
+    }
+    .hero .bar { height: 6px; width: 120px; background: var(--red); margin-bottom: 28px; }
+    .hero h1 {
+      margin: 0;
+      font-family: "Arial Black", "Helvetica Neue", Helvetica, Arial, sans-serif;
+      font-size: clamp(2rem, 5vw, 3rem);
+      letter-spacing: 0.08em;
+      font-weight: 900;
+    }
+    .hero .kicker {
+      margin: 10px 0 0;
+      color: var(--red);
+      font-weight: 700;
+      letter-spacing: 0.28em;
+      font-size: 0.85rem;
+      text-transform: uppercase;
+    }
+    .hero .lede {
+      margin: 18px 0 0;
+      max-width: 42rem;
+      color: var(--muted);
+      font-size: 1.05rem;
+    }
+    .meta {
+      margin-top: 18px;
+      display: flex; flex-wrap: wrap; gap: 10px 18px;
+      color: var(--faint); font-size: 0.85rem;
+    }
+    .meta strong { color: var(--cream); font-weight: 700; }
+    .ladder {
+      display: flex; flex-wrap: wrap; align-items: stretch; gap: 8px;
+      margin: 36px 0 8px;
+    }
+    .ladder-step {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-left: 4px solid var(--red);
+      padding: 12px 14px;
+      min-width: 7.5rem;
+    }
+    .ladder-step strong { display: block; font-size: 0.82rem; letter-spacing: 0.04em; }
+    .ladder-step .count { display: block; margin-top: 6px; color: var(--cream); font-weight: 700; }
+    .ladder-arrow { color: var(--red); align-self: center; font-size: 1.2rem; padding: 0 2px; }
+    nav.toc {
+      margin: 28px 0 8px;
+      display: flex; flex-wrap: wrap; gap: 8px;
+    }
+    nav.toc a {
+      color: var(--cream);
+      text-decoration: none;
+      border: 1px solid var(--line);
+      background: var(--panel-alt);
+      padding: 6px 10px;
+      font-size: 0.8rem;
+      letter-spacing: 0.04em;
+    }
+    nav.toc a:hover { border-color: var(--red); }
+    .block {
+      margin-top: 40px;
+      background: var(--panel);
+      border: 1px solid var(--line);
+      padding: 22px 22px 8px;
+    }
+    .block header h2 {
+      margin: 0;
+      font-size: 1.25rem;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+    }
+    .block header p {
+      margin: 8px 0 16px;
+      color: var(--muted);
+      font-size: 0.95rem;
+    }
+    table { width: 100%; border-collapse: collapse; margin-bottom: 12px; }
+    th, td {
+      text-align: left;
+      padding: 10px 8px;
+      border-top: 1px solid var(--line);
+      vertical-align: top;
+    }
+    th {
+      color: var(--faint);
+      font-size: 0.72rem;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+      font-weight: 700;
+    }
+    td.holders {
+      width: 5.5rem;
+      font-variant-numeric: tabular-nums;
+      color: var(--cream);
+      font-weight: 700;
+    }
+    td.note { color: var(--muted); font-size: 0.9rem; }
+    td.role { display: flex; align-items: flex-start; gap: 10px; font-weight: 600; }
+    td.role span { display: inline; }
+    .discord-name {
+      display: block;
+      margin-top: 4px;
+      font-size: 0.72rem;
+      color: var(--faint);
+      font-weight: 500;
+    }
+    .swatch {
+      width: 12px; height: 12px; margin-top: 4px; flex: 0 0 auto;
+      background: var(--red-dark); border: 1px solid var(--line);
+    }
+    .swatch.empty { background: transparent; }
+    tr.missing td.role span { color: var(--faint); }
+    tr.missing td.holders { color: var(--faint); }
+    .footnote {
+      margin-top: 48px;
+      color: var(--faint);
+      font-size: 0.82rem;
+      max-width: 40rem;
+    }
+    .footnote code {
+      color: var(--cream);
+      font-size: 0.8rem;
+    }
+    @media (max-width: 720px) {
+      .wrap { padding: 28px 16px 64px; }
+      td.note { display: none; }
+      .ladder-arrow { display: none; }
+    }
+  </style>
+</head>
+<body>
+  <main class="wrap">
+    <header class="hero">
+      <div class="bar" aria-hidden="true"></div>
+      <h1>G00N SQUAD</h1>
+      <p class="kicker">Discord Roles Guide</p>
+      <p class="lede">How the G00N SQUAD / PERMAFLEET role ladder works — entry, Prospects, enlisted &amp; select units, officers, and recognition — with live holder counts from Discord.</p>
+      <div class="meta">
+        <span><strong>1,287 members</strong></span>
+        <span><strong>176 roles</strong> in catalog</span>
+        <span>As of <strong>Sep 6, 2026, 4:34 PM CT</strong></span>
+        <span>Source: <strong>from-json:reports/probes/goon-squad-discord-roster.json</strong></span>
+      </div>
+      <div class="ladder" aria-label="Promotion ladder overview"><div class="ladder-step"><strong>GREENBACKS</strong><span class="count">864</span></div><span class="ladder-arrow" aria-hidden="true">→</span><div class="ladder-step"><strong>PERMAFLEET</strong><span class="count">211</span></div><span class="ladder-arrow" aria-hidden="true">→</span><div class="ladder-step"><strong>Prospect I–VI</strong><span class="count">538</span></div><span class="ladder-arrow" aria-hidden="true">→</span><div class="ladder-step"><strong>Enlisted / Units</strong><span class="count">194</span></div><span class="ladder-arrow" aria-hidden="true">→</span><div class="ladder-step"><strong>Officers</strong><span class="count">81</span></div><span class="ladder-arrow" aria-hidden="true">→</span><div class="ladder-step"><strong>Command</strong><span class="count">5</span></div></div>
+      <nav class="toc" aria-label="Sections">
+        <a href="#entry">Entry &amp; identity</a>
+        <a href="#membership">PERMAFLEET membership</a>
+        <a href="#prospect">Prospect track</a>
+        <a href="#enlisted">Enlisted performance</a>
+        <a href="#units">Select units</a>
+        <a href="#officers">Officer &amp; command</a>
+        <a href="#orgs">Member organizations</a>
+        <a href="#interest">Interest &amp; ops tags</a>
+        <a href="#celebration">Recognition</a>
+        <a href="#other">Other roles</a>
+      </nav>
+    </header>
+
+
+<section class="block" id="entry">
+  <header>
+    <h2>Entry &amp; identity</h2>
+    <p>Everyone lands here first. GREENBACKS is the open door; Star Citizens tags the game identity.</p>
+  </header>
+  <table>
+    <thead><tr><th>Role</th><th>Holders</th><th>Meaning</th></tr></thead>
+    <tbody>
+<tr class=""><td class="role"><span class="swatch empty"></span><span>GREENBACKS</span></td><td class="holders">864</td><td class="note">Default community role — apply to join the RSI org when ready.</td></tr>
+<tr class=""><td class="role"><span class="swatch empty"></span><span>Star Citizens</span></td><td class="holders">1,162</td><td class="note">In-game / SC player tag.</td></tr>
+<tr class=""><td class="role"><span class="swatch empty"></span><span>PERMAFLEET GUESTS</span></td><td class="holders">219</td><td class="note">Visiting alliance guests before full PERMAFLEET.</td></tr>
+<tr class=""><td class="role"><span class="swatch empty"></span><span>NORMIES</span></td><td class="holders">86</td><td class="note">Casual / off-meta hangout tag.</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<section class="block" id="membership">
+  <header>
+    <h2>PERMAFLEET membership</h2>
+    <p>Official alliance membership. From contracts/roles.dot: GREENBACK → PERMAFLEET (apply to join the RSI organization).</p>
+  </header>
+  <table>
+    <thead><tr><th>Role</th><th>Holders</th><th>Meaning</th></tr></thead>
+    <tbody>
+<tr class=""><td class="role"><span class="swatch empty"></span><span>PERMAFLEET</span></td><td class="holders">211</td><td class="note">Alliance member — first rank in the PERMAFLEET program.</td></tr>
+<tr class=""><td class="role"><span class="swatch empty"></span><span>G00N SQUAD</span></td><td class="holders">13</td><td class="note">Core org membership chip.</td></tr>
+<tr class=""><td class="role"><span class="swatch empty"></span><span>Enlisted</span></td><td class="holders">58</td><td class="note">Broad enlisted bucket (pre-[E1] / legacy).</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<section class="block" id="prospect">
+  <header>
+    <h2>Prospect track</h2>
+    <p>Promotion ladder inside PERMAFLEET. Leadership advances Prospects; Prospect IV unlocks select-unit and officer paths.</p>
+  </header>
+  <table>
+    <thead><tr><th>Role</th><th>Holders</th><th>Meaning</th></tr></thead>
+    <tbody>
+<tr class=""><td class="role"><span class="swatch empty"></span><span>Prospect I</span><code class="discord-name">[P] Prospect I</code></td><td class="holders">245</td><td class="note">First Prospect rank.</td></tr>
+<tr class=""><td class="role"><span class="swatch empty"></span><span>Prospect II</span><code class="discord-name">[P2] Prospect II</code></td><td class="holders">145</td><td class="note">Promoted by leadership.</td></tr>
+<tr class=""><td class="role"><span class="swatch empty"></span><span>Prospect III</span><code class="discord-name">[P3] Prospect III</code></td><td class="holders">79</td><td class="note">Promoted by leadership.</td></tr>
+<tr class=""><td class="role"><span class="swatch empty"></span><span>Prospect IV</span><code class="discord-name">[P4] Prospect IV</code></td><td class="holders">50</td><td class="note">Branch point — teams, units, or officer school.</td></tr>
+<tr class=""><td class="role"><span class="swatch empty"></span><span>Prospect V</span><code class="discord-name">[P5] Prospect V</code></td><td class="holders">14</td><td class="note">Promoted by leadership.</td></tr>
+<tr class=""><td class="role"><span class="swatch empty"></span><span>Prospect VI</span><code class="discord-name">[P6] Prospect VI</code></td><td class="holders">5</td><td class="note">Top Prospect rank.</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<section class="block" id="enlisted">
+  <header>
+    <h2>Enlisted performance</h2>
+    <p>Selected into an official team from Prospect IV+. Rewarded for performance and skill (roles.dot).</p>
+  </header>
+  <table>
+    <thead><tr><th>Role</th><th>Holders</th><th>Meaning</th></tr></thead>
+    <tbody>
+<tr class=""><td class="role"><span class="swatch empty"></span><span>Enlisted 1</span><code class="discord-name">[E1] Enlisted 1</code></td><td class="holders">53</td><td class="note">Selected into an official team.</td></tr>
+<tr class=""><td class="role"><span class="swatch empty"></span><span>Enlisted 2</span><code class="discord-name">[E2] Enlisted 2</code></td><td class="holders">13</td><td class="note">Rewarded for performance and skill.</td></tr>
+<tr class="missing"><td class="role"><span class="swatch empty"></span><span>Enlisted 3</span><code class="discord-name">[E3] Enlisted 3</code></td><td class="holders">0</td><td class="note">Top enlisted performance rank.</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<section class="block" id="units">
+  <header>
+    <h2>Select units</h2>
+    <p>Specialty paths from Prospect IV — infantry, fighters, piracy, and special operators.</p>
+  </header>
+  <table>
+    <thead><tr><th>Role</th><th>Holders</th><th>Meaning</th></tr></thead>
+    <tbody>
+<tr class=""><td class="role"><span class="swatch empty"></span><span>TURTLE BRIGADE</span></td><td class="holders">48</td><td class="note">Basic infantry training.</td></tr>
+<tr class=""><td class="role"><span class="swatch empty"></span><span>SHELLBACK</span></td><td class="holders">4</td><td class="note">Elite infantry (from Turtle Brigade).</td></tr>
+<tr class=""><td class="role"><span class="swatch empty"></span><span>BRAVO SQUADRON</span></td><td class="holders">48</td><td class="note">Fighter squadron.</td></tr>
+<tr class=""><td class="role"><span class="swatch empty"></span><span>ALPHA SQUADRON</span></td><td class="holders">8</td><td class="note">Top ~5% of Bravo.</td></tr>
+<tr class=""><td class="role"><span class="swatch empty"></span><span>RAT SQUADRON</span></td><td class="holders">45</td><td class="note">Piracy unit.</td></tr>
+<tr class=""><td class="role"><span class="swatch empty"></span><span>GHOST SQUADRON</span></td><td class="holders">13</td><td class="note">Ghost / special flight path.</td></tr>
+<tr class=""><td class="role"><span class="swatch empty"></span><span>Special Operators</span><code class="discord-name">[SO] SPECIAL OPERATORS</code></td><td class="holders">21</td><td class="note">Special operations cadre.</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<section class="block" id="officers">
+  <header>
+    <h2>Officer &amp; command</h2>
+    <p>Officer school → commissioned ranks → admiralty / command. Structure.dot: Enlisted → Candidate → Officer → Admiral.</p>
+  </header>
+  <table>
+    <thead><tr><th>Role</th><th>Holders</th><th>Meaning</th></tr></thead>
+    <tbody>
+<tr class=""><td class="role"><span class="swatch empty"></span><span>PERMAFLEET Officers</span><code class="discord-name">[PO] PERMAFLEET OFFICERS</code></td><td class="holders">44</td><td class="note">Officer training track.</td></tr>
+<tr class=""><td class="role"><span class="swatch empty"></span><span>Officer 1</span><code class="discord-name">[O1] Officer 1</code></td><td class="holders">45</td><td class="note">Junior officer.</td></tr>
+<tr class=""><td class="role"><span class="swatch empty"></span><span>Officer 2</span><code class="discord-name">[O2] Officer 2</code></td><td class="holders">7</td><td class="note">Senior junior officer.</td></tr>
+<tr class=""><td class="role"><span class="swatch empty"></span><span>Lieutenant</span><code class="discord-name">[LT] Lieutenant</code></td><td class="holders">15</td><td class="note">Selected by a Captain.</td></tr>
+<tr class=""><td class="role"><span class="swatch empty"></span><span>Captain</span><code class="discord-name">[CPT] Captain</code></td><td class="holders">17</td><td class="note">Selected by a Major.</td></tr>
+<tr class=""><td class="role"><span class="swatch empty"></span><span>Major</span><code class="discord-name">[MAJ] Major</code></td><td class="holders">5</td><td class="note">Promoted by leadership.</td></tr>
+<tr class=""><td class="role"><span class="swatch empty"></span><span>Rear Admiral</span><code class="discord-name">[RADM] Rear Admiral</code></td><td class="holders">2</td><td class="note">Flag rank.</td></tr>
+<tr class=""><td class="role"><span class="swatch empty"></span><span>Vice Admiral</span><code class="discord-name">[VADM] Vice Admiral</code></td><td class="holders">0</td><td class="note">Flag rank.</td></tr>
+<tr class=""><td class="role"><span class="swatch empty"></span><span>Warlords / Admiral</span><code class="discord-name">[ADM] WARLORDS</code></td><td class="holders">2</td><td class="note">Senior admiralty.</td></tr>
+<tr class=""><td class="role"><span class="swatch empty"></span><span>Fleet Admiral</span><code class="discord-name">[FADM] Fleet Admiral</code></td><td class="holders">1</td><td class="note">Top fleet command.</td></tr>
+<tr class=""><td class="role"><span class="swatch empty"></span><span>COMMAND</span></td><td class="holders">3</td><td class="note">Command staff.</td></tr>
+<tr class=""><td class="role"><span class="swatch empty"></span><span>LEADERSHIP</span></td><td class="holders">1</td><td class="note">Org leadership.</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<section class="block" id="orgs">
+  <header>
+    <h2>Member organizations</h2>
+    <p>Alliance member-org chips on Discord (RSI SIDs correlate in the PERMAFLEET membership report).</p>
+  </header>
+  <table>
+    <thead><tr><th>Role</th><th>Holders</th><th>Meaning</th></tr></thead>
+    <tbody>
+<tr class=""><td class="role"><span class="swatch empty"></span><span>Infinity Industries</span><code class="discord-name">[INFN] INFINITY INDUSTRIES</code></td><td class="holders">15</td><td class="note"></td></tr>
+<tr class=""><td class="role"><span class="swatch empty"></span><span>Transgalactic Trade</span><code class="discord-name">[TRDE] TRANS-GALACTIC</code></td><td class="holders">7</td><td class="note"></td></tr>
+<tr class=""><td class="role"><span class="swatch empty"></span><span>LEGACY</span><code class="discord-name">[LCRP] LEGACY CORP</code></td><td class="holders">7</td><td class="note"></td></tr>
+<tr class=""><td class="role"><span class="swatch empty"></span><span>Black Exodus</span><code class="discord-name">BLACK EXODUS</code></td><td class="holders">4</td><td class="note"></td></tr>
+<tr class=""><td class="role"><span class="swatch empty"></span><span>Turtle Brigade (unit + org)</span><code class="discord-name">TURTLE BRIGADE</code></td><td class="holders">48</td><td class="note"></td></tr>
+<tr class=""><td class="role"><span class="swatch empty"></span><span>RAT</span><code class="discord-name">RAT SQUADRON</code></td><td class="holders">45</td><td class="note"></td></tr>
+    </tbody>
+  </table>
+</section>
+
+<section class="block" id="interest">
+  <header>
+    <h2>Interest &amp; ops tags</h2>
+    <p>Self-select playstyle and activity tags — not a promotion ladder.</p>
+  </header>
+  <table>
+    <thead><tr><th>Role</th><th>Holders</th><th>Meaning</th></tr></thead>
+    <tbody>
+<tr class=""><td class="role"><span class="swatch empty"></span><span>RED ARMY</span></td><td class="holders">701</td><td class="note">PvP / combat-focused.</td></tr>
+<tr class=""><td class="role"><span class="swatch empty"></span><span>PVP INQUISITORS</span></td><td class="holders">560</td><td class="note">PvP inquisitor track.</td></tr>
+<tr class=""><td class="role"><span class="swatch empty"></span><span>INDUSTRIAL INQUISITORS</span></td><td class="holders">409</td><td class="note">Industry / economy track.</td></tr>
+<tr class=""><td class="role"><span class="swatch empty"></span><span>SALT MINERS</span></td><td class="holders">282</td><td class="note">Mining community.</td></tr>
+<tr class=""><td class="role"><span class="swatch empty"></span><span>LOGISTICS</span></td><td class="holders">8</td><td class="note">Hauling / logistics.</td></tr>
+<tr class=""><td class="role"><span class="swatch empty"></span><span>MERCHANTS</span></td><td class="holders">12</td><td class="note">Trade.</td></tr>
+<tr class=""><td class="role"><span class="swatch empty"></span><span>Trainers</span></td><td class="holders">5</td><td class="note">Training staff.</td></tr>
+<tr class=""><td class="role"><span class="swatch empty"></span><span>Ambassadors</span></td><td class="holders">4</td><td class="note">External relations.</td></tr>
+<tr class=""><td class="role"><span class="swatch empty"></span><span>Event Planners</span></td><td class="holders">9</td><td class="note">Ops / event coordination.</td></tr>
+<tr class=""><td class="role"><span class="swatch empty"></span><span>RECRUITERS</span></td><td class="holders">7</td><td class="note">Recruitment.</td></tr>
+<tr class=""><td class="role"><span class="swatch empty"></span><span>ORG STEWARDS</span></td><td class="holders">31</td><td class="note">Org stewardship.</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<section class="block" id="celebration">
+  <header>
+    <h2>Recognition</h2>
+    <p>Celebration and achievement roles — earned, not ladder ranks.</p>
+  </header>
+  <table>
+    <thead><tr><th>Role</th><th>Holders</th><th>Meaning</th></tr></thead>
+    <tbody>
+<tr class=""><td class="role"><span class="swatch empty"></span><span>OG GOON</span></td><td class="holders">85</td><td class="note"></td></tr>
+<tr class=""><td class="role"><span class="swatch empty"></span><span>GOON CORE</span></td><td class="holders">27</td><td class="note"></td></tr>
+<tr class=""><td class="role"><span class="swatch empty"></span><span>VETERANS</span></td><td class="holders">3</td><td class="note"></td></tr>
+<tr class=""><td class="role"><span class="swatch empty"></span><span>CONFIRMED ACES</span></td><td class="holders">16</td><td class="note"></td></tr>
+<tr class=""><td class="role"><span class="swatch empty"></span><span>Confirmed John Wicks</span></td><td class="holders">2</td><td class="note"></td></tr>
+<tr class=""><td class="role"><span class="swatch empty"></span><span>1v1 Champion</span></td><td class="holders">1</td><td class="note"></td></tr>
+<tr class=""><td class="role"><span class="swatch empty"></span><span>Flight School Certified</span></td><td class="holders">1</td><td class="note"></td></tr>
+<tr class=""><td class="role"><span class="swatch empty"></span><span>PATRON</span></td><td class="holders">1</td><td class="note"></td></tr>
+<tr class=""><td class="role"><span class="swatch empty"></span><span>Medal</span></td><td class="holders">1</td><td class="note"></td></tr>
+    </tbody>
+  </table>
+</section>
+
+    <section class="block" id="other">
+      <header>
+        <h2>Other live roles</h2>
+        <p>Additional Discord roles present on the server (excluding bots/managed integrations and names already covered above). Useful as a full inventory — not all are part of the promotion path.</p>
+      </header>
+      <table>
+        <thead><tr><th>Role</th><th>Holders</th></tr></thead>
+        <tbody>
+<tr><td class="role"><span class="swatch empty"></span><span>G00N Class 6</span></td><td class="holders">126</td></tr>
+<tr><td class="role"><span class="swatch empty"></span><span>G00N Class 5</span></td><td class="holders">28</td></tr>
+<tr><td class="role"><span class="swatch empty"></span><span>ODIN BUYERS</span></td><td class="holders">22</td></tr>
+<tr><td class="role"><span class="swatch empty"></span><span>NEW EDENITES</span></td><td class="holders">20</td></tr>
+<tr><td class="role"><span class="swatch empty"></span><span>[4M] 4M Contractors</span></td><td class="holders">19</td></tr>
+<tr><td class="role"><span class="swatch empty"></span><span>SOFTWARE ENGINEERS</span></td><td class="holders">16</td></tr>
+<tr><td class="role"><span class="swatch empty"></span><span>[GN] GrieferNet</span></td><td class="holders">14</td></tr>
+<tr><td class="role"><span class="swatch empty"></span><span>IDRIS OWNERS</span></td><td class="holders">13</td></tr>
+<tr><td class="role"><span class="swatch empty"></span><span>[AIM] A.I.M.O.S.</span></td><td class="holders">11</td></tr>
+<tr><td class="role"><span class="swatch empty"></span><span>Ancient Defenders</span></td><td class="holders">11</td></tr>
+<tr><td class="role"><span class="swatch empty"></span><span>Server Booster</span></td><td class="holders">10</td></tr>
+<tr><td class="role"><span class="swatch empty"></span><span>BOTS</span></td><td class="holders">8</td></tr>
+<tr><td class="role"><span class="swatch empty"></span><span>HELLDIVERS</span></td><td class="holders">8</td></tr>
+<tr><td class="role"><span class="swatch empty"></span><span>BOOJAHIDEEN</span></td><td class="holders">7</td></tr>
+<tr><td class="role"><span class="swatch empty"></span><span>Black Squadron</span></td><td class="holders">6</td></tr>
+<tr><td class="role"><span class="swatch empty"></span><span>CINEMA</span></td><td class="holders">6</td></tr>
+<tr><td class="role"><span class="swatch empty"></span><span>SEC</span></td><td class="holders">5</td></tr>
+<tr><td class="role"><span class="swatch empty"></span><span>CINDER</span></td><td class="holders">4</td></tr>
+<tr><td class="role"><span class="swatch empty"></span><span>DOUBLEDOG DELIVERY, INC.</span></td><td class="holders">4</td></tr>
+<tr><td class="role"><span class="swatch empty"></span><span>ODIN OWNERS</span></td><td class="holders">4</td></tr>
+<tr><td class="role"><span class="swatch empty"></span><span>RPG</span></td><td class="holders">4</td></tr>
+<tr><td class="role"><span class="swatch empty"></span><span>Streamers</span></td><td class="holders">4</td></tr>
+<tr><td class="role"><span class="swatch empty"></span><span>Wild Weasels</span></td><td class="holders">4</td></tr>
+<tr><td class="role"><span class="swatch empty"></span><span>[PW] PACIFIC WATCH</span></td><td class="holders">3</td></tr>
+<tr><td class="role"><span class="swatch empty"></span><span>ARC RAIDER</span></td><td class="holders">3</td></tr>
+<tr><td class="role"><span class="swatch empty"></span><span>G00N Class 1</span></td><td class="holders">3</td></tr>
+<tr><td class="role"><span class="swatch empty"></span><span>Risky Business</span></td><td class="holders">3</td></tr>
+<tr><td class="role"><span class="swatch empty"></span><span>SC Homies</span></td><td class="holders">3</td></tr>
+<tr><td class="role"><span class="swatch empty"></span><span>Sons of Ares</span></td><td class="holders">3</td></tr>
+<tr><td class="role"><span class="swatch empty"></span><span>V Rising</span></td><td class="holders">3</td></tr>
+<tr><td class="role"><span class="swatch empty"></span><span>[TKOW] Templar Knights Of War</span></td><td class="holders">2</td></tr>
+<tr><td class="role"><span class="swatch empty"></span><span>ACHLYS CORP</span></td><td class="holders">2</td></tr>
+<tr><td class="role"><span class="swatch empty"></span><span>Artists</span></td><td class="holders">2</td></tr>
+<tr><td class="role"><span class="swatch empty"></span><span>Borderlanders</span></td><td class="holders">2</td></tr>
+<tr><td class="role"><span class="swatch empty"></span><span>Communications</span></td><td class="holders">2</td></tr>
+<tr><td class="role"><span class="swatch empty"></span><span>FOREVER WAR</span></td><td class="holders">2</td></tr>
+<tr><td class="role"><span class="swatch empty"></span><span>G00N Class 2</span></td><td class="holders">2</td></tr>
+<tr><td class="role"><span class="swatch empty"></span><span>GTFO</span></td><td class="holders">2</td></tr>
+<tr><td class="role"><span class="swatch empty"></span><span>LOYALISTS</span></td><td class="holders">2</td></tr>
+<tr><td class="role"><span class="swatch empty"></span><span>PATH OF EXILE</span></td><td class="holders">2</td></tr>
+<tr><td class="role"><span class="swatch empty"></span><span>RACERS</span></td><td class="holders">2</td></tr>
+<tr><td class="role"><span class="swatch empty"></span><span>Red Hunters</span></td><td class="holders">2</td></tr>
+<tr><td class="role"><span class="swatch empty"></span><span>Rintak</span></td><td class="holders">2</td></tr>
+<tr><td class="role"><span class="swatch empty"></span><span>RON SWATTERS</span></td><td class="holders">2</td></tr>
+<tr><td class="role"><span class="swatch empty"></span><span>Super Friends</span></td><td class="holders">2</td></tr>
+<tr><td class="role"><span class="swatch empty"></span><span>TESTERS</span></td><td class="holders">2</td></tr>
+<tr><td class="role"><span class="swatch empty"></span><span>WARCRAFTERS</span></td><td class="holders">2</td></tr>
+<tr><td class="role"><span class="swatch empty"></span><span>.fmbot</span></td><td class="holders">1</td></tr>
+<tr><td class="role"><span class="swatch empty"></span><span>[A77] Atlas 77</span></td><td class="holders">1</td></tr>
+<tr><td class="role"><span class="swatch empty"></span><span>[AVS] Avenger Squadron</span></td><td class="holders">1</td></tr>
+<tr><td class="role"><span class="swatch empty"></span><span>[DR] Devil's Rejects</span></td><td class="holders">1</td></tr>
+<tr><td class="role"><span class="swatch empty"></span><span>[PAX] Pax Mortis</span></td><td class="holders">1</td></tr>
+<tr><td class="role"><span class="swatch empty"></span><span>[RUIN] Ruin Gaming</span></td><td class="holders">1</td></tr>
+<tr><td class="role"><span class="swatch empty"></span><span>[SHDWMSS] Shadow Moses</span></td><td class="holders">1</td></tr>
+<tr><td class="role"><span class="swatch empty"></span><span>[VOX] Vox Mortis</span></td><td class="holders">1</td></tr>
+<tr><td class="role"><span class="swatch empty"></span><span>[WLIGHTNING] White Lightning</span></td><td class="holders">1</td></tr>
+<tr><td class="role"><span class="swatch empty"></span><span>[WOS] Walkers of Sigma</span></td><td class="holders">1</td></tr>
+<tr><td class="role"><span class="swatch empty"></span><span>7TH FLEET</span></td><td class="holders">1</td></tr>
+<tr><td class="role"><span class="swatch empty"></span><span>Black Star Sovereignty</span></td><td class="holders">1</td></tr>
+<tr><td class="role"><span class="swatch empty"></span><span>BRIDGE</span></td><td class="holders">1</td></tr>
+<tr><td class="role"><span class="swatch empty"></span><span>Citizen</span></td><td class="holders">1</td></tr>
+<tr><td class="role"><span class="swatch empty"></span><span>CODENAME HELLDIVER</span></td><td class="holders">1</td></tr>
+<tr><td class="role"><span class="swatch empty"></span><span>DCS Players</span></td><td class="holders">1</td></tr>
+<tr><td class="role"><span class="swatch empty"></span><span>DISBOARD.org</span></td><td class="holders">1</td></tr>
+<tr><td class="role"><span class="swatch empty"></span><span>FINANCIER</span></td><td class="holders">1</td></tr>
+<tr><td class="role"><span class="swatch empty"></span><span>Flight Instructor</span></td><td class="holders">1</td></tr>
+<tr><td class="role"><span class="swatch empty"></span><span>GOON GUIDES</span></td><td class="holders">1</td></tr>
+<tr><td class="role"><span class="swatch empty"></span><span>Grove</span></td><td class="holders">1</td></tr>
+<tr><td class="role"><span class="swatch empty"></span><span>HLN</span></td><td class="holders">1</td></tr>
+<tr><td class="role"><span class="swatch empty"></span><span>Homeworlders</span></td><td class="holders">1</td></tr>
+<tr><td class="role"><span class="swatch empty"></span><span>IdleCapitalist</span></td><td class="holders">1</td></tr>
+<tr><td class="role"><span class="swatch empty"></span><span>Live Translator</span></td><td class="holders">1</td></tr>
+<tr><td class="role"><span class="swatch empty"></span><span>LoL (League)</span></td><td class="holders">1</td></tr>
+<tr><td class="role"><span class="swatch empty"></span><span>MEDRUNNERS</span></td><td class="holders">1</td></tr>
+<tr><td class="role"><span class="swatch empty"></span><span>MERIT FARMERS</span></td><td class="holders">1</td></tr>
+<tr><td class="role"><span class="swatch empty"></span><span>Modelers</span></td><td class="holders">1</td></tr>
+<tr><td class="role"><span class="swatch empty"></span><span>RED TEAM</span></td><td class="holders">1</td></tr>
+<tr><td class="role"><span class="swatch empty"></span><span>Robert's Rejects</span></td><td class="holders">1</td></tr>
+<tr><td class="role"><span class="swatch empty"></span><span>Rye Eye Profiteer</span></td><td class="holders">1</td></tr>
+<tr><td class="role"><span class="swatch empty"></span><span>Streamcord</span></td><td class="holders">1</td></tr>
+<tr><td class="role"><span class="swatch empty"></span><span>Tempo 2</span></td><td class="holders">1</td></tr>
+<tr><td class="role"><span class="swatch empty"></span><span>Tempo 3</span></td><td class="holders">1</td></tr>
+<tr><td class="role"><span class="swatch empty"></span><span>Tempo 5</span></td><td class="holders">1</td></tr>
+<tr><td class="role"><span class="swatch empty"></span><span>Ticket Tool</span></td><td class="holders">1</td></tr>
+<tr><td class="role"><span class="swatch empty"></span><span>Tortuga</span></td><td class="holders">1</td></tr>
+<tr><td class="role"><span class="swatch empty"></span><span>TrackR</span></td><td class="holders">1</td></tr>
+<tr><td class="role"><span class="swatch empty"></span><span>Vanguard</span></td><td class="holders">1</td></tr>
+<tr><td class="role"><span class="swatch empty"></span><span>VoiceMaster</span></td><td class="holders">1</td></tr>
+<tr><td class="role"><span class="swatch empty"></span><span>VoiceStats</span></td><td class="holders">1</td></tr>
+<tr><td class="role"><span class="swatch empty"></span><span>Wastaken Family</span></td><td class="holders">1</td></tr>
+<tr><td class="role"><span class="swatch empty"></span><span>YouTube</span></td><td class="holders">1</td></tr>
+<tr><td class="role"><span class="swatch empty"></span><span>[GSR] RACING TEAM</span></td><td class="holders">0</td></tr>
+<tr><td class="role"><span class="swatch empty"></span><span>30k Club</span></td><td class="holders">0</td></tr>
+<tr><td class="role"><span class="swatch empty"></span><span>ARCHILLECT</span></td><td class="holders">0</td></tr>
+<tr><td class="role"><span class="swatch empty"></span><span>BARON</span></td><td class="holders">0</td></tr>
+<tr><td class="role"><span class="swatch empty"></span><span>Blackstar Salvage</span></td><td class="holders">0</td></tr>
+<tr><td class="role"><span class="swatch empty"></span><span>BLUE TEAM</span></td><td class="holders">0</td></tr>
+<tr><td class="role"><span class="swatch empty"></span><span>Cornerstone</span></td><td class="holders">0</td></tr>
+<tr><td class="role"><span class="swatch empty"></span><span>ENLIGHTENED (EARLY PASS)</span></td><td class="holders">0</td></tr>
+<tr><td class="role"><span class="swatch empty"></span><span>G00N Class 3</span></td><td class="holders">0</td></tr>
+<tr><td class="role"><span class="swatch empty"></span><span>G00N Class 4</span></td><td class="holders">0</td></tr>
+<tr><td class="role"><span class="swatch empty"></span><span>Howlers</span></td><td class="holders">0</td></tr>
+<tr><td class="role"><span class="swatch empty"></span><span>LIVE NOW</span></td><td class="holders">0</td></tr>
+<tr><td class="role"><span class="swatch empty"></span><span>Meridian Exploration Group</span></td><td class="holders">0</td></tr>
+<tr><td class="role"><span class="swatch empty"></span><span>Phantom Fleet</span></td><td class="holders">0</td></tr>
+<tr><td class="role"><span class="swatch empty"></span><span>PIRATE OF THE MONTH</span></td><td class="holders">0</td></tr>
+<tr><td class="role"><span class="swatch empty"></span><span>PK, Inc.</span></td><td class="holders">0</td></tr>
+<tr><td class="role"><span class="swatch empty"></span><span>PRIORITY</span></td><td class="holders">0</td></tr>
+<tr><td class="role"><span class="swatch empty"></span><span>RACE COORDINATOR</span></td><td class="holders">0</td></tr>
+<tr><td class="role"><span class="swatch empty"></span><span>RAM</span></td><td class="holders">0</td></tr>
+<tr><td class="role"><span class="swatch empty"></span><span>Splint3r</span></td><td class="holders">0</td></tr>
+<tr><td class="role"><span class="swatch empty"></span><span>TEAM CHARLIE</span></td><td class="holders">0</td></tr>
+<tr><td class="role"><span class="swatch empty"></span><span>TEST Squadron</span></td><td class="holders">0</td></tr>
+<tr><td class="role"><span class="swatch empty"></span><span>Trauma Team</span></td><td class="holders">0</td></tr>
+<tr><td class="role"><span class="swatch empty"></span><span>UEE Drug Enforcement Agency</span></td><td class="holders">0</td></tr>
+<tr><td class="role"><span class="swatch empty"></span><span>war-thunder</span></td><td class="holders">0</td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <p class="footnote">
+      Regenerated from the local GoonCitizen API
+      (<code>GET /services/star-citizen/discord/guilds/1190527980120850493/roles</code>)
+      and the PERMAFLEET ladder in <code>goon.vc/contracts/roles.dot</code>.
+      Run <code>npm run discord:roles-guide</code> to refresh.
+    </p>
+  </main>
+</body>
+</html>

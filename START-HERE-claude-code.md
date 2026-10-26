@@ -47,7 +47,7 @@ English BEFORE you run it:
 
 1. Clone the feature/rsi branch into this folder.
 2. Read DEVELOPERS.md and AGENTS.md §3–§4 so you understand what runs.
-3. Use Node.js 24.15.0 (see .nvmrc). Run: npm i
+3. Use Node.js 26.12.1 (see .nvmrc). Run: npm i
 4. Run: npm test
 5. Run: npm start   to start LiveRelay.
 6. Tell me the exact web address to open in my browser, and explain what I'm

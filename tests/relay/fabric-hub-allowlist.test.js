@@ -8,7 +8,6 @@ const {
   assertAllowedFabricHub,
   normalizeHubOrigin
 } = require('../../functions/fabricHubAllowlist');
-const { parseFabricLoginUrl } = require('../../functions/fabricProtocolLogin');
 const { parseFabricDeviceLinkUrl } = require('../../functions/fabricDeviceLinkProtocol');
 
 describe('fabricHubAllowlist', () => {
@@ -45,20 +44,6 @@ describe('fabricHubAllowlist', () => {
 
 describe('fabric login/link parsers enforce hub allowlist', () => {
   const sid = crypto.randomBytes(24).toString('hex');
-
-  it('accepts allowlisted login hub', () => {
-    const u = `fabric://login?sessionId=${sid}&hub=${encodeURIComponent('https://relay.goon.vc')}`;
-    const p = parseFabricLoginUrl(u);
-    assert.equal(p.ok, true);
-    assert.equal(p.hubBase, 'https://relay.goon.vc');
-  });
-
-  it('rejects phishing login hub', () => {
-    const u = `fabric://login?sessionId=${sid}&hub=${encodeURIComponent('https://evil.example')}`;
-    const p = parseFabricLoginUrl(u);
-    assert.equal(p.ok, false);
-    assert.match(p.error, /not allowed/);
-  });
 
   it('rejects phishing device-link hub', () => {
     const u = `fabric://link?sessionId=${sid}&hub=${encodeURIComponent('https://evil.example')}`;

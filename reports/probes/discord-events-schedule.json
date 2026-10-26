@@ -1,0 +1,78 @@
+{
+  "@type": "GoonCitizenAgentProbe",
+  "name": "discord-events-schedule",
+  "generatedAt": "2026-09-06T21:01:58.985Z",
+  "title": "G00N SQUAD Discord week schedule",
+  "guildId": "1190527980120850493",
+  "fetchedAt": "2026-09-06T21:01:21.032Z",
+  "count": 16,
+  "schedule": {
+    "generatedAt": "2026-09-06T21:01:58.984Z",
+    "counts": {
+      "theme": 6,
+      "timed": 4,
+      "special": 6,
+      "total": 16
+    }
+  },
+  "days": {
+    "Monday": {
+      "theme": "MINING MONDAY",
+      "timed": [],
+      "special": [
+        "ROCKBREAKER",
+        "HATHOR DOMINANCE"
+      ],
+      "other": []
+    },
+    "Tuesday": {
+      "theme": "TRAUMA TUESDAY",
+      "timed": [],
+      "special": [],
+      "other": []
+    },
+    "Wednesday": {
+      "theme": "HUMPDAY HAULING",
+      "timed": [
+        "TRAINING WEDNESDAY"
+      ],
+      "special": [
+        "CONTESTED ZONES"
+      ],
+      "other": []
+    },
+    "Thursday": {
+      "theme": null,
+      "timed": [
+        "FLIGHT SCHOOL EUROPA",
+        "TRAINING THURSDAY"
+      ],
+      "special": [],
+      "other": []
+    },
+    "Friday": {
+      "theme": "FIGHTER FRIDAY",
+      "timed": [
+        "FRIDAY NIGHT FIGHTS"
+      ],
+      "special": [],
+      "other": []
+    },
+    "Saturday": {
+      "theme": "SATURDAY SHENANIGANS",
+      "timed": [],
+      "special": [
+        "1v1 Tournament",
+        "CAPITAL COMBAT",
+        "Tour Through The Stars"
+      ],
+      "other": []
+    },
+    "Sunday": {
+      "theme": "SUNDAY FUNDAY",
+      "timed": [],
+      "special": [],
+      "other": []
+    }
+  }
+}

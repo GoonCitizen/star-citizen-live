@@ -26,12 +26,10 @@ const { channelFromPath } = require('../functions/locate');
 const settingsStore = require('../functions/settingsStore');
 const offlineMode = require('../functions/offlineMode');
 const { isHttpSharedModeEnabled, resolveHttpListenHost } = require('../functions/httpSharedMode');
-const { shouldEnforceRemoteAuth } = require('../functions/httpRemoteAuth');
+const { shouldEnforceRemoteAuth, isForeignBrowserWrite } = require('../functions/httpRemoteAuth');
 const { httpBindWarning } = require('../functions/httpBindWarning');
 const { applyGoonCitizenEnvAliases } = require('../functions/goonCitizenEnvAliases');
-
-/** Hosted / site-login Bearer session lifetime (ms). */
-const BEARER_TTL_MS = 8 * 60 * 60 * 1000;
+const { createLiveRelayPassport } = require('../functions/liveRelayPassport');
 let resolveFabricPeerInterface;
 try {
   ({ resolveFabricPeerInterface } = require('@fabric/core/functions/fabricListenInterface'));
@@ -163,8 +161,11 @@ const INGEST_COLLECTIONS = [
 // Both hubs selectively relay relevant Fabric messages for the network.
 const DEFAULT_PEERS = [
   { address: 'hub.fabric.pub:7777', label: 'hub.fabric.pub' },
+  { address: 'hub.goon.vc:7777', label: 'hub.goon.vc' },
   { address: 'relay.goon.vc:7777', label: 'relay.goon.vc' }
 ];
+// Seeds every roster saved before `seedsOffered` existed already had.
+const ORIGINAL_SEEDS = ['hub.fabric.pub:7777', 'relay.goon.vc:7777'];
 
 const FabricNetwork = require('./FabricNetwork');
 
@@ -330,8 +331,6 @@ class StarCitizenService extends EventEmitter {
     this._primaryGroupId = null;
     /** Opt-in always-on-top overlay window (Electron). */
     this._groupOverlay = false;
-    /** Opaque Share clipboard encoding: `'base64'` (default) or `'hex'`. */
-    this._fabricShareEncoding = 'base64';
     /** Gossip Discord/chat catalog packs to Federation groups (default off). */
     this._shareDiscordCatalog = false;
     /** Opt-in common play times pack on own profile (default off). */
@@ -381,14 +380,15 @@ class StarCitizenService extends EventEmitter {
     /**
      * Signs with the unlocked UI identity. Desktop keeps that key in the main
      * process when FABRIC_XPRV is the publishing identity (`_identity`).
-     * @type {((message: string) => { pubkey?: string, signature?: string })|null}
+     * Returns `{ pubkey?, signature? }`.
+     * @type {?function(string): Object}
      */
     this._localSigner = null;
     this._uplinkQueue = [];     // events awaiting signed push to the uplink
     this._uplinkTimer = null;
     this._uplinkWired = false;
 
-    // Peers: Fabric `host:port` addresses (seed hub.fabric.pub + relay.goon.vc).
+    // Peers: Fabric `host:port` addresses (seeds: DEFAULT_PEERS).
     // Loaded from the Fabric Store in start(); managed via REST / Peers UI.
     this.peers = [];
     this.fabricNetwork = null;
@@ -472,6 +472,9 @@ class StarCitizenService extends EventEmitter {
       this.groupManager.on('group:journal-needed', (ev) => {
         this._requestGroupJournal(ev).catch((e) => this.emit('error', e));
       });
+      for (const ev of ['group:created', 'group:changed', 'group:journal-merged']) {
+        this.groupManager.on(ev, () => this._ensureOwnCosigners());
+      }
     }
     this._wireRegisterInbox();
 
@@ -479,6 +482,14 @@ class StarCitizenService extends EventEmitter {
     // Global posts use P2P_CHAT_MESSAGE; group posts use GroupChat CONTRACT_MESSAGE.
     const ChatManager = require('../services/ChatManager');
     this.chatManager = new ChatManager({ store: this.registerStore, groupManager: this.groupManager });
+
+    // Document market: ranked chunk index + local provider telemetry (core DocumentBook).
+    const MarketManager = require('../services/MarketManager');
+    this.marketManager = new MarketManager(Object.assign({}, this.settings.market || {}, {
+      store: this.registerStore,
+      bitcoin: this.settings.bitcoin || null,
+      peer: () => (this.fabricNetwork && this.fabricNetwork.peer) || null
+    }));
 
     const IdentityCluster = require('../functions/identityCluster');
     this.identityCluster = new IdentityCluster();
@@ -509,11 +520,8 @@ class StarCitizenService extends EventEmitter {
       dir: this.settings.settingsDir ? path.join(this.settings.settingsDir, 'snapshots') : null
     });
 
-    // Bearer sessions issued by POST …/auth (Schnorr login challenge)
-    // or by client-signed Fabric site login (POST /sessions/…/signatures).
-    this._sessions = {};
-    // Pending Fabric site-login challenges (D-011) — Passport / GoonCitizen.
-    this._siteLoginSessions = null;
+    // Passport v2 sign-in (`/sessions*`), built for the listening port on first use.
+    this._passport = null;
 
     // Bitcoin payouts: escrow mission rewards in authority multisig addresses.
     // settings.payouts = { enable, network, rpc, allowMainnet, feeSats }.
@@ -566,6 +574,43 @@ class StarCitizenService extends EventEmitter {
           if (row) this._appendInbox(row);
         });
       }
+    }
+
+    // Group wallets: each group's signers are a named Fabric federation
+    // (core `types/federation` descriptor, vault, withdrawals, messages) over
+    // their cosigner keys; frames are signed by the local cosigner key.
+    this.groupWallets = null;
+    if (this.groupManager) {
+      const GroupWallets = require('../services/GroupWallets');
+      const cosignerKey = (network) => (this._identity && this._identity.xprv
+        ? identityLib().cosignerKeyFromIdentity(this._identity, network)
+        : null);
+      this.groupWallets = new GroupWallets({
+        store: this.registerStore,
+        network: () => this._groupWalletNetwork(),
+        allowMainnet: !!(this.settings.payouts && this.settings.payouts.allowMainnet),
+        signingKey: cosignerKey,
+        publish: (body) => {
+          const key = cosignerKey(this._groupWalletNetwork());
+          if (this.fabricNetwork && key) this.fabricNetwork.publishFederationMessage(body, { key, chain: false });
+        },
+        chain: this._groupWalletChain(),
+        groups: () => this.groupManager.groups
+      });
+      this.groupWallets.on('warning', (msg) => this.emit('warning', msg));
+      this.groupWallets.on('withdrawal', (w) => {
+        const row = registerInbox.entryFromWalletEvent({
+          kind: 'WalletWithdrawal',
+          status: 'pending',
+          actionable: true,
+          title: 'Group withdrawal requested',
+          body: `${Number(w.amountSats).toLocaleString()} sats to ${w.destinationAddress}`,
+          source: w.requester,
+          refs: { groupId: w.groupId, withdrawalId: w.id, federationId: w.federationId },
+          dedupeKey: `wallet-wd-${w.id}`
+        });
+        if (row) this._appendInbox(row);
+      });
     }
 
     // Compact cumulative history (ended missions, deaths, sessions, heat).
@@ -2728,6 +2773,7 @@ class StarCitizenService extends EventEmitter {
         this._healPeerRoster({ persist: false, dropSelf: true });
       } else if (!persistedCleared) {
         this._healPeerRoster({ persist: true, dropSelf: true, ensureHubs: true });
+        this._offerNewSeeds(persisted.seedsOffered);
       }
     }
     if (persisted.uplinkIntervalMs) this.settings.uplink.intervalMs = persisted.uplinkIntervalMs;
@@ -2755,23 +2801,11 @@ class StarCitizenService extends EventEmitter {
     this._notifyMissionBroadcasts = persisted.notifyMissionBroadcasts !== false;
     this._primaryGroupId = settingsStore.sanitizePrimaryGroupId(persisted.primaryGroupId);
     this._groupOverlay = persisted.groupOverlay === true;
-    this._fabricShareEncoding = settingsStore.sanitizeFabricShareEncoding(persisted.fabricShareEncoding) || 'base64';
     this._shareDiscordCatalog = persisted.shareDiscordCatalog === true;
     this._sharePlaytimes = persisted.sharePlaytimes === true;
     this._shareFiles = persisted.shareFiles === true;
     this._applySnapshotSettings(persisted);
     this._applyPresenceSettings(persisted);
-  }
-
-  /**
-   * Clipboard encoding for opaque `fabric:` GroupOffer / invite shares.
-   * @param {string} [override]
-   * @returns {'hex'|'base64'}
-   */
-  _opaqueShareEncoding (override) {
-    const { normalizeOpaqueShareEncoding } = require('../functions/groupShareMessage');
-    if (override != null && override !== '') return normalizeOpaqueShareEncoding(override);
-    return this._fabricShareEncoding === 'hex' ? 'hex' : 'base64';
   }
 
   /**
@@ -3007,6 +3041,34 @@ class StarCitizenService extends EventEmitter {
       : '';
     const theirs = String(hex || '').trim().toLowerCase().replace(/^0[23]/, '');
     return !!(mine && theirs && mine === theirs);
+  }
+
+  /**
+   * Add each default seed a saved roster has never been offered, once, so a new
+   * network hub reaches existing installs while removing it later still sticks.
+   * @param {string[]} [offered] Persisted `seedsOffered`.
+   */
+  _offerNewSeeds (offered) {
+    const already = new Set(Array.isArray(offered) ? offered : ORIGINAL_SEEDS);
+    const fresh = DEFAULT_PEERS.filter((seed) => !already.has(seed.address));
+    if (!fresh.length) return;
+    const have = new Set(this.peers.map((p) => p.address));
+    const selfOpts = this._selfFabricDialOpts();
+    const added = [];
+    for (const seed of fresh) {
+      if (have.has(seed.address) || FabricNetwork.isSelfFabricAddress(seed.address, selfOpts)) continue;
+      const row = this._normalizePeerRecord(seed);
+      if (!row) continue;
+      this.peers.push(row);
+      added.push(row.address);
+    }
+    if (added.length) {
+      this._persistPeers();
+      console.log(`[STAR-CITIZEN] added new network seeds: ${added.join(', ')}`);
+    }
+    if (this.registerStore && this.registerStore.persistent) {
+      settingsStore.putSetting(this.registerStore, 'seedsOffered', DEFAULT_PEERS.map((seed) => seed.address));
+    }
   }
 
   /**
@@ -3907,33 +3969,48 @@ class StarCitizenService extends EventEmitter {
     return list.find((d) => d && (d.peerFabricId === pubkey || d.pubkey === pubkey)) || null;
   }
 
-  _loadIdentityCluster () {
-    if (!this.registerStore || !this.identityCluster) return;
-    const IdentityCluster = require('../functions/identityCluster');
+  /**
+   * Stored cross-sign rows whose signature still verifies; rows that no longer
+   * do (tampered, or signed under an older protocol) are deleted.
+   * @returns {Array<{ row: object, kind: string, record: object }>}
+   */
+  _verifiedIdentityCrossSignRows () {
+    if (!this.registerStore) return [];
+    const { verifyCrossSignObject } = require('../functions/identityCrossSignVerify');
     let rows = [];
     try {
       rows = this.registerStore.all('identitycrosssigns') || [];
     } catch (_) {
       rows = [];
     }
-    const revokes = [];
-    const signs = [];
+    const out = [];
     for (const row of rows) {
       if (!row) continue;
-      if (row.kind === IdentityCluster.REVOKE_TYPE || row.type === IdentityCluster.REVOKE_TYPE) {
-        revokes.push(row);
-      } else {
-        signs.push(row);
+      const checked = verifyCrossSignObject(row);
+      if (checked.ok) {
+        out.push({ row, kind: checked.kind, record: checked.record });
+        continue;
       }
+      if (row.id) {
+        try { this.registerStore.del('identitycrosssigns', row.id); } catch (_) { /* ignore */ }
+      }
+      logFabricSync('IdentityCrossSign dropped', checked.error);
     }
-    for (const row of signs) this.identityCluster.ingestCrossSign(row);
-    for (const row of revokes) this.identityCluster.ingestRevoke(row);
+    return out;
+  }
+
+  _loadIdentityCluster () {
+    if (!this.registerStore || !this.identityCluster) return;
+    const IdentityCluster = require('../functions/identityCluster');
+    const rows = this._verifiedIdentityCrossSignRows();
+    for (const r of rows) if (r.kind !== IdentityCluster.REVOKE_TYPE) this.identityCluster.ingestCrossSign(r.record);
+    for (const r of rows) if (r.kind === IdentityCluster.REVOKE_TYPE) this.identityCluster.ingestRevoke(r.record);
   }
 
   _persistIdentityCrossSignRow (kind, record) {
     if (!this.registerStore || !record) return;
     const IdentityCluster = require('../functions/identityCluster');
-    const nonce16 = String(record.nonce || '').slice(0, 16);
+    const nonce16 = String(record.sessionId || '').slice(0, 16) + String(record.nonce || '').slice(0, 16);
     let id = 'edge:' + String(kind || 'sign') + ':' + nonce16;
     try {
       const a = IdentityCluster.keyOf
@@ -4008,17 +4085,41 @@ class StarCitizenService extends EventEmitter {
    */
   _replayIdentityCrossSigns () {
     if (!this.registerStore || !this.fabricNetwork || !this.fabricNetwork.ready) return;
-    let rows = [];
-    try { rows = this.registerStore.all('identitycrosssigns') || []; } catch (_) { rows = []; }
-    for (const row of rows) {
-      if (!row || !row.signature) continue;
-      this._gossipIdentityCrossSign(row);
+    for (const r of this._verifiedIdentityCrossSignRows()) this._gossipIdentityCrossSign(r.row);
+  }
+
+  /**
+   * The device link a cross-sign names. Callers that only know the peer and
+   * nonce get the session and origin from the linked-device row.
+   * @param {object} fields { peerPubkey, nonce, sessionId?, origin? }
+   * @returns {{ peerPubkey: string, nonce: string, sessionId: string, origin: string }}
+   */
+  _crossSignBinding (fields = {}) {
+    const peerPubkey = String(fields.peerPubkey || '').toLowerCase();
+    const nonce = String(fields.nonce || '').toLowerCase();
+    let sessionId = fields.sessionId ? String(fields.sessionId) : '';
+    let origin = fields.origin ? String(fields.origin) : '';
+    if ((!sessionId || !origin) && this.registerStore) {
+      const persisted = settingsStore.loadSettings(this.registerStore);
+      const list = Array.isArray(persisted.linkedDevices) ? persisted.linkedDevices : [];
+      const IdentityCluster = require('../functions/identityCluster');
+      const keyOf = (v) => (IdentityCluster.keyOf ? IdentityCluster.keyOf(v) : String(v || '').toLowerCase());
+      const row = list.find((d) => d && String(d.nonce || '').toLowerCase() === nonce &&
+        keyOf(d.peerPubkey || d.pubkey) === keyOf(peerPubkey));
+      if (row) {
+        sessionId = sessionId || String(row.sessionId || '');
+        origin = origin || String(row.hubOrigin || '');
+      }
     }
+    if (!sessionId || !origin) {
+      throw new Error('This device was linked with an older version. Link it again.');
+    }
+    return { peerPubkey, nonce, sessionId, origin };
   }
 
   /**
    * Sign + ingest + gossip a cross-sign or revoke for the unlocked identity.
-   * @param {object} fields { peerPubkey, nonce }
+   * @param {object} fields { peerPubkey, nonce, sessionId?, origin?, revokedAt? }
    * @param {string} [kind]
    */
   async publishLocalIdentityCrossSign (fields, kind) {
@@ -4026,7 +4127,9 @@ class StarCitizenService extends EventEmitter {
     const { signCrossSign } = require('../functions/identityCrossSignVerify');
     if (!this._identity) throw new Error('Identity is locked');
     const k = kind || IdentityCluster.SIGN_TYPE;
-    const obj = signCrossSign(this._identity, fields, k);
+    const binding = this._crossSignBinding(fields || {});
+    if (fields && fields.revokedAt != null) binding.revokedAt = fields.revokedAt;
+    const obj = signCrossSign(this._identity, binding, k);
     this._ingestIdentityCrossSign(obj, this._identity.pubkey);
     await this._ensureFabric().catch(() => null);
     this._gossipIdentityCrossSign(obj);
@@ -4526,10 +4629,10 @@ class StarCitizenService extends EventEmitter {
     for (const row of list) {
       const pk = row.peerPubkey || row.peerPubkeyHex;
       const nonce = row.nonce;
-      if (!pk || !nonce) continue;
+      if (!pk || !nonce || !row.sessionId || !row.hubOrigin) continue;
       if (this.identityCluster && this.identityCluster.clusterEquals(me, pk)) continue;
       try {
-        await this.publishLocalIdentityCrossSign({ peerPubkey: pk, nonce });
+        await this.publishLocalIdentityCrossSign({ peerPubkey: pk, nonce, sessionId: row.sessionId, origin: row.hubOrigin });
         n += 1;
       } catch (e) {
         this.emit('warning', '[LiveRelay] IdentityCrossSign nudge: ' + ((e && e.message) || e));
@@ -5031,8 +5134,44 @@ class StarCitizenService extends EventEmitter {
     documentOffers.replyInventory(peer, String(originName), items);
   }
 
+  /**
+   * Local sealed blob tree for availability challenges: leaf hashes in order
+   * plus a byte reader, from this node's Files catalog. Null when not held.
+   * @param {string} merkleRootHex
+   * @returns {{ blobHashes: string[], bytesFor: function }|null}
+   */
+  _localBlobTree (merkleRootHex) {
+    if (!this.registerStore) return null;
+    const root = String(merkleRootHex || '').toLowerCase();
+    const rows = localDocuments.list(this.registerStore, { includeBlobIndex: true });
+    const row = rows.find((r) => String(r.merkleRootHex || '').toLowerCase() === root);
+    if (!row) return null;
+    const leaves = Array.isArray(row.blobs) && row.blobs.length
+      ? row.blobs
+      : (row.documentBlobIndex && Array.isArray(row.documentBlobIndex.blobs) ? row.documentBlobIndex.blobs : []);
+    const blobHashes = leaves.map((b) => String(b.blobHashHex || '').toLowerCase()).filter(Boolean);
+    if (!blobHashes.length) return null;
+    const dir = this._documentsDir();
+    return {
+      blobHashes,
+      bytesFor: (index) => {
+        try {
+          const { document } = localDocuments.get(this.registerStore, row.id, { dir });
+          if (!document || !document.contentBase64) return null;
+          const buf = Buffer.from(document.contentBase64, 'base64');
+          const Document = require('@fabric/core/types/document');
+          const parts = Document.split(buf, row.chunkBytes || undefined).blobs;
+          return parts[index] || null;
+        } catch (_) { return null; }
+      }
+    };
+  }
+
   _onDocumentInventoryResponse (ev) {
     if (!this.registerStore) return;
+    if (this.marketManager) {
+      try { this.marketManager.ingestInventoryResponse(ev); } catch (e) { this.emit('error', e); }
+    }
     const items = documentOffers.itemsFromInventoryMessage(ev && ev.message);
     const originName = ev && ev.origin && (ev.origin.name != null ? ev.origin.name : ev.origin);
     const address = originName ? String(originName) : null;
@@ -5879,62 +6018,29 @@ class StarCitizenService extends EventEmitter {
     return { ok: true, code: 200, error: null };
   }
 
-  // ---- Auth sessions (Schnorr login) ----
+  // ---- Auth sessions (Passport v2, functions/liveRelayPassport.js) ----
 
   /**
-   * Resolve the authenticated pubkey for a request from its Bearer session.
-   * @returns {String|null} Pubkey, or null when unauthenticated/expired.
+   * Passport routes and sessions for the port the relay listens on.
+   * @returns {object}
+   */
+  _passportSignIn () {
+    const address = this.server && typeof this.server.address === 'function' ? this.server.address() : null;
+    const port = Number((address && address.port) || (this.settings && this.settings.port) || 3041);
+    if (!this._passport || this._passport.port !== port) {
+      this._passport = Object.assign(createLiveRelayPassport(this, { port }), { port });
+    }
+    return this._passport;
+  }
+
+  /**
+   * Signed-in identity pubkey (compressed hex) for a request, from the
+   * Passport session `_handle` resolved for it.
+   * @returns {String|null}
    */
   _authPubkey (req) {
-    const header = (req.headers && req.headers.authorization) || '';
-    if (!header.startsWith('Bearer ')) return null;
-    const session = this._sessions[header.slice(7)];
-    if (!session) return null;
-    if (session.expiresAt < Date.now()) { delete this._sessions[session.token]; return null; }
-    return session.pubkey;
-  }
-
-  /**
-   * Issue a session for a Schnorr login envelope:
-   * `{ pubkey, payload: { intent: 'login', ts }, signature }` where `ts` is
-   * within 5 minutes of server time (replay damping).
-   * @returns {{ token, pubkey, expiresAt }|{ error, code }}
-   */
-  _login (envelope) {
-    const check = this._checkEnvelope(envelope);
-    if (!check.ok) return { error: check.error, code: check.code };
-    const p = envelope.payload || {};
-    if (p.intent !== 'login') return { error: 'payload.intent must be "login"', code: 400 };
-    const ts = Date.parse(p.ts);
-    if (Number.isNaN(ts) || Math.abs(Date.now() - ts) > 5 * 60 * 1000) {
-      return { error: 'payload.ts must be within 5 minutes of server time', code: 401 };
-    }
-    const token = crypto.randomBytes(24).toString('hex');
-    const session = {
-      token,
-      pubkey: envelope.pubkey,
-      createdAt: Date.now(),
-      expiresAt: Date.now() + BEARER_TTL_MS
-    };
-    this._sessions[token] = session;
-    // Cap session table growth.
-    const keys = Object.keys(this._sessions);
-    if (keys.length > 5000) delete this._sessions[keys[0]];
-    return { token, pubkey: session.pubkey, expiresAt: new Date(session.expiresAt).toISOString() };
-  }
-
-  /**
-   * Drop a Bearer session (logout / revoke). Returns true when a session was removed.
-   * @param {object} req
-   * @returns {boolean}
-   */
-  _revokeBearerSession (req) {
-    const header = (req.headers && req.headers.authorization) || '';
-    if (!header.startsWith('Bearer ')) return false;
-    const token = header.slice(7);
-    if (!this._sessions[token]) return false;
-    delete this._sessions[token];
-    return true;
+    const session = req && req._passportSession;
+    return session && session.pubkey ? session.pubkey : null;
   }
 
   /**
@@ -5959,7 +6065,7 @@ class StarCitizenService extends EventEmitter {
    */
   _actor (req, bodyValue) {
     if (this._enforceRemoteAuth(req)) return this._authPubkey(req);
-    return this._authPubkey(req) || bodyValue || null;
+    return this._authPubkey(req) || bodyValue || (this._identity && this._identity.pubkey) || null;
   }
 
   /**
@@ -6359,7 +6465,7 @@ class StarCitizenService extends EventEmitter {
    */
   _requireSession (req, send) {
     if (this._enforceRemoteAuth(req) && !this._authPubkey(req)) {
-      send(401, { error: 'Authentication required (POST …/auth with a signed login envelope)' });
+      send(401, { error: 'Authentication required (sign in with Passport at /sessions)' });
       return false;
     }
     return true;
@@ -6954,10 +7060,7 @@ class StarCitizenService extends EventEmitter {
       expiresAt: payload.expiresAt,
       messageId,
       protocolUrl: encoded.protocolUrl,
-      protocolUrlHex: encoded.protocolUrlHex || encoded.protocolUrl,
-      protocolUrlBase64: encoded.protocolUrlBase64,
       messageHex: encoded.messageHex,
-      messageBase64: encoded.messageBase64,
       pagePath: `/missions/${m.id}`,
       relayed: sent.relayed,
       relayError: sent.relayError,
@@ -6986,18 +7089,16 @@ class StarCitizenService extends EventEmitter {
     if (!this.groupManager || !groupId) return null;
     const group = this.groupManager.getGroup(groupId);
     if (!group) throw new Error('completion group not found');
-    const { groupTaprootWallet } = require('../functions/groupSpendLadder');
-    const pm = this.payoutManager;
-    const tapWallet = groupTaprootWallet(group, {
-      network: (pm && pm.settings && pm.settings.network) || 'regtest'
-    });
-    if (!tapWallet || !tapWallet.address) throw new Error('completion group wallet unavailable');
+    if (!this.groupWallets) throw new Error('completion group wallet unavailable');
+    const fed = this.groupWallets.federation(group);
+    if (!fed) throw new Error('completion group wallet: every signer must publish a wallet key first');
     return {
-      address: tapWallet.address,
+      address: fed.address,
       groupId: group.id,
-      mode: tapWallet.mode || 'taproot',
-      keys: tapWallet.keys,
-      threshold: tapWallet.threshold
+      mode: 'federation',
+      federationId: fed.id,
+      keys: fed.descriptor.validators.slice(),
+      threshold: fed.descriptor.threshold
     };
   }
 
@@ -7595,6 +7696,23 @@ class StarCitizenService extends EventEmitter {
       res.writeHead(204, cors);
       return res.end();
     }
+    const passport = this._passportSignIn();
+    if (await passport.handle(req, res, pathname)) return;
+    req._passportSession = await passport.requestSession(req);
+    if (this._fabricLocalSigner === undefined) {
+      this._fabricLocalSigner = require('../functions/fabricLocalSignerRelay').createFabricLocalSignerRelay(this);
+    }
+    if (this._fabricLocalSigner && this._fabricLocalSigner.handle(req, res, pathname)) return;
+    // Loopback writes act as the unlocked identity. `identity/cross-sign` carries its own
+    // BIP340 proof, and Passport posts it from its extension origin.
+    if (pathname.startsWith(`${base}/`) && pathname !== `${base}/identity/cross-sign` &&
+      !this._enforceRemoteAuth(req) && !this._authPubkey(req) &&
+      isForeignBrowserWrite(req, {
+        port: (req.socket && req.socket.localPort) || this.settings.port,
+        allowOrigin: () => Object.keys(cors || {}).length > 0
+      })) {
+      return send(403, { error: 'Writes from another web origin need a session', code: 'FOREIGN_ORIGIN' });
+    }
     // Read the JSON body. When embedded behind Express (historical Hub mount), body-parser
     // has already consumed the stream and parsed req.body — use it directly.
     const body = async () => {
@@ -7603,10 +7721,6 @@ class StarCitizenService extends EventEmitter {
     };
 
     try {
-      // Fabric site login (D-011) — Passport / GoonCitizen client-signed sessions.
-      const { tryHandleSiteLogin } = require('../functions/fabricSiteLogin');
-      const siteLogin = await tryHandleSiteLogin(this, req, res, pathname, body);
-      if (siteLogin === true) return;
       const { tryHandleDeviceLink } = require('../functions/fabricDeviceLinkRelay');
       if (this._offlineMode && String(pathname || '').startsWith('/device-links')) {
         return send(503, { error: offlineMode.OFFLINE_ERROR, code: 'OFFLINE' });
@@ -7620,8 +7734,7 @@ class StarCitizenService extends EventEmitter {
       if (liveRelayPeeringHttp.tryHandlePeeringDiscovery(this, req, res, pathname)) return;
       const mapStaticAssets = require('../functions/mapStaticAssets');
       if (mapStaticAssets.tryServeMapStatic(req, res, pathname)) return;
-      // GET /sessions → same dashboard (header SiteLogin buttons).
-      const serveSpa = siteLogin === 'spa' ||
+      const serveSpa =
         (req.method === 'GET' && (pathname === '/' || pathname === `${base}/ui` ||
           pathname === '/groups' || /^\/groups\/[^/]+$/.test(pathname) ||
           pathname === '/profiles' || /^\/profiles\/[^/]+$/.test(pathname) ||
@@ -7709,7 +7822,7 @@ class StarCitizenService extends EventEmitter {
           return send(400, { error: 'corpus sync is a local-player operation' });
         }
         if (this._enforceRemoteAuth(req) && !this._authPubkey(req)) {
-          return send(401, { error: 'Authentication required (POST …/auth with a signed login envelope)' });
+          return send(401, { error: 'Authentication required (sign in with Passport at /sessions)' });
         }
         const result = await this._syncCumulativeHistory();
         return send(200, { type: 'LogCorpusSync', result, corpus: this._corpusStatus() });
@@ -7720,7 +7833,7 @@ class StarCitizenService extends EventEmitter {
           return send(400, { error: 'corpus import is a local-player operation' });
         }
         if (this._enforceRemoteAuth(req) && !this._authPubkey(req)) {
-          return send(401, { error: 'Authentication required (POST …/auth with a signed login envelope)' });
+          return send(401, { error: 'Authentication required (sign in with Passport at /sessions)' });
         }
         const d = await body();
         const dirs = Array.isArray(d.dirs) ? d.dirs : (d.dir ? [d.dir] : []);
@@ -7744,7 +7857,7 @@ class StarCitizenService extends EventEmitter {
           return send(400, { error: 'corpus remove is a local-player operation' });
         }
         if (this._enforceRemoteAuth(req) && !this._authPubkey(req)) {
-          return send(401, { error: 'Authentication required (POST …/auth with a signed login envelope)' });
+          return send(401, { error: 'Authentication required (sign in with Passport at /sessions)' });
         }
         const d = await body();
         const removeDirs = new Set(fsBrowser.sanitizeCorpusDirs(Array.isArray(d.dirs) ? d.dirs : (d.dir ? [d.dir] : [])));
@@ -7788,7 +7901,7 @@ class StarCitizenService extends EventEmitter {
       }
       if (req.method === 'POST' && pathname === `${base}/activity-tree/publish`) {
         if (this._enforceRemoteAuth(req) && !this._authPubkey(req)) {
-          return send(401, { error: 'Authentication required (POST …/auth with a signed login envelope)' });
+          return send(401, { error: 'Authentication required (sign in with Passport at /sessions)' });
         }
         const d = await body();
         const groupId = d.groupId || d.id;
@@ -7870,7 +7983,7 @@ class StarCitizenService extends EventEmitter {
         const editable = !!(store && store.persistent);
         const mutating = req.method !== 'GET' && req.method !== 'HEAD' && req.method !== 'OPTIONS';
         if (mutating && this._enforceRemoteAuth(req) && !this._authPubkey(req)) {
-          return send(401, { error: 'Authentication required (POST …/auth with a signed login envelope)' });
+          return send(401, { error: 'Authentication required (sign in with Passport at /sessions)' });
         }
         if (req.method === 'GET' && pathname === '/settings') {
           if (!this._requireSession(req, send)) return;
@@ -7921,7 +8034,6 @@ class StarCitizenService extends EventEmitter {
               primaryGroupColor: this._primaryGroupColor(),
               defaultGroupMessageId: this._defaultGroupMessageId || null,
               groupOverlay: this._groupOverlay === true,
-              fabricShareEncoding: this._opaqueShareEncoding(),
               shareDiscordCatalog: this._shareDiscordCatalog === true,
               sharePlaytimes: this._sharePlaytimes === true,
               shareFiles: this._hasPinnedProfileFiles(),
@@ -7944,7 +8056,7 @@ class StarCitizenService extends EventEmitter {
         let sMatch;
         if ((sMatch = pathname.match(/^\/settings\/([a-zA-Z]+)$/)) && req.method === 'PUT') {
           if (this._enforceRemoteAuth(req) && !this._authPubkey(req)) {
-            return send(401, { error: 'Authentication required (POST …/auth with a signed login envelope)' });
+            return send(401, { error: 'Authentication required (sign in with Passport at /sessions)' });
           }
           if (!editable) return send(400, { error: 'No persistent store configured (settingsDir)' });
           const d = await body();
@@ -8033,10 +8145,6 @@ class StarCitizenService extends EventEmitter {
             }
             if (sMatch[1] === 'groupOverlay') {
               this._groupOverlay = updated.groupOverlay === true;
-              requiresRestart = false;
-            }
-            if (sMatch[1] === 'fabricShareEncoding') {
-              this._fabricShareEncoding = settingsStore.sanitizeFabricShareEncoding(updated.fabricShareEncoding) || 'base64';
               requiresRestart = false;
             }
             if (sMatch[1] === 'shareDiscordCatalog') {
@@ -8429,9 +8537,7 @@ class StarCitizenService extends EventEmitter {
           if (!this._requireSession(req, send)) return;
           const d = await body();
           try {
-            const data = this.decodeOpaqueFabricMessage(
-              d.protocolUrl || d.messageHex || d.messageBase64 || d.hex || d.base64 || d.message || ''
-            );
+            const data = this.decodeOpaqueFabricMessage(d.protocolUrl);
             return send(200, { type: 'FabricMessageDecode', data });
           } catch (e) {
             return send(400, { error: e.message || String(e) });
@@ -8499,7 +8605,7 @@ class StarCitizenService extends EventEmitter {
       if (this.settings.mode !== 'server') {
         const mutating = req.method !== 'GET' && req.method !== 'HEAD' && req.method !== 'OPTIONS';
         if (mutating && this._enforceRemoteAuth(req) && !this._authPubkey(req)) {
-          return send(401, { error: 'Authentication required (POST …/auth with a signed login envelope)' });
+          return send(401, { error: 'Authentication required (sign in with Passport at /sessions)' });
         }
         // Discord guild / channel / user catalog for Chat Discord insight.
         if ((pathname === `${base}/discord/links` || pathname === '/discord/links') &&
@@ -9004,17 +9110,6 @@ class StarCitizenService extends EventEmitter {
         }
       }
 
-      // Schnorr login: exchange a signed envelope for a Bearer session token.
-      if (req.method === 'POST' && pathname === `${base}/auth`) {
-        const result = this._login(await body());
-        if (result.error) return send(result.code || 401, { error: result.error });
-        return send(200, { type: 'Session', data: result });
-      }
-      if (req.method === 'DELETE' && pathname === `${base}/auth`) {
-        const revoked = this._revokeBearerSession(req);
-        return send(200, { type: 'SessionRevoke', data: { revoked } });
-      }
-
       if (pathname === `${base}/identity/cluster` || pathname === '/identity/cluster') {
         if (!this._requireSession(req, send)) return;
         // Prefer explicit pubkey query; never fall back to unlocked operator when
@@ -9077,7 +9172,8 @@ class StarCitizenService extends EventEmitter {
         try {
           const ident = identityLib().restoreIdentity({
             xprv: d && d.xprv,
-            mnemonic: (d && d.mnemonic) || undefined
+            account: d && d.account,
+            network: d && d.network
           });
           this.setIdentity(ident);
           return send(200, { ok: true, pubkey: ident.pubkey });
@@ -9102,12 +9198,15 @@ class StarCitizenService extends EventEmitter {
           }
           if (!this._identity) return send(401, { error: 'Unlock your identity' });
           if (this._enforceRemoteAuth(req) && !this._authPubkey(req)) {
-            return send(401, { error: 'Authentication required (POST …/auth with a signed login envelope)' });
+            return send(401, { error: 'Authentication required (sign in with Passport at /sessions)' });
           }
           try {
             const obj = await this.publishLocalIdentityCrossSign({
               peerPubkey: d.peerPubkey,
-              nonce: d.nonce
+              nonce: d.nonce,
+              sessionId: d.sessionId,
+              origin: d.origin,
+              revokedAt: d.revokedAt
             }, kind);
             return send(200, { type: kind, data: obj });
           } catch (e) {
@@ -9642,9 +9741,7 @@ class StarCitizenService extends EventEmitter {
         if (!requireAuth()) return;
         const d = await body();
         try {
-          const data = await this.ingestOpaqueGroupShare(
-            d.protocolUrl || d.messageHex || d.messageBase64 || d.hex || d.base64 || d.message || ''
-          );
+          const data = await this.ingestOpaqueGroupShare(d.protocolUrl);
           return send(200, { type: 'GroupShareIngest', data });
         } catch (e) {
           const { inviteHttpStatus, inviteHttpBody } = require('../functions/inviteExpiry');
@@ -9879,7 +9976,7 @@ class StarCitizenService extends EventEmitter {
           const gcp = require('../functions/groupChangeProposal');
           if (!signature && actor && this._localSigner &&
               this._unlockedPubkey && pubkeysMatch(this._unlockedPubkey, actor)) {
-            const signed = this._localSigner(gcp.signingStringForGroupChangeProposal(proposal));
+            const signed = this._localSigner(proposal);
             if (signed && signed.signature && pubkeysMatch(signed.pubkey, actor)) {
               signature = signed.signature;
             }
@@ -10258,7 +10355,7 @@ class StarCitizenService extends EventEmitter {
         });
       }
 
-      // ---- Hub-backed personal Bitcoin (proxy; identity xpub watch + Hub-wallet send) ----
+      // ---- Hub-backed personal Bitcoin (proxy; account wallet watch + Hub-wallet send) ----
       const btcPath = `${base}/bitcoin`;
       if (pathname === `${btcPath}/status` || pathname.startsWith(`${btcPath}/`)) {
         if (this._offlineResponse(send)) return;
@@ -10277,53 +10374,54 @@ class StarCitizenService extends EventEmitter {
             const status = await hubBitcoinProxy.fetchStatus(btc);
             return send(200, { type: 'BitcoinStatus', data: status, hub: btc.hub, network: btc.network });
           }
+          // Unlocked: the account's m/84' + m/44' xpubs on the Hub's network.
+          // Locked: the cached xpubs the UI read from the vault summary.
+          const walletKeys = () => {
+            const own = hubBitcoinProxy.walletKeysFromIdentity(this._identity, btc.network);
+            if (own) return own;
+            const xpub = String(url.searchParams.get('xpub') || '').trim();
+            if (!xpub) return null;
+            return { xpub, standardXpub: String(url.searchParams.get('standardXpub') || '').trim() || null };
+          };
+          const LOCKED = { error: 'xpub query param required (or unlock identity)' };
           if (pathname === `${btcPath}/wallet` && req.method === 'GET') {
-            const xpubParam = String(url.searchParams.get('xpub') || '').trim();
-            const ident = this._identity || {};
-            const watchXpub = hubBitcoinProxy.bitcoinWatchXpubFromIdentity(ident) || xpubParam;
-            if (!watchXpub) return send(400, { error: 'xpub query param required (or unlock identity)' });
-            const summary = await hubBitcoinProxy.fetchWalletSummary(btc, { xpub: watchXpub });
+            const keys = walletKeys();
+            if (!keys) return send(400, LOCKED);
+            const summary = await hubBitcoinProxy.fetchWalletSummary(btc, keys);
             return send(200, {
               type: 'BitcoinWallet',
               data: summary,
-              walletId: hubBitcoinProxy.deriveWalletIdFromXpub(watchXpub),
-              watchXpub
+              walletId: hubBitcoinProxy.deriveWalletIdFromXpub(keys.xpub),
+              watchXpub: keys.xpub,
+              standardXpub: keys.standardXpub || null
             });
           }
           if (pathname === `${btcPath}/receive` && req.method === 'GET') {
-            const xpubParam = String(url.searchParams.get('xpub') || '').trim();
             const index = Number(url.searchParams.get('index') || 0);
-            const ident = this._identity || {};
-            const xpub = xpubParam || String(ident.xpub || '').trim();
-            if (!xpub && !ident.xprv) return send(400, { error: 'xpub query param required (or unlock identity)' });
-            const derived = hubBitcoinProxy.deriveReceiveAddress(xpub, index, btc.network, {
-              xprv: ident.xprv || null
-            });
+            const keys = walletKeys();
+            if (!keys) return send(400, LOCKED);
+            const derived = hubBitcoinProxy.deriveReceiveAddress(keys.xpub, index, btc.network);
             if (!derived) return send(400, { error: 'unable to derive receive address from identity' });
-            const watchXpub = derived.accountXpub || hubBitcoinProxy.bitcoinWatchXpubFromIdentity(ident) || xpub;
             return send(200, {
               type: 'BitcoinReceive',
               data: Object.assign({}, derived, {
+                path: keys.segwitPath ? `${keys.segwitPath}/0/${derived.index}` : derived.path,
                 network: btc.network,
-                walletId: hubBitcoinProxy.deriveWalletIdFromXpub(watchXpub)
+                walletId: hubBitcoinProxy.deriveWalletIdFromXpub(keys.xpub)
               })
             });
           }
           if (pathname === `${btcPath}/transactions` && req.method === 'GET') {
-            const xpubParam = String(url.searchParams.get('xpub') || '').trim();
             const limit = Number(url.searchParams.get('limit') || 50);
-            const ident = this._identity || {};
-            const watchXpub = hubBitcoinProxy.bitcoinWatchXpubFromIdentity(ident) || xpubParam;
-            if (!watchXpub) return send(400, { error: 'xpub query param required (or unlock identity)' });
-            const txs = await hubBitcoinProxy.fetchTransactions(btc, { xpub: watchXpub, limit });
+            const keys = walletKeys();
+            if (!keys) return send(400, LOCKED);
+            const txs = await hubBitcoinProxy.fetchTransactions(btc, Object.assign({ limit }, keys));
             return send(200, { type: 'BitcoinTransactions', data: txs });
           }
           if (pathname === `${btcPath}/utxos` && req.method === 'GET') {
-            const xpubParam = String(url.searchParams.get('xpub') || '').trim();
-            const ident = this._identity || {};
-            const watchXpub = hubBitcoinProxy.bitcoinWatchXpubFromIdentity(ident) || xpubParam;
-            if (!watchXpub) return send(400, { error: 'xpub query param required (or unlock identity)' });
-            const utxos = await hubBitcoinProxy.fetchUtxos(btc, { xpub: watchXpub });
+            const keys = walletKeys();
+            if (!keys) return send(400, LOCKED);
+            const utxos = await hubBitcoinProxy.fetchUtxos(btc, keys);
             return send(200, { type: 'BitcoinUtxos', data: utxos });
           }
           if (pathname === `${btcPath}/send` && req.method === 'POST') {
@@ -10424,6 +10522,72 @@ class StarCitizenService extends EventEmitter {
               : documentOffers.sortOffersByPrice(documentOffers.list(this.registerStore));
             return send(200, { type: 'DocumentOffers', data: { offers, documentId: documentId || null } });
           }
+          if (pathname === `${docsPath}/market` && req.method === 'GET') {
+            if (!requireAuth()) return;
+            const mm = this.marketManager;
+            if (!mm) return send(503, { type: 'MarketStatus', error: 'market disabled' });
+            return send(200, { type: 'MarketStatus', data: Object.assign(mm.status(), { providers: mm.listProviders() }) });
+          }
+          if (pathname === `${docsPath}/market/agent` && req.method === 'GET') {
+            if (!requireAuth()) return;
+            const mm = this.marketManager;
+            if (!mm) return send(503, { type: 'MarketAgentStatus', error: 'market disabled' });
+            return send(200, { type: 'MarketAgentStatus', data: mm.agentStatus() });
+          }
+          if (pathname === `${docsPath}/market/agent` && req.method === 'PUT') {
+            if (!requireAuth()) return;
+            const mm = this.marketManager;
+            if (!mm) return send(503, { type: 'MarketAgentStatus', error: 'market disabled' });
+            try {
+              return send(200, { type: 'MarketAgentStatus', data: mm.agentConfigure(await body()) });
+            } catch (e) {
+              return send(400, { error: e && e.message ? e.message : String(e) });
+            }
+          }
+          if (pathname === `${docsPath}/market/agent/wants` && req.method === 'POST') {
+            if (!requireAuth()) return;
+            const mm = this.marketManager;
+            if (!mm) return send(503, { type: 'MarketWant', error: 'market disabled' });
+            try {
+              return send(201, { type: 'MarketWant', data: mm.agentWant(await body()) });
+            } catch (e) {
+              return send(400, { error: e && e.message ? e.message : String(e) });
+            }
+          }
+          if (pathname.startsWith(`${docsPath}/market/agent/wants/`) && req.method === 'DELETE') {
+            if (!requireAuth()) return;
+            const mm = this.marketManager;
+            if (!mm) return send(503, { type: 'MarketWant', error: 'market disabled' });
+            const id = decodeURIComponent(pathname.slice(`${docsPath}/market/agent/wants/`.length));
+            return send(200, { type: 'MarketWant', data: { documentId: id, removed: mm.agentForget(id) } });
+          }
+          if (pathname === `${docsPath}/market/channels` && req.method === 'GET') {
+            if (!requireAuth()) return;
+            const mm = this.marketManager;
+            if (!mm) return send(503, { type: 'ChannelBookStatus', error: 'market disabled' });
+            return send(200, mm.channelsStatus());
+          }
+          if (pathname === `${docsPath}/market/channels` && req.method === 'POST') {
+            if (!requireAuth()) return;
+            const mm = this.marketManager;
+            if (!mm) return send(503, { type: 'ChannelOpened', error: 'market disabled' });
+            try {
+              return send(201, Object.assign({ type: 'ChannelOpened' }, mm.channelOpen(await body())));
+            } catch (e) {
+              return send(400, { error: e && e.message ? e.message : String(e) });
+            }
+          }
+          if (pathname === `${docsPath}/market/chunks` && req.method === 'GET') {
+            if (!requireAuth()) return;
+            const mm = this.marketManager;
+            if (!mm) return send(503, { type: 'MarketChunkIndex', error: 'market disabled' });
+            const filter = {};
+            const root = String(url.searchParams.get('merkleRootHex') || '').trim();
+            const docId = String(url.searchParams.get('documentId') || '').trim();
+            if (root) filter.merkleRootHex = root;
+            if (docId) filter.documentId = docId;
+            return send(200, { type: 'MarketChunkIndex', data: { filter, chunks: mm.chunkIndex(filter) } });
+          }
           let docMatch = pathname.match(new RegExp(`^${docsPath}/([^/]+)$`));
           if (docMatch && req.method === 'GET') {
             if (!requireAuth()) return;
@@ -10471,39 +10635,15 @@ class StarCitizenService extends EventEmitter {
       }
       let wMatch;
       if ((wMatch = pathname.match(new RegExp(`^${base}/groups/([^/]+)/wallet$`))) && req.method === 'GET') {
-        if (!gm) return send(503, { error: 'Group system not available' });
+        if (!gm || !this.groupWallets) return send(503, { error: 'Group system not available' });
         const group = gm.findGroup(wMatch[1]);
         if (!group) return send(404, { error: 'Group not found' });
         if (serverMode && !(viewer && group.includes(viewer))) {
           return send(403, { error: 'forbidden: members only' });
         }
-        if (!pm) {
-          return send(200, {
-            type: 'GroupWallet',
-            data: {
-              groupId: group.id,
-              keys: [...group.members].sort(),
-              threshold: group.threshold,
-              mode: 'disabled',
-              address: null,
-              bitcoinEnable: hubBitcoinProxy.isBitcoinEnabled(this.settings),
-              note: 'configure payouts (bitcoind RPC) to derive addresses'
-            }
-          });
-        }
         try {
-          const { groupTaprootWallet } = require('../functions/groupSpendLadder');
-          const tapWallet = groupTaprootWallet(group, { network: (pm && pm.network) || 'regtest' });
-          let legacy = null;
-          try {
-            const signers = group.validators || group.members;
-            legacy = await pm.multisigAddress(signers, group.threshold);
-          } catch (_) { /* optional */ }
           const bitcoinEnable = hubBitcoinProxy.isBitcoinEnabled(this.settings);
-          const data = Object.assign({ groupId: group.id }, tapWallet, {
-            legacyP2wsh: legacy,
-            keys: tapWallet.keys,
-            threshold: tapWallet.threshold,
+          const data = Object.assign(this.groupWallets.wallet(group, viewer || (this._identity && this._identity.pubkey)), {
             bitcoinEnable,
             balanceSats: null,
             utxos: [],
@@ -10513,59 +10653,46 @@ class StarCitizenService extends EventEmitter {
           });
           if (bitcoinEnable && data.address) {
             try {
-              const funding = await this._groupWalletFunding(data.address, pm);
-              Object.assign(data, funding);
+              Object.assign(data, await this._groupWalletFunding(data.address, pm));
             } catch (e) {
               data.balanceError = (e && e.message) || String(e);
+            }
+            for (const prev of data.previous) {
+              try {
+                prev.balanceSats = (await this._groupWalletFunding(prev.address, pm)).balanceSats;
+              } catch (_) { prev.balanceSats = null; }
             }
           }
           return send(200, { type: 'GroupWallet', data });
         } catch (e) { return send(400, { error: e.message }); }
       }
 
-      // ---- Group Taproot withdrawals (failover ladder) ----
-      if ((wMatch = pathname.match(new RegExp(`^${base}/groups/([^/]+)/withdrawals$`)))) {
-        if (!gm) return send(503, { error: 'Group system not available' });
+      // ---- Group wallet withdrawals (named federation) ----
+      if ((wMatch = pathname.match(new RegExp(`^${base}/groups/([^/]+)/withdrawals(?:/([0-9a-f]{64})/signatures)?$`)))) {
+        if (!gm || !this.groupWallets) return send(503, { error: 'Group system not available' });
         const group = gm.findGroup(wMatch[1]);
         if (!group) return send(404, { error: 'Group not found' });
-        if (req.method === 'GET') {
+        const status = (e) => (e.code === 'FORBIDDEN' ? 403 : e.code === 'NOT_FOUND' ? 404 : 400);
+        if (!wMatch[2] && req.method === 'GET') {
           if (serverMode && !(viewer && group.includes(viewer))) {
             return send(403, { error: 'forbidden: members only' });
           }
-          const list = (this.store && this.store.all)
-            ? this.store.all('groupwithdrawals').filter((w) => w.groupId === group.id)
-            : [];
-          return send(200, { type: 'GroupWithdrawalList', data: list });
+          return send(200, { type: 'GroupWithdrawalList', data: this.groupWallets.withdrawals(group.id) });
         }
         if (req.method === 'POST') {
           if (!requireAuth()) return;
           const actor = viewer || (this._identity && this._identity.pubkey);
-          if (!actor || group.creator !== actor) {
-            return send(403, { error: 'forbidden: only the group creator (publisher) may propose withdrawals' });
-          }
+          if (!actor) return send(403, { error: 'forbidden: unlock your identity' });
           const d = await body();
+          await this._ensureFabric().catch(() => null);
           try {
-            const data = await this.proposeGroupWithdrawal(group.id, actor, d);
+            const data = wMatch[2]
+              ? await this.groupWallets.approve(group, wMatch[2], actor, d)
+              : await this.groupWallets.request(group, actor, d);
             return send(200, { type: 'GroupWithdrawal', data });
           } catch (e) {
-            return send(e.code === 'FORBIDDEN' ? 403 : 400, { error: e.message });
+            return send(status(e), { error: e.message });
           }
-        }
-      }
-      if ((wMatch = pathname.match(new RegExp(`^${base}/groups/([^/]+)/withdrawals/([^/]+)/(witness|finalize)$`))) && req.method === 'POST') {
-        if (!gm) return send(503, { error: 'Group system not available' });
-        if (!requireAuth()) return;
-        const group = gm.findGroup(wMatch[1]);
-        if (!group) return send(404, { error: 'Group not found' });
-        const actor = viewer || (this._identity && this._identity.pubkey);
-        const d = await body();
-        try {
-          const data = wMatch[3] === 'finalize'
-            ? await this.finalizeGroupWithdrawal(group.id, wMatch[2], actor, d)
-            : await this.witnessGroupWithdrawal(group.id, wMatch[2], actor, d);
-          return send(200, { type: 'GroupWithdrawal', data });
-        } catch (e) {
-          return send(e.code === 'FORBIDDEN' ? 403 : /not found/i.test(e.message) ? 404 : 400, { error: e.message });
         }
       }
 
@@ -11055,13 +11182,54 @@ class StarCitizenService extends EventEmitter {
     if (this._identity && !this._offlineMode) {
       try { this._flushPendingFederationInvites(); } catch (e) { this.emit('error', e); }
       if (this._pendingHistoricalShare) this._requestHistoricalLogShare();
+      this._ensureOwnCosigners();
     }
+  }
+
+  /** Publish this identity's group wallet cosigner keys soon (debounced). */
+  _ensureOwnCosigners () {
+    if (this._cosignerTimer || this._stopping) return;
+    this._cosignerTimer = setTimeout(() => {
+      this._cosignerTimer = null;
+      if (this._stopping) return;
+      try { this._publishOwnCosigners(); } catch (e) { this.emit('error', e); }
+    }, 50);
+    if (this._cosignerTimer.unref) this._cosignerTimer.unref();
+  }
+
+  /**
+   * Tie this identity's cosigner key (group wallet network) to it in every
+   * group it belongs to that doesn't have it yet (`cosigner.set`).
+   * @returns {number} groups updated
+   */
+  _publishOwnCosigners () {
+    const ident = this._identity;
+    if (!ident || !ident.xprv || !this.groupManager || this._offlineMode) return 0;
+    const lib = identityLib();
+    const { createGroupCosigner, groupCosignerFor } = require('../functions/groupCosigner');
+    const network = this._groupWalletNetwork();
+    let identityKey = null;
+    let cosignerKey = null;
+    let updated = 0;
+    for (const g of this.groupManager.groups || []) {
+      if (!g || !(g.members || []).some((m) => lib.pubkeysMatch(m, ident.pubkey))) continue;
+      if (!identityKey) {
+        identityKey = lib.keyFromIdentity(ident);
+        cosignerKey = lib.cosignerKeyFromIdentity(ident, network);
+      }
+      if (groupCosignerFor(g, identityKey.pubkey, network) === String(cosignerKey.pubkey).toLowerCase()) continue;
+      const { group } = this.groupManager.ensureContract(g.id);
+      const record = createGroupCosigner({ identityKey, cosignerKey, group, network });
+      if (this.groupManager.setCosigner(g.id, record, identityKey.pubkey).applied) updated++;
+    }
+    return updated;
   }
 
   /**
    * Signer for the unlocked UI identity when it is not `_identity`
    * (desktop FABRIC_XPRV publishing key). Pass null on lock.
-   * @param {Function|null} signer `(message) => { pubkey, signature }`
+   * @param {Function|null} signer `(proposal) => { pubkey, signature }`, a
+   *   group change proposal vote (`signProposalVote`)
    */
   setLocalSigner (signer) {
     this._localSigner = typeof signer === 'function' ? signer : null;
@@ -11094,6 +11262,18 @@ class StarCitizenService extends EventEmitter {
       return resolveSignerPubkey(source, actor);
     };
     return {
+      onFraudProof: (object) => {
+        if (!this.marketManager) return;
+        try { this.marketManager.ingestFraudProof(object); } catch (e) { this.emit('error', e); }
+      },
+      onAvailabilityChallenge: (object) => {
+        if (!this.marketManager) return;
+        try { this.marketManager.onAvailabilityChallenge(object); } catch (e) { this.emit('error', e); }
+      },
+      onChannelMessage: (object, signer) => {
+        if (!this.marketManager) return;
+        try { this.marketManager.ingestChannelMessage(object, { sellerId: signer ? String(signer) : undefined }); } catch (e) { this.emit('error', e); }
+      },
       onMissionCreated: (object, source, meta) => {
         const actor = meta && meta.msg && meta.msg.actor;
         const resolved = actorId(source, actor);
@@ -11257,9 +11437,8 @@ class StarCitizenService extends EventEmitter {
         // Only keep DMs addressed to this node (or authored here).
         if (me && this.chatManager && !this.chatManager.canAccess(channel, me, { enforceMembership: true })) return;
         // Group invites also ride DirectChat so spoke↔spoke via a shared hub
-        // still lands. The payload is the same AMP bytes as the clipboard
-        // `fabric:` clip (`messageHex` / `protocolUrl`), not a rebuilt invite JSON.
-        const opaqueClip = object.messageHex || object.protocolUrl || null;
+        // still lands: `protocolUrl` is the same `fabric:` frame as the clipboard clip.
+        const opaqueClip = typeof object.protocolUrl === 'string' ? object.protocolUrl : null;
         if (opaqueClip) {
           try {
             const {
@@ -11281,18 +11460,6 @@ class StarCitizenService extends EventEmitter {
                 }));
               }
             }
-          } catch (e) { this.emit('error', e); }
-        }
-        const embedded = object.invite
-          || (() => {
-            try {
-              const p = typeof object.body === 'string' ? JSON.parse(object.body) : null;
-              return (p && p.type === 'FederationContractInvite') ? p : null;
-            } catch (_) { return null; }
-          })();
-        if (!opaqueClip && embedded && embedded.type === 'FederationContractInvite') {
-          try {
-            this._ingestFederationInvite(embedded, author, meta || {});
           } catch (e) { this.emit('error', e); }
         }
         if (!this.chatManager || object.body == null || object.body === '') return;
@@ -11667,6 +11834,10 @@ class StarCitizenService extends EventEmitter {
         try {
           this._ingestDeviceDataShare(object, resolveSignerPubkey(source) || source);
         } catch (e) { this.emit('error', e); }
+      },
+      onFederationMessage: (body, signer) => {
+        if (!this.groupWallets) return;
+        this.groupWallets.receive(body, signer).catch((e) => this.emit('warning', `[GROUP-WALLET] ${e.message}`));
       },
       onInventoryRequest: (ev) => {
         try { this._onDocumentInventoryRequest(ev); } catch (e) { this.emit('error', e); }
@@ -12509,6 +12680,19 @@ class StarCitizenService extends EventEmitter {
     }
     const starting = !this.fabricNetwork.peer;
     if (starting) await this.fabricNetwork.start();
+    if (starting && this.marketManager) {
+      try {
+        this.marketManager.attach({
+          peer: this.fabricNetwork.peer,
+          providerPrivateKey: (this.fabricNetwork.peer && this.fabricNetwork.peer.key && this.fabricNetwork.peer.key.private) || null,
+          localTree: (merkleRootHex) => this._localBlobTree(merkleRootHex),
+          publish: (type, object) => {
+            try { this.fabricNetwork.publishMarketArtifact(type, object); } catch (e) { this.emit('error', e); }
+          }
+        });
+        await this.marketManager.start();
+      } catch (e) { this.emit('error', e); }
+    }
     this._startFabricFlush();
     this._startHubObserveTimer();
     // Alias publish must never await _ensureFabric (ensure → alias → ensure overflow).
@@ -12852,9 +13036,7 @@ class StarCitizenService extends EventEmitter {
     if (!this.fabricNetwork) {
       throw new Error('Fabric network is not available');
     }
-    const encoded = this.fabricNetwork.encodeOpaqueMessage(msg, {
-      encoding: this._opaqueShareEncoding(opts.encoding)
-    });
+    const encoded = this.fabricNetwork.encodeOpaqueMessage(msg);
     let relayed = false;
     let relayError = null;
     if (opts.relay !== false) {
@@ -12952,10 +13134,7 @@ class StarCitizenService extends EventEmitter {
       messageId,
       expiresAt: offer.expiresAt,
       protocolUrl: encoded.protocolUrl,
-      protocolUrlHex: encoded.protocolUrlHex || encoded.protocolUrl,
-      protocolUrlBase64: encoded.protocolUrlBase64,
       messageHex: encoded.messageHex,
-      messageBase64: encoded.messageBase64,
       pagePath: g.path || `/groups/${g.slug || g.id}`,
       visibility: g.visibility,
       relayed,
@@ -12968,17 +13147,16 @@ class StarCitizenService extends EventEmitter {
   }
 
   /**
-   * Decode an opaque fabric:<hex|base64> Message without ingesting/mutating state.
-   * @param {string} protocolUrlOrPayload
+   * Decode a `fabric:` share without ingesting/mutating state.
+   * @param {string} protocolUrl
    * @returns {object}
    */
-  decodeOpaqueFabricMessage (protocolUrlOrPayload) {
+  decodeOpaqueFabricMessage (protocolUrl) {
     const {
       parseOpaqueFabricMessage,
-      classifyGroupShareMessage,
-      buildOpaqueFabricUrl
+      classifyGroupShareMessage
     } = require('../functions/groupShareMessage');
-    const parsed = parseOpaqueFabricMessage(protocolUrlOrPayload);
+    const parsed = parseOpaqueFabricMessage(protocolUrl);
     if (!parsed.ok) throw new Error(parsed.error || 'invalid fabric message');
     let classified = { kind: 'unknown' };
     try {
@@ -12987,14 +13165,10 @@ class StarCitizenService extends EventEmitter {
     const msgType = (parsed.message && parsed.message.type) || null;
     const hash = (parsed.message && (parsed.message.id || parsed.message.hash)) || null;
     return {
-      encoding: parsed.encoding || 'hex',
-      hex: parsed.hex,
-      base64: parsed.base64,
       messageHex: parsed.hex,
-      messageBase64: parsed.base64,
-      protocolUrl: buildOpaqueFabricUrl(parsed.buffer, { encoding: parsed.encoding || 'hex' }),
-      protocolUrlHex: buildOpaqueFabricUrl(parsed.buffer, { encoding: 'hex' }),
-      protocolUrlBase64: buildOpaqueFabricUrl(parsed.buffer, { encoding: 'base64' }),
+      protocolUrl: parsed.protocolUrl,
+      signed: parsed.signed,
+      author: parsed.author,
       type: msgType,
       wireType: msgType,
       kind: classified.kind || null,
@@ -13006,15 +13180,15 @@ class StarCitizenService extends EventEmitter {
   }
 
   /**
-   * Ingest an opaque fabric:<hex|base64> GroupOffer / invite / group CONTRACT_PUBLISH.
+   * Ingest a `fabric:` GroupOffer / invite / group CONTRACT_PUBLISH / MissionBroadcast.
    */
-  async ingestOpaqueGroupShare (protocolUrlOrHex) {
+  async ingestOpaqueGroupShare (protocolUrl) {
     const {
       parseOpaqueFabricMessage,
       classifyGroupShareMessage,
       GROUP_SHARE_KIND_OFFER
     } = require('../functions/groupShareMessage');
-    const parsed = parseOpaqueFabricMessage(protocolUrlOrHex);
+    const parsed = parseOpaqueFabricMessage(protocolUrl);
     if (!parsed.ok) throw new Error(parsed.error || 'invalid fabric message');
     try {
       const summary = summarizeMessage(parsed.message, { direction: 'in', via: 'opaque' });
@@ -13034,8 +13208,7 @@ class StarCitizenService extends EventEmitter {
     const shareMeta = {
       contract: classified.contractId,
       messageHex: parsed.hex,
-      messageBase64: parsed.base64 || null,
-      protocolUrl: protocolUrlOrHex
+      protocolUrl: parsed.protocolUrl
     };
     if (classified.kind === 'GroupOffer') {
       assertInviteNotExpired(classified.object);
@@ -13174,13 +13347,13 @@ class StarCitizenService extends EventEmitter {
     const role = String(opts.role || 'signer').toLowerCase() === 'reader' ? 'reader' : 'signer';
     let capabilityToken = null;
     try {
-      const { issueContractCapability, roleToCapability } = require('@fabric/core/functions/contractCapability');
+      const Contract = require('@fabric/core/types/contract');
       const expiresInSeconds = Math.max(1, Math.ceil((expiresAtMs - Date.now()) / 1000));
-      capabilityToken = issueContractCapability({
+      capabilityToken = Contract.issueCapability({
         issuerKey: require('../functions/identity').keyFromIdentity(this._identity),
         subject: invitee || actor,
         contractId,
-        capability: roleToCapability(role),
+        capability: Contract.roleToCapability(role),
         expiresInSeconds
       });
     } catch (_) { /* token optional if key path fails */ }
@@ -13238,7 +13411,8 @@ class StarCitizenService extends EventEmitter {
             author: actor,
             body: `Group invite: ${group.name} — open Notifications to accept`,
             handle: null,
-            ts: new Date().toISOString()
+            ts: new Date().toISOString(),
+            protocolUrl: encoded.protocolUrl
           });
         }
       } catch (e) {
@@ -13251,10 +13425,7 @@ class StarCitizenService extends EventEmitter {
       status: 'pending',
       createdAt: new Date().toISOString(),
       protocolUrl: encoded.protocolUrl,
-      protocolUrlHex: encoded.protocolUrlHex || null,
-      protocolUrlBase64: encoded.protocolUrlBase64 || null,
       messageHex: encoded.messageHex,
-      messageBase64: encoded.messageBase64,
       direction: 'outbound'
     });
     if (this.registerStore) {
@@ -13265,10 +13436,7 @@ class StarCitizenService extends EventEmitter {
       groupId: group.id,
       groupName: group.name,
       protocolUrl: encoded.protocolUrl,
-      protocolUrlHex: encoded.protocolUrlHex || encoded.protocolUrl,
-      protocolUrlBase64: encoded.protocolUrlBase64,
       messageHex: encoded.messageHex,
-      messageBase64: encoded.messageBase64,
       relayed,
       relayError,
       peers: sent.peers
@@ -13307,13 +13475,7 @@ class StarCitizenService extends EventEmitter {
     }
 
     try {
-      const btcCfg = Object.assign({}, this.settings.bitcoin || {});
-      const btc = hubBitcoinProxy.withResolvedHubAdminToken({
-        hub: hubBitcoinProxy.normalizeHubBase(btcCfg.hub),
-        network: String(btcCfg.network || 'regtest'),
-        adminToken: btcCfg.adminToken || null,
-        adminTokenFile: btcCfg.adminTokenFile || null
-      });
+      const btc = this._hubBitcoin();
       const bal = await hubBitcoinProxy.fetchAddressBalance(btc, addr);
       const raw = (bal && bal.data) || bal || {};
       let balanceSats = null;
@@ -13346,166 +13508,67 @@ class StarCitizenService extends EventEmitter {
     }
   }
 
-  /**
-   * Publisher proposes a Taproot spend or decay-migrate for the group vault.
-   * @param {string} groupId
-   * @param {string} actor Must be group.creator
-   * @param {object} opts
-   */
-  async proposeGroupWithdrawal (groupId, actor, opts = {}) {
-    if (!this.groupManager) throw Object.assign(new Error('Group system not available'), { code: 'UNAVAILABLE' });
-    const group = this.groupManager.getGroup(groupId);
-    if (!group) throw Object.assign(new Error('Group not found'), { code: 'NOT_FOUND' });
-    if (group.creator !== actor) {
-      const e = new Error('forbidden: only the creator may propose withdrawals'); e.code = 'FORBIDDEN'; throw e;
-    }
-    const { groupSpendLadder } = require('../functions/groupSpendLadder');
-    const tap = require('@fabric/core/functions/contractTaproot');
-    const policy = groupSpendLadder(group, { network: opts.network || 'regtest' });
-    const action = String(opts.action || 'spend').toLowerCase() === 'migrate' ? 'migrate' : 'spend';
-    const ctx = {
-      utxoAgeBlocks: Number(opts.utxoAgeBlocks) || 0,
-      tipHeight: Number(opts.tipHeight) || 0,
-      tipClock: Number(opts.tipClock) || 0,
-      contractState: opts.contractState || null
-    };
-    let prepared = null;
-    if (action === 'migrate') {
-      if (!opts.fundedTxHex) {
-        prepared = {
-          action: 'migrate',
-          target: tap.selectMigrateTarget(policy, ctx),
-          note: 'Provide fundedTxHex to build PSBT'
-        };
-      } else {
-        prepared = tap.prepareDecayMigrationPsbt({
-          policy,
-          fundedTxHex: opts.fundedTxHex,
-          vaultAddress: opts.vaultAddress,
-          feeSats: opts.feeSats,
-          ctx
-        });
-      }
-    } else {
-      if (!opts.fundedTxHex || !opts.destinationAddress) {
-        const active = tap.selectActiveTiers(policy, ctx);
-        prepared = {
-          action: 'spend',
-          activeTiers: active.map((t) => ({ id: t.id, threshold: t.threshold, after: t.after, until: t.until })),
-          preferredTierId: active[0] ? active[0].id : null,
-          address: tap.toAddress(policy),
-          note: 'Provide fundedTxHex + destinationAddress to build PSBT'
-        };
-      } else {
-        prepared = tap.prepareTierWithdrawalPsbt({
-          policy,
-          tierId: opts.tierId,
-          fundedTxHex: opts.fundedTxHex,
-          vaultAddress: opts.vaultAddress,
-          destinationAddress: opts.destinationAddress,
-          feeSats: opts.feeSats,
-          ctx
-        });
-      }
-    }
-    const id = opts.requestId || idFor(`gwd:${groupId}:${Date.now()}`);
-    const record = {
-      id,
-      groupId,
-      contractId: group.contractId || null,
-      action,
-      tierId: prepared.tierId || opts.tierId || null,
-      status: prepared.psbtBase64 ? 'prepared' : 'proposed',
-      proposedBy: actor,
-      createdAt: new Date().toISOString(),
-      destinationAddress: opts.destinationAddress || prepared.childAddress || null,
-      prepared,
-      signatures: {},
-      type: 'ContractWithdrawalRequest'
-    };
-    if (this.registerStore) this.registerStore.put('groupwithdrawals', id, record);
-    const wdNotice = registerInbox.entryFromWalletEvent({
-      kind: 'WalletWithdrawal',
-      status: record.status === 'prepared' ? 'pending' : 'info',
-      actionable: record.status === 'prepared' || record.status === 'proposed',
-      title: 'Group withdrawal proposed',
-      body: record.destinationAddress
-        ? `to ${record.destinationAddress}`
-        : (record.prepared && record.prepared.address) || 'Taproot withdrawal',
-      source: actor,
-      refs: {
-        groupId,
-        withdrawalId: id,
-        contractId: record.contractId,
-        tierId: record.tierId
-      },
-      dedupeKey: `wallet-wd-${id}`
+  /** Bitcoin network for group wallets: payouts, else the Hub Bitcoin setting. */
+  _groupWalletNetwork () {
+    const payouts = this.settings.payouts || {};
+    const bitcoin = this.settings.bitcoin || {};
+    return String((this.payoutManager && payouts.network) || bitcoin.network || 'regtest').toLowerCase();
+  }
+
+  /** Hub Bitcoin proxy config with the operator admin token resolved server-side. */
+  _hubBitcoin () {
+    const btcCfg = Object.assign({}, this.settings.bitcoin || {});
+    return hubBitcoinProxy.withResolvedHubAdminToken({
+      hub: hubBitcoinProxy.normalizeHubBase(btcCfg.hub),
+      network: String(btcCfg.network || 'regtest'),
+      adminToken: btcCfg.adminToken || null,
+      adminTokenFile: btcCfg.adminTokenFile || null
     });
-    if (wdNotice) this._appendInbox(wdNotice);
-    try {
-      await this._ensureFabric().catch(() => null);
-      if (this.fabricNetwork && group.contractId) {
-        this.fabricNetwork._publishContractMessage(group.contractId, 'ContractWithdrawalRequest', {
-          type: 'ContractWithdrawalRequest',
-          contractId: group.contractId,
-          requestId: id,
-          action,
-          tierId: record.tierId,
-          destinationAddress: record.destinationAddress,
-          proposedBy: actor,
-          createdAt: record.createdAt
+  }
+
+  /**
+   * Chain access for group wallet withdrawals: the payouts bitcoind RPC when
+   * set, else Hub Bitcoin (when `settings.bitcoin.enable`).
+   * @returns {{ scan: Function, rawTransaction: Function, broadcast: Function }}
+   */
+  _groupWalletChain () {
+    const rpc = () => {
+      const pm = this.payoutManager;
+      return pm && pm.mode === 'bitcoin' ? pm.settings.rpc : null;
+    };
+    const hubOn = () => hubBitcoinProxy.isBitcoinEnabled(this.settings);
+    const unavailable = () => Object.assign(new Error('no Bitcoin backend (set payouts.rpc or settings.bitcoin.enable)'), { code: 'BAD_REQUEST' });
+    return {
+      scan: (address) => this._groupWalletFunding(address, this.payoutManager),
+      rawTransaction: async (txid, { height } = {}) => {
+        const call = rpc();
+        if (call) {
+          try {
+            return await call('getrawtransaction', [txid, false]);
+          } catch (e) {
+            if (height == null) throw e;
+            const blockhash = await call('getblockhash', [Number(height)]);
+            return call('getrawtransaction', [txid, false, blockhash]);
+          }
+        }
+        if (!hubOn()) throw unavailable();
+        const tx = await hubBitcoinProxy.hubRequest(this._hubBitcoin().hub, `/services/bitcoin/transactions/${encodeURIComponent(txid)}`);
+        if (!tx || !tx.hex) throw new Error(`Hub has no raw transaction for ${txid}`);
+        return tx.hex;
+      },
+      broadcast: async (txHex) => {
+        const call = rpc();
+        if (call) return call('sendrawtransaction', [txHex]);
+        if (!hubOn()) throw unavailable();
+        const btc = this._hubBitcoin();
+        const res = await hubBitcoinProxy.hubRequest(btc.hub, '/services/bitcoin/broadcast', {
+          method: 'POST',
+          headers: btc.adminToken ? { Authorization: `Bearer ${btc.adminToken}` } : {},
+          body: { hex: txHex }
         });
+        return res && res.txid;
       }
-    } catch (_) { /* best-effort mesh */ }
-    return record;
-  }
-
-  async witnessGroupWithdrawal (groupId, requestId, actor, opts = {}) {
-    if (!this.registerStore) throw new Error('store unavailable');
-    const group = this.groupManager && this.groupManager.getGroup(groupId);
-    if (!group) throw Object.assign(new Error('Group not found'), { code: 'NOT_FOUND' });
-    if (!group.isSigner || !group.isSigner(actor)) {
-      // Group instance from getGroup is Group class
-      const g = group;
-      const signers = g.validators || [];
-      if (!signers.includes(actor)) {
-        const e = new Error('forbidden: only signers may witness'); e.code = 'FORBIDDEN'; throw e;
-      }
-    }
-    const rec = this.registerStore.get('groupwithdrawals', requestId);
-    if (!rec || rec.groupId !== groupId) throw Object.assign(new Error('withdrawal not found'), { code: 'NOT_FOUND' });
-    const sig = opts.signature || opts.sig;
-    if (!sig) throw new Error('signature required');
-    rec.signatures = rec.signatures || {};
-    rec.signatures[actor] = String(sig);
-    rec.status = 'witnessing';
-    this.registerStore.put('groupwithdrawals', requestId, rec);
-    return rec;
-  }
-
-  async finalizeGroupWithdrawal (groupId, requestId, actor, opts = {}) {
-    if (!this.registerStore) throw new Error('store unavailable');
-    const group = this.groupManager && this.groupManager.getGroup(groupId);
-    if (!group) throw Object.assign(new Error('Group not found'), { code: 'NOT_FOUND' });
-    if (group.creator !== actor && !(group.isSigner && group.isSigner(actor))) {
-      const signers = group.validators || [];
-      if (group.creator !== actor && !signers.includes(actor)) {
-        const e = new Error('forbidden'); e.code = 'FORBIDDEN'; throw e;
-      }
-    }
-    const rec = this.registerStore.get('groupwithdrawals', requestId);
-    if (!rec || rec.groupId !== groupId) throw Object.assign(new Error('withdrawal not found'), { code: 'NOT_FOUND' });
-    const need = group.threshold || 1;
-    const sigCount = Object.keys(rec.signatures || {}).length;
-    if (rec.action === 'spend' && sigCount < need && !opts.force) {
-      throw new Error(`need ${need} signer witnesses, have ${sigCount}`);
-    }
-    rec.status = 'finalized';
-    rec.finalizedAt = new Date().toISOString();
-    rec.finalizedBy = actor;
-    if (opts.txid) rec.txid = String(opts.txid);
-    this.registerStore.put('groupwithdrawals', requestId, rec);
-    return rec;
+    };
   }
 
   /**
@@ -13933,8 +13996,10 @@ class StarCitizenService extends EventEmitter {
     } catch (_) { /* ignore */ }
     if (this._pollTimer) { clearTimeout(this._pollTimer); this._pollTimer = null; }
     if (this._historyFlushTimer) { clearTimeout(this._historyFlushTimer); this._historyFlushTimer = null; }
+    if (this._cosignerTimer) { clearTimeout(this._cosignerTimer); this._cosignerTimer = null; }
     this._flushHistory();
     if (this.snapshotManager) this.snapshotManager.stop();
+    if (this.marketManager) { try { this.marketManager.stop(); } catch (_) { /* best effort */ } }
     if (this.discordBot) {
       try { await this.discordBot.stop(); } catch (_) { /* ignore */ }
       this.discordBot = null;
@@ -13960,6 +14025,5 @@ class StarCitizenService extends EventEmitter {
 }
 
 module.exports = StarCitizenService;
-module.exports.BEARER_TTL_MS = BEARER_TTL_MS;
 module.exports.SESSION_LOG_CAP = SESSION_LOG_CAP;
 module.exports.SEED_MAX_BYTES = SEED_MAX_BYTES;

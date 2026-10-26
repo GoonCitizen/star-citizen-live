@@ -177,15 +177,7 @@ class GlobalChatDock extends React.Component {
   _authHeaders (extra) {
     const h = Object.assign({ Accept: 'application/json' }, extra || {});
     const tok = this.props && this.props.authToken;
-    if (tok) {
-      h.Authorization = 'Bearer ' + tok;
-      return h;
-    }
-    try {
-      const { readStoredSiteLoginToken } = require('../functions/goonCitizenClientEnvironment');
-      const t = readStoredSiteLoginToken();
-      if (t) h.Authorization = 'Bearer ' + t;
-    } catch (_) { /* ignore */ }
+    if (tok) h.Authorization = 'Bearer ' + tok;
     return h;
   }
 

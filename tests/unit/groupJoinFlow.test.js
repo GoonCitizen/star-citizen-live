@@ -13,10 +13,8 @@ const {
 } = require('../../functions/groupJoinFlow');
 
 describe('groupJoinFlow', () => {
-  it('prefers protocolUrl then base64 then hex for clipboard', () => {
+  it('copies protocolUrl to the clipboard', () => {
     assert.strictEqual(shareClipboardText({ protocolUrl: 'fabric:abcPlus' }), 'fabric:abcPlus');
-    assert.strictEqual(shareClipboardText({ protocolUrlBase64: 'fabric:xyz==' }), 'fabric:xyz==');
-    assert.strictEqual(shareClipboardText({ protocolUrlHex: 'fabric:ef' }), 'fabric:ef');
     assert.strictEqual(shareClipboardText({}), '');
   });
 

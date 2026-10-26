@@ -148,11 +148,10 @@ test('heal roster drops self hub seed when fabricAdvertiseHost matches', async (
     ];
     const healed = svc._healPeerRoster({ persist: true, forceHubs: true });
     assert.ok(healed.removed.includes('relay.goon.vc:7777'));
-    assert.deepStrictEqual(
-      svc.peers.map((p) => p.address).sort(),
-      ['hub.fabric.pub:7777']
-    );
-    assert.deepStrictEqual(svc._fabricPeerAddresses(), ['hub.fabric.pub:7777']);
+    assert.ok(healed.added.includes('hub.goon.vc:7777'));
+    const hubs = ['hub.fabric.pub:7777', 'hub.goon.vc:7777'];
+    assert.deepStrictEqual(svc.peers.map((p) => p.address).sort(), hubs);
+    assert.deepStrictEqual(svc._fabricPeerAddresses().sort(), hubs);
   } finally {
     await svc.stop();
     fs.rmSync(dir, { recursive: true, force: true });

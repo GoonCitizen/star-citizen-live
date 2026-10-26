@@ -50,14 +50,17 @@ test('playnetDeploy.hubRpcBase and playnetPeers', () => {
   }
 });
 
-test('playnetDeploy.mintOperatorAdminToken signs OP_IDENTITY/admin from FABRIC_XPRV', () => {
+test('playnetDeploy.mintOperatorAdminToken signs OP_IDENTITY/admin with the account 0 identity key', () => {
   const Key = require('@fabric/core/types/key');
   const Token = require('@fabric/core/types/token');
   const master = new Key();
-  const minted = mintOperatorAdminToken({ xprv: master.xprv }, { persist: false });
+  const { restoreIdentity, protocolKeyFromIdentity } = require('../../functions/identity');
+  const minted = mintOperatorAdminToken({ xprv: master.xprv }, { persist: false, network: 'regtest' });
   assert.ok(minted.token && minted.token.includes('.'));
-  assert.equal(minted.source, 'operator-master');
-  const payload = Token.verifySigned(minted.token, master);
+  assert.equal(minted.source, 'operator-identity');
+  const identityKey = protocolKeyFromIdentity(restoreIdentity({ xprv: master.xprv, network: 'regtest' }));
+  assert.equal(Token.verifySigned(minted.token, master), null);
+  const payload = Token.verifySigned(minted.token, identityKey);
   assert.ok(payload);
   assert.equal(payload.cap, 'OP_IDENTITY');
   assert.equal(payload.sub, 'admin');
@@ -73,7 +76,7 @@ test('playnetDeploy.listAcceptAdminTokenCandidates prefers env/file then mint', 
     assert.ok(list.length >= 2);
     assert.equal(list[0].token, 'hub-issued-token');
     assert.ok(['env', 'file-or-env'].includes(list[0].source));
-    assert.equal(list[1].source, 'operator-master');
+    assert.equal(list[1].source, 'operator-identity');
     const resolved = resolveAcceptAdminToken({ xprv: master.xprv }, { persist: false });
     assert.equal(resolved.token, 'hub-issued-token');
   } finally {
@@ -95,7 +98,7 @@ test('playnetDeploy.acceptTrackedWithTokenCascade tries next candidate after rej
     contractId: 'abc',
     baseUrl: 'http://127.0.0.1:9',
     candidates: [
-      { token: 'bad', source: 'operator-master' },
+      { token: 'bad', source: 'operator-identity' },
       { token: 'good', source: 'env' }
     ],
     rpc: fakeRpc

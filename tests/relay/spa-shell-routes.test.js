@@ -8,7 +8,8 @@ const os = require('os');
 const path = require('path');
 
 const LiveRelay = require('../../services/LiveRelay');
-const { createIdentity, signEnvelope } = require('../../functions/identity');
+const { createIdentity } = require('../../functions/identity');
+const { passportLogin } = require('../helpers/passportLogin');
 const { request } = require('../helpers/http');
 
 const BASE = '/services/star-citizen';
@@ -27,11 +28,8 @@ function spaGet (port, reqPath) {
   });
 }
 
-async function login (port, identity) {
-  const envelope = signEnvelope(identity, { intent: 'login', ts: new Date().toISOString() });
-  const res = await request(port, 'POST', `${BASE}/auth`, envelope);
-  assert.equal(res.status, 200, res.body && res.body.error);
-  return res.body.data.token;
+function login (port, identity) {
+  return passportLogin(port, identity);
 }
 
 function authRequest (port, method, reqPath, payload, token) {

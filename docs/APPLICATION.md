@@ -20,7 +20,7 @@ What actually runs: [`AGENTS.md`](../AGENTS.md) §3–§4. Call for developers:
 
 | If you start from… | You get | You still have to build |
 |---|---|---|
-| **This repo (LiveRelay)** | Peer, Store collections, site login, device-link, Federation Groups, Group Taproot treasury, publisher-profile pinned desktops, shoutbox + `CONTRACT_*` gossip, Electron + Android shells, optional Discord adapter, public-seed runbook | Your domain (parser, missions, chrome, brand) |
+| **This repo (LiveRelay)** | Peer, Store collections, site login, device-link, Federation Groups, group federation vaults, publisher-profile pinned desktops, shoutbox + `CONTRACT_*` gossip, Electron + Android shells, optional Discord adapter, public-seed runbook | Your domain (parser, missions, chrome, brand) |
 | **Hub (`hub.fabric.pub`)** | Rendezvous, Beacon, Bitcoin, WebRTC signaling, document market | A whole application node (Hub is not a player client) |
 | **`@fabric/core` only** | AMP/`Message`, Peer, Key, Contract, Chain | HTTP dashboard, identity UX, Groups, packaging, Discord, deploy |
 | **Blank HTTPS service** | Familiar REST | Mesh identity, signed gossip, `fabric:` shares, hostile-peer assumptions |
@@ -123,16 +123,19 @@ not a Discord transport.
 - Gameplay share **opt-in** (D-017). Chat/missions may publish when the Peer is up.
 - Officer (or your equivalent) validates high-stakes completion (D-005) if the
   source is self-reported.
-- Alliance coins sit on **Group Taproot on the org node**. Hub is not a
-  custodian. Do not market mesh chat or Beacon as money.
+- Alliance coins sit in the **group's federation vault** (k-of-n signers). Hub
+  is not a custodian. Do not market mesh chat or Beacon as money.
 
-### 9. Alliance treasury (Group Taproot on the org node)
+### 9. Alliance treasury (the group's federation vault)
 
-[`functions/groupSpendLadder.js`](../functions/groupSpendLadder.js) —
-`groupTaprootWallet` / `synthesizeDefaultLadder`. Each Federation Group has a
-deterministic P2TR spend-ladder address from sorted signer keys (readers do not
-move it). `GET …/groups/:id/wallet` returns `mode: 'taproot'` and
-`treasury: { role: 'alliance-treasury', surface: 'group-taproot', custody: 'org-node' }`.
+[`services/GroupWallets.js`](../services/GroupWallets.js) on core
+`@fabric/core/types/federation`. Each Federation Group's signers (readers do
+not count) and threshold make a named-federation descriptor; its hash is the
+federation id and every member derives the same Taproot vault.
+`GET …/groups/:id/wallet` returns `mode: 'federation'`, `federationId`, and
+earlier vaults under `previous` (still spendable after a signer change).
+Withdrawals are core `FederationWithdrawal*` messages under the federation id,
+so a Hub or Passport holding a signer key can take part.
 
 This is the alliance vault. **Hub does not hold these coins.** Mission escrow
 (`PayoutManager`) is a separate ledger/RPC path on the same node. D-008:
@@ -168,7 +171,7 @@ history, SC mission types, Discord as the front door, personal Hub Bitcoin
 proxy, G00N/PERMAFLEET copy.
 
 Keep or reimplement in-kind: Peer on `:7777`, `CONTRACT_PUBLISH` genesis,
-Group Federation contracts, Group Taproot treasury (`groupSpendLadder`),
+Group Federation contracts, group federation vaults (`GroupWallets`),
 publisher-profile pinned desktops (`profile.files` + `--pin`), opaque
 `fabric:` shares, site login / device-link, Store collections,
 unknown-namespace ignore, opt-in private data.
@@ -187,7 +190,7 @@ unknown-namespace ignore, opt-in private data.
 
 ## Minimum path (second application)
 
-1. Clone this repo (or fork). Node **24.15.0**, `npm i`, `npm test`, `npm start`.
+1. Clone this repo (or fork). Node **26.12.1**, `npm i`, `npm test`, `npm start`.
 2. Keep [`contracts/gooncitizenGroup.js`](../contracts/gooncitizenGroup.js) until
    you have a reason to split Groups.
 3. Add your genesis next to [`contracts/gooncitizen.js`](../contracts/gooncitizen.js)

@@ -16,7 +16,7 @@ const DOC = 'docs/API-SURFACES.md';
 
 const SOURCE_FILES = [
   'services/LiveRelay.js',
-  'functions/fabricSiteLogin.js',
+  'functions/liveRelayPassport.js',
   'functions/fabricDeviceLinkRelay.js',
   'functions/fabricDeviceLinkLocalHttp.js',
   'functions/liveRelayPeeringHttp.js',
@@ -26,8 +26,8 @@ const SOURCE_FILES = [
 /** Distinctive path tokens that must appear (backticks optional). */
 const REQUIRED_NEEDLES = [
   '/sessions',
-  '/sessions/:id',
-  '/sessions/:id/signatures',
+  '/sessions/challenges',
+  '/sessions/current',
   '/device-links',
   '/device-links/:id',
   '/device-links/:id/signatures',
@@ -50,7 +50,6 @@ const REQUIRED_NEEDLES = [
   '/activity-tree/publish',
   '/monitor',
   '/feed',
-  '/auth',
   '/identity/cluster',
   '/identity/cluster/sync',
   '/identity/session',
@@ -88,8 +87,7 @@ const REQUIRED_NEEDLES = [
   '/groupaudit',
   '/groups/:id/wallet',
   '/groups/:id/withdrawals',
-  '/groups/:id/withdrawals/:id/witness',
-  '/groups/:id/withdrawals/:id/finalize',
+  '/groups/:id/withdrawals/:id/signatures',
   '/notes',
   '/notes/:id',
   '/notes/:id/share',
@@ -190,6 +188,10 @@ const REQUIRED_NEEDLES = [
   '/logslice',
   '/reparse',
   '/locations',
+  '/rsi/claim',
+  '/rsi/orgs/:sid',
+  '/rsi/citizens/:handle',
+  '/rsi/citizens/:handle/verify',
   '/locations/map',
   '/locations/reports',
   '/locations/:slug',

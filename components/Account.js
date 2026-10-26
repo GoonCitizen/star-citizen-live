@@ -25,7 +25,7 @@ const CSS = `
 function leadFor (section) {
   const android = isAndroidCompanion();
   if (section === 'devices') {
-    return 'This identity’s linked devices. Pair with fabric://link, then chat and notes replay over Fabric both ways (desktop ↔ phone). Website login is Passport or GoonCitizen fabric://login — not this pairing QR.';
+    return 'This identity’s linked devices. Pair with fabric://link, then chat and notes replay over Fabric both ways (desktop ↔ phone). Signing in to websites is Passport (which can ask GoonCitizen to sign) — not this pairing QR.';
   }
   if (section === 'security') {
     return 'Lock this identity, set auto-lock, and link or revoke Passport / desktop / another device. Unlock to sign. Lost the password? Forget the identity on this device, then restore from seed.';

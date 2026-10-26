@@ -7,6 +7,7 @@
 
 const React = require('react');
 const { readOfflineMode } = require('../functions/offlineMode');
+const { currentViewer } = require('../functions/goonCitizenClientEnvironment');
 const RegisterEventLog = require('./RegisterEventLog');
 const { isMissionApprover } = require('../functions/missionRole');
 const {
@@ -64,7 +65,6 @@ class MissionPage extends React.Component {
   constructor (props) {
     super(props);
     this.state = {
-      token: null,
       pubkey: null,
       mission: null,
       applications: [],
@@ -95,34 +95,14 @@ class MissionPage extends React.Component {
   }
 
   headers () {
-    const h = { 'Content-Type': 'application/json' };
-    if (this.state.token) h.Authorization = `Bearer ${this.state.token}`;
-    return h;
+    return { 'Content-Type': 'application/json' };
   }
 
   async boot () {
     const offline = await readOfflineMode();
     this.setState({ offlineMode: offline === true });
-    const b = identityBridge();
-    if (b) {
-      try {
-        const info = await b.get();
-        if (info && info.unlocked) {
-          const envelope = await b.signEnvelope({ intent: 'login', ts: new Date().toISOString() });
-          if (envelope && !envelope.error) {
-            const res = await fetch(`${BASE}/auth`, {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify(envelope)
-            });
-            if (res.ok) {
-              const json = await res.json();
-              this.setState({ token: json.data.token, pubkey: json.data.pubkey });
-            }
-          }
-        }
-      } catch (_) { /* locked */ }
-    }
+    const viewer = await currentViewer();
+    if (viewer) this.setState({ pubkey: viewer.pubkey });
     await this.load();
   }
 

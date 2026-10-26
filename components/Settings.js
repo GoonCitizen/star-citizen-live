@@ -92,7 +92,6 @@ class Settings extends React.Component {
       notifyWhenFocused: false,
       notifyMissionBroadcasts: true,
       groupOverlay: false,
-      fabricShareEncoding: 'base64',
       primaryGroupId: null,
       primaryGroupColor: null,
       defaultGroupMessageId: null,
@@ -160,10 +159,6 @@ class Settings extends React.Component {
         notifyWhenFocused: !!s.notifyWhenFocused,
         notifyMissionBroadcasts: s.notifyMissionBroadcasts !== false,
         groupOverlay: s.groupOverlay === true || (settingsRes.runtime && settingsRes.runtime.groupOverlay === true),
-        fabricShareEncoding: (s.fabricShareEncoding === 'hex' ||
-          (settingsRes.runtime && settingsRes.runtime.fabricShareEncoding === 'hex'))
-          ? 'hex'
-          : 'base64',
         primaryGroupId: s.primaryGroupId || (settingsRes.runtime && settingsRes.runtime.primaryGroupId) || null,
         primaryGroupColor: (settingsRes.runtime && settingsRes.runtime.primaryGroupColor) || null,
         defaultGroupMessageId: (settingsRes.runtime && settingsRes.runtime.defaultGroupMessageId) || null,
@@ -306,18 +301,6 @@ class Settings extends React.Component {
     }
   }
 
-  async putShareEncoding (value) {
-    const next = value === 'hex' ? 'hex' : 'base64';
-    const prev = this.state.fabricShareEncoding;
-    this.setState({ fabricShareEncoding: next, error: null, busy: true });
-    try {
-      await this.put('fabricShareEncoding', next);
-      this.setState({ busy: false });
-    } catch (err) {
-      this.setState({ busy: false, fabricShareEncoding: prev, error: err.message });
-    }
-  }
-
   async revokeLinkedDevice (peerFabricId) {
     const id = String(peerFabricId || '');
     if (!id) return;
@@ -339,7 +322,9 @@ class Settings extends React.Component {
       const posted = await postIdentityCrossSign(window.location.origin, {
         type: 'IdentityCrossSignRevoke',
         peerPubkey,
-        nonce
+        nonce,
+        sessionId: (match && match.sessionId) || undefined,
+        origin: (match && match.hubOrigin) || undefined
       });
       if (!posted.ok) {
         throw new Error(posted.error || 'Could not publish IdentityCrossSignRevoke. Unlock this identity, then retry.');
@@ -807,7 +792,6 @@ class Settings extends React.Component {
 
   renderFabricNetworkSection (opts = {}) {
     const embedded = opts.embedded === true;
-    const encodingName = embedded ? 'fabricShareEncoding-net' : 'fabricShareEncoding';
     const openNetwork = (view) => {
       if (typeof this.props.onOpenNetwork === 'function') {
         this.props.onOpenNetwork(view || 'peers');
@@ -821,7 +805,7 @@ class Settings extends React.Component {
     return React.createElement('div', { className: 'st-sec' },
       React.createElement('h3', null, 'Fabric Network'),
       React.createElement('div', { className: 'd' },
-        'Native Fabric TCP/NOISE only (pubkey@host:port). Seeds hub.fabric.pub:7777 and relay.goon.vc:7777 are the default rendezvous. Set a public advertise host so others can dial you; announce open slots only when you opt in.'),
+        'Native Fabric TCP/NOISE only (pubkey@host:port). Seeds hub.fabric.pub:7777, hub.goon.vc:7777, and relay.goon.vc:7777 are the default rendezvous. Set a public advertise host so others can dial you; announce open slots only when you opt in.'),
       this.field('Advertise host (public hostname)', 'fabricAdvertiseHost', 'e.g. relay.example.com — no port; listen uses fabricPort'),
       React.createElement('div', { className: 'st-row', style: { marginTop: -4, marginBottom: 10 } },
         React.createElement('button', {
@@ -873,31 +857,6 @@ class Settings extends React.Component {
       ),
       React.createElement('div', { className: 'd', style: { marginTop: -4, marginBottom: 10 } },
         'Default is off. Per-peer “Share logs” on Network → Peers is the usual path for authorizing a network hub.'),
-      React.createElement('h3', { style: { margin: '14px 0 4px', fontSize: 13 } }, 'Share encoding'),
-      React.createElement('div', { className: 'd' },
-        'Groups → Share copies an opaque Fabric message as ',
-        React.createElement('code', null, 'fabric:'),
-        ' plus the raw body. Default is base64; hex is still sniffed on Import.'),
-      React.createElement('label', { style: { display: 'flex', gap: 8, alignItems: 'center', fontSize: 13, cursor: 'pointer', marginBottom: 6 } },
-        React.createElement('input', {
-          type: 'radio',
-          name: encodingName,
-          checked: this.state.fabricShareEncoding !== 'hex',
-          disabled: !this.state.editable || this.state.busy,
-          onChange: () => this.putShareEncoding('base64')
-        }),
-        'base64 body (default)'
-      ),
-      React.createElement('label', { style: { display: 'flex', gap: 8, alignItems: 'center', fontSize: 13, cursor: 'pointer', marginBottom: 10 } },
-        React.createElement('input', {
-          type: 'radio',
-          name: encodingName,
-          checked: this.state.fabricShareEncoding === 'hex',
-          disabled: !this.state.editable || this.state.busy,
-          onChange: () => this.putShareEncoding('hex')
-        }),
-        'hex body'
-      ),
       React.createElement('div', { className: 'st-row' },
         React.createElement('span', { style: { fontSize: 12.5, color: 'var(--muted)' } },
           this.state.peerCount

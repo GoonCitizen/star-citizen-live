@@ -8,46 +8,35 @@
 const { describe, it } = require('node:test');
 const assert = require('node:assert/strict');
 const crypto = require('crypto');
-const Key = require('@fabric/core/types/key');
 
 const httpAllowlist = require('@fabric/http/functions/fabricHubAllowlist');
-const httpProtocol = require('@fabric/http/functions/fabricProtocolLogin');
 const httpDeviceProtocol = require('@fabric/http/functions/fabricDeviceLinkProtocol');
-const httpVerify = require('@fabric/http/functions/fabricSiteLoginVerify');
 const gcAllowlist = require('../../functions/fabricHubAllowlist');
-const gcProtocol = require('../../functions/fabricProtocolLogin');
+const { signInToRelay } = require('../../functions/fabricLoginClient');
+const { createIdentity } = require('../../functions/identity');
 
-describe('Fabric interop: Hub allowlist across login/link parsers', () => {
-  it('rejects phishing hubs before client sign (login + link)', () => {
+describe('Fabric interop: Hub allowlist across sign-in and link', () => {
+  it('rejects phishing hubs before any key is used (link)', () => {
     const sid = crypto.randomBytes(24).toString('hex');
-    const evil = `fabric://login?sessionId=${sid}&hub=${encodeURIComponent('https://evil.example')}`;
-    const login = gcProtocol.parseFabricLoginUrl(evil);
-    assert.equal(login.ok, false);
-    assert.match(String(login.error || ''), /allowlist|hub|origin/i);
-
     const evilLink = `fabric://link?sessionId=${sid}&hub=${encodeURIComponent('https://evil.example')}`;
     const link = httpDeviceProtocol.parseFabricDeviceLinkUrl(evilLink);
     assert.equal(link.ok, false);
+    assert.equal(gcAllowlist.assertAllowedFabricHub('https://evil.example').ok, false);
   });
 
-  it('accepts network hubs for login and builds matching Hub challenge prefix', () => {
-    const sid = crypto.randomBytes(24).toString('hex');
+  it('native relay sign-in refuses a challenge for another origin', async () => {
     const hub = 'https://relay.goon.vc';
-    const login = httpProtocol.parseFabricLoginUrl(
-      `fabric://login?sessionId=${sid}&hub=${encodeURIComponent(hub)}`
-    );
-    assert.equal(login.ok, true);
-    assert.equal(login.hubBase, hub);
-    const allowed = gcAllowlist.assertAllowedFabricHub(hub);
-    assert.equal(allowed.ok, true);
-    assert.equal(allowed.hubBase, hub);
-
-    const nonce = crypto.randomBytes(32).toString('hex');
-    const message = httpVerify.buildLoginMessage(sid, hub, nonce);
-    assert.match(message, /^fabric:hub-login:1:/);
-    const key = new Key();
-    const sig = key.signSchnorr(Buffer.from(message, 'utf8'));
-    assert.ok(sig);
+    assert.equal(gcAllowlist.assertAllowedFabricHub(hub).ok, true);
+    const passport = require('@fabric/core/functions/passport');
+    const forged = passport.createChallenge({ origin: 'https://evil.example', network: 'regtest' });
+    let posted = 0;
+    const fetchImpl = async (url) => {
+      if (url.endsWith('/sessions')) posted++;
+      return { ok: true, status: 200, json: async () => ({ challenge: forged.uri, binding: 'ab'.repeat(32) }) };
+    };
+    const out = await signInToRelay(createIdentity(), hub, { fetchImpl });
+    assert.equal(out.ok, false);
+    assert.equal(posted, 0, 'nothing is signed or posted for a foreign challenge');
   });
 
   it('http and GC allowlists agree on defaults', () => {

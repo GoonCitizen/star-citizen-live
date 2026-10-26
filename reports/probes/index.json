@@ -1,0 +1,120 @@
+{
+  "@type": "GoonCitizenAgentProbeIndex",
+  "generatedAt": "2026-09-18T23:21:17.464Z",
+  "publicBase": null,
+  "count": 14,
+  "probes": [
+    {
+      "file": "adversary-chaos-local.json",
+      "name": "adversary-chaos-local",
+      "title": "Adversary local probe",
+      "generatedAt": "2026-08-20T14:12:06.319Z",
+      "bytes": 4919,
+      "mtime": "2026-08-20T14:12:06.320Z"
+    },
+    {
+      "file": "adversary-chaos-public.json",
+      "name": "adversary-chaos-public",
+      "title": "Adversary public probe",
+      "generatedAt": "2026-08-17T01:33:22.142Z",
+      "bytes": 3340,
+      "mtime": "2026-08-17T01:33:22.143Z"
+    },
+    {
+      "file": "adversary-local-probe.json",
+      "name": "adversary-local-probe",
+      "title": "Adversary local probe",
+      "generatedAt": "2026-08-17T00:12:16.212Z",
+      "bytes": 4338,
+      "mtime": "2026-08-17T00:12:16.213Z"
+    },
+    {
+      "file": "adversary-public-probe.json",
+      "name": "adversary-public-probe",
+      "title": "Adversary public probe",
+      "generatedAt": "2026-08-17T00:12:47.620Z",
+      "bytes": 2722,
+      "mtime": "2026-08-17T00:12:47.621Z"
+    },
+    {
+      "file": "discord-events-resolved.json",
+      "name": "discord-events-resolved",
+      "title": "G00N SQUAD Discord event resolve",
+      "generatedAt": "2026-08-15T02:42:17.207Z",
+      "bytes": 26742,
+      "mtime": "2026-08-15T02:42:17.256Z"
+    },
+    {
+      "file": "discord-events-schedule.json",
+      "name": "discord-events-schedule",
+      "title": "G00N SQUAD Discord week schedule",
+      "generatedAt": "2026-09-06T21:01:58.985Z",
+      "bytes": 1563,
+      "mtime": "2026-09-06T21:01:58.986Z"
+    },
+    {
+      "file": "discord-scheduled-events.json",
+      "name": "discord-scheduled-events",
+      "title": "G00N SQUAD Discord scheduled events",
+      "generatedAt": "2026-09-06T21:01:21.032Z",
+      "bytes": 29910,
+      "mtime": "2026-09-06T21:01:21.039Z"
+    },
+    {
+      "file": "goon-squad-discord-roster.json",
+      "name": "goon-squad-discord-roster",
+      "title": "goon-squad-discord-roster",
+      "generatedAt": "2026-09-06T20:35:00Z",
+      "bytes": 408831,
+      "mtime": "2026-09-06T20:35:50.512Z"
+    },
+    {
+      "file": "goon-squad-roles.json",
+      "name": "goon-squad-roles",
+      "title": "G00N SQUAD Discord roles guide",
+      "generatedAt": "2026-09-06T21:34:45.724Z",
+      "bytes": 31698,
+      "mtime": "2026-09-06T21:34:45.796Z"
+    },
+    {
+      "file": "goon-squad-schedule.json",
+      "name": "goon-squad-schedule",
+      "title": "G00N SQUAD weekly ops infographic",
+      "generatedAt": "2026-09-06T21:01:42.660Z",
+      "bytes": 719,
+      "mtime": "2026-09-06T21:01:42.664Z"
+    },
+    {
+      "file": "permafleet-membership-analysis.json",
+      "name": "permafleet-membership-analysis",
+      "title": "permafleet-membership-analysis",
+      "generatedAt": "2026-09-06T20:38:38.468923+00:00",
+      "bytes": 321961,
+      "mtime": "2026-09-06T20:39:51.724Z"
+    },
+    {
+      "file": "permafleet-rsi-members.json",
+      "name": "permafleet-rsi-members",
+      "title": "permafleet-rsi-members",
+      "generatedAt": "2026-09-06",
+      "bytes": 46069,
+      "mtime": "2026-09-06T20:32:09.887Z"
+    },
+    {
+      "file": "permafleet-rsi-orgs.json",
+      "name": "permafleet-rsi-orgs",
+      "title": "permafleet-rsi-orgs",
+      "generatedAt": "2026-09-06T20:37:30.978779+00:00",
+      "bytes": 68960,
+      "mtime": "2026-09-06T20:37:30.983Z"
+    },
+    {
+      "file": "permafleet-schedule.json",
+      "name": "permafleet-schedule",
+      "title": "PERMAFLEET weekly ops infographic",
+      "generatedAt": "2026-09-18T23:21:17.448Z",
+      "bytes": 813,
+      "mtime": "2026-09-18T23:21:17.449Z"
+    }
+  ]
+}

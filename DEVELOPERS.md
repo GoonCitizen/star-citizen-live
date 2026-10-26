@@ -5,7 +5,8 @@ Make it work, make it right, make it fast. In that order.
 **GoonCitizen** is MIT-licensed Star Citizen tooling that already speaks the
 [Fabric Protocol](https://fabric.pub): a live `Game.log` relay, an
 officer-validated mission register, Federation **Groups**, signed chat, and a
-Fabric Peer that seeds `hub.fabric.pub:7777` and `relay.goon.vc:7777`.
+Fabric Peer that seeds `hub.fabric.pub:7777`, `hub.goon.vc:7777`, and
+`relay.goon.vc:7777`.
 
 This call has two audiences. Both are welcome.
 
@@ -109,14 +110,14 @@ and what you saw.
 ## Trusted mesh weeks (G00N / PERMAFLEET / friends)
 
 Run a **local desktop node** among operators you know. Fabric seeds
-(`hub.fabric.pub:7777`, `relay.goon.vc:7777`) relay chat, Groups, and mission
+(`hub.fabric.pub:7777`, `hub.goon.vc:7777`, `relay.goon.vc:7777`) relay chat, Groups, and mission
 broadcasts. This is **not** a claim that relays cannot read global shoutbox
 or that Hub is production-hardened against every adversary.
 
 **Kickoff checklist** (full detail: [`docs/THREAT-MODEL.md`](docs/THREAT-MODEL.md)
 “Trusted mesh weeks”):
 
-1. `npm i` → `npm start` or `npm run desktop` (Node **24.15.0**).
+1. `npm i` → `npm start` or `npm run desktop` (Node **26.12.1**).
 2. Unlock identity; Peers tab shows a connection to hub and/or relay.
 3. Leave **Share logs globally** off; enable **Seal outbound group chat**.
 4. Keep HTTP on loopback (no LAN shared mode unless the LAN is trusted).
@@ -137,7 +138,7 @@ This software is **MIT**. Keep the copyright notice. Change the rest.
 
 GoonCitizen is the suite’s **reference application node** (compose Peer + Store;
 do not subclass Hub). The contract files, LiveRelay, Groups, login, packaging,
-**Group Taproot treasury**, and **publisher-profile pinned desktops** are the
+**group federation vaults**, and **publisher-profile pinned desktops** are the
 basis — Star Citizen chrome is optional. Catalog:
 [`docs/APPLICATION.md`](docs/APPLICATION.md) (artifacts 9–10).
 Intel desk / Groups as orgs / `settings/local.js` whitelabel:
@@ -150,8 +151,8 @@ Intel desk / Groups as orgs / `settings/local.js` whitelabel:
 - Federation **Groups** as the sharing boundary — not a G00N membership
   requirement. Nested subgroups, opaque `fabric:` Share/Invite clips,
   GroupChat on that contract.
-- A Fabric Peer on **`:7777`**. Default seeds are `hub.fabric.pub:7777` and
-  `relay.goon.vc:7777`. You may add your own hub and remove ours.
+- A Fabric Peer on **`:7777`**. Default seeds are `hub.fabric.pub:7777`,
+  `hub.goon.vc:7777`, and `relay.goon.vc:7777`. You may add your own hub and remove ours.
 - Opt-in gameplay uplink (`shareLogs` / `shareLogsGlobal`, default **off**).
   Chat and mission broadcasts publish when the Peer is up; logs do not leak
   unless you say so.
@@ -159,8 +160,8 @@ Intel desk / Groups as orgs / `settings/local.js` whitelabel:
   application. We never need your bot token.
 - A public-seed runbook if you want to be a mesh peer, not only a leaf:
   [`docs/PRODUCTION.md`](docs/PRODUCTION.md).
-- An **alliance treasury** on each Federation Group (Taproot spend ladder on
-  **your** node — Hub is not the custodian). Pin **your** desktop installers
+- An **alliance treasury** on each Federation Group (a k-of-n federation vault
+  held by **your** signers — Hub is not the custodian). Pin **your** desktop installers
   on **your** Fabric profile (`npm run publish:builds -- --pin`) so members
   install from identity, not from git.
 
@@ -173,7 +174,7 @@ Fabric out loud.
 ```bash
 git clone https://github.com/GoonCitizen/star-citizen-live.git
 cd star-citizen-live
-# Node.js 24.15.0 — see .nvmrc
+# Node.js 26.12.1 — see .nvmrc
 npm i          # .npmrc already sets allow-git=all for Fabric git pins
 npm test       # unit + fabric + relay + integration + ui
 npm start      # LiveRelay → http://localhost:3041/
@@ -208,7 +209,7 @@ brand. File-level list of what to copy vs delete:
 
 ## Contributor mechanics
 
-**Node.js 24.15.0.** Fabric git deps need `npm i` (see `.npmrc`). Desktop /
+**Node.js 26.12.1.** Fabric git deps need `npm i` (see `.npmrc`). Desktop /
 mesh paths are not zero-dependency.
 
 | Command | What |
@@ -248,7 +249,7 @@ professional engineer.
 
 Repo: https://github.com/GoonCitizen/star-citizen-live
 Guide: DEVELOPERS.md (branch feature/rsi)
-Run: Node 24.15 → npm i → npm start → http://localhost:3041/
+Run: Node 26.12 → npm i → npm start → http://localhost:3041/
 
 Useful: real log lines for the parser, Discord bot ops, fleet JSON,
 desktop/Android QA, tests next to a fix. PRs against feature/rsi. Do not

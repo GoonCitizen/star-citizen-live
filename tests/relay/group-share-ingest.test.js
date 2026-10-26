@@ -174,42 +174,6 @@ test('opaque public GroupOffer ingest + apply uses local publishing identity', a
   }
 });
 
-test('opaque hex fabric: url still ingests a GroupOffer', async () => {
-  const alice = createIdentity();
-  const bob = createIdentity();
-  const def = groupContractDefinition({
-    groupId: 'group-hex-offer-1',
-    creator: alice.pubkey,
-    validators: [alice.pubkey],
-    threshold: 1,
-    createdAt: '2026-01-01T00:00:00.000Z',
-    meta: { name: 'Hex Ops', visibility: 'public' }
-  });
-  const contractId = groupContractId(def);
-  const offer = buildGroupOfferBody({
-    group: { id: def.groupId, name: 'Hex Ops', visibility: 'public', contractId },
-    definition: def,
-    actor: alice.pubkey
-  });
-  const { service, port, dir } = await startRelay(bob);
-  try {
-    const net = new FabricNetwork({ enable: false, listen: false, peers: [], peersDb: null });
-    net.setIdentity(alice);
-    const msg = net.signContractMessage(contractId, 'GroupShare', offer, { relay: false });
-    const protocolUrl = net.encodeOpaqueMessage(msg, { encoding: 'hex' }).protocolUrl;
-    assert.ok(protocolUrl.startsWith('fabric:'));
-    assert.ok(!protocolUrl.startsWith('fabric:base64'));
-    const ingest = await request(port, 'POST', `${BASE}/groups/share/ingest`, { protocolUrl });
-    assert.strictEqual(ingest.status, 200, ingest.body && ingest.body.error);
-    assert.strictEqual(ingest.body.data.kind, 'GroupOffer');
-    assert.ok(ingest.body.data.inbox);
-    assert.strictEqual(ingest.body.data.inbox.status, 'pending');
-  } finally {
-    await service.stop();
-    fs.rmSync(dir, { recursive: true, force: true });
-  }
-});
-
 test('expired GroupOffer and Federation invite clips return 410', async () => {
   const alice = createIdentity();
   const bob = createIdentity();

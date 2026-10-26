@@ -8,7 +8,7 @@ Get Star Citizen Live running with Discord integration in 5 minutes.
 
 ## Prerequisites
 
-- Node.js 24.15.0 or higher
+- Node.js 26.12.1 or higher
 - Star Citizen installed (for log file access)
 - Discord server with webhook access (optional, for Discord features)
 

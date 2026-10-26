@@ -1,0 +1,101 @@
+{
+  "@type": "GoonCitizenAgentProbe",
+  "name": "adversary-public-probe",
+  "generatedAt": "2026-08-17T00:12:47.620Z",
+  "title": "Adversary public probe",
+  "findings": [
+    {
+      "severity": "info",
+      "title": "GET status",
+      "detail": "200",
+      "at": "2026-08-17T00:12:32.176Z"
+    },
+    {
+      "severity": "ok",
+      "title": "Chat POST without auth rejected",
+      "detail": "401 Authentication required (POST …/auth with a signed login envelope)",
+      "at": "2026-08-17T00:12:32.326Z"
+    },
+    {
+      "severity": "info",
+      "title": "GET /settings",
+      "detail": "401",
+      "at": "2026-08-17T00:12:32.633Z"
+    },
+    {
+      "severity": "info",
+      "title": "GET /services/star-citizen/discord/guilds",
+      "detail": "401",
+      "at": "2026-08-17T00:12:32.778Z"
+    },
+    {
+      "severity": "important",
+      "title": "Readable without auth: /services/star-citizen/groups",
+      "detail": "groups=11 first=TEST",
+      "at": "2026-08-17T00:12:33.050Z"
+    },
+    {
+      "severity": "important",
+      "title": "Readable without auth: /services/star-citizen/missions",
+      "detail": "ok",
+      "at": "2026-08-17T00:12:33.610Z"
+    },
+    {
+      "severity": "info",
+      "title": "GET /services/star-citizen/peers",
+      "detail": "401",
+      "at": "2026-08-17T00:12:33.746Z"
+    },
+    {
+      "severity": "info",
+      "title": "GET /services/star-citizen/presence/roster",
+      "detail": "401",
+      "at": "2026-08-17T00:12:33.882Z"
+    },
+    {
+      "severity": "ok",
+      "title": "POST /missions",
+      "detail": "401 Authentication required (POST …/auth with a signed login envelope)",
+      "at": "2026-08-17T00:12:34.015Z"
+    },
+    {
+      "severity": "warn",
+      "title": "Hub HTTP probe failed",
+      "detail": "timeout",
+      "at": "2026-08-17T00:12:46.317Z"
+    },
+    {
+      "severity": "info",
+      "title": "Neighbor 0 mesh",
+      "detail": "pubkey=028a3768fed4ad12… connected=2 first=hub.fabric.pub:7777",
+      "at": "2026-08-17T00:12:47.196Z"
+    },
+    {
+      "severity": "info",
+      "title": "Neighbor 0 signed writes",
+      "detail": "8",
+      "at": "2026-08-17T00:12:47.267Z"
+    },
+    {
+      "severity": "info",
+      "title": "Neighbor 1 mesh",
+      "detail": "pubkey=02b2b84203543851… connected=2 first=hub.fabric.pub:7777",
+      "at": "2026-08-17T00:12:47.581Z"
+    },
+    {
+      "severity": "info",
+      "title": "Neighbor 1 signed writes",
+      "detail": "8",
+      "at": "2026-08-17T00:12:47.616Z"
+    }
+  ],
+  "targets": {
+    "http": "https://relay.goon.vc",
+    "fabric": [
+      "hub.fabric.pub:7777",
+      "relay.goon.vc:7777"
+    ],
+    "production": true
+  },
+  "at": "2026-08-17T00:12:47.617Z"
+}

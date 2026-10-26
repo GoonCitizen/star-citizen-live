@@ -2,7 +2,7 @@
 
 /**
  * End-to-end identity setups used by desktop, Android, Passport, and Hub:
- * one seed → many device xprvs; many seeds → many devices; cluster + revoke.
+ * one seed on many devices; many seeds linked by device-link; cluster + revoke.
  */
 
 const { describe, it } = require('node:test');
@@ -14,27 +14,40 @@ const Key = require('@fabric/core/types/key');
 
 const {
   generateVaultMnemonic,
-  deriveMasterSeedVault,
-  deviceAccountPath
+  deriveMasterSeedVault
 } = require('../../functions/masterSeedVault');
-const { createIdentity, restoreIdentity } = require('../../functions/identity');
+const { createIdentity, restoreIdentity, keyFromIdentity } = require('../../functions/identity');
 const IdentityCluster = require('../../functions/identityCluster');
 const { signCrossSign, verifyCrossSignObject } = require('../../functions/identityCrossSignVerify');
 const { SIGN_TYPE, REVOKE_TYPE } = require('../../functions/identityCrossSign');
 const GroupManager = require('../../services/GroupManager');
 const { Store } = require('../../types/Store');
 
-function nonce () {
-  return crypto.randomBytes(32).toString('hex');
+/** One device-link session: what both cross-signs of a pair must name. */
+function session () {
+  return {
+    sessionId: crypto.randomBytes(24).toString('hex'),
+    nonce: crypto.randomBytes(32).toString('hex'),
+    origin: 'https://hub.example'
+  };
+}
+
+function toward (peer, l) {
+  return Object.assign({ peerPubkey: peer.pubkey }, l);
+}
+
+/** The identity leaf as a standalone xprv, for core Identity. */
+function keyXprv (identity) {
+  return keyFromIdentity(identity).xprv;
 }
 
 function identFromXprv (xprv) {
   return new Identity({ xprv, network: 'regtest' });
 }
 
-function linkBoth (cluster, a, b, n) {
-  const ab = signCrossSign(a, { peerPubkey: b.pubkey, nonce: n });
-  const ba = signCrossSign(b, { peerPubkey: a.pubkey, nonce: n });
+function linkBoth (cluster, a, b, l) {
+  const ab = signCrossSign(a, toward(b, l));
+  const ba = signCrossSign(b, toward(a, l));
   assert.equal(verifyCrossSignObject(ab).ok, true);
   assert.equal(verifyCrossSignObject(ba).ok, true);
   assert.equal(cluster.ingestCrossSign(verifyCrossSignObject(ab).record).linked, false);
@@ -42,52 +55,38 @@ function linkBoth (cluster, a, b, n) {
 }
 
 describe('identity setups: one seed, many devices', () => {
-  it('vault children restore as distinct identities until they cross-sign', () => {
+  it('the same seed and derivation password restore the same identity on every device', () => {
     const mnemonic = generateVaultMnemonic();
-    const vault = deriveMasterSeedVault({
-      mnemonic,
-      passphrase: 'one-seed-passphrase',
-      extraDevices: 2
-    });
-    assert.equal(vault.devices.length, 3);
-    const desktop = restoreIdentity({ xprv: vault.devices[0].xprv });
-    const phone = restoreIdentity({ xprv: vault.devices[1].xprv });
-    const passport = restoreIdentity({ xprv: vault.devices[2].xprv });
-    assert.equal(desktop.pubkey, vault.devices[0].pubkey);
-    assert.equal(phone.pubkey, vault.devices[1].pubkey);
-    assert.notEqual(desktop.pubkey, phone.pubkey);
-    assert.notEqual(phone.pubkey, passport.pubkey);
-
-    const cluster = new IdentityCluster();
-    assert.equal(cluster.clusterEquals(desktop.pubkey, phone.pubkey), false);
-
-    const n = nonce();
-    linkBoth(cluster, identFromXprv(vault.devices[0].xprv), identFromXprv(vault.devices[1].xprv), n);
-    assert.equal(cluster.clusterEquals(desktop.pubkey, phone.pubkey), true);
-    assert.equal(cluster.clusterEquals(desktop.pubkey, passport.pubkey), false);
+    const passphrase = 'one-seed-passphrase';
+    const vault = deriveMasterSeedVault({ mnemonic, passphrase, network: 'regtest' });
+    const desktop = restoreIdentity({ mnemonic, passphrase, network: 'regtest' });
+    const phone = restoreIdentity({ mnemonic, passphrase, network: 'regtest' });
+    assert.equal(desktop.pubkey, vault.identity.pubkey);
+    assert.equal(phone.pubkey, desktop.pubkey);
+    assert.equal(phone.xprv, desktop.xprv);
+    assert.equal(restoreIdentity({ mnemonic, network: 'regtest' }).pubkey === desktop.pubkey, false);
   });
 
-  it('does not treat the Bitcoin account xprv as a clustered identity sibling', () => {
+  it('keeps the identity, wallet, and cosigner keys apart', () => {
     const vault = deriveMasterSeedVault({
       mnemonic: generateVaultMnemonic(),
       passphrase: 'btc-separate',
-      extraDevices: 0
+      network: 'regtest'
     });
-    const device = restoreIdentity({ xprv: vault.devices[0].xprv });
-    const btcAsIdent = restoreIdentity({ xprv: vault.bitcoin.xprv });
-    assert.notEqual(device.pubkey, btcAsIdent.pubkey);
+    assert.notEqual(vault.identity.pubkey, vault.cosigner.pubkey);
+    assert.notEqual(vault.wallet.segwit.xpub, vault.wallet.standard.xpub);
     const cluster = new IdentityCluster();
-    assert.equal(cluster.clusterEquals(device.pubkey, btcAsIdent.pubkey), false);
+    assert.equal(cluster.clusterEquals(vault.identity.pubkey, vault.cosigner.pubkey), false);
   });
 
-  it('rebuilds the same companion xprv from seed + password after the companion device is lost', () => {
+  it('a device with its own seed joins by device-link, not by a shared xprv', () => {
     const mnemonic = generateVaultMnemonic();
-    const passphrase = 'recover-companion';
-    const original = deriveMasterSeedVault({ mnemonic, passphrase, extraDevices: 1 });
-    const recovered = deriveMasterSeedVault({ mnemonic, passphrase, extraDevices: 1 });
-    assert.equal(recovered.devices[1].xprv, original.devices[1].xprv);
-    assert.equal(recovered.devices[1].pubkey, original.devices[1].pubkey);
-    assert.equal(recovered.devices[1].path, deviceAccountPath(1, recovered.network));
+    const desktop = restoreIdentity({ mnemonic, passphrase: 'shared-pass', network: 'regtest' });
+    const phone = createIdentity({ network: 'regtest' });
+    const cluster = new IdentityCluster();
+    assert.equal(cluster.clusterEquals(desktop.pubkey, phone.pubkey), false);
+    linkBoth(cluster, identFromXprv(keyXprv(desktop)), identFromXprv(keyXprv(phone)), session());
+    assert.equal(cluster.clusterEquals(desktop.pubkey, phone.pubkey), true);
   });
 });
 
@@ -98,36 +97,28 @@ describe('identity setups: many seeds, many devices', () => {
     const passport = createIdentity();
     const cluster = new IdentityCluster();
     assert.equal(cluster.clusterEquals(desktop.pubkey, phone.pubkey), false);
-    linkBoth(cluster, new Identity({ xprv: desktop.xprv }), new Identity({ xprv: phone.xprv }), nonce());
+    linkBoth(cluster, identFromXprv(keyXprv(desktop)), identFromXprv(keyXprv(phone)), session());
     assert.equal(cluster.clusterEquals(desktop.pubkey, phone.pubkey), true);
     assert.equal(cluster.clusterEquals(desktop.pubkey, passport.pubkey), false);
     assert.equal(cluster.clusterOf(desktop.pubkey).size, 2);
   });
 
-  it('two vaults (two seeds) never share device or Bitcoin keys', () => {
-    const a = deriveMasterSeedVault({
-      mnemonic: generateVaultMnemonic(),
-      passphrase: 'seed-a-password',
-      extraDevices: 1
-    });
-    const b = deriveMasterSeedVault({
-      mnemonic: generateVaultMnemonic(),
-      passphrase: 'seed-b-password',
-      extraDevices: 1
-    });
-    assert.notEqual(a.devices[0].xprv, b.devices[0].xprv);
-    assert.notEqual(a.devices[1].pubkey, b.devices[1].pubkey);
-    assert.notEqual(a.bitcoin.xprv, b.bitcoin.xprv);
+  it('two vaults (two seeds) never share identity, wallet, or cosigner keys', () => {
+    const a = deriveMasterSeedVault({ mnemonic: generateVaultMnemonic(), passphrase: 'seed-a-password' });
+    const b = deriveMasterSeedVault({ mnemonic: generateVaultMnemonic(), passphrase: 'seed-b-password' });
+    assert.notEqual(a.identity.pubkey, b.identity.pubkey);
+    assert.notEqual(a.wallet.segwit.xpub, b.wallet.segwit.xpub);
+    assert.notEqual(a.cosigner.pubkey, b.cosigner.pubkey);
   });
 
   it('peer-equivalent link works when either side initiates (Passport or mobile)', () => {
     const passport = new Identity(new Key());
     const phone = new Identity(new Key());
     const cluster = new IdentityCluster();
-    const n = nonce();
+    const l = session();
     // Android signs first, Passport countersigns.
-    const phoneFirst = signCrossSign(phone, { peerPubkey: passport.pubkey, nonce: n });
-    const passportBack = signCrossSign(passport, { peerPubkey: phone.pubkey, nonce: n });
+    const phoneFirst = signCrossSign(phone, toward(passport, l));
+    const passportBack = signCrossSign(passport, toward(phone, l));
     assert.equal(phoneFirst.type, SIGN_TYPE);
     cluster.ingestCrossSign(verifyCrossSignObject(phoneFirst).record);
     cluster.ingestCrossSign(verifyCrossSignObject(passportBack).record);
@@ -139,9 +130,9 @@ describe('identity setups: revocation', () => {
   it('either cluster member can revoke and group membership follows', async () => {
     const desktop = new Identity(new Key());
     const phone = new Identity(new Key());
-    const n = nonce();
+    const l = session();
     const cluster = new IdentityCluster();
-    linkBoth(cluster, desktop, phone, n);
+    linkBoth(cluster, desktop, phone, l);
 
     const gm = new GroupManager({
       store: new Store(),
@@ -151,7 +142,7 @@ describe('identity setups: revocation', () => {
     const created = await gm.createGroup({ name: 'Wing', visibility: 'private' }, desktop.pubkey);
     assert.equal(gm.isMember(created.id, phone.pubkey), true);
 
-    const rev = signCrossSign(phone, { peerPubkey: desktop.pubkey, nonce: n }, REVOKE_TYPE);
+    const rev = signCrossSign(phone, toward(desktop, l), REVOKE_TYPE);
     assert.equal(rev.type, REVOKE_TYPE);
     assert.equal(verifyCrossSignObject(rev).ok, true);
     cluster.ingestRevoke(verifyCrossSignObject(rev).record);
@@ -164,29 +155,29 @@ describe('identity setups: revocation', () => {
     const b = new Identity(new Key());
     const c = new Identity(new Key());
     const cluster = new IdentityCluster();
-    linkBoth(cluster, a, b, nonce());
-    linkBoth(cluster, b, c, nonce());
+    const ab = session();
+    linkBoth(cluster, a, b, ab);
+    linkBoth(cluster, b, c, session());
     assert.equal(cluster.clusterOf(a.pubkey).size, 3);
 
-    cluster.ingestRevoke({ localPubkey: a.pubkey, peerPubkey: b.pubkey });
+    cluster.ingestRevoke(Object.assign({ localPubkey: a.pubkey, peerPubkey: b.pubkey }, ab));
     assert.equal(cluster.clusterEquals(a.pubkey, b.pubkey), false);
     assert.equal(cluster.clusterEquals(b.pubkey, c.pubkey), true);
     assert.equal(cluster.clusterEquals(a.pubkey, c.pubkey), false);
   });
 
-  it('refuses to re-link a revoked edge even with a new nonce', () => {
+  it('refuses the revoked session again, and links only through a new one', () => {
     const a = new Identity(new Key());
     const b = new Identity(new Key());
     const cluster = new IdentityCluster();
-    const n1 = nonce();
-    linkBoth(cluster, a, b, n1);
-    cluster.ingestRevoke({ localPubkey: a.pubkey, peerPubkey: b.pubkey });
-    const again = cluster.ingestCrossSign({
-      localPubkey: a.pubkey,
-      peerPubkey: b.pubkey,
-      nonce: nonce()
-    });
+    const l1 = session();
+    linkBoth(cluster, a, b, l1);
+    cluster.ingestRevoke(Object.assign({ localPubkey: a.pubkey, peerPubkey: b.pubkey }, l1));
+    const again = cluster.ingestCrossSign(Object.assign({ localPubkey: a.pubkey, peerPubkey: b.pubkey }, l1));
     assert.equal(again.ok, false);
     assert.equal(again.reason, 'revoked');
+    assert.equal(cluster.clusterEquals(a.pubkey, b.pubkey), false);
+    linkBoth(cluster, a, b, session());
+    assert.equal(cluster.clusterEquals(a.pubkey, b.pubkey), true);
   });
 });

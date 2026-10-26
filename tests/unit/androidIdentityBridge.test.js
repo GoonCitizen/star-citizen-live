@@ -5,6 +5,7 @@ const assert = require('node:assert/strict');
 const { installAndroidIdentityBridge, IDENTITY_PREF } = require('../../functions/androidIdentityBridge');
 const { isAndroidCompanion } = require('../../functions/isAndroidCompanion');
 const { setAndroidSecureFlag } = require('../../functions/androidSecureScreen');
+const { identityBlobSummary } = require('../../functions/identity');
 
 describe('androidIdentityBridge', () => {
   it('does not install outside Capacitor', () => {
@@ -82,7 +83,10 @@ describe('androidIdentityBridge', () => {
       const res = await window.electronAPI.identity.create('password12');
       assert.ok(res.pubkey);
       assert.ok(wrapped);
-      assert.equal(JSON.parse(wrapped).pubkey, res.pubkey);
+      assert.equal(identityBlobSummary(JSON.parse(wrapped)).pubkey, res.pubkey);
+      assert.doesNotMatch(wrapped, /[xt]prv|mnemonic/);
+      assert.ok(res.mnemonic, 'the seed phrase is returned once for the backup step');
+      assert.ok(!wrapped.includes(res.mnemonic.split(' ').slice(0, 3).join(' ')));
       assert.equal(prefs.has(IDENTITY_PREF), false);
       assert.equal(local.store.has(IDENTITY_PREF), false);
       const forgotten = await window.electronAPI.identity.forget(true);

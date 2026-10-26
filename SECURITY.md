@@ -9,7 +9,7 @@ and other orgs: [DEVELOPERS.md](DEVELOPERS.md).
 Fabric networks are intended for deployment where **peers, relays, hubs, and operators may be hostile**. Design and review against:
 
 - Untrusted TCP / WebSocket / WebRTC neighbors (forgery, replay, amplification, pin hijack)
-- Phishing of identity flows (`fabric://login`, device-link) toward attacker-controlled hubs
+- Phishing of identity flows (sign-in, device-link) toward attacker-controlled hubs. Sign-in is Passport v2 (D-021, `@fabric/core` `docs/PASSPORT.md`): each challenge names its origin, Passport checks it against the tab's real URL, the relay pins its own origins, and there is no `fabric://login` link or delegation token
 - Public observability of unsigned or plaintext application traffic unless an explicit seal is used
 - No reliance on an “honest majority” of random internet peers for key custody
 
@@ -25,7 +25,7 @@ See also [`docs/THREAT-MODEL.md`](docs/THREAT-MODEL.md) for product claims (opt-
 - Discord webhooks / bot tokens via env, `settings/local.js`, or Settings UI
   secrets file under the store root — never commit; never put tokens in the
   Fabric Store collection.
-- Site login / device-link complete only against allowlisted Hub origins.
+- Passport sign-in is issued only for pinned origins (loopback on the relay's port, `https://<FABRIC_PUBLIC_HOST>`, `settings.passport.origins`) and redeemed once with the binding cookie; native sign-in and device-link go only to allowlisted Hub origins. The desktop local signer answers only Passport (pinned Chrome ids, any Firefox build) on a direct loopback socket, behind a native dialog.
 - Mesh `GroupChange` ingest (`GroupManager.ingestGroupChange`) authorizes the AMP signer (`source`), not `change.actor`. Strangers cannot `member.add` themselves. Same gates as HTTP `proposeChange` / `updateGroup`.
 
 ## Outstanding (RSI follow-ups)
@@ -34,7 +34,7 @@ See also [`docs/THREAT-MODEL.md`](docs/THREAT-MODEL.md) for product claims (opt-
 - ~~**Fabric coin types**~~ — current core pin includes **7777** / **7778**; local site-login verify re-exports `@fabric/http`. No SCL-local BIP44 identity hardcode remains to flip.
 - ~~**`@fabric/discord` `normalizeDiscordSettings`**~~ — [`functions/discordConfig.js`](functions/discordConfig.js) requires the package export; local [`functions/normalizeDiscordSettings.js`](functions/normalizeDiscordSettings.js) is a thin re-export.
 - ~~**Identity cluster**~~ — [`functions/identityCluster.js`](functions/identityCluster.js) re-exports `@fabric/hub/functions/identityCluster` (Hub `c12df87` keys are x-only / compressed hex only). Keep [`functions/identityCrossSign.js`](functions/identityCrossSign.js) local (browser-safe protocol strings; `_normPubkey` matches core).
-- **npm audit (prod omit-dev)** — ~~**critical** `screenshot-desktop`~~ bumped to `=1.15.4` (GHSA-gjx4-2c7g-fm94); still hardcode `{ format: 'png' }` in capture paths. Remaining **high**: transitive `serialize-javascript` (mocha), `undici` (discord.js 14.18). Prefer upstream bumps / scoped overrides over `npm audit fix --force`.
+- **npm audit (prod omit-dev)** — ~~**critical** `screenshot-desktop`~~ bumped to `=1.15.4` (GHSA-gjx4-2c7g-fm94); still hardcode `{ format: 'png' }` in capture paths. Remaining **high**: `undici` (discord.js 14.18), plus `serialize-javascript` via the stale `@fabric/hub` pin (its old commit lists `mocha@10.8.2` as a runtime dependency) until the Fabric pins move; our own `mocha` is `12.0.3`. Prefer upstream bumps / scoped overrides over `npm audit fix --force`.
 - ~~**Shared-mode LAN writes**~~ — [`functions/httpRemoteAuth.js`](functions/httpRemoteAuth.js) requires Bearer/Schnorr on mutating routes for non-loopback peers when `httpSharedMode` is on (same bar as `SC_MODE=server`). Hosted/shared-LAN GETs for notes, local tags, analytics, documents, Discord link/guilds, settings, peers, gameplay collections, groupaudit, chat list/channels, identity cluster, snapshots, and document offers require a session (`tests/relay/privacy-http-auth.test.js`). Unauth `GET /groups` does not dump private groups. `bitcoinRuntimeForSettings` omits `adminToken`. `isLoopbackRequest` ignores `X-Forwarded-For`. Bearer sessions expire in **8h**; `DELETE /services/star-citizen/auth` revokes the presented token. Remaining mesh/Hub/Passport follow-ups: [docs/PRIVACY_REMAINING.md](docs/PRIVACY_REMAINING.md).
 - **PR split** — large WIP still benefits from stacked PRs before merge to `master`.
 

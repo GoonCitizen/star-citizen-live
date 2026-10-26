@@ -12,9 +12,10 @@
  *   - **Add a device** (peer-equivalent initiator or responder): QR `fabric://link`
  *     + HTTPS Passport landing; Android, desktop, and Passport can each create or accept
  *   - **Linked devices / Revoke** publishes IdentityCrossSignRevoke (BIP340 Fabric Message)
- *   - reveal recovery phrase / xprv only after re-entering the password
- *     (even while unlocked), hidden by default, copy gated on reveal
- *   - encrypted backup export + import (password-sealed JSON file)
+ *   - account + network switcher: one sealed master key, each pair derives
+ *     its own identity, wallet, and cosigner keys (locked: cached pairs only)
+ *   - no seed or private key is ever shown after creation; backups are the
+ *     sealed master key (password-sealed JSON file)
  *   - forget requires an explicit typed confirmation
  *
  * The plaintext key never enters the renderer: all operations go through
@@ -113,11 +114,9 @@ class Identity extends React.Component {
       error: null,
       notice: null,
       unlockPassword: '',
-      // reveal
-      revealPassword: '',
-      revealed: null,       // { mnemonic, xprv }
-      showMnemonic: false,
-      showXprv: false,
+      // account switcher
+      accountDraft: '',
+      networkDraft: '',
       // backup
       backupPassword: '',
       importPassword: '',
@@ -173,7 +172,7 @@ class Identity extends React.Component {
     const b = bridge();
     if (b && b.onChanged) {
       this._unsub = b.onChanged((summary) => {
-        const next = { info: summary, revealed: null };
+        const next = { info: summary };
         if (summary && summary.pendingDeviceLinkOffer && summary.pendingDeviceLinkOffer.sessionId &&
           !this.state.linkOffer) {
           next.linkOffer = summary.pendingDeviceLinkOffer;
@@ -185,8 +184,7 @@ class Identity extends React.Component {
   }
 
   componentDidUpdate (_prevProps, prevState) {
-    if (!!prevState.revealed !== !!this.state.revealed ||
-      !!prevState.createdMnemonic !== !!this.state.createdMnemonic) {
+    if (!!prevState.createdMnemonic !== !!this.state.createdMnemonic) {
       this.syncSeedSecureFlag();
     }
   }
@@ -390,11 +388,11 @@ class Identity extends React.Component {
     if (this._presenceTimer) clearInterval(this._presenceTimer);
     this.stopLinkPoll();
     // Never keep secrets in component state after close.
-    this.setState({ revealed: null, revealPassword: '', unlockPassword: '', backupPassword: '', createdMnemonic: null });
+    this.setState({ unlockPassword: '', backupPassword: '', createdMnemonic: null });
   }
 
   syncSeedSecureFlag () {
-    setAndroidSecureFlag(!!(this.state.revealed || this.state.createdMnemonic));
+    setAndroidSecureFlag(!!this.state.createdMnemonic);
   }
 
   async load () {
@@ -424,7 +422,7 @@ class Identity extends React.Component {
 
   async lock () {
     await bridge().lock();
-    this.setState({ notice: 'Locked — the key was cleared from memory.', revealed: null });
+    this.setState({ notice: 'Locked — the key was cleared from memory.' });
     this.load();
   }
 
@@ -433,17 +431,23 @@ class Identity extends React.Component {
     if (res && !res.error) this.setState({ info: res });
   }
 
-  async reveal () {
-    if (!this.state.revealPassword || this.state.busy) return;
+  async selectAccount (pair) {
+    const b = bridge();
+    if (!b || typeof b.selectAccount !== 'function' || this.state.busy) return;
+    const account = Math.floor(Number(pair.account));
+    if (!Number.isInteger(account) || account < 0 || account > 0x7fffffff) {
+      this.setState({ error: 'Account must be a whole number, 0 or more.' });
+      return;
+    }
     this.setState({ busy: true, error: null, notice: null });
-    const res = await bridge().reveal(this.state.revealPassword);
-    if (res.error) return this.setState({ busy: false, error: res.error });
+    const res = await b.selectAccount({ account, network: pair.network });
+    if (res && res.error) return this.setState({ busy: false, error: res.error });
     this.setState({
       busy: false,
-      revealPassword: '',
-      revealed: { mnemonic: res.mnemonic, xprv: res.xprv },
-      showMnemonic: false,
-      showXprv: false
+      info: res,
+      accountDraft: '',
+      networkDraft: '',
+      notice: 'Switched to account ' + account + ' on ' + pair.network + '.'
     });
   }
 
@@ -493,7 +497,6 @@ class Identity extends React.Component {
     this.setState({
       confirmForget: false,
       forgetText: '',
-      revealed: null,
       notice: isAndroidCompanion()
         ? 'Identity deleted from this device.'
         : 'Identity deleted from this machine.'
@@ -588,6 +591,14 @@ class Identity extends React.Component {
       });
       return;
     }
+    if (res && res.ok && res.status === 'accepted') {
+      res = await this.confirmAddDevice(b, res);
+    }
+    if (res && res.declined) {
+      this.stopLinkPoll();
+      this.setState({ linkOffer: null, linkBusy: false, error: res.error || 'Link declined. Nothing was signed.' });
+      return;
+    }
     if (!res || res.error || res.expired) {
       if (isStaleDeviceLinkError(res) || (res && res.expired) || (res && /no pending device-link/i.test(String(res.error || '')))) {
         this.stopLinkPoll();
@@ -606,6 +617,32 @@ class Identity extends React.Component {
         linkBusy: false,
         notice: 'Device linked. Both sides publish IdentityCrossSign and replay account data over Fabric (groups, notes, profile, chat). Sync continues on the mesh.'
       });
+    }
+  }
+
+  /**
+   * A device answered the add-device code: countersign only after the user
+   * checks its key against the other screen.
+   */
+  async confirmAddDevice (b, accepted) {
+    if (this._confirmingLink) return { ok: true, status: 'pending' };
+    if (typeof b.confirmDeviceLinkOffer !== 'function') return { ok: true, status: 'pending' };
+    this._confirmingLink = true;
+    try {
+      const label = String(accepted.label || 'a device');
+      const ok = window.confirm(
+        `Link "${label}" to this identity?\n\nIts key: ${accepted.fingerprint || 'unknown'}\nVia: ${accepted.origin || 'the Hub'}\n\n` +
+        'Check that the other device shows the same key. Linked devices act as you.'
+      );
+      if (!ok) {
+        if (typeof b.cancelDeviceLinkOffer === 'function') {
+          try { await b.cancelDeviceLinkOffer(); } catch (_) { /* the offer ages out */ }
+        }
+        return { ok: false, declined: true, error: 'Link declined. Nothing was signed.' };
+      }
+      return await b.confirmDeviceLinkOffer(accepted.responder && accepted.responder.id);
+    } finally {
+      this._confirmingLink = false;
     }
   }
 
@@ -674,7 +711,9 @@ class Identity extends React.Component {
         const posted = await postIdentityCrossSign(window.location.origin, {
           type: 'IdentityCrossSignRevoke',
           peerPubkey,
-          nonce
+          nonce,
+          sessionId: (match && match.sessionId) || (row && row.sessionId) || undefined,
+          origin: (match && match.hubOrigin) || (row && row.hubOrigin) || undefined
         });
         if (!posted.ok) throw new Error(posted.error || 'Could not publish IdentityCrossSignRevoke');
       }
@@ -761,13 +800,13 @@ class Identity extends React.Component {
       return React.createElement('div', { className: 'id-sec' },
         React.createElement('h3', null, 'Add a device'),
         React.createElement('div', { className: 'd' },
-          'Unlock this identity to show a QR. Phone / desktop scan fabric://link; Passport opens the HTTPS landing. Website login is a different card (fabric://login).')
+          'Unlock this identity to show a QR. Phone / desktop scan fabric://link; Passport opens the HTTPS landing. Signing in to websites goes through Passport, not this QR.')
       );
     }
     return React.createElement('div', { className: 'id-sec' },
       React.createElement('h3', null, 'Add a device'),
         React.createElement('div', { className: 'd' },
-          'Show a QR for Android, Passport, or another desktop. On the other device tap the header QR (or paste fabric://link). Matching emoji on that confirm modal is enough to approve the link. Each app keeps its own seed. Website sign-in uses fabric://login, not this QR.'),
+          'Show a QR for Android, Passport, or another desktop. On the other device tap the header QR (or paste fabric://link). Matching emoji on that confirm modal is enough to approve the link. Each app keeps its own seed. Signing in to websites goes through Passport, not this QR.'),
       React.createElement('div', { className: 'd' },
         'If the camera does not open fabric://link, paste it here (desktop Identity → Copy fabric://link).'),
       React.createElement('div', { className: 'id-row' },
@@ -887,7 +926,7 @@ class Identity extends React.Component {
         React.createElement('button', {
           className: 'id-btn ghost',
           type: 'button',
-          onClick: () => this.setState({ showKeyTools: !open, revealed: open ? null : this.state.revealed })
+          onClick: () => this.setState({ showKeyTools: !open })
         }, open ? 'Hide keys & recovery' : 'Keys & recovery…'),
         info.unlocked
           ? React.createElement('span', { className: 'id-tag on' }, 'unlocked')
@@ -899,16 +938,9 @@ class Identity extends React.Component {
       open
         ? React.createElement(React.Fragment, null,
           React.createElement('div', { className: 'd', style: { marginTop: 10 } },
-            'Technical key material — pubkey, backups, and recovery. Most day-to-day use stays in Profile and Online status above.'),
-          React.createElement('div', { className: 'id-kv' },
-            React.createElement('b', null, 'pubkey (actor id) '), React.createElement('br'), info.pubkey || '—'),
-          info.xpub
-            ? React.createElement('div', { className: 'id-kv' },
-              React.createElement('b', null, 'xpub (watch-only) '), React.createElement('br'), info.xpub)
-            : null,
-          React.createElement('div', { className: 'id-row' },
-            React.createElement('button', { className: 'id-btn ghost', onClick: () => this.copy(info.pubkey) }, 'Copy pubkey')
-          ),
+            'Accounts, backups, and recovery. Most day-to-day use stays in Profile and Online status above.'),
+          this.renderKeyDetails(info),
+          this.renderAccounts(),
           React.createElement('div', { className: 'id-row' },
             React.createElement('span', { style: { fontSize: 12, color: 'var(--muted)' } }, 'Auto-lock after idle'),
             React.createElement('select', {
@@ -917,7 +949,6 @@ class Identity extends React.Component {
               onChange: (e) => this.setAutoLock(Number(e.target.value))
             }, AUTOLOCK_OPTIONS.map(([v, label]) => React.createElement('option', { key: v, value: v }, label)))
           ),
-          this.renderReveal(),
           this.renderBackup(),
           this.renderForget()
         )
@@ -1180,52 +1211,78 @@ class Identity extends React.Component {
     );
   }
 
-  renderReveal () {
-    const r = this.state.revealed;
+  renderKeyDetails (info, tag = false) {
+    const wallet = info.wallet || {};
+    return React.createElement(React.Fragment, null,
+      React.createElement('div', { className: 'id-kv' },
+        React.createElement('b', null, 'pubkey (actor id) '), React.createElement('br'), info.pubkey || '—'),
+      wallet.segwit
+        ? React.createElement('div', { className: 'id-kv' },
+          React.createElement('b', null, 'wallet '), React.createElement('br'),
+          wallet.segwit.path + ' (SegWit, new addresses)',
+          wallet.standard ? React.createElement('br') : null,
+          wallet.standard ? wallet.standard.path + ' (standard, watched)' : null)
+        : null,
+      info.cosigner
+        ? React.createElement('div', { className: 'id-kv' },
+          React.createElement('b', null, 'multisig key (group wallets, escrow) '), React.createElement('br'), info.cosigner)
+        : null,
+      React.createElement('div', { className: 'id-row' },
+        React.createElement('button', { className: 'id-btn ghost', onClick: () => this.copy(info.pubkey) }, 'Copy pubkey'),
+        tag
+          ? React.createElement('span', { className: 'id-tag ' + (info.unlocked ? 'on' : 'off') }, info.unlocked ? 'unlocked' : 'locked')
+          : null
+      )
+    );
+  }
+
+  renderAccounts () {
+    const info = this.state.info;
+    if (!info || !info.exists) return null;
+    const accounts = Array.isArray(info.accounts) ? info.accounts : [];
+    const network = this.state.networkDraft || info.network || 'regtest';
+    const draft = this.state.accountDraft;
+    const draftOk = draft !== '' && Number.isInteger(Number(draft)) && Number(draft) >= 0;
+    const cached = (a, n) => accounts.some((x) => x.account === a && x.network === n);
+    const canSwitch = draftOk && (info.unlocked || cached(Number(draft), network));
     return React.createElement('div', { style: { marginTop: 14 } },
-      React.createElement('h3', { style: { margin: '0 0 4px', fontSize: 13 } }, 'Recovery phrase'),
+      React.createElement('h3', { style: { margin: '0 0 4px', fontSize: 13 } }, 'Account'),
       React.createElement('div', { className: 'd' },
-        'Re-enter your password to view the seed phrase or xprv — required even while unlocked, so an open app never exposes the seed.'),
-      !r
+        'One master key, many accounts. Each account and network has its own identity, wallet, and multisig key; the same account number on another network uses another path. ',
+        info.unlocked ? null : 'Locked, you can switch only to accounts used before.'),
+      React.createElement('div', { className: 'id-kv' },
+        React.createElement('b', null, 'current '), React.createElement('br'),
+        (info.label || ('Account ' + info.account)) + ' · ' + info.network),
+      accounts.length > 1
         ? React.createElement('div', { className: 'id-row' },
-          React.createElement('input', {
-            className: 'id-input', type: 'password', placeholder: 'password',
-            value: this.state.revealPassword,
-            onChange: (e) => this.setState({ revealPassword: e.target.value }),
-            onKeyDown: (e) => { if (e.key === 'Enter') this.reveal(); }
-          }),
-          React.createElement('button', { className: 'id-btn ghost', disabled: !this.state.revealPassword || this.state.busy, onClick: () => this.reveal() }, 'Reveal secrets')
-        )
-        : React.createElement(React.Fragment, null,
-          React.createElement('div', { className: 'id-warn' },
-            'Anyone with these can permanently impersonate you. Never share them; never paste them into chat.'),
-          r.mnemonic
-            ? React.createElement(React.Fragment, null,
-              React.createElement('div', { className: 'id-secret' + (this.state.showMnemonic ? '' : ' hidden') },
-                this.state.showMnemonic ? r.mnemonic : 'Recovery phrase hidden — click Show to reveal.'),
-              React.createElement('div', { className: 'id-row' },
-                React.createElement('button', { className: 'id-btn ghost', onClick: () => this.setState({ showMnemonic: !this.state.showMnemonic }) },
-                  this.state.showMnemonic ? 'Hide phrase' : 'Show phrase'),
-                React.createElement('button', {
-                  className: 'id-btn ghost', disabled: !this.state.showMnemonic,
-                  title: this.state.showMnemonic ? undefined : 'Reveal the phrase first so you know what you are copying',
-                  onClick: () => this.copy(r.mnemonic)
-                }, 'Copy phrase')
-              ))
-            : null,
-          React.createElement('div', { className: 'id-secret' + (this.state.showXprv ? '' : ' hidden') },
-            this.state.showXprv ? r.xprv : 'Extended private key (xprv) hidden — click Show to reveal.'),
-          React.createElement('div', { className: 'id-row' },
-            React.createElement('button', { className: 'id-btn ghost', onClick: () => this.setState({ showXprv: !this.state.showXprv }) },
-              this.state.showXprv ? 'Hide xprv' : 'Show xprv'),
-            React.createElement('button', {
-              className: 'id-btn ghost', disabled: !this.state.showXprv,
-              title: this.state.showXprv ? undefined : 'Reveal the xprv first so you know what you are copying',
-              onClick: () => this.copy(r.xprv)
-            }, 'Copy xprv'),
-            React.createElement('button', { className: 'id-btn ghost', onClick: () => this.setState({ revealed: null }) }, 'Done — hide all')
-          )
-        )
+          accounts.filter((a) => !a.current).map((a) => React.createElement('button', {
+            key: a.network + ':' + a.account,
+            className: 'id-btn ghost',
+            disabled: this.state.busy,
+            title: a.pubkey,
+            onClick: () => this.selectAccount({ account: a.account, network: a.network })
+          }, (a.label || ('Account ' + a.account)) + ' · ' + a.network)))
+        : null,
+      React.createElement('div', { className: 'id-row' },
+        React.createElement('input', {
+          className: 'id-input', type: 'number', min: 0, placeholder: 'account number',
+          value: draft,
+          style: { flex: '0 1 140px', minWidth: 120 },
+          onChange: (e) => this.setState({ accountDraft: e.target.value })
+        }),
+        React.createElement('select', {
+          className: 'id-select',
+          value: network,
+          onChange: (e) => this.setState({ networkDraft: e.target.value })
+        }, ['mainnet', 'testnet', 'signet', 'regtest'].map((n) =>
+          React.createElement('option', { key: n, value: n }, n))),
+        React.createElement('button', {
+          className: 'id-btn ghost',
+          disabled: !canSwitch || this.state.busy,
+          title: draftOk && !canSwitch ? 'Unlock to add this account' : undefined,
+          onClick: () => this.selectAccount({ account: Number(draft), network })
+        }, 'Switch')
+      )
     );
   }
 
@@ -1233,7 +1290,7 @@ class Identity extends React.Component {
     return React.createElement('div', { style: { marginTop: 14 } },
       React.createElement('h3', { style: { margin: '0 0 4px', fontSize: 13 } }, 'Encrypted backup'),
       React.createElement('div', { className: 'd' },
-        'Download a password-sealed backup file (the key material stays encrypted with your password). ',
+        'Download a backup file holding your master key, sealed with your password. ',
         isAndroidCompanion()
           ? 'Restore it here, or on desktop / another device, via Import backup.'
           : 'Restore it on another machine via "Import backup".'),
@@ -1308,19 +1365,9 @@ class Identity extends React.Component {
     return React.createElement('div', { className: 'id-sec' },
       React.createElement('h3', null, 'This device’s key'),
       React.createElement('div', { className: 'd' },
-        'Pubkey is the actor id on the mesh. xpub is watch-only for associated funds.'),
-      React.createElement('div', { className: 'id-kv' },
-        React.createElement('b', null, 'pubkey (actor id) '), React.createElement('br'), info.pubkey || '—'),
-      info.xpub
-        ? React.createElement('div', { className: 'id-kv' },
-          React.createElement('b', null, 'xpub (watch-only) '), React.createElement('br'), info.xpub)
-        : null,
-      React.createElement('div', { className: 'id-row' },
-        React.createElement('button', { className: 'id-btn ghost', onClick: () => this.copy(info.pubkey) }, 'Copy pubkey'),
-        info.unlocked
-          ? React.createElement('span', { className: 'id-tag on' }, 'unlocked')
-          : React.createElement('span', { className: 'id-tag off' }, 'locked')
-      )
+        'Pubkey is the actor id on the mesh. Funds and multisig use their own keys from the same master.'),
+      this.renderKeyDetails(info, true),
+      this.renderAccounts()
     );
   }
 
@@ -1330,7 +1377,7 @@ class Identity extends React.Component {
     return React.createElement('div', { className: 'id-sec' },
       React.createElement('h3', null, 'Associated funds'),
       React.createElement('div', { className: 'd' },
-        'Balance, receive, and history for this identity’s xpub (Hub Bitcoin proxy). Unlock to refresh.'),
+        'Balance, receive, and history for this account’s wallet (Hub Bitcoin proxy). New addresses are SegWit. Unlock to refresh.'),
       React.createElement(BitcoinWalletPanel, {
         identityPubkey: info && info.pubkey,
         identityLocked: !(info && info.unlocked),
@@ -1345,7 +1392,7 @@ class Identity extends React.Component {
     return React.createElement('div', { className: 'id-sec' },
       React.createElement('h3', null, 'Lock'),
       React.createElement('div', { className: 'd' },
-        'Password encrypts the seed on this device. Auto-lock clears the unlocked session after idle time.'),
+        'Password encrypts the master key on this device. Auto-lock clears the unlocked session after idle time.'),
       React.createElement('div', { className: 'id-row', style: { marginTop: 0 } },
         info.unlocked
           ? React.createElement('button', { className: 'id-btn ghost', onClick: () => this.lock() }, '🔒 Lock now')
@@ -1382,8 +1429,7 @@ class Identity extends React.Component {
         React.createElement('div', { className: 'id-sec' },
           React.createElement('h3', null, 'Recovery'),
           React.createElement('div', { className: 'd' },
-            'Reveal the seed only after re-entering your password. Export an encrypted backup, or restore one here.'),
-          this.renderReveal(),
+            'Your seed phrase and derivation password rebuild every account; they are never shown again here. Export an encrypted backup, or restore one here.'),
           this.renderBackup()
         ),
         isAndroidCompanion()

@@ -3,24 +3,32 @@
 /**
  * Device-link *initiator* — any GoonCitizen node (Android or desktop) can create a
  * pending offer on an allowlisted public hub, show fabric://link + an HTTPS landing
- * URL (Passport), then countersign when the responder accepts. Passport and Hub
- * browser can start the same ceremony. Pairing is peer-equivalent.
+ * URL (Passport), then — once the user confirms the responder's key — countersign.
+ * Polling never signs. Passport and Hub browser can start the same ceremony.
+ * Pairing is peer-equivalent.
  *
  * Pairing HTTPS is rendezvous only (D-013). IdentityCrossSign still gossips
  * from the local Peer after status: linked.
  */
 
 const {
-  createDeviceLinkOffer,
+  prepareDeviceLinkOffer,
+  commitDeviceLinkOffer,
   fetchDeviceLinkSession,
   postDeviceLinkSignature,
-  buildDeviceLinkOfferMessage
+  buildDeviceLinkOfferMessage,
+  verifyDeviceLinkResponder,
+  DEVICE_LINK_OFFER_TAG,
+  DEVICE_LINK_TAG
 } = require('@fabric/http/functions/fabricDeviceLinkClient');
-const { buildFabricIdentitySignedPayload } = require('@fabric/http/functions/fabricSiteLoginVerify');
+const { buildFabricIdentitySignedPayload } = require('@fabric/core/functions/fabricIdentitySchnorr');
 const { assertAllowedFabricHub } = require('./fabricHubAllowlist');
-const { keyFromIdentity } = require('./identity');
 const { protocolQrDataUrl } = require('./protocolQr');
-const { cancelDeviceLinkSession } = require('./fabricDeviceLinkClient');
+const {
+  cancelDeviceLinkSession,
+  keyFingerprint,
+  signingIdentity
+} = require('./fabricDeviceLinkClient');
 const {
   DEVICE_LINK_OFFER_TTL_MS,
   stampCreatedAt,
@@ -30,17 +38,6 @@ const {
 
 const DEFAULT_DEVICE_LINK_HUB = 'https://relay.goon.vc';
 const DEVICE_LINK_TICK_MS = 2000;
-
-function randomNonceHex () {
-  try {
-    if (typeof crypto !== 'undefined' && crypto.getRandomValues) {
-      const u = new Uint8Array(32);
-      crypto.getRandomValues(u);
-      return Array.from(u).map((b) => b.toString(16).padStart(2, '0')).join('');
-    }
-  } catch (_) { /* fall through */ }
-  return require('crypto').randomBytes(32).toString('hex');
-}
 
 function httpsLandingUrl (hubBase, sessionId) {
   const base = String(hubBase || '').replace(/\/$/, '');
@@ -89,6 +86,7 @@ function compactPendingOffer (offer) {
     protocolUrl: offer.protocolUrl || null,
     httpsUrl: offer.httpsUrl || null,
     initiatorId: offer.initiatorId || null,
+    countersigned: offer.countersigned || null,
     status: 'pending'
   };
 }
@@ -107,22 +105,38 @@ async function startDeviceLinkOffer (identity, opts = {}) {
   const hubBase = hubGate.hubBase;
   const origin = hubBase;
   const label = String(opts.label || 'GoonCitizen').replace(/:/g, '-').slice(0, 64);
-  let key;
+  let me;
   try {
-    key = keyFromIdentity(identity);
+    me = signingIdentity(identity);
   } catch (e) {
     return { ok: false, error: (e && e.message) ? String(e.message) : 'could not load identity key' };
   }
-  const probe = buildFabricIdentitySignedPayload(key, 'fabric:device-link:id-probe');
-  const initiatorId = probe.identity.id;
-  const nonce = randomNonceHex();
-  const offerMessage = buildDeviceLinkOfferMessage(nonce, initiatorId, label, origin);
-  const offerSigned = buildFabricIdentitySignedPayload(key, offerMessage);
-  const created = await createDeviceLinkOffer({
+  const initiatorId = me.id;
+  // The hub picks sessionId + nonce; sign only the offer rebuilt here.
+  const prepared = await prepareDeviceLinkOffer({
     hubBase,
     origin,
     label,
-    nonce,
+    identity: { id: initiatorId, xpub: me.xpub },
+    fetchImpl: opts.fetchImpl
+  });
+  if (!prepared.ok) return prepared;
+  let offerMessage;
+  try {
+    offerMessage = buildDeviceLinkOfferMessage(prepared.sessionId, prepared.nonce, initiatorId, label, origin);
+  } catch (e) {
+    return { ok: false, error: 'hub did not return a session-bound device-link offer' };
+  }
+  if (prepared.offerMessage && prepared.offerMessage !== offerMessage) {
+    return { ok: false, error: 'hub offer does not match this identity, label, or origin' };
+  }
+  const nonce = String(prepared.nonce).toLowerCase();
+  const offerSigned = buildFabricIdentitySignedPayload(me.key, offerMessage, DEVICE_LINK_OFFER_TAG);
+  const created = await commitDeviceLinkOffer({
+    hubBase,
+    origin,
+    label,
+    sessionId: prepared.sessionId,
     identity: offerSigned.identity,
     pubkeyHex: offerSigned.pubkeyHex,
     signature: offerSigned.signature,
@@ -138,7 +152,7 @@ async function startDeviceLinkOffer (identity, opts = {}) {
     ok: true,
     sessionId: created.sessionId,
     nonce: created.nonce || nonce,
-    pollSecret: created.pollSecret || null,
+    pollSecret: created.pollSecret || prepared.pollSecret || null,
     label,
     hubBase,
     origin,
@@ -164,8 +178,70 @@ async function abandonDeviceLinkOffer (offer, opts = {}) {
   });
 }
 
+function _linkedResult (offer, st, responder) {
+  return {
+    ok: true,
+    status: 'linked',
+    sessionId: offer.sessionId,
+    nonce: st.nonce || offer.nonce,
+    origin: offer.origin || offer.hubBase,
+    responder,
+    label: st.label || offer.label,
+    hubBase: offer.hubBase,
+    peerPubkey: (responder && responder.pubkeyHex) || peerPubkeyFromParty(responder),
+    peerFabricId: (responder && responder.id) || null,
+    peerXpub: (responder && responder.xpub) || null
+  };
+}
+
 /**
- * Poll once. When the responder has accepted, countersign as initiator.
+ * Check an accepted session against the offer this device made, and the
+ * responder's signature over the link it names.
+ * @returns {{ ok: true, responder: object, linkMessage: string }|{ ok: false, error: string }}
+ */
+function _checkAccepted (me, offer, st) {
+  if (String(st.sessionId || '') !== String(offer.sessionId)) {
+    return { ok: false, error: 'Hub answered for another device link' };
+  }
+  if ((offer.nonce && st.nonce !== offer.nonce) || (offer.label && st.label !== offer.label)) {
+    return { ok: false, error: 'Hub session does not match this offer' };
+  }
+  try {
+    if (new URL(String(st.origin)).origin !== new URL(String(offer.origin || offer.hubBase)).origin) {
+      return { ok: false, error: 'Hub session does not match this offer' };
+    }
+  } catch (_) {
+    return { ok: false, error: 'Hub session does not match this offer' };
+  }
+  if (!st.initiator || st.initiator.id !== me.id) {
+    return { ok: false, error: 'Hub session was not offered by this identity' };
+  }
+  let verified;
+  try {
+    verified = verifyDeviceLinkResponder(st);
+  } catch (err) {
+    verified = { ok: false, error: (err && err.message) ? String(err.message) : 'invalid device link' };
+  }
+  if (!verified.ok) return verified;
+  if (verified.responder.id === me.id || verified.responder.pubkeyHex === me.pubkeyHex) {
+    return { ok: false, error: 'Cannot link a device to itself' };
+  }
+  return { ok: true, responder: verified.responder, linkMessage: verified.linkMessage };
+}
+
+async function _fetchOffer (offer, opts) {
+  return fetchDeviceLinkSession(offer.hubBase, offer.sessionId, {
+    origin: offer.origin || offer.hubBase,
+    pollSecret: offer.pollSecret,
+    fetchImpl: opts.fetchImpl
+  });
+}
+
+/**
+ * Poll once. Never signs: an accepted session comes back as `accepted` with
+ * the responder's key fingerprint for the user to confirm
+ * ({@link confirmDeviceLinkOffer}). `linked` is reported only for the
+ * responder this device countersigned (`offer.countersigned`).
  * @param {object} identity
  * @param {object} offer startDeviceLinkOffer result
  * @param {object} [opts]
@@ -182,12 +258,7 @@ async function tickDeviceLinkOffer (identity, offer, opts = {}) {
       error: 'device-link offer timed out — start a new one'
     };
   }
-  const origin = offer.origin || offer.hubBase;
-  const st = await fetchDeviceLinkSession(offer.hubBase, offer.sessionId, {
-    origin,
-    pollSecret: offer.pollSecret,
-    fetchImpl: opts.fetchImpl
-  });
+  const st = await _fetchOffer(offer, opts);
   if (!st.ok) {
     if (isStaleDeviceLinkError(st)) {
       return {
@@ -204,50 +275,71 @@ async function tickDeviceLinkOffer (identity, offer, opts = {}) {
   }
   if (st.status === 'linked') {
     const responder = st.responder || null;
-    return {
-      ok: true,
-      status: 'linked',
-      sessionId: offer.sessionId,
-      nonce: st.nonce || offer.nonce,
-      responder,
-      label: st.label || offer.label,
-      hubBase: offer.hubBase,
-      peerPubkey: peerPubkeyFromParty(responder),
-      peerFabricId: (responder && responder.id) || null,
-      peerXpub: (responder && responder.xpub) || null
-    };
+    if (!offer.countersigned || !responder || responder.id !== offer.countersigned) {
+      return { ok: false, expired: true, error: 'Hub reports a link this device did not confirm' };
+    }
+    return _linkedResult(offer, st, responder);
   }
-  if (st.status !== 'accepted' || !st.linkMessage) {
+  if (st.status !== 'accepted') {
     return { ok: true, status: st.status || 'unknown', sessionId: offer.sessionId };
   }
-  let key;
+  let me;
   try {
-    key = keyFromIdentity(identity);
+    me = signingIdentity(identity);
   } catch (e) {
     return { ok: false, error: (e && e.message) ? String(e.message) : 'could not load identity key' };
   }
-  const countersigned = buildFabricIdentitySignedPayload(key, st.linkMessage);
+  const checked = _checkAccepted(me, offer, st);
+  if (!checked.ok) return checked;
+  return {
+    ok: true,
+    status: 'accepted',
+    sessionId: offer.sessionId,
+    origin: offer.origin || offer.hubBase,
+    label: st.label || offer.label,
+    responder: checked.responder,
+    fingerprint: keyFingerprint(checked.responder.pubkeyHex)
+  };
+}
+
+/**
+ * Countersign the link after the user confirmed the responder `responderId`
+ * (the Fabric id {@link tickDeviceLinkOffer} showed with its fingerprint).
+ * Refuses when the session now names another responder.
+ * @param {object} identity
+ * @param {object} offer
+ * @param {string} responderId
+ * @param {object} [opts]
+ */
+async function confirmDeviceLinkOffer (identity, offer, responderId, opts = {}) {
+  if (!identity) return { ok: false, error: 'Identity is locked' };
+  if (!offer || !offer.sessionId || !offer.hubBase) {
+    return { ok: false, expired: true, error: 'no pending device-link offer' };
+  }
+  const st = await _fetchOffer(offer, opts);
+  if (!st.ok) return st;
+  if (st.status !== 'accepted') return { ok: false, error: 'device link is not waiting for confirmation' };
+  let me;
+  try {
+    me = signingIdentity(identity);
+  } catch (e) {
+    return { ok: false, error: (e && e.message) ? String(e.message) : 'could not load identity key' };
+  }
+  const checked = _checkAccepted(me, offer, st);
+  if (!checked.ok) return checked;
+  if (!responderId || checked.responder.id !== String(responderId)) {
+    return { ok: false, error: 'device link changed since you confirmed it — start a new one' };
+  }
+  const countersigned = buildFabricIdentitySignedPayload(me.key, checked.linkMessage, DEVICE_LINK_TAG);
+  offer.countersigned = checked.responder.id;
   const done = await postDeviceLinkSignature(offer.hubBase, offer.sessionId, {
     role: 'initiator',
     signature: countersigned.signature,
     pubkeyHex: countersigned.pubkeyHex,
     identity: countersigned.identity
-  }, { origin, fetchImpl: opts.fetchImpl });
+  }, { origin: offer.origin || offer.hubBase, fetchImpl: opts.fetchImpl });
   if (!done.ok) return done;
-  return {
-    ok: true,
-    status: done.status || 'linked',
-    sessionId: offer.sessionId,
-    nonce: st.nonce || offer.nonce,
-    responder: done.responder || st.responder || null,
-    label: done.label || st.label || offer.label,
-    hubBase: offer.hubBase,
-    peerPubkey: peerPubkeyFromParty(done.responder) || peerPubkeyFromParty(st.responder),
-    peerFabricId: (done.responder && done.responder.id) ||
-      (st.responder && st.responder.id) || null,
-    peerXpub: (done.responder && done.responder.xpub) ||
-      (st.responder && st.responder.xpub) || null
-  };
+  return _linkedResult(offer, st, checked.responder);
 }
 
 function parseDeviceLinkLanding (loc) {
@@ -319,6 +411,7 @@ module.exports = {
   httpsLandingUrl,
   startDeviceLinkOffer,
   tickDeviceLinkOffer,
+  confirmDeviceLinkOffer,
   abandonDeviceLinkOffer,
   peerPubkeyFromParty,
   compactPendingOffer,

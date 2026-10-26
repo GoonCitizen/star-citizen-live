@@ -1,13 +1,12 @@
 'use strict';
 
 /**
- * Turn a scanned QR payload into a fabric:// protocol URL for device-link
- * (or site login). Accepts fabric://link, the HTTPS Passport landing, and
+ * Turn a scanned QR payload into a fabric:// protocol URL for device-link.
+ * Accepts fabric://link, the HTTPS Passport landing, and
  * a bare #device-link= hash.
  */
 
 const { parseFabricDeviceLinkUrl } = require('./fabricDeviceLinkProtocol');
-const { parseFabricLoginUrl } = require('./fabricProtocolLogin');
 const {
   parseDeviceLinkLanding,
   DEFAULT_DEVICE_LINK_HUB
@@ -43,11 +42,6 @@ function interpretQrScan (text) {
   }
   if (/^fabric:\/\/link\b/i.test(raw)) {
     return { ok: false, error: (link && link.error) || 'invalid fabric://link' };
-  }
-
-  const login = parseFabricLoginUrl(raw);
-  if (login && login.ok) {
-    return { ok: true, kind: 'login', protocolUrl: raw };
   }
 
   try {

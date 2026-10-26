@@ -16,6 +16,8 @@ Missions can be accepted by signing with secp256k1 or Musig2 multisig.</p>
 <dd></dd>
 <dt><a href="#FabricNetwork">FabricNetwork</a></dt>
 <dd></dd>
+<dt><a href="#MarketManager">MarketManager</a></dt>
+<dd></dd>
 <dt><a href="#MissionManager">MissionManager</a></dt>
 <dd><p>Mission Manager service.
 Handles mission lifecycle, applications, and cryptographic verification.
@@ -892,6 +894,7 @@ Deterministic id for a message payload (mirror of post()).
         * [.replyDocumentInventory(originName, items)](#FabricNetwork+replyDocumentInventory) ⇒ <code>boolean</code>
         * [.sendCatalogFile(peerAddress, buffer, [opts])](#FabricNetwork+sendCatalogFile) ⇒ <code>number</code>
         * [.sendCatalogFileToAddresses(addresses, buffer, [opts])](#FabricNetwork+sendCatalogFileToAddresses) ⇒ <code>number</code>
+        * [.publishMarketArtifact(type, object)](#FabricNetwork+publishMarketArtifact)
     * _static_
         * [.connectionMatchesAddress(connectionId, rosterAddress)](#FabricNetwork.connectionMatchesAddress)
 
@@ -1551,6 +1554,20 @@ Send a catalog blob to every currently connected address in `addresses`.
 | buffer | <code>Buffer</code> | 
 | [opts] | <code>Object</code> | 
 
+<a name="FabricNetwork+publishMarketArtifact"></a>
+
+### fabricNetwork.publishMarketArtifact(type, object)
+Publish a market artifact (`AvailabilityCommitment` / `AvailabilityResponse`
+/ `FraudProof`) under the Fabric document-market namespace shared with Hub
+`services/challenge.js` (`SHA256('fabric-document-market')`).
+
+**Kind**: instance method of [<code>FabricNetwork</code>](#FabricNetwork)  
+
+| Param | Type |
+| --- | --- |
+| type | <code>string</code> | 
+| object | <code>object</code> | 
+
 <a name="FabricNetwork.connectionMatchesAddress"></a>
 
 ### FabricNetwork.connectionMatchesAddress(connectionId, rosterAddress)
@@ -1562,6 +1579,261 @@ True when `connectionId` matches a roster address (exact or host match).
 | --- | --- |
 | connectionId | <code>string</code> | 
 | rosterAddress | <code>string</code> | 
+
+<a name="MarketManager"></a>
+
+## MarketManager
+**Kind**: global class  
+
+* [MarketManager](#MarketManager)
+    * [new MarketManager([settings])](#new_MarketManager_new)
+    * [.agentEnabled](#MarketManager+agentEnabled) ⇒ <code>boolean</code>
+    * [.channelsEnabled](#MarketManager+channelsEnabled) ⇒ <code>boolean</code>
+    * [.attach(deps)](#MarketManager+attach)
+    * [._ensureAgent()](#MarketManager+_ensureAgent) ⇒ <code>MarketAgent</code> \| <code>null</code>
+    * [.start()](#MarketManager+start)
+    * [.agentStatus()](#MarketManager+agentStatus) ⇒ <code>Object</code>
+    * [.agentWant(body)](#MarketManager+agentWant)
+    * [.agentForget(documentId)](#MarketManager+agentForget)
+    * [.agentConfigure(body)](#MarketManager+agentConfigure)
+    * [.persist()](#MarketManager+persist) ⇒ <code>object</code> \| <code>null</code>
+    * [.ingestInventoryResponse(ev)](#MarketManager+ingestInventoryResponse) ⇒ <code>Array.&lt;object&gt;</code>
+    * [.chunkIndex([filter])](#MarketManager+chunkIndex) ⇒ <code>Object.&lt;string, Array.&lt;object&gt;&gt;</code>
+    * [.planFor()](#MarketManager+planFor)
+    * [._ensureChannels()](#MarketManager+_ensureChannels) ⇒ <code>object</code> \| <code>null</code>
+    * [.ingestChannelMessage(body, [meta])](#MarketManager+ingestChannelMessage) ⇒ <code>object</code> \| <code>null</code>
+    * [.onBitcoinBlock(payload)](#MarketManager+onBitcoinBlock) ⇒ <code>object</code> \| <code>null</code>
+    * [.channelsStatus()](#MarketManager+channelsStatus) ⇒ <code>object</code>
+    * [.channelOpen(body)](#MarketManager+channelOpen)
+    * [.ingestFraudProof(body, [ctx])](#MarketManager+ingestFraudProof) ⇒ <code>object</code>
+    * [.providerPubkey()](#MarketManager+providerPubkey)
+    * [.commitAvailability(opts)](#MarketManager+commitAvailability) ⇒ <code>object</code>
+    * [.onAvailabilityChallenge(challenge, [opts])](#MarketManager+onAvailabilityChallenge) ⇒ <code>object</code> \| <code>null</code>
+    * [.publishWrongfulPenalty(challenge, response, [penalty], [ctx])](#MarketManager+publishWrongfulPenalty) ⇒ <code>object</code>
+
+<a name="new_MarketManager_new"></a>
+
+### new MarketManager([settings])
+
+| Param | Type | Default | Description |
+| --- | --- | --- | --- |
+| [settings] | <code>Object</code> |  |  |
+| [settings.store] | <code>object</code> |  | GoonCitizen `types/Store` instance. |
+| [settings.persistDebounceMs] | <code>number</code> | <code>2000</code> |  |
+| [settings.book] | <code>object</code> |  | `DocumentBook` settings (alpha, hopPenaltyMs, weights). |
+
+<a name="MarketManager+agentEnabled"></a>
+
+### marketManager.agentEnabled ⇒ <code>boolean</code>
+**Kind**: instance property of [<code>MarketManager</code>](#MarketManager)  
+<a name="MarketManager+channelsEnabled"></a>
+
+### marketManager.channelsEnabled ⇒ <code>boolean</code>
+**Kind**: instance property of [<code>MarketManager</code>](#MarketManager)  
+<a name="MarketManager+attach"></a>
+
+### marketManager.attach(deps)
+Late-bind the Fabric Peer (LiveRelay starts it after construction) and the
+Hub-proxied Bitcoin settings used to fund purchases.
+
+**Kind**: instance method of [<code>MarketManager</code>](#MarketManager)  
+
+| Param | Type | Description |
+| --- | --- | --- |
+| deps | <code>Object</code> | `{ peer?: Function|Object, bitcoin?: Object }` |
+
+<a name="MarketManager+_ensureAgent"></a>
+
+### marketManager.\_ensureAgent() ⇒ <code>MarketAgent</code> \| <code>null</code>
+Build the core budget agent once. Refuses mainnet.
+
+**Kind**: instance method of [<code>MarketManager</code>](#MarketManager)  
+<a name="MarketManager+start"></a>
+
+### marketManager.start()
+Start the budget agent scheduler when enabled.
+
+**Kind**: instance method of [<code>MarketManager</code>](#MarketManager)  
+<a name="MarketManager+agentStatus"></a>
+
+### marketManager.agentStatus() ⇒ <code>Object</code>
+**Kind**: instance method of [<code>MarketManager</code>](#MarketManager)  
+**Returns**: <code>Object</code> - agent status or `{ available: false }`.  
+<a name="MarketManager+agentWant"></a>
+
+### marketManager.agentWant(body)
+**Kind**: instance method of [<code>MarketManager</code>](#MarketManager)  
+
+| Param | Type | Description |
+| --- | --- | --- |
+| body | <code>Object</code> | `{ documentId, merkleRootHex?, blobTotal?, maxSats? }` |
+
+<a name="MarketManager+agentForget"></a>
+
+### marketManager.agentForget(documentId)
+**Kind**: instance method of [<code>MarketManager</code>](#MarketManager)  
+
+| Param | Type |
+| --- | --- |
+| documentId | <code>string</code> | 
+
+<a name="MarketManager+agentConfigure"></a>
+
+### marketManager.agentConfigure(body)
+**Kind**: instance method of [<code>MarketManager</code>](#MarketManager)  
+
+| Param | Type | Description |
+| --- | --- | --- |
+| body | <code>Object</code> | `{ budgetSats?, perPlanMaxSats?, proximityWeight? }` |
+
+<a name="MarketManager+persist"></a>
+
+### marketManager.persist() ⇒ <code>object</code> \| <code>null</code>
+Write the signable telemetry record to the Store now.
+
+**Kind**: instance method of [<code>MarketManager</code>](#MarketManager)  
+<a name="MarketManager+ingestInventoryResponse"></a>
+
+### marketManager.ingestInventoryResponse(ev) ⇒ <code>Array.&lt;object&gt;</code>
+Fold one `P2P_INVENTORY_RESPONSE` into the book (telemetry + chunk index).
+
+**Kind**: instance method of [<code>MarketManager</code>](#MarketManager)  
+**Returns**: <code>Array.&lt;object&gt;</code> - rows upserted  
+
+| Param | Type | Description |
+| --- | --- | --- |
+| ev | <code>Object</code> | `{ message, origin, latencyMs?, hops?, signerPubkeyHex? }` |
+
+<a name="MarketManager+chunkIndex"></a>
+
+### marketManager.chunkIndex([filter]) ⇒ <code>Object.&lt;string, Array.&lt;object&gt;&gt;</code>
+Chunk locator: blob hash → providers, optionally narrowed by document / root.
+
+**Kind**: instance method of [<code>MarketManager</code>](#MarketManager)  
+
+| Param | Type |
+| --- | --- |
+| [filter] | <code>Object</code> | 
+
+<a name="MarketManager+planFor"></a>
+
+### marketManager.planFor()
+Cheapest ranked per-blob plan for one document (see `DocumentBook#pickBlobPlan`).
+
+**Kind**: instance method of [<code>MarketManager</code>](#MarketManager)  
+<a name="MarketManager+_ensureChannels"></a>
+
+### marketManager.\_ensureChannels() ⇒ <code>object</code> \| <code>null</code>
+Channel registry keyed by this node's Fabric key; bodies gossip as
+`CONTRACT_MESSAGE` under the document-market namespace (no new opcode).
+
+**Kind**: instance method of [<code>MarketManager</code>](#MarketManager)  
+**Returns**: <code>object</code> \| <code>null</code> - core `Channel.Book`  
+<a name="MarketManager+ingestChannelMessage"></a>
+
+### marketManager.ingestChannelMessage(body, [meta]) ⇒ <code>object</code> \| <code>null</code>
+Route an inbound `Channel*` body from the Fabric contract stream.
+
+**Kind**: instance method of [<code>MarketManager</code>](#MarketManager)  
+
+| Param | Type | Description |
+| --- | --- | --- |
+| body | <code>object</code> |  |
+| [meta] | <code>object</code> | `{ sellerId }` |
+
+<a name="MarketManager+onBitcoinBlock"></a>
+
+### marketManager.onBitcoinBlock(payload) ⇒ <code>object</code> \| <code>null</code>
+New chain tip (Hub Bitcoin status poll or host hook): refresh the book's
+tip, tick expiries, and classify any supplied transactions — a stale
+counterparty commitment yields a justice tx and a gossiped `FraudProof`.
+Supply `blockHeaderHex` + `txids` (the block the transactions confirmed in)
+so the proof carries an SPV inclusion artifact third parties can verify.
+
+**Kind**: instance method of [<code>MarketManager</code>](#MarketManager)  
+
+| Param | Type | Description |
+| --- | --- | --- |
+| payload | <code>object</code> | `{ height, txHexes?, blockHeaderHex?, txids?, destinationAddress? }` |
+
+<a name="MarketManager+channelsStatus"></a>
+
+### marketManager.channelsStatus() ⇒ <code>object</code>
+**Kind**: instance method of [<code>MarketManager</code>](#MarketManager)  
+<a name="MarketManager+channelOpen"></a>
+
+### marketManager.channelOpen(body)
+Open a channel as funder (operator). Caller supplies the funding tx hex.
+
+**Kind**: instance method of [<code>MarketManager</code>](#MarketManager)  
+
+| Param | Type | Description |
+| --- | --- | --- |
+| body | <code>object</code> | `{ remotePubkey, fundedTxHex, capacitySats, expireAfter, localAddress, remoteAddress, feeSats?, aliases? }` |
+
+<a name="MarketManager+ingestFraudProof"></a>
+
+### marketManager.ingestFraudProof(body, [ctx]) ⇒ <code>object</code>
+Verify a peer-relayed `FraudProof` and penalize the offender in the local
+book (core `DocumentBook#ingestFraudProof`). Reputation stays local.
+
+**Kind**: instance method of [<code>MarketManager</code>](#MarketManager)  
+**Returns**: <code>object</code> - verdict  
+
+| Param | Type | Description |
+| --- | --- | --- |
+| body | <code>object</code> |  |
+| [ctx] | <code>object</code> | `{ epoch }` |
+
+<a name="MarketManager+providerPubkey"></a>
+
+### marketManager.providerPubkey()
+x-only provider pubkey (hex) this node answers challenges for, or null.
+
+**Kind**: instance method of [<code>MarketManager</code>](#MarketManager)  
+<a name="MarketManager+commitAvailability"></a>
+
+### marketManager.commitAvailability(opts) ⇒ <code>object</code>
+Sign an `AvailabilityCommitment` for a tree this node serves and publish it
+as a `CONTRACT_MESSAGE` (via the injected `publish(type, object)`).
+
+**Kind**: instance method of [<code>MarketManager</code>](#MarketManager)  
+**Returns**: <code>object</code> - signed commitment  
+
+| Param | Type | Description |
+| --- | --- | --- |
+| opts | <code>object</code> | `{ merkleRootHex, blobTotal, fromEpoch, untilEpoch, depositAddress?, depositTxid?, publisherPubkey? }` |
+
+<a name="MarketManager+onAvailabilityChallenge"></a>
+
+### marketManager.onAvailabilityChallenge(challenge, [opts]) ⇒ <code>object</code> \| <code>null</code>
+Answer an `AvailabilityChallenge` addressed to this provider from the local
+catalog (`localTree(merkleRootHex)` → `{ blobHashes, bytesFor(i) }`).
+
+**Kind**: instance method of [<code>MarketManager</code>](#MarketManager)  
+**Returns**: <code>object</code> \| <code>null</code> - signed response, or null when not ours / not held  
+
+| Param | Type | Description |
+| --- | --- | --- |
+| challenge | <code>object</code> | signed artifact |
+| [opts] | <code>object</code> | `{ epoch }` |
+
+<a name="MarketManager+publishWrongfulPenalty"></a>
+
+### marketManager.publishWrongfulPenalty(challenge, response, [penalty], [ctx]) ⇒ <code>object</code>
+Counter-proof when this provider is penalized despite a valid response.
+The penalty's `prevouts` let verifiers check the penalty leaf and both
+signatures; `ctx` is this node's chain view showing the penalty confirmed.
+
+**Kind**: instance method of [<code>MarketManager</code>](#MarketManager)  
+**Returns**: <code>object</code> - `FraudProof` body (also published)  
+
+| Param | Type | Default | Description |
+| --- | --- | --- | --- |
+| challenge | <code>object</code> |  |  |
+| response | <code>object</code> |  |  |
+| [penalty] | <code>object</code> | <code></code> | `{ txHex, txid?, prevouts: [{ scriptHex, valueSats }] }` (spent outputs in input order) |
+| [ctx] | <code>object</code> |  | `{ txConfirmed(txid) }` or `{ headerKnown(blockHash) }` |
 
 <a name="MissionManager"></a>
 

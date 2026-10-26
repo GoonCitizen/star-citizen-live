@@ -2,7 +2,7 @@
 
 /**
  * Personal Bitcoin panel — Hub-backed via LiveRelay /bitcoin/* proxy.
- * Watch: identity xpub. Send: Hub faucet wallet (admin token on server).
+ * Watch: the account's m/84' + m/44' wallet. Send: Hub faucet wallet (admin token on server).
  */
 
 const React = require('react');
@@ -91,9 +91,18 @@ class BitcoinWalletPanel extends React.Component {
     if (!bridge || typeof bridge.get !== 'function') return null;
     try {
       const summary = await bridge.get();
-      if (summary && summary.unlocked && summary.xpub) return String(summary.xpub).trim();
+      const wallet = summary && summary.unlocked && summary.wallet;
+      if (wallet && wallet.segwit && wallet.segwit.xpub) {
+        this._standardXpub = (wallet.standard && wallet.standard.xpub) || '';
+        return String(wallet.segwit.xpub).trim();
+      }
     } catch (_) { /* ignore */ }
     return null;
+  }
+
+  xpubQuery () {
+    const q = `xpub=${encodeURIComponent(this.state.xpub)}`;
+    return this._standardXpub ? `${q}&standardXpub=${encodeURIComponent(this._standardXpub)}` : q;
   }
 
   async bootstrap () {
@@ -121,20 +130,20 @@ class BitcoinWalletPanel extends React.Component {
     if (!xpub) {
       this.setState({
         error: this.props.identityPubkey
-          ? 'Unlocked identity has no xpub — unlock or restore identity.'
+          ? 'Unlocked identity has no wallet keys — unlock or restore identity.'
           : null
       });
       return;
     }
     this.setState({ loading: true, error: null, notice: null });
     try {
-      const q = encodeURIComponent(xpub);
+      const q = this.xpubQuery();
       const idx = this.state.receiveIndex || 0;
       const [statusRes, walletRes, recvRes, txRes, faucetRes] = await Promise.all([
         fetch(`${BASE}/status`).then((r) => r.json().then((j) => ({ ok: r.ok, j }))),
-        fetch(`${BASE}/wallet?xpub=${q}`).then((r) => r.json().then((j) => ({ ok: r.ok, j }))),
-        fetch(`${BASE}/receive?xpub=${q}&index=${idx}`).then((r) => r.json().then((j) => ({ ok: r.ok, j }))),
-        fetch(`${BASE}/transactions?xpub=${q}&limit=25`).then((r) => r.json().then((j) => ({ ok: r.ok, j }))),
+        fetch(`${BASE}/wallet?${q}`).then((r) => r.json().then((j) => ({ ok: r.ok, j }))),
+        fetch(`${BASE}/receive?${q}&index=${idx}`).then((r) => r.json().then((j) => ({ ok: r.ok, j }))),
+        fetch(`${BASE}/transactions?${q}&limit=25`).then((r) => r.json().then((j) => ({ ok: r.ok, j }))),
         fetch(`${BASE}/faucet`).then((r) => r.json().then((j) => ({ ok: r.ok, j }))).catch(() => ({ ok: false, j: null }))
       ]);
       if (!statusRes.ok) throw new Error((statusRes.j && statusRes.j.error) || 'Hub status failed');
@@ -301,7 +310,7 @@ class BitcoinWalletPanel extends React.Component {
   renderLocked () {
     return React.createElement('div', { className: 'wa-body' },
       React.createElement('p', { className: 'bwp-note' },
-        'Unlock your Fabric identity to load the personal watch wallet (xpub balance, receive, history).')
+        'Unlock your Fabric identity to load the personal watch wallet (balance, receive, history).')
     );
   }
 
@@ -343,7 +352,7 @@ class BitcoinWalletPanel extends React.Component {
           React.createElement('p', { className: 'bwp-note', style: { marginTop: 10 } },
             'Send goes through this app’s Hub-shaped API (LiveRelay → Hub HTTP). ',
             'The operator admin token stays in the desktop process — never in the browser. ',
-            'Balance / history watch your identity xpub. ',
+            'Balance / history watch this account\'s wallet (SegWit and standard). ',
             'Beacon faucet appears only when the Hub OPTIONS contract advertises it (regtest/playnet).'),
           this.state.receive && this.state.receive.address
             ? React.createElement('div', { style: { marginTop: 12 } },
@@ -419,7 +428,7 @@ class BitcoinWalletPanel extends React.Component {
                 ))
               )
             )
-            : React.createElement('div', { className: 'wa-note' }, 'No transactions yet for this xpub.'),
+            : React.createElement('div', { className: 'wa-note' }, 'No transactions yet for this wallet.'),
           this.state.error
             ? React.createElement('div', { className: 'bwp-err', style: { marginTop: 10 } }, this.state.error)
             : null,

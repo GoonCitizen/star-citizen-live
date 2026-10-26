@@ -7,6 +7,7 @@
  */
 
 const React = require('react');
+const { currentViewer } = require('../functions/goonCitizenClientEnvironment');
 const {
   notificationTarget,
   applyNotificationTarget,
@@ -109,7 +110,6 @@ class Notifications extends React.Component {
       loading: true,
       busyId: null,
       error: null,
-      token: null,
       pubkey: null,
       pending: 0
     };
@@ -138,57 +138,20 @@ class Notifications extends React.Component {
   };
 
   headers () {
-    const h = { 'Content-Type': 'application/json' };
-    if (this.state.token) h.Authorization = `Bearer ${this.state.token}`;
-    return h;
+    return { 'Content-Type': 'application/json' };
   }
 
+  /** Who acts here: the app's identity, else this browser's Passport session (cookie). */
   async ensureSession () {
-    const b = (typeof window !== 'undefined' && window.electronAPI && window.electronAPI.identity) || null;
-    if (b) {
-      try {
-        const info = await b.get();
-        if (info && info.unlocked && b.signEnvelope) {
-          const envelope = await b.signEnvelope({ intent: 'login', ts: new Date().toISOString() });
-          if (envelope && !envelope.error) {
-            const res = await fetch(`${BASE}/auth`, {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify(envelope)
-            });
-            if (res.ok) {
-              const json = await res.json();
-              const token = json.data && json.data.token;
-              const pubkey = json.data && json.data.pubkey;
-              this.setState({ token, pubkey });
-              return { token, pubkey };
-            }
-          }
-        }
-      } catch (_) { /* fall through */ }
-    }
-    try {
-      const raw = typeof window !== 'undefined' && window.localStorage &&
-        window.localStorage.getItem('fabric.delegation');
-      if (raw) {
-        const parsed = JSON.parse(raw);
-        const token = parsed && (parsed.token || parsed.delegationToken);
-        if (token) {
-          const pubkey = (parsed && parsed.pubkey) || this.state.pubkey;
-          this.setState({ token, pubkey });
-          return { token, pubkey };
-        }
-      }
-    } catch (_) { /* ignore */ }
-    return { token: this.state.token, pubkey: this.state.pubkey };
+    const viewer = await currentViewer();
+    const pubkey = (viewer && viewer.pubkey) || this.state.pubkey || null;
+    if (pubkey !== this.state.pubkey) this.setState({ pubkey });
+    return { pubkey };
   }
 
   async refresh () {
     try {
-      if (!this.state.token) await this.ensureSession();
-      if (this.props.authToken && !this.state.token) {
-        this.setState({ token: this.props.authToken });
-      }
+      if (!this.state.pubkey) await this.ensureSession();
       const res = await fetch(`${BASE}/inbox?scope=notifications`, { headers: this.headers() }).then((r) => r.json());
       const items = (res.data || []).slice()
         .sort((a, b) => String(b.ts || '').localeCompare(String(a.ts || '')));
@@ -208,7 +171,7 @@ class Notifications extends React.Component {
     if (this.state.busyId) return;
     this.setState({ busyId: item.id, error: null });
     try {
-      if (!this.state.token) await this.ensureSession();
+      if (!this.state.pubkey) await this.ensureSession();
       const res = await fetch(`${BASE}/missionbroadcasts/${encodeURIComponent(broadcastId)}/${action}`, {
         method: 'POST',
         headers: this.headers(),
@@ -264,7 +227,7 @@ class Notifications extends React.Component {
     }
     this.setState({ busyId: item.id, error: null });
     try {
-      if (!this.state.token) await this.ensureSession();
+      if (!this.state.pubkey) await this.ensureSession();
       const res = await fetch(
         `${BASE}/groups/${encodeURIComponent(groupId)}/invites/${encodeURIComponent(inviteId)}/${accept ? 'accept' : 'reject'}`,
         { method: 'POST', headers: this.headers(), body: '{}' }
@@ -291,7 +254,7 @@ class Notifications extends React.Component {
     if (this.state.busyId) return;
     this.setState({ busyId: item.id, error: null });
     try {
-      if (!this.state.token) await this.ensureSession();
+      if (!this.state.pubkey) await this.ensureSession();
       const res = await fetch(`${BASE}/groups/${encodeURIComponent(groupId)}/applications`, {
         method: 'POST',
         headers: this.headers(),
@@ -329,7 +292,7 @@ class Notifications extends React.Component {
     if (this.state.busyId) return;
     this.setState({ busyId: item.id, error: null });
     try {
-      if (!this.state.token) await this.ensureSession();
+      if (!this.state.pubkey) await this.ensureSession();
       const res = await fetch(
         `${BASE}/group-applications/${encodeURIComponent(applicationId)}/decision`,
         {

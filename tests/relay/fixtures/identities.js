@@ -7,7 +7,7 @@
  * {@link restoreIdentity} so Alice/Bob/Carol/Hub pubkeys stay stable across runs.
  */
 
-const { restoreIdentity, keyFromIdentity } = require('../../../functions/identity');
+const { restoreIdentity, keyFromIdentity, cosignerKeyFromIdentity } = require('../../../functions/identity');
 
 const FIXTURE_SEEDS = Object.freeze({
   alice: 'client cinnamon second donor actor harvest crucial century horse dry leopard repeat',
@@ -49,9 +49,20 @@ function fixtureKey (name) {
   return keyFromIdentity(fixtureIdentity(name));
 }
 
+/**
+ * Account 0 cosigner key (`m/87'/B'/0'/0/0`) for group wallets.
+ * @param {'alice'|'bob'|'carol'|'hub'} name
+ * @param {string} [network='regtest']
+ * @returns {import('@fabric/core/types/key')}
+ */
+function fixtureCosignerKey (name, network = 'regtest') {
+  return cosignerKeyFromIdentity(fixtureIdentity(name), network);
+}
+
 module.exports = {
   FIXTURE_SEEDS,
   FIXTURE_PUBKEYS,
   fixtureIdentity,
-  fixtureKey
+  fixtureKey,
+  fixtureCosignerKey
 };

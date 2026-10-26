@@ -16,6 +16,7 @@ const { mergeLinkedDevice } = require('./linkedDevices');
 const {
   startDeviceLinkOffer,
   tickDeviceLinkOffer,
+  confirmDeviceLinkOffer,
   abandonDeviceLinkOffer,
   DEFAULT_DEVICE_LINK_HUB,
   DEVICE_LINK_TICK_MS,
@@ -45,11 +46,16 @@ function persistLinkedDevice (relay, entry) {
   }
 }
 
-async function publishCrossSign (relay, peerPubkey, nonce) {
-  if (!relay || !peerPubkey || !nonce) return;
+async function publishCrossSign (relay, entry) {
+  if (!relay || !entry || !entry.peerPubkey || !entry.nonce || !entry.sessionId || !entry.hubOrigin) return;
   if (typeof relay.publishLocalIdentityCrossSign !== 'function') return;
   try {
-    await relay.publishLocalIdentityCrossSign({ peerPubkey, nonce });
+    await relay.publishLocalIdentityCrossSign({
+      peerPubkey: entry.peerPubkey,
+      nonce: entry.nonce,
+      sessionId: entry.sessionId,
+      origin: entry.hubOrigin
+    });
   } catch (e) {
     relay.emit && relay.emit('warning', '[LiveRelay] IdentityCrossSign: ' +
       ((e && e.message) ? e.message : e));
@@ -107,12 +113,7 @@ async function tickPendingOffer (relay) {
       }
       return result;
     }
-    if (result.status === 'linked') {
-      persistLinkedDevice(relay, linkedEntryFromOffer(result, 'initiator'));
-      const peerPk = result.peerPubkey || peerPubkeyFromParty(result.responder);
-      await publishCrossSign(relay, peerPk, result.nonce);
-      clearPendingOffer(relay);
-    }
+    if (result.status === 'linked') await finishLinked(relay, result);
     return result;
   } catch (e) {
     relay.emit && relay.emit('warning', '[LiveRelay] device-link tick: ' +
@@ -121,6 +122,13 @@ async function tickPendingOffer (relay) {
   } finally {
     relay._deviceLinkTickBusy = false;
   }
+}
+
+async function finishLinked (relay, result) {
+  const entry = linkedEntryFromOffer(result, 'initiator');
+  persistLinkedDevice(relay, entry);
+  await publishCrossSign(relay, entry);
+  clearPendingOffer(relay);
 }
 
 function armDeviceLinkTick (relay) {
@@ -143,9 +151,10 @@ function linkedEntryFromOffer (res, role) {
       peerPubkeyFromParty(res.initiator) ||
       (res.responder && res.responder.pubkeyHex) ||
       (res.initiator && res.initiator.pubkeyHex) || null,
+    sessionId: res.sessionId || null,
     nonce: res.nonce || null,
     label: res.label || 'Linked device',
-    hubOrigin: res.hubBase || null,
+    hubOrigin: res.origin || res.hubBase || null,
     role: role || 'initiator'
   };
 }
@@ -231,6 +240,28 @@ async function tryHandleDeviceLinkLocal (relay, req, res, pathname, readBody, se
     return true;
   }
 
+  if (req.method === 'POST' && rest === '/confirm') {
+    if (!relay._identity) {
+      send(401, { ok: false, error: 'Identity is locked' });
+      return true;
+    }
+    const offer = relay._pendingDeviceLinkOffer;
+    if (!offer) {
+      send(400, { ok: false, error: 'no pending device-link offer' });
+      return true;
+    }
+    const d = await readBody();
+    const result = await confirmDeviceLinkOffer(relay._identity, offer, d && d.responderId);
+    if (!result.ok) {
+      send(400, result);
+      return true;
+    }
+    persistPendingOffer(relay, offer);
+    await finishLinked(relay, result);
+    send(200, result);
+    return true;
+  }
+
   if (req.method === 'POST' && rest === '/cancel') {
     const offer = relay._pendingDeviceLinkOffer;
     clearPendingOffer(relay);
@@ -259,30 +290,30 @@ async function tryHandleDeviceLinkLocal (relay, req, res, pathname, readBody, se
     }
     const d = await readBody();
     const hubBase = String((d && d.hubBase) || DEFAULT_DEVICE_LINK_HUB).trim();
-    const session = {
+    const approved = {
       sessionId: d && d.sessionId,
-      status: 'pending',
       nonce: d && d.nonce,
       label: d && d.label,
+      origin: d && d.origin,
       initiator: d && d.initiator
     };
-    const result = await completeDeviceLinkAsResponder(relay._identity, hubBase, session);
+    const result = await completeDeviceLinkAsResponder(relay._identity, hubBase, approved);
     if (!result.ok) {
       send(400, result);
       return true;
     }
-    const peerPk = peerPubkeyFromParty(d && d.initiator) ||
-      result.peerPubkeyHex ||
-      peerPubkeyFromParty(result);
-    persistLinkedDevice(relay, linkedEntryFromOffer({
-      peerFabricId: result.peerFabricId || (d && d.initiator && d.initiator.id),
-      peerXpub: result.peerXpub || (d && d.initiator && d.initiator.xpub),
-      peerPubkey: peerPk,
-      nonce: (d && d.nonce) || result.nonce,
-      label: result.label || (d && d.label) || 'Linked device',
+    const entry = linkedEntryFromOffer({
+      peerFabricId: result.peerFabricId,
+      peerXpub: result.peerXpub,
+      peerPubkey: result.peerPubkeyHex,
+      sessionId: result.sessionId,
+      nonce: result.nonce,
+      origin: result.origin,
+      label: result.label || 'Linked device',
       hubBase
-    }, 'responder'));
-    await publishCrossSign(relay, peerPk, (d && d.nonce) || result.nonce);
+    }, 'responder');
+    persistLinkedDevice(relay, entry);
+    await publishCrossSign(relay, entry);
     send(200, Object.assign({ ok: true }, result, { linked: true }));
     return true;
   }

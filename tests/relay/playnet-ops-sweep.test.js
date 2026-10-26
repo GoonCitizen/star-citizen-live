@@ -136,7 +136,7 @@ test('wipe: local invalidate walks tip back to snapshot', async () => {
 
 test('faucet: acquire from fake local Hub via LiveRelay proxy', async () => {
   const id = createIdentity();
-  const recv = hubBitcoinProxy.deriveReceiveAddress(id.xpub, 0, 'regtest');
+  const recv = hubBitcoinProxy.deriveReceiveAddress(hubBitcoinProxy.walletKeysFromIdentity(id, 'regtest').xpub, 0, 'regtest');
   assert.ok(recv && recv.address);
 
   let faucetPosts = 0;
@@ -290,7 +290,7 @@ test('live playnet sweep (opt-in FABRIC_PLAYNET_SWEEP=1)', async (t) => {
     return;
   }
   const id = createIdentity();
-  const recv = hubBitcoinProxy.deriveReceiveAddress(id.xpub, 0, 'regtest');
+  const recv = hubBitcoinProxy.deriveReceiveAddress(hubBitcoinProxy.walletKeysFromIdentity(id, 'regtest').xpub, 0, 'regtest');
   const funded = await acquireHubFaucetFunds({
     hub,
     address: recv.address,

@@ -12,6 +12,7 @@ const ChatManager = require('../../services/ChatManager');
 const GroupManager = require('../../services/GroupManager');
 const { Store } = require('../../types/Store');
 const { createIdentity, signEnvelope, pubkeyXOnly, pubkeysMatch } = require('../../functions/identity');
+const { passportLogin } = require('../helpers/passportLogin');
 
 const BASE = '/services/star-citizen';
 
@@ -30,11 +31,8 @@ function request (port, method, reqPath, payload, token) {
   });
 }
 
-async function login (port, identity) {
-  const envelope = signEnvelope(identity, { intent: 'login', ts: new Date().toISOString() });
-  const res = await request(port, 'POST', `${BASE}/auth`, envelope);
-  assert.strictEqual(res.status, 200);
-  return res.body.data.token;
+function login (port, identity) {
+  return passportLogin(port, identity);
 }
 
 // ---- ChatManager ----

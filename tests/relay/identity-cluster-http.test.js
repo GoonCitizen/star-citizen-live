@@ -9,7 +9,8 @@ const Key = require('@fabric/core/types/key');
 const LiveRelay = require('../../services/LiveRelay');
 const { signCrossSign } = require('../../functions/identityCrossSignVerify');
 const IdentityCluster = require('../../functions/identityCluster');
-const { createIdentity, signEnvelope } = require('../../functions/identity');
+const { createIdentity } = require('../../functions/identity');
+const { signInToRelay } = require('../../functions/fabricLoginClient');
 
 function listen (relay) {
   return new Promise((resolve) => {
@@ -28,15 +29,11 @@ async function jsonFetch (url, init = {}) {
   return { status: res.status, ok: res.ok, j };
 }
 
-async function login (base, identity) {
-  const envelope = signEnvelope(identity, { intent: 'login', ts: new Date().toISOString() });
-  const r = await jsonFetch(`${base}/services/star-citizen/auth`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
-    body: JSON.stringify(envelope)
+function login (base, identity) {
+  return signInToRelay(identity, base).then((out) => {
+    assert.ok(out.ok, out.error);
+    return out.token;
   });
-  assert.equal(r.status, 200, r.j && r.j.error);
-  return r.j.data.token;
 }
 
 function authHeaders (token) {
@@ -45,6 +42,14 @@ function authHeaders (token) {
 
 function ident () {
   return new Identity(new Key());
+}
+
+function session () {
+  return {
+    sessionId: crypto.randomBytes(24).toString('hex'),
+    nonce: crypto.randomBytes(32).toString('hex'),
+    origin: 'https://relay.goon.vc'
+  };
 }
 
 describe('LiveRelay identity cluster HTTP', () => {
@@ -106,9 +111,9 @@ describe('LiveRelay identity cluster HTTP', () => {
   it('ingests mutual IdentityCrossSign and unions the cluster', async () => {
     const a = ident();
     const b = ident();
-    const nonce = crypto.randomBytes(32).toString('hex');
-    const ab = signCrossSign(a, { peerPubkey: b.pubkey, nonce });
-    const ba = signCrossSign(b, { peerPubkey: a.pubkey, nonce });
+    const l = session();
+    const ab = signCrossSign(a, Object.assign({ peerPubkey: b.pubkey }, l));
+    const ba = signCrossSign(b, Object.assign({ peerPubkey: a.pubkey }, l));
     const r1 = await jsonFetch(`${base}/identity/cross-sign`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
@@ -133,18 +138,19 @@ describe('LiveRelay identity cluster HTTP', () => {
   it('revokes an edge and splits the cluster', async () => {
     const a = ident();
     const b = ident();
-    const nonce = crypto.randomBytes(32).toString('hex');
+    const l = session();
     await jsonFetch(`${base}/identity/cross-sign`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(signCrossSign(a, { peerPubkey: b.pubkey, nonce }))
+      body: JSON.stringify(signCrossSign(a, Object.assign({ peerPubkey: b.pubkey }, l)))
     });
     await jsonFetch(`${base}/identity/cross-sign`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(signCrossSign(b, { peerPubkey: a.pubkey, nonce }))
+      body: JSON.stringify(signCrossSign(b, Object.assign({ peerPubkey: a.pubkey }, l)))
     });
-    const rev = signCrossSign(a, { peerPubkey: b.pubkey, nonce }, IdentityCluster.REVOKE_TYPE);
+    assert.equal(relay.identityCluster.clusterEquals(a.pubkey, b.pubkey), true);
+    const rev = signCrossSign(a, Object.assign({ peerPubkey: b.pubkey }, l), IdentityCluster.REVOKE_TYPE);
     const r = await jsonFetch(`${base}/identity/cross-sign`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -152,6 +158,18 @@ describe('LiveRelay identity cluster HTTP', () => {
     });
     assert.equal(r.status, 200, r.j && r.j.error);
     assert.equal(relay.identityCluster.clusterEquals(a.pubkey, b.pubkey), false);
+  });
+
+  it('refuses a cross-sign whose origin was changed after signing', async () => {
+    const a = ident();
+    const b = ident();
+    const signed = signCrossSign(a, Object.assign({ peerPubkey: b.pubkey }, session()));
+    const r = await jsonFetch(`${base}/identity/cross-sign`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(Object.assign({}, signed, { origin: 'https://evil.example' }))
+    });
+    assert.equal(r.status, 400);
   });
 
   it('GET /identity/cluster/sync without a session is 401 on hosted', async () => {

@@ -884,10 +884,10 @@ describe('GoonCitizen dashboard Sandbox', { timeout: 300000 }, () => {
     });
     assert.ok(addReady, 'Add peer enabled after URL');
     assert.ok(await clickTab(sandbox.browser, 'Wallet'), 'Wallet');
-    assert.ok(await waitForBodyText(sandbox.browser, /Group Taproot|Sandbox Wing|Refresh/, 8000));
+    assert.ok(await waitForBodyText(sandbox.browser, /federation vault|Sandbox Wing|Refresh/, 8000));
     assert.ok(await clickByText(sandbox.browser, 'Refresh'));
     await sleep(250);
-    assert.ok(await waitForBodyText(sandbox.browser, /Sandbox Wing|Taproot|No groups yet|mode /, 8000));
+    assert.ok(await waitForBodyText(sandbox.browser, /Sandbox Wing|federation|No groups yet|mode /, 8000));
   });
 
   it('inspects group Fabric Messages, Statechain, Activity Tree, and Codec', async (t) => {

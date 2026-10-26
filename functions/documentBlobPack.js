@@ -8,8 +8,8 @@
 
 const documentBlobPrice = require('./documentBlobPrice');
 
-function loadManifest () {
-  return require('@fabric/core/functions/documentBlobManifest');
+function loadDocument () {
+  return require('@fabric/core/types/document');
 }
 
 /**
@@ -22,9 +22,9 @@ function loadManifest () {
  */
 function packDocument (buffer, opts = {}) {
   const buf = Buffer.isBuffer(buffer) ? buffer : Buffer.from(buffer == null ? '' : buffer);
-  const manifest = loadManifest();
+  const Document = loadDocument();
   const documentId = opts.documentId != null ? String(opts.documentId) : undefined;
-  const split = manifest.splitBlobs(buf, opts.chunkBytes, documentId);
+  const split = Document.split(buf, opts.chunkBytes, documentId);
   const priced = documentBlobPrice.pricePackedDocument(split.blobs, buf.length, opts.policy || {});
   const itemBlobs = split.blobs.map((b, i) => {
     const row = {
@@ -34,8 +34,8 @@ function packDocument (buffer, opts = {}) {
       size: b.size,
       rateSats: priced.blobs[i]
     };
-    if (documentId && typeof manifest.blobPaymentHashHex === 'function') {
-      row.contentHash = manifest.blobPaymentHashHex({
+    if (documentId) {
+      row.contentHash = Document.blobPaymentHash({
         documentId,
         blobIndex: b.index,
         blobHashHex: b.blobHashHex
@@ -43,16 +43,13 @@ function packDocument (buffer, opts = {}) {
     }
     return row;
   });
-  let index = manifest.buildBlobIndex({
+  const index = Document.compactBlobIndex(Document.blobIndex({
     documentId,
     merkleRootHex: split.merkleRootHex,
     contentSha256: split.contentSha256,
     chunkBytes: split.chunkBytes,
     blobs: itemBlobs
-  });
-  if (typeof manifest.compactBlobIndexForWire === 'function') {
-    index = manifest.compactBlobIndexForWire(index);
-  }
+  }));
   const blobs = index.leavesInline === false ? itemBlobs : (index.blobs || itemBlobs);
   return {
     merkleRootHex: split.merkleRootHex,

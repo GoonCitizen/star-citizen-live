@@ -5,6 +5,8 @@ const assert = require('node:assert');
 
 require('../helpers/installReactStub');
 const { textOf, findType } = require('../helpers/reactTree');
+
+const buttons = (tree, label) => findType(tree, 'button').filter((b) => textOf(b).trim().endsWith(label));
 const Wallet = require('../../components/Wallet');
 const GroupBitcoinPanel = require('../../components/GroupBitcoinPanel');
 const BitcoinWalletPanel = require('../../components/BitcoinWalletPanel');
@@ -35,7 +37,7 @@ describe('Wallet tab', () => {
     assert.strictEqual(findType(tree, BitcoinWalletPanel).length, 1);
     assert.match(text, /Escrow backend/);
     assert.match(text, /Alliance treasury/);
-    assert.match(text, /Group Taproot/);
+    assert.match(text, /federation vault/);
     assert.match(text, /Mission escrows/);
     assert.match(text, /No groups yet/);
     assert.match(text, /No escrows yet/);
@@ -59,8 +61,9 @@ describe('Wallet tab', () => {
     }];
     page.state.groupWallets = {
       'group-1': {
+        groupId: 'group-1',
         address: ADDR,
-        mode: 'p2tr',
+        mode: 'federation',
         threshold: 2,
         keys: [ME, '02' + 'cd'.repeat(32)],
         balanceSats: 2500,
@@ -83,34 +86,81 @@ describe('Wallet tab', () => {
 });
 
 describe('Group Bitcoin panel', () => {
-  it('shows address, copy, and creator withdraw when Bitcoin is on', () => {
+  it('shows address, copy, and withdraw for a signer when Bitcoin is on', () => {
     const panel = new GroupBitcoinPanel({
       wallet: {
+        groupId: 'group-1',
+        federationId: 'fe'.repeat(32),
         address: ADDR,
-        mode: 'p2tr',
+        mode: 'federation',
         threshold: 2,
         keys: ['a', 'b'],
         balanceSats: 1234,
-        bitcoinEnable: true
+        bitcoinEnable: true,
+        viewerIsSigner: true,
+        viewerKey: 'ab'.repeat(32),
+        previous: []
       },
       bitcoinEnable: true,
-      isCreator: true,
       onCopy: () => {},
-      onProposeWithdraw: () => {},
       onRefresh: () => {}
     });
     const text = textOf(panel.render());
     assert.match(text, /Copy address/);
-    assert.match(text, /Propose withdraw/);
+    assert.match(text, /Withdraw…/);
     assert.match(text, /Refresh/);
     assert.match(text, /sats/);
     assert.match(text, /2-of-2/);
+    assert.match(text, /federation/);
     assert.ok(text.includes(ADDR));
+  });
+
+  it('lists withdrawals with a Sign button for a signer who has not signed', () => {
+    const wallet = {
+      groupId: 'group-1',
+      federationId: 'fe'.repeat(32),
+      address: ADDR,
+      mode: 'federation',
+      threshold: 2,
+      keys: ['a', 'b'],
+      viewerIsSigner: true,
+      viewerKey: 'ab'.repeat(32),
+      previous: [{ federationId: 'ee'.repeat(32), address: 'bcrt1pold', threshold: 1, keys: ['02' + 'ab'.repeat(32)], balanceSats: 700 }]
+    };
+    const row = { id: 'cc'.repeat(32), federationId: wallet.federationId, amountSats: 5000, destinationAddress: 'bcrt1qdest', threshold: 2, status: 'pending' };
+    const panel = new GroupBitcoinPanel({ wallet, bitcoinEnable: true });
+    panel.state.withdrawals = [Object.assign({ signers: ['cd'.repeat(32)] }, row)];
+    let tree = panel.render();
+    let text = textOf(tree);
+    assert.match(text, /Withdrawals/);
+    assert.match(text, /1 of 2/);
+    assert.match(text, /waiting for signatures/);
+    assert.strictEqual(buttons(tree, 'Sign').length, 1);
+    assert.strictEqual(buttons(tree, 'Withdraw…').length, 2, 'current vault + the earlier one viewer signs for');
+    assert.match(text, /Earlier vaults/);
+    assert.ok(text.includes('bcrt1pold'));
+
+    panel.state.withdrawals = [Object.assign({ signers: ['ab'.repeat(32)] }, row)];
+    tree = panel.render();
+    assert.strictEqual(buttons(tree, 'Sign').length, 0, 'already signed');
+
+    panel.state.form = { destinationAddress: '', amountSats: '', feeSats: '1000' };
+    text = textOf(panel.render());
+    assert.match(text, /Pay to address/);
+    assert.match(text, /Request/);
+  });
+
+  it('offers no withdraw to a reader', () => {
+    const panel = new GroupBitcoinPanel({
+      wallet: { groupId: 'g', address: ADDR, mode: 'federation', threshold: 1, keys: ['a'], viewerIsSigner: false },
+      bitcoinEnable: false
+    });
+    assert.doesNotMatch(textOf(panel.render()), /Withdraw/);
   });
 
   it('hides balance when Bitcoin is off', () => {
     const panel = new GroupBitcoinPanel({
-      wallet: { address: ADDR, mode: 'p2tr', balanceSats: 99, bitcoinEnable: false },
+      wallet: { address: ADDR, mode: 'federation', balanceSats: 99, bitcoinEnable: false },
       bitcoinEnable: false
     });
     const text = textOf(panel.render());

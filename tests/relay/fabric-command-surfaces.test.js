@@ -80,15 +80,42 @@ describe('LiveRelay in-process Fabric commands (IPC targets)', () => {
     const nonce = crypto.randomBytes(32).toString('hex');
     const obj = await relay.publishLocalIdentityCrossSign({
       peerPubkey: peer.pubkey,
-      nonce
+      nonce,
+      sessionId: crypto.randomBytes(24).toString('hex'),
+      origin: 'https://relay.goon.vc'
     });
     assert.ok(obj.signature);
     assert.ok(obj.peerPubkey);
+    assert.equal(obj.origin, 'https://relay.goon.vc');
     const snap = relay.identityCluster.snapshot(local.pubkey);
     assert.ok(snap);
     assert.ok(Array.isArray(snap.members));
     assert.ok(snap.members.length >= 1, 'cluster snapshot includes the local device');
     assert.ok(snap.canonical);
+  });
+
+  it('publishLocalIdentityCrossSign takes the session and origin from the linked device', async () => {
+    const settingsStore = require('../../functions/settingsStore');
+    const other = createIdentity();
+    const nonce = crypto.randomBytes(32).toString('hex');
+    const sessionId = crypto.randomBytes(24).toString('hex');
+    settingsStore.putSetting(relay.registerStore, 'linkedDevices', [{
+      kind: 'device-link',
+      peerPubkey: other.pubkey,
+      sessionId,
+      nonce,
+      hubOrigin: 'https://hub.fabric.pub'
+    }]);
+    const obj = await relay.publishLocalIdentityCrossSign({ peerPubkey: other.pubkey, nonce });
+    assert.equal(obj.sessionId, sessionId);
+    assert.equal(obj.origin, 'https://hub.fabric.pub');
+    await assert.rejects(
+      () => relay.publishLocalIdentityCrossSign({
+        peerPubkey: createIdentity().pubkey,
+        nonce: crypto.randomBytes(32).toString('hex')
+      }),
+      /Link it again/
+    );
   });
 
   it('publishLocalIdentityCrossSign throws when identity is locked', async () => {
@@ -156,7 +183,9 @@ describe('LiveRelay HTTP fallbacks for the same jobs', () => {
         body: JSON.stringify({
           type: IdentityCluster.SIGN_TYPE,
           peerPubkey: peer.pubkey,
-          nonce
+          nonce,
+          sessionId: crypto.randomBytes(24).toString('hex'),
+          origin: 'https://relay.goon.vc'
         })
       });
       assert.equal(r.status, 200, r.j && r.j.error);

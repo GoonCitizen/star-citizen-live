@@ -16,6 +16,7 @@
  */
 
 const React = require('react');
+const { currentViewer } = require('../functions/goonCitizenClientEnvironment');
 const MissionOutcomesChart = require('./MissionOutcomesChart');
 const { isMissionApprover, isMyMission } = require('../functions/missionRole');
 const { topPilots } = require('../functions/missionCharts');
@@ -77,7 +78,6 @@ class Missions extends React.Component {
   constructor (props) {
     super(props);
     this.state = {
-      token: null,
       pubkey: null,
       missions: [],
       groups: [],
@@ -120,39 +120,13 @@ class Missions extends React.Component {
   }
 
   headers () {
-    const h = { 'Content-Type': 'application/json' };
-    if (this.state.token) h.Authorization = `Bearer ${this.state.token}`;
-    return h;
+    return { 'Content-Type': 'application/json' };
   }
 
+  /** Who acts here: the app's identity, else this browser's Passport session (cookie). */
   async connect () {
-    const b = bridge();
-    if (b) {
-      try {
-        const info = await b.get();
-        if (info && info.unlocked) {
-          const envelope = await b.signEnvelope({ intent: 'login', ts: new Date().toISOString() });
-          if (envelope && !envelope.error) {
-            const res = await fetch(`${BASE}/auth`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(envelope) });
-            if (res.ok) {
-              const json = await res.json();
-              this.setState({ token: json.data.token, pubkey: json.data.pubkey });
-            }
-          }
-        }
-      } catch (_) { /* locked */ }
-    }
-    if (!this.state.token) {
-      const propTok = this.props && this.props.authToken;
-      if (propTok) this.setState({ token: propTok });
-      else {
-        try {
-          const { readStoredSiteLoginToken } = require('../functions/goonCitizenClientEnvironment');
-          const siteTok = readStoredSiteLoginToken();
-          if (siteTok) this.setState({ token: siteTok });
-        } catch (_) { /* ignore */ }
-      }
-    }
+    const viewer = await currentViewer();
+    if (viewer) this.setState({ pubkey: viewer.pubkey });
     await this.refresh();
   }
 

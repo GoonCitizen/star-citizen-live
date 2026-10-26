@@ -1,0 +1,1502 @@
+{
+  "@type": "GoonCitizenAgentProbe",
+  "name": "goon-squad-roles",
+  "generatedAt": "2026-09-06T21:34:45.724Z",
+  "title": "G00N SQUAD Discord roles guide",
+  "source": "from-json:reports/probes/goon-squad-discord-roster.json",
+  "guildId": "1190527980120850493",
+  "guildName": "G00N SQUAD",
+  "memberCount": 1287,
+  "roleCount": 176,
+  "countsSource": null,
+  "ladder": [
+    {
+      "label": "GREENBACKS",
+      "holders": 864
+    },
+    {
+      "label": "PERMAFLEET",
+      "holders": 211
+    },
+    {
+      "label": "Prospect I–VI",
+      "holders": 538
+    },
+    {
+      "label": "Enlisted / Units",
+      "holders": 194
+    },
+    {
+      "label": "Officers",
+      "holders": 81
+    },
+    {
+      "label": "Command",
+      "holders": 5
+    }
+  ],
+  "sections": [
+    {
+      "id": "entry",
+      "title": "Entry & identity",
+      "holders": 2331,
+      "roles": [
+        {
+          "name": "GREENBACKS",
+          "label": "GREENBACKS",
+          "holders": 864,
+          "present": true
+        },
+        {
+          "name": "Star Citizens",
+          "label": "Star Citizens",
+          "holders": 1162,
+          "present": true
+        },
+        {
+          "name": "PERMAFLEET GUESTS",
+          "label": "PERMAFLEET GUESTS",
+          "holders": 219,
+          "present": true
+        },
+        {
+          "name": "NORMIES",
+          "label": "NORMIES",
+          "holders": 86,
+          "present": true
+        }
+      ]
+    },
+    {
+      "id": "membership",
+      "title": "PERMAFLEET membership",
+      "holders": 282,
+      "roles": [
+        {
+          "name": "PERMAFLEET",
+          "label": "PERMAFLEET",
+          "holders": 211,
+          "present": true
+        },
+        {
+          "name": "G00N SQUAD",
+          "label": "G00N SQUAD",
+          "holders": 13,
+          "present": true
+        },
+        {
+          "name": "Enlisted",
+          "label": "Enlisted",
+          "holders": 58,
+          "present": true
+        }
+      ]
+    },
+    {
+      "id": "prospect",
+      "title": "Prospect track",
+      "holders": 538,
+      "roles": [
+        {
+          "name": "[P] Prospect I",
+          "label": "Prospect I",
+          "holders": 245,
+          "present": true
+        },
+        {
+          "name": "[P2] Prospect II",
+          "label": "Prospect II",
+          "holders": 145,
+          "present": true
+        },
+        {
+          "name": "[P3] Prospect III",
+          "label": "Prospect III",
+          "holders": 79,
+          "present": true
+        },
+        {
+          "name": "[P4] Prospect IV",
+          "label": "Prospect IV",
+          "holders": 50,
+          "present": true
+        },
+        {
+          "name": "[P5] Prospect V",
+          "label": "Prospect V",
+          "holders": 14,
+          "present": true
+        },
+        {
+          "name": "[P6] Prospect VI",
+          "label": "Prospect VI",
+          "holders": 5,
+          "present": true
+        }
+      ]
+    },
+    {
+      "id": "enlisted",
+      "title": "Enlisted performance",
+      "holders": 66,
+      "roles": [
+        {
+          "name": "[E1] Enlisted 1",
+          "label": "Enlisted 1",
+          "holders": 53,
+          "present": true
+        },
+        {
+          "name": "[E2] Enlisted 2",
+          "label": "Enlisted 2",
+          "holders": 13,
+          "present": true
+        },
+        {
+          "name": "[E3] Enlisted 3",
+          "label": "Enlisted 3",
+          "holders": 0,
+          "present": false
+        }
+      ]
+    },
+    {
+      "id": "units",
+      "title": "Select units",
+      "holders": 187,
+      "roles": [
+        {
+          "name": "TURTLE BRIGADE",
+          "label": "TURTLE BRIGADE",
+          "holders": 48,
+          "present": true
+        },
+        {
+          "name": "SHELLBACK",
+          "label": "SHELLBACK",
+          "holders": 4,
+          "present": true
+        },
+        {
+          "name": "BRAVO SQUADRON",
+          "label": "BRAVO SQUADRON",
+          "holders": 48,
+          "present": true
+        },
+        {
+          "name": "ALPHA SQUADRON",
+          "label": "ALPHA SQUADRON",
+          "holders": 8,
+          "present": true
+        },
+        {
+          "name": "RAT SQUADRON",
+          "label": "RAT SQUADRON",
+          "holders": 45,
+          "present": true
+        },
+        {
+          "name": "GHOST SQUADRON",
+          "label": "GHOST SQUADRON",
+          "holders": 13,
+          "present": true
+        },
+        {
+          "name": "[SO] SPECIAL OPERATORS",
+          "label": "Special Operators",
+          "holders": 21,
+          "present": true
+        }
+      ]
+    },
+    {
+      "id": "officers",
+      "title": "Officer & command",
+      "holders": 142,
+      "roles": [
+        {
+          "name": "[PO] PERMAFLEET OFFICERS",
+          "label": "PERMAFLEET Officers",
+          "holders": 44,
+          "present": true
+        },
+        {
+          "name": "[O1] Officer 1",
+          "label": "Officer 1",
+          "holders": 45,
+          "present": true
+        },
+        {
+          "name": "[O2] Officer 2",
+          "label": "Officer 2",
+          "holders": 7,
+          "present": true
+        },
+        {
+          "name": "[LT] Lieutenant",
+          "label": "Lieutenant",
+          "holders": 15,
+          "present": true
+        },
+        {
+          "name": "[CPT] Captain",
+          "label": "Captain",
+          "holders": 17,
+          "present": true
+        },
+        {
+          "name": "[MAJ] Major",
+          "label": "Major",
+          "holders": 5,
+          "present": true
+        },
+        {
+          "name": "[RADM] Rear Admiral",
+          "label": "Rear Admiral",
+          "holders": 2,
+          "present": true
+        },
+        {
+          "name": "[VADM] Vice Admiral",
+          "label": "Vice Admiral",
+          "holders": 0,
+          "present": true
+        },
+        {
+          "name": "[ADM] WARLORDS",
+          "label": "Warlords / Admiral",
+          "holders": 2,
+          "present": true
+        },
+        {
+          "name": "[FADM] Fleet Admiral",
+          "label": "Fleet Admiral",
+          "holders": 1,
+          "present": true
+        },
+        {
+          "name": "COMMAND",
+          "label": "COMMAND",
+          "holders": 3,
+          "present": true
+        },
+        {
+          "name": "LEADERSHIP",
+          "label": "LEADERSHIP",
+          "holders": 1,
+          "present": true
+        }
+      ]
+    },
+    {
+      "id": "orgs",
+      "title": "Member organizations",
+      "holders": 126,
+      "roles": [
+        {
+          "name": "[INFN] INFINITY INDUSTRIES",
+          "label": "Infinity Industries",
+          "holders": 15,
+          "present": true
+        },
+        {
+          "name": "[TRDE] TRANS-GALACTIC",
+          "label": "Transgalactic Trade",
+          "holders": 7,
+          "present": true
+        },
+        {
+          "name": "[LCRP] LEGACY CORP",
+          "label": "LEGACY",
+          "holders": 7,
+          "present": true
+        },
+        {
+          "name": "BLACK EXODUS",
+          "label": "Black Exodus",
+          "holders": 4,
+          "present": true
+        },
+        {
+          "name": "TURTLE BRIGADE",
+          "label": "Turtle Brigade (unit + org)",
+          "holders": 48,
+          "present": true
+        },
+        {
+          "name": "RAT SQUADRON",
+          "label": "RAT",
+          "holders": 45,
+          "present": true
+        }
+      ]
+    },
+    {
+      "id": "interest",
+      "title": "Interest & ops tags",
+      "holders": 2028,
+      "roles": [
+        {
+          "name": "RED ARMY",
+          "label": "RED ARMY",
+          "holders": 701,
+          "present": true
+        },
+        {
+          "name": "PVP INQUISITORS",
+          "label": "PVP INQUISITORS",
+          "holders": 560,
+          "present": true
+        },
+        {
+          "name": "INDUSTRIAL INQUISITORS",
+          "label": "INDUSTRIAL INQUISITORS",
+          "holders": 409,
+          "present": true
+        },
+        {
+          "name": "SALT MINERS",
+          "label": "SALT MINERS",
+          "holders": 282,
+          "present": true
+        },
+        {
+          "name": "LOGISTICS",
+          "label": "LOGISTICS",
+          "holders": 8,
+          "present": true
+        },
+        {
+          "name": "MERCHANTS",
+          "label": "MERCHANTS",
+          "holders": 12,
+          "present": true
+        },
+        {
+          "name": "Trainers",
+          "label": "Trainers",
+          "holders": 5,
+          "present": true
+        },
+        {
+          "name": "Ambassadors",
+          "label": "Ambassadors",
+          "holders": 4,
+          "present": true
+        },
+        {
+          "name": "Event Planners",
+          "label": "Event Planners",
+          "holders": 9,
+          "present": true
+        },
+        {
+          "name": "RECRUITERS",
+          "label": "RECRUITERS",
+          "holders": 7,
+          "present": true
+        },
+        {
+          "name": "ORG STEWARDS",
+          "label": "ORG STEWARDS",
+          "holders": 31,
+          "present": true
+        }
+      ]
+    },
+    {
+      "id": "celebration",
+      "title": "Recognition",
+      "holders": 137,
+      "roles": [
+        {
+          "name": "OG GOON",
+          "label": "OG GOON",
+          "holders": 85,
+          "present": true
+        },
+        {
+          "name": "GOON CORE",
+          "label": "GOON CORE",
+          "holders": 27,
+          "present": true
+        },
+        {
+          "name": "VETERANS",
+          "label": "VETERANS",
+          "holders": 3,
+          "present": true
+        },
+        {
+          "name": "CONFIRMED ACES",
+          "label": "CONFIRMED ACES",
+          "holders": 16,
+          "present": true
+        },
+        {
+          "name": "Confirmed John Wicks",
+          "label": "Confirmed John Wicks",
+          "holders": 2,
+          "present": true
+        },
+        {
+          "name": "1v1 Champion",
+          "label": "1v1 Champion",
+          "holders": 1,
+          "present": true
+        },
+        {
+          "name": "Flight School Certified",
+          "label": "Flight School Certified",
+          "holders": 1,
+          "present": true
+        },
+        {
+          "name": "PATRON",
+          "label": "PATRON",
+          "holders": 1,
+          "present": true
+        },
+        {
+          "name": "Medal",
+          "label": "Medal",
+          "holders": 1,
+          "present": true
+        }
+      ]
+    }
+  ],
+  "otherCount": 116,
+  "roles": [
+    {
+      "id": "1224891530313994365",
+      "name": "LIVE NOW",
+      "position": 175
+    },
+    {
+      "id": "1230821201300033596",
+      "name": "BRIDGE",
+      "position": 174
+    },
+    {
+      "id": "1230868577783910420",
+      "name": "PRIORITY",
+      "position": 173
+    },
+    {
+      "id": "1298441796786851881",
+      "name": "LEADERSHIP",
+      "position": 172
+    },
+    {
+      "id": "1298550587964788807",
+      "name": "COMMAND",
+      "position": 171
+    },
+    {
+      "id": "1230429751865245739",
+      "name": "1v1 Champion",
+      "position": 170
+    },
+    {
+      "id": "1239354644799553546",
+      "name": "RACE COORDINATOR",
+      "position": 169
+    },
+    {
+      "id": "1330815820716183622",
+      "name": "G00N SQUAD",
+      "position": 168
+    },
+    {
+      "id": "1230873016284745749",
+      "name": "BARON",
+      "position": 167
+    },
+    {
+      "id": "1230870086651478016",
+      "name": "ARCHILLECT",
+      "position": 166
+    },
+    {
+      "id": "1230876336902504469",
+      "name": "ENLIGHTENED (EARLY PASS)",
+      "position": 165
+    },
+    {
+      "id": "1234741793711587389",
+      "name": "[FADM] Fleet Admiral",
+      "position": 164
+    },
+    {
+      "id": "1234741732894183475",
+      "name": "[ADM] WARLORDS",
+      "position": 163
+    },
+    {
+      "id": "1234741445655658506",
+      "name": "[VADM] Vice Admiral",
+      "position": 162
+    },
+    {
+      "id": "1235213554467078246",
+      "name": "[RADM] Rear Admiral",
+      "position": 161
+    },
+    {
+      "id": "1298391657838022666",
+      "name": "[SO] SPECIAL OPERATORS",
+      "position": 160
+    },
+    {
+      "id": "1452784647586058243",
+      "name": "PIRATE OF THE MONTH",
+      "position": 159
+    },
+    {
+      "id": "1325682930701565983",
+      "name": "[MAJ] Major",
+      "position": 158
+    },
+    {
+      "id": "1205021280747651112",
+      "name": "ALPHA SQUADRON",
+      "position": 157
+    },
+    {
+      "id": "1234740631843242079",
+      "name": "[CPT] Captain",
+      "position": 156
+    },
+    {
+      "id": "1498548768021286923",
+      "name": "[O2] Officer 2",
+      "position": 155
+    },
+    {
+      "id": "1234740074546204733",
+      "name": "[LT] Lieutenant",
+      "position": 154
+    },
+    {
+      "id": "1258319219062210570",
+      "name": "GOON CORE",
+      "position": 153
+    },
+    {
+      "id": "1476797936309506099",
+      "name": "CODENAME HELLDIVER",
+      "position": 152
+    },
+    {
+      "id": "1230993055041978478",
+      "name": "CONFIRMED ACES",
+      "position": 151
+    },
+    {
+      "id": "1469032391552139452",
+      "name": "[PW] PACIFIC WATCH",
+      "position": 150
+    },
+    {
+      "id": "1205021360783364097",
+      "name": "BRAVO SQUADRON",
+      "position": 149
+    },
+    {
+      "id": "1227734928452751451",
+      "name": "[O1] Officer 1",
+      "position": 148
+    },
+    {
+      "id": "1300330274139279445",
+      "name": "[PO] PERMAFLEET OFFICERS",
+      "position": 147
+    },
+    {
+      "id": "1487994103860953118",
+      "name": "[E2] Enlisted 2",
+      "position": 146
+    },
+    {
+      "id": "1244529253207511041",
+      "name": "RAT SQUADRON",
+      "position": 145
+    },
+    {
+      "id": "1518976133515837521",
+      "name": "SHELLBACK",
+      "position": 144
+    },
+    {
+      "id": "1480517986262454383",
+      "name": "TURTLE BRIGADE",
+      "position": 143
+    },
+    {
+      "id": "1301089126447190058",
+      "name": "GHOST SQUADRON",
+      "position": 142
+    },
+    {
+      "id": "1475316122256412795",
+      "name": "SEC",
+      "position": 141
+    },
+    {
+      "id": "1240419006947524648",
+      "name": "GOON GUIDES",
+      "position": 140
+    },
+    {
+      "id": "1235242607655911477",
+      "name": "Flight Instructor",
+      "position": 139
+    },
+    {
+      "id": "1236453605205344416",
+      "name": "Confirmed John Wicks",
+      "position": 138
+    },
+    {
+      "id": "1253073003856658462",
+      "name": "[GSR] RACING TEAM",
+      "position": 137
+    },
+    {
+      "id": "1224901062373408950",
+      "name": "Server Booster",
+      "position": 136
+    },
+    {
+      "id": "1477493178721636565",
+      "name": "ORG STEWARDS",
+      "position": 135
+    },
+    {
+      "id": "1480982433003475036",
+      "name": "[E1] Enlisted 1",
+      "position": 134
+    },
+    {
+      "id": "1501216787084218440",
+      "name": "[4M] 4M Contractors",
+      "position": 133
+    },
+    {
+      "id": "1531627253216051312",
+      "name": "[AIM] A.I.M.O.S.",
+      "position": 132
+    },
+    {
+      "id": "1203196310333947954",
+      "name": "[INFN] INFINITY INDUSTRIES",
+      "position": 131
+    },
+    {
+      "id": "1254340464367243335",
+      "name": "[LCRP] LEGACY CORP",
+      "position": 130
+    },
+    {
+      "id": "1254340363888627723",
+      "name": "[TRDE] TRANS-GALACTIC",
+      "position": 129
+    },
+    {
+      "id": "1510330347349344256",
+      "name": "DOUBLEDOG DELIVERY, INC.",
+      "position": 128
+    },
+    {
+      "id": "1299631681392738364",
+      "name": "MERIT FARMERS",
+      "position": 127
+    },
+    {
+      "id": "1256386978732310620",
+      "name": "PATRON",
+      "position": 126
+    },
+    {
+      "id": "1230855701287669872",
+      "name": "FINANCIER",
+      "position": 125
+    },
+    {
+      "id": "1323582972443492362",
+      "name": "[A77] Atlas 77",
+      "position": 124
+    },
+    {
+      "id": "1468996043449307198",
+      "name": "[TKOW] Templar Knights Of War",
+      "position": 123
+    },
+    {
+      "id": "1532051837874733146",
+      "name": "Risky Business",
+      "position": 122
+    },
+    {
+      "id": "1514450435253997639",
+      "name": "Wastaken Family",
+      "position": 121
+    },
+    {
+      "id": "1540222448845324359",
+      "name": "TESTERS",
+      "position": 120
+    },
+    {
+      "id": "1298457632431931413",
+      "name": "PERMAFLEET",
+      "position": 119
+    },
+    {
+      "id": "1234738549450997831",
+      "name": "[P6] Prospect VI",
+      "position": 118
+    },
+    {
+      "id": "1234739862205366312",
+      "name": "[P5] Prospect V",
+      "position": 117
+    },
+    {
+      "id": "1234739335312703548",
+      "name": "[P4] Prospect IV",
+      "position": 116
+    },
+    {
+      "id": "1234526030186938409",
+      "name": "[P3] Prospect III",
+      "position": 115
+    },
+    {
+      "id": "1234735136785043537",
+      "name": "[P2] Prospect II",
+      "position": 114
+    },
+    {
+      "id": "1234735430587514970",
+      "name": "[P] Prospect I",
+      "position": 113
+    },
+    {
+      "id": "1449556704340476005",
+      "name": "BLACK EXODUS",
+      "position": 112
+    },
+    {
+      "id": "1501607026265030667",
+      "name": "HLN",
+      "position": 111
+    },
+    {
+      "id": "1501606879590092993",
+      "name": "Splint3r",
+      "position": 110
+    },
+    {
+      "id": "1298538145410977944",
+      "name": "PERMAFLEET GUESTS",
+      "position": 109
+    },
+    {
+      "id": "1295774332030681198",
+      "name": "MERCHANTS",
+      "position": 108
+    },
+    {
+      "id": "1323539671250243616",
+      "name": "Modelers",
+      "position": 107
+    },
+    {
+      "id": "1242638877949431879",
+      "name": "LOGISTICS",
+      "position": 106
+    },
+    {
+      "id": "1252986508147818527",
+      "name": "RACERS",
+      "position": 105
+    },
+    {
+      "id": "1227782776380588053",
+      "name": "Trainers",
+      "position": 104
+    },
+    {
+      "id": "1230860121396215879",
+      "name": "Citizen",
+      "position": 103
+    },
+    {
+      "id": "1235355847048298528",
+      "name": "Communications",
+      "position": 102
+    },
+    {
+      "id": "1227737457294839958",
+      "name": "Ambassadors",
+      "position": 101
+    },
+    {
+      "id": "1190775596997947463",
+      "name": "OG GOON",
+      "position": 100
+    },
+    {
+      "id": "1476949619593449595",
+      "name": "Flight School Certified",
+      "position": 99
+    },
+    {
+      "id": "1227751144814542858",
+      "name": "Enlisted",
+      "position": 98
+    },
+    {
+      "id": "1234526086012866671",
+      "name": "Phantom Fleet",
+      "position": 97
+    },
+    {
+      "id": "1205021481512468540",
+      "name": "TEAM CHARLIE",
+      "position": 96
+    },
+    {
+      "id": "1230860114282676259",
+      "name": "LOYALISTS",
+      "position": 95
+    },
+    {
+      "id": "1235989752776360018",
+      "name": "RECRUITERS",
+      "position": 94
+    },
+    {
+      "id": "1231111672630874113",
+      "name": "Artists",
+      "position": 93
+    },
+    {
+      "id": "1234300016273657926",
+      "name": "Streamers",
+      "position": 92
+    },
+    {
+      "id": "1225237189139366009",
+      "name": "30k Club",
+      "position": 91
+    },
+    {
+      "id": "1224865356527566898",
+      "name": "[AVS] Avenger Squadron",
+      "position": 90
+    },
+    {
+      "id": "1333701167720431626",
+      "name": "[DR] Devil's Rejects",
+      "position": 89
+    },
+    {
+      "id": "1298535067848544256",
+      "name": "SALT MINERS",
+      "position": 88
+    },
+    {
+      "id": "1211595309424312320",
+      "name": "[GN] GrieferNet",
+      "position": 87
+    },
+    {
+      "id": "1244528677526704210",
+      "name": "[PAX] Pax Mortis",
+      "position": 86
+    },
+    {
+      "id": "1329695650866008147",
+      "name": "[SHDWMSS] Shadow Moses",
+      "position": 85
+    },
+    {
+      "id": "1333328106806837289",
+      "name": "[RUIN] Ruin Gaming",
+      "position": 84
+    },
+    {
+      "id": "1324285797121396819",
+      "name": "[VOX] Vox Mortis",
+      "position": 83
+    },
+    {
+      "id": "1329731981457621012",
+      "name": "[WLIGHTNING] White Lightning",
+      "position": 82
+    },
+    {
+      "id": "1323459782971097128",
+      "name": "[WOS] Walkers of Sigma",
+      "position": 81
+    },
+    {
+      "id": "1243706259841089536",
+      "name": "7TH FLEET",
+      "position": 80
+    },
+    {
+      "id": "1237328569219416176",
+      "name": "ACHLYS CORP",
+      "position": 79
+    },
+    {
+      "id": "1190775064975650898",
+      "name": "Black Squadron",
+      "position": 78
+    },
+    {
+      "id": "1296555498858086422",
+      "name": "Blackstar Salvage",
+      "position": 77
+    },
+    {
+      "id": "1448134377136586805",
+      "name": "CINDER",
+      "position": 76
+    },
+    {
+      "id": "1231063368102580234",
+      "name": "SC Homies",
+      "position": 75
+    },
+    {
+      "id": "1224870566507446322",
+      "name": "Howlers",
+      "position": 74
+    },
+    {
+      "id": "1299918978029981758",
+      "name": "MEDRUNNERS",
+      "position": 73
+    },
+    {
+      "id": "1227791022277394452",
+      "name": "PK, Inc.",
+      "position": 72
+    },
+    {
+      "id": "1196013595717283910",
+      "name": "RAM",
+      "position": 71
+    },
+    {
+      "id": "1200593748934021181",
+      "name": "Red Hunters",
+      "position": 70
+    },
+    {
+      "id": "1221745378651537408",
+      "name": "Rintak",
+      "position": 69
+    },
+    {
+      "id": "1314320760621367357",
+      "name": "Robert's Rejects",
+      "position": 68
+    },
+    {
+      "id": "1231117676928172042",
+      "name": "Rye Eye Profiteer",
+      "position": 67
+    },
+    {
+      "id": "1224870434592260199",
+      "name": "Sons of Ares",
+      "position": 66
+    },
+    {
+      "id": "1190774769726001292",
+      "name": "Super Friends",
+      "position": 65
+    },
+    {
+      "id": "1217631205734748290",
+      "name": "TEST Squadron",
+      "position": 64
+    },
+    {
+      "id": "1190774972482855043",
+      "name": "Trauma Team",
+      "position": 63
+    },
+    {
+      "id": "1190775246643535912",
+      "name": "UEE Drug Enforcement Agency",
+      "position": 62
+    },
+    {
+      "id": "1230011134036279427",
+      "name": "Vanguard",
+      "position": 61
+    },
+    {
+      "id": "1305037286022578187",
+      "name": "Wild Weasels",
+      "position": 60
+    },
+    {
+      "id": "1231065501623652372",
+      "name": "RED ARMY",
+      "position": 59
+    },
+    {
+      "id": "1298539046905315349",
+      "name": "GREENBACKS",
+      "position": 58
+    },
+    {
+      "id": "1298538536986869772",
+      "name": "PVP INQUISITORS",
+      "position": 57
+    },
+    {
+      "id": "1298538353599447051",
+      "name": "INDUSTRIAL INQUISITORS",
+      "position": 56
+    },
+    {
+      "id": "1190529463126069329",
+      "name": "Star Citizens",
+      "position": 55
+    },
+    {
+      "id": "1231132761222283294",
+      "name": "NEW EDENITES",
+      "position": 54
+    },
+    {
+      "id": "1205256001436000346",
+      "name": "Ancient Defenders",
+      "position": 53
+    },
+    {
+      "id": "1467416850832031817",
+      "name": "Borderlanders",
+      "position": 52
+    },
+    {
+      "id": "1231042087638663260",
+      "name": "VETERANS",
+      "position": 51
+    },
+    {
+      "id": "1231003718619496539",
+      "name": "BOOJAHIDEEN",
+      "position": 50
+    },
+    {
+      "id": "1233681064711553054",
+      "name": "HELLDIVERS",
+      "position": 49
+    },
+    {
+      "id": "1196013172629450752",
+      "name": "RPG",
+      "position": 48
+    },
+    {
+      "id": "1237436164559077386",
+      "name": "NORMIES",
+      "position": 47
+    },
+    {
+      "id": "1211595466844676126",
+      "name": "BOTS",
+      "position": 46
+    },
+    {
+      "id": "1211594795819073589",
+      "name": "TrackR",
+      "position": 45
+    },
+    {
+      "id": "1224890003667025973",
+      "name": "Streamcord",
+      "position": 44
+    },
+    {
+      "id": "1227774720414453870",
+      "name": "Ticket Tool",
+      "position": 43
+    },
+    {
+      "id": "1230071987758567456",
+      "name": "Medal",
+      "position": 42
+    },
+    {
+      "id": "1230782814425710647",
+      "name": "Grove",
+      "position": 41
+    },
+    {
+      "id": "1230528827151880195",
+      "name": "YouTube",
+      "position": 40
+    },
+    {
+      "id": "1231108106935734322",
+      "name": "IdleCapitalist",
+      "position": 39
+    },
+    {
+      "id": "1233595263709614233",
+      "name": "DISBOARD.org",
+      "position": 38
+    },
+    {
+      "id": "1235413608049934348",
+      "name": "BLUE TEAM",
+      "position": 37
+    },
+    {
+      "id": "1235413812836958240",
+      "name": "RED TEAM",
+      "position": 36
+    },
+    {
+      "id": "1249825139554648129",
+      "name": ".fmbot",
+      "position": 35
+    },
+    {
+      "id": "1301692001170755614",
+      "name": "Meridian Exploration Group",
+      "position": 34
+    },
+    {
+      "id": "1301693310976659559",
+      "name": "Cornerstone",
+      "position": 33
+    },
+    {
+      "id": "1303889859454173254",
+      "name": "war-thunder",
+      "position": 32
+    },
+    {
+      "id": "1310066611356700732",
+      "name": "SOFTWARE ENGINEERS",
+      "position": 31
+    },
+    {
+      "id": "1325048684424990794",
+      "name": "VoiceMaster",
+      "position": 30
+    },
+    {
+      "id": "1476127495630618635",
+      "name": "G00N Class 1",
+      "position": 29
+    },
+    {
+      "id": "1476127463959433216",
+      "name": "G00N Class 2",
+      "position": 28
+    },
+    {
+      "id": "1476127423320817746",
+      "name": "G00N Class 3",
+      "position": 27
+    },
+    {
+      "id": "1476127358766415932",
+      "name": "G00N Class 4",
+      "position": 26
+    },
+    {
+      "id": "1330815444202029169",
+      "name": "G00N Class 5",
+      "position": 25
+    },
+    {
+      "id": "1472078231820697835",
+      "name": "IDRIS OWNERS",
+      "position": 24
+    },
+    {
+      "id": "1475448215108325516",
+      "name": "DCS Players",
+      "position": 23
+    },
+    {
+      "id": "1477517133096288396",
+      "name": "Homeworlders",
+      "position": 22
+    },
+    {
+      "id": "1477530789502779394",
+      "name": "VoiceStats",
+      "position": 21
+    },
+    {
+      "id": "1483655359569854567",
+      "name": "ARC RAIDER",
+      "position": 20
+    },
+    {
+      "id": "1493006087903772692",
+      "name": "Event Planners",
+      "position": 19
+    },
+    {
+      "id": "1497156245763919922",
+      "name": "CINEMA",
+      "position": 18
+    },
+    {
+      "id": "1497168811315429516",
+      "name": "V Rising",
+      "position": 17
+    },
+    {
+      "id": "1497197263225753781",
+      "name": "LoL (League)",
+      "position": 16
+    },
+    {
+      "id": "1498704811682693364",
+      "name": "WARCRAFTERS",
+      "position": 15
+    },
+    {
+      "id": "1499819864695771156",
+      "name": "RON SWATTERS",
+      "position": 14
+    },
+    {
+      "id": "1503496185401315449",
+      "name": "ODIN BUYERS",
+      "position": 13
+    },
+    {
+      "id": "1504239110016204932",
+      "name": "GTFO",
+      "position": 12
+    },
+    {
+      "id": "1504239140508536923",
+      "name": "FOREVER WAR",
+      "position": 11
+    },
+    {
+      "id": "1504523954419798250",
+      "name": "Tempo 3",
+      "position": 10
+    },
+    {
+      "id": "1508972674393837668",
+      "name": "ODIN OWNERS",
+      "position": 9
+    },
+    {
+      "id": "1510002764854460456",
+      "name": "G00N Class 6",
+      "position": 8
+    },
+    {
+      "id": "1513714379097510111",
+      "name": "PATH OF EXILE",
+      "position": 7
+    },
+    {
+      "id": "1513772067911241751",
+      "name": "Tempo 2",
+      "position": 6
+    },
+    {
+      "id": "1525364850165944410",
+      "name": "Black Star Sovereignty",
+      "position": 5
+    },
+    {
+      "id": "1525364939303292998",
+      "name": "Tortuga",
+      "position": 4
+    },
+    {
+      "id": "1527124656132329486",
+      "name": "Live Translator",
+      "position": 3
+    },
+    {
+      "id": "1529698958564135013",
+      "name": "new role",
+      "position": 2
+    },
+    {
+      "id": "1540747387943788756",
+      "name": "Tempo 5",
+      "position": 1
+    },
+    {
+      "id": "1190527980120850493",
+      "name": "@everyone",
+      "position": 0
+    }
+  ],
+  "roleCounts": {
+    "Star Citizens": 1162,
+    "GREENBACKS": 864,
+    "RED ARMY": 701,
+    "PVP INQUISITORS": 560,
+    "INDUSTRIAL INQUISITORS": 409,
+    "SALT MINERS": 282,
+    "[P] Prospect I": 245,
+    "PERMAFLEET GUESTS": 219,
+    "PERMAFLEET": 211,
+    "[P2] Prospect II": 145,
+    "G00N Class 6": 126,
+    "NORMIES": 86,
+    "OG GOON": 85,
+    "[P3] Prospect III": 79,
+    "Enlisted": 58,
+    "[E1] Enlisted 1": 53,
+    "[P4] Prospect IV": 50,
+    "TURTLE BRIGADE": 48,
+    "BRAVO SQUADRON": 48,
+    "RAT SQUADRON": 45,
+    "[O1] Officer 1": 45,
+    "[PO] PERMAFLEET OFFICERS": 44,
+    "ORG STEWARDS": 31,
+    "G00N Class 5": 28,
+    "GOON CORE": 27,
+    "ODIN BUYERS": 22,
+    "[SO] SPECIAL OPERATORS": 21,
+    "NEW EDENITES": 20,
+    "[4M] 4M Contractors": 19,
+    "[CPT] Captain": 17,
+    "SOFTWARE ENGINEERS": 16,
+    "CONFIRMED ACES": 16,
+    "[LT] Lieutenant": 15,
+    "[INFN] INFINITY INDUSTRIES": 15,
+    "[P5] Prospect V": 14,
+    "[GN] GrieferNet": 14,
+    "[E2] Enlisted 2": 13,
+    "GHOST SQUADRON": 13,
+    "G00N SQUAD": 13,
+    "IDRIS OWNERS": 13,
+    "MERCHANTS": 12,
+    "[AIM] A.I.M.O.S.": 11,
+    "Ancient Defenders": 11,
+    "Server Booster": 10,
+    "Event Planners": 9,
+    "ALPHA SQUADRON": 8,
+    "LOGISTICS": 8,
+    "HELLDIVERS": 8,
+    "BOTS": 8,
+    "[O2] Officer 2": 7,
+    "[LCRP] LEGACY CORP": 7,
+    "[TRDE] TRANS-GALACTIC": 7,
+    "RECRUITERS": 7,
+    "BOOJAHIDEEN": 7,
+    "CINEMA": 6,
+    "Black Squadron": 6,
+    "[P6] Prospect VI": 5,
+    "SEC": 5,
+    "[MAJ] Major": 5,
+    "Trainers": 5,
+    "CINDER": 4,
+    "SHELLBACK": 4,
+    "RPG": 4,
+    "Ambassadors": 4,
+    "ODIN OWNERS": 4,
+    "Streamers": 4,
+    "DOUBLEDOG DELIVERY, INC.": 4,
+    "Wild Weasels": 4,
+    "BLACK EXODUS": 4,
+    "SC Homies": 3,
+    "ARC RAIDER": 3,
+    "V Rising": 3,
+    "VETERANS": 3,
+    "G00N Class 1": 3,
+    "COMMAND": 3,
+    "Risky Business": 3,
+    "Sons of Ares": 3,
+    "[PW] PACIFIC WATCH": 3,
+    "PATH OF EXILE": 2,
+    "ACHLYS CORP": 2,
+    "G00N Class 2": 2,
+    "RON SWATTERS": 2,
+    "Confirmed John Wicks": 2,
+    "[ADM] WARLORDS": 2,
+    "WARCRAFTERS": 2,
+    "Borderlanders": 2,
+    "Super Friends": 2,
+    "GTFO": 2,
+    "FOREVER WAR": 2,
+    "LOYALISTS": 2,
+    "Communications": 2,
+    "TESTERS": 2,
+    "[RADM] Rear Admiral": 2,
+    "RACERS": 2,
+    "Rintak": 2,
+    "[TKOW] Templar Knights Of War": 2,
+    "Red Hunters": 2,
+    "Artists": 2,
+    "[PAX] Pax Mortis": 1,
+    "LoL (League)": 1,
+    "Flight School Certified": 1,
+    "Wastaken Family": 1,
+    "1v1 Champion": 1,
+    "[SHDWMSS] Shadow Moses": 1,
+    "Homeworlders": 1,
+    "Robert's Rejects": 1,
+    "Vanguard": 1,
+    "[DR] Devil's Rejects": 1,
+    "[RUIN] Ruin Gaming": 1,
+    "[WLIGHTNING] White Lightning": 1,
+    "PATRON": 1,
+    "RED TEAM": 1,
+    "DISBOARD.org": 1,
+    "[A77] Atlas 77": 1,
+    "Medal": 1,
+    "GOON GUIDES": 1,
+    "MEDRUNNERS": 1,
+    "HLN": 1,
+    "CODENAME HELLDIVER": 1,
+    ".fmbot": 1,
+    "Streamcord": 1,
+    "[AVS] Avenger Squadron": 1,
+    "LEADERSHIP": 1,
+    "MERIT FARMERS": 1,
+    "[FADM] Fleet Admiral": 1,
+    "YouTube": 1,
+    "VoiceMaster": 1,
+    "[VOX] Vox Mortis": 1,
+    "Grove": 1,
+    "BRIDGE": 1,
+    "Rye Eye Profiteer": 1,
+    "IdleCapitalist": 1,
+    "Ticket Tool": 1,
+    "Tortuga": 1,
+    "Live Translator": 1,
+    "[WOS] Walkers of Sigma": 1,
+    "Black Star Sovereignty": 1,
+    "Tempo 2": 1,
+    "Tempo 3": 1,
+    "Tempo 5": 1,
+    "7TH FLEET": 1,
+    "DCS Players": 1,
+    "Flight Instructor": 1,
+    "FINANCIER": 1,
+    "Modelers": 1,
+    "TrackR": 1,
+    "Citizen": 1,
+    "VoiceStats": 1
+  }
+}

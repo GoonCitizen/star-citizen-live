@@ -30,7 +30,7 @@ npm install -g @anthropic-ai/claude-code
 ```bash
 git clone -b feature/rsi https://github.com/GoonCitizen/star-citizen-live.git
 cd star-citizen-live
-# Node.js 24.15.0 — see .nvmrc
+# Node.js 26.12.1 — see .nvmrc
 npm i
 ```
 

@@ -9,10 +9,10 @@
 const React = require('react');
 const Onboarding = require('./Onboarding');
 const Identity = require('./Identity');
-const FabricLoginModal = require('./FabricLoginModal');
+const DeviceLinkModal = require('./DeviceLinkModal');
 const QrScanOverlay = require('./QrScanOverlay');
 const GroupOfferModal = require('./GroupOfferModal');
-const SiteLogin = require('./SiteLogin');
+const PassportSignIn = require('./PassportSignIn');
 const Chat = require('./Chat');
 const DeliverySync = require('./DeliverySync');
 const GlobalChatDock = require('./GlobalChatDock');
@@ -53,8 +53,7 @@ const {
   GC_UI_RUNTIME_LIVE,
   GC_UI_RUNTIME_STATIC,
   classifyLiveRelayProbe,
-  readStoredSiteLoginToken,
-  readStoredSiteLoginSession,
+  fetchSiteSession,
   isGoonCitizenVisitor
 } = require('../functions/goonCitizenClientEnvironment');
 const { dashboardAuthHeaders } = require('../functions/dashboardAuthHeaders');
@@ -726,34 +725,46 @@ class Dashboard extends React.Component {
       /** liveRelay | static | null until first probe */
       apiRuntime: null,
       apiRuntimeReason: null,
-      siteToken: null,
+      /** Passport session on this origin (browser), from GET /sessions/current */
+      siteSession: null,
       capabilityChecked: false
     };
     this._timer = null;
     this._copiedTimers = {};
     this._identityUnsub = null;
     this._feedRef = React.createRef();
-    this._onStorageAuth = null;
   }
 
   authHeaders (extra) {
     return dashboardAuthHeaders({
-      token: this.state.siteToken,
       headers: Object.assign({ Accept: 'application/json' }, extra || {})
     });
   }
 
-  refreshSiteAuth () {
-    const siteToken = readStoredSiteLoginToken();
-    const siteSession = readStoredSiteLoginSession();
+  /** Read this browser's Passport session (the app itself needs none). */
+  async refreshSiteAuth () {
+    if (typeof window !== 'undefined' && window.electronAPI && window.electronAPI.identity) return null;
+    const siteSession = await fetchSiteSession();
     this.setState({
-      siteToken: siteToken || null,
+      siteSession,
       identityExists: !!(this.state.identityExists || siteSession),
-      identityPubkey: this.state.identityPubkey ||
-        (siteSession && (siteSession.pubkeyHex || (siteSession.identity && siteSession.identity.id))) ||
-        null
+      identityPubkey: this.state.identityPubkey || (siteSession && siteSession.identity.pubkey) || null
     });
-    return siteToken;
+    return siteSession;
+  }
+
+  onSiteSignedIn (session) {
+    this.setState({
+      siteSession: session || null,
+      identityExists: true,
+      identityPubkey: this.state.identityPubkey || (session && session.identity && session.identity.pubkey) || null
+    });
+    this.poll();
+    this.loadNickname();
+  }
+
+  onSiteSignedOut () {
+    this.setState({ siteSession: null, identityExists: false, identityPubkey: null });
   }
 
   isStaticClient () {
@@ -770,8 +781,7 @@ class Dashboard extends React.Component {
       runtime: this.state.apiRuntime || GC_UI_RUNTIME_LIVE,
       auth: {
         electronUnlocked: !!(this.state.identityPubkey && !this.state.identityLocked),
-        siteToken: this.state.siteToken,
-        siteSession: this.state.siteToken ? { delegationToken: this.state.siteToken } : null
+        siteSession: this.state.siteSession
       }
     });
   }
@@ -828,19 +838,18 @@ class Dashboard extends React.Component {
     React.createElement('p', { style: { color: 'var(--muted)', lineHeight: 1.5 } },
       this.isStaticClient()
         ? 'This origin is only serving the HTML client. Point a browser at a live GoonCitizen / LiveRelay HTTP API.'
-        : 'This hosted relay needs a Fabric site login (Passport or GoonCitizen) before session-backed tabs work.'),
-    React.createElement(SiteLogin, {
-      onSignedIn: () => {
-        this.refreshSiteAuth();
-        this.poll();
-      }
+        : 'This hosted relay needs you to sign in with Fabric Passport (or a GoonCitizen desktop linked to it) before session-backed tabs work.'),
+    React.createElement(PassportSignIn, {
+      session: this.state.siteSession,
+      onSignedIn: (session) => this.onSiteSignedIn(session),
+      onSignedOut: () => this.onSiteSignedOut()
     })
     );
   }
 
   componentDidMount () {
-    this.refreshSiteAuth();
-    this.probeApiRuntime().then(() => {
+    this.probeApiRuntime().then(async () => {
+      await this.refreshSiteAuth();
       if (!this.isStaticClient() && !this.isPublicVisitor()) {
         this.poll();
         if (androidSurface('heatmap')) {
@@ -882,8 +891,6 @@ class Dashboard extends React.Component {
       if (this.state.showIdFlyout) this.setState({ showIdFlyout: false });
     };
     document.addEventListener('click', this._onDocClick);
-    this._onStorageAuth = () => this.refreshSiteAuth();
-    window.addEventListener('storage', this._onStorageAuth);
     // Live lock-state from the desktop shell (auto-lock, manual lock, forget).
     const idBridge = (window.electronAPI && window.electronAPI.identity) || null;
     if (idBridge && idBridge.onChanged) {
@@ -908,7 +915,6 @@ class Dashboard extends React.Component {
   componentWillUnmount () {
     if (this._onHash) window.removeEventListener('hashchange', this._onHash);
     if (this._onDocClick) document.removeEventListener('click', this._onDocClick);
-    if (this._onStorageAuth) window.removeEventListener('storage', this._onStorageAuth);
     if (this._identityUnsub) this._identityUnsub();
     if (this._timer) clearInterval(this._timer);
     if (this._analyticsTimer) clearInterval(this._analyticsTimer);
@@ -3216,8 +3222,7 @@ class Dashboard extends React.Component {
       case 'missions': return React.createElement(Missions, {
         offlineMode: this.state.offlineMode === true,
         identityPubkey: this.state.identityPubkey,
-        analytics: this.state.analytics,
-        authToken: this.state.siteToken
+        analytics: this.state.analytics
       });
       case 'wallet': return this.walletVisible()
         ? React.createElement(Wallet, {
@@ -3250,8 +3255,7 @@ class Dashboard extends React.Component {
         nickname: this.state.nickname,
         documentsEnable: this.state.documentsEnable === true,
         documentsDefaultPriceSats: (this.state.documentsRuntime &&
-          this.state.documentsRuntime.defaultPriceSats) || 25,
-        authToken: this.state.siteToken
+          this.state.documentsRuntime.defaultPriceSats) || 716
       });
       case 'groups': return React.createElement(Groups, {
         identityPubkey: this.state.identityPubkey,
@@ -3259,12 +3263,10 @@ class Dashboard extends React.Component {
         advancedMode: this.state.advancedMode,
         bitcoinEnable: this.state.bitcoinEnable === true,
         onPrimaryGroupTheme: (hex) => this.applyPrimaryGroupTheme(hex),
-        onRequestImport: () => this.setState({ showFabricImport: true }),
-        authToken: this.state.siteToken
+        onRequestImport: () => this.setState({ showFabricImport: true })
       });
       case 'map': return React.createElement(MapPage, null);
       case 'notifications': return React.createElement(Notifications, {
-        authToken: this.state.siteToken,
         onPendingCount: (n) => {
           if (n !== this.state.notifyPending) this.setState({ notifyPending: n });
         }
@@ -3281,8 +3283,7 @@ class Dashboard extends React.Component {
           onForget: () => this.setState({ identityPubkey: null, identityExists: false, identityLocked: false }),
           onNicknameChange: (n) => this.setState({ nickname: n || null }),
           onPresenceChange: (p) => this.applyPresenceChip(p),
-          onOpenSettings: () => this.setState({ showSettings: true }),
-          authToken: this.state.siteToken
+          onOpenSettings: () => this.setState({ showSettings: true })
         });
       default:
         return this.renderHome();
@@ -3311,7 +3312,7 @@ class Dashboard extends React.Component {
           showIdentity: false
         })
       }),
-      React.createElement(FabricLoginModal, null),
+      React.createElement(DeviceLinkModal, null),
       this.state.showQrScan
         ? React.createElement(QrScanOverlay, {
           error: this.state.qrScanError,
@@ -3436,7 +3437,6 @@ class Dashboard extends React.Component {
             !(this.isOfflineMode() || this.isStaticClient() || this.isPublicVisitor())
               ? React.createElement(DataSyncStatus, {
                 variant: 'compact',
-                authToken: this.state.siteToken,
                 onAddDevice: () => {
                   this.openAccount('devices');
                 },
@@ -3513,12 +3513,10 @@ class Dashboard extends React.Component {
                 ),
                 this.renderIdentityFlyout()
               )
-              : React.createElement(SiteLogin, {
-                onSignedIn: () => {
-                  this.refreshSiteAuth();
-                  this.poll();
-                  this.loadNickname();
-                }
+              : React.createElement(PassportSignIn, {
+                session: this.state.siteSession,
+                onSignedIn: (session) => this.onSiteSignedIn(session),
+                onSignedOut: () => this.onSiteSignedOut()
               }),
             !(this.isStaticClient() || this.isPublicVisitor())
               ? React.createElement('button', {
@@ -3558,7 +3556,6 @@ class Dashboard extends React.Component {
           ),
           !(this.isStaticClient() || this.isPublicVisitor())
             ? React.createElement(AppSearch, {
-              authToken: this.state.siteToken,
               onNavigate: (hit, dest) => this.openSearchHit(hit, dest)
             })
             : null
@@ -3578,10 +3575,9 @@ class Dashboard extends React.Component {
         identityPubkey: this.state.meshPubkey || this.state.identityPubkey,
         nickname: this.state.nickname,
         hide: this.state.tab === 'chat' || this.isStaticClient() || this.isPublicVisitor(),
-        authToken: this.state.siteToken,
         documentsEnable: this.state.documentsEnable === true,
         documentsDefaultPriceSats: (this.state.documentsRuntime &&
-          this.state.documentsRuntime.defaultPriceSats) || 25,
+          this.state.documentsRuntime.defaultPriceSats) || 716,
         onUnread: (n) => {
           if (n !== this.state.chatUnread) this.setState({ chatUnread: n });
         }
@@ -3589,7 +3585,6 @@ class Dashboard extends React.Component {
       this.isOfflineMode() ? null : React.createElement(MissionBroadcastBanner, {
         hide: this.state.tab === 'notifications' || this.isStaticClient() || this.isPublicVisitor(),
         raised: this.state.voiceJoined,
-        authToken: this.state.siteToken,
         onResolved: () => {
           if (this.state.tab === 'missions') this.showTab('missions');
         },
@@ -3614,7 +3609,7 @@ const CHROME_CSS = `
 
 Dashboard.TITLE = TITLE;
 Dashboard.CHROME_CSS = CHROME_CSS;
-Dashboard.CSS = CSS + '\n' + (SiteLogin.CSS || '') + '\n' + (LogBrowser.CSS || '') + '\n' +
+Dashboard.CSS = CSS + '\n' + (PassportSignIn.CSS || '') + '\n' + (LogBrowser.CSS || '') + '\n' +
   (AppSearch.CSS || '') + '\n' + (Account.CSS || '') + '\n' + (DataSyncStatus.CSS || '') + '\n' +
   (LinkedDevices.CSS || '') + '\n' + (Settings.CSS || '') + '\n' + (ActiveVoicePanel.CSS || '') + '\n' + CHROME_CSS;
 Dashboard.resolveHash = resolveHash;

@@ -34,6 +34,7 @@ const EventEmitter = require('events');
 const secp256k1 = require('tiny-secp256k1');
 const Actor = require('@fabric/core/types/actor');
 const { verifyAggregatedSchnorr } = require('@fabric/core/functions/musig2');
+const { FEDERATION_WITNESS } = require('@fabric/core/functions/signingTags');
 const { Store } = require('../types/Store');
 
 // Local Types
@@ -198,7 +199,7 @@ class MissionManager extends EventEmitter {
           const Key = require('@fabric/core/types/key');
           for (const [pubkey, sig] of Object.entries(e.authorization.signatures)) {
             const key = new Key({ public: pubkey });
-            if (!key.verifySchnorr(Buffer.from(String(e.authorization.message)), Buffer.from(String(sig), 'hex'))) return false;
+            if (!key.verifySchnorr(Buffer.from(String(e.authorization.message)), Buffer.from(String(sig), 'hex'), FEDERATION_WITNESS)) return false;
           }
         } catch (_) { return false; }
       }

@@ -1,7 +1,7 @@
 'use strict';
 
 /**
- * Optional QR data-URL for fabric:// protocol URLs (SiteLogin / Hub Identity).
+ * Optional QR data-URL for fabric:// protocol URLs (device-link offers).
  * Uses the `qrcode` package when installed (Hub already depends on it).
  */
 

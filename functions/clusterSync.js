@@ -11,7 +11,7 @@
  * Finding the sibling (Fabric TCP first):
  *   1. LAN RFC1918 `host:port` advertised in `account.peers` (no /24 scan)
  *   2. Optional `fabricAdvertiseHost:port`
- *   3. Already-connected Hub seeds (`hub.fabric.pub:7777`, `relay.goon.vc:7777`)
+ *   3. Already-connected Hub seeds (`hub.fabric.pub:7777`, `hub.goon.vc:7777`, `relay.goon.vc:7777`)
  *   4. Hub WebRTC *registry* (`RegisterWebRTCPeer` / `ListWebRTCPeers`) so Node
  *      LiveRelay can publish those LAN hints when NAT hides interfaces.
  *      LiveRelay does not host ICE; Passport / Hub browser still use Hub
@@ -33,12 +33,14 @@ const MAX_WEBRTC_HUBS = 4;
 
 const DEFAULT_WEBRTC_HUBS = Object.freeze([
   'https://hub.fabric.pub',
+  'https://hub.goon.vc',
   'https://relay.goon.vc'
 ]);
 
 /** Hub origins that speak RegisterWebRTCPeer (not LiveRelay on relay.goon.vc). */
 const COORDINATOR_HUBS = Object.freeze([
-  'https://hub.fabric.pub'
+  'https://hub.fabric.pub',
+  'https://hub.goon.vc'
 ]);
 
 const TRANSPORT = Object.freeze([

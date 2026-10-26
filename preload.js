@@ -16,13 +16,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
   getGroupOverlay: () => ipcRenderer.invoke('get-group-overlay'),
   identity: {
     get: () => ipcRenderer.invoke('identity:get'),
-    create: (password) => ipcRenderer.invoke('identity:create', { password }),
+    create: (password, opts) => ipcRenderer.invoke('identity:create', Object.assign({}, opts || {}, { password })),
     restore: (opts) => ipcRenderer.invoke('identity:restore', opts),
     unlock: (password) => ipcRenderer.invoke('identity:unlock', { password }),
+    selectAccount: (pair) => ipcRenderer.invoke('identity:select-account', pair || {}),
     signEnvelope: (payload) => ipcRenderer.invoke('identity:sign-envelope', payload),
-    signMessage: (message) => ipcRenderer.invoke('identity:sign-message', { message }),
     lock: () => ipcRenderer.invoke('identity:lock'),
-    reveal: (password) => ipcRenderer.invoke('identity:reveal', { password }),
     exportBackup: (password) => ipcRenderer.invoke('identity:export-backup', { password }),
     importBackup: (backup, password, replace) => ipcRenderer.invoke('identity:import-backup', { backup, password, replace }),
     setAutoLock: (minutes) => ipcRenderer.invoke('identity:set-autolock', { minutes }),
@@ -31,6 +30,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     tickDeviceLinkOffer: () => ipcRenderer.invoke('identity:device-link-tick'),
     cancelDeviceLinkOffer: () => ipcRenderer.invoke('identity:device-link-cancel'),
     openProtocolUrl: (url) => ipcRenderer.invoke('identity:open-protocol-url', url),
+    signInToRelay: (origin) => ipcRenderer.invoke('identity:sign-in-relay', { origin }),
     onChanged: (handler) => {
       const listener = (_e, summary) => handler(summary);
       ipcRenderer.on('identity:changed', listener);
@@ -58,15 +58,15 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.on('notify:click', listener);
     return () => ipcRenderer.removeListener('notify:click', listener);
   },
-  /** Client-signed Fabric site login (`fabric://login`) — approve/reject in the renderer. */
-  fabricLogin: {
+  /** Device link (`fabric://link`) answered on this device — approve/reject in the renderer. */
+  deviceLinkPrompt: {
     onPrompt: (handler) => {
       const listener = (_e, payload) => handler(payload);
-      ipcRenderer.on('fabric-login-prompt', listener);
-      return () => ipcRenderer.removeListener('fabric-login-prompt', listener);
+      ipcRenderer.on('device-link-prompt', listener);
+      return () => ipcRenderer.removeListener('device-link-prompt', listener);
     },
-    pullPending: () => ipcRenderer.invoke('fabric-login:pull-pending'),
-    resolve: (opts) => ipcRenderer.invoke('fabric-login:resolve', opts || {})
+    pullPending: () => ipcRenderer.invoke('device-link:pull-pending'),
+    resolve: (opts) => ipcRenderer.invoke('device-link:resolve', opts || {})
   },
   /** Opaque fabric:<hex> GroupOffer / FederationContractInvite. */
   groupShare: {

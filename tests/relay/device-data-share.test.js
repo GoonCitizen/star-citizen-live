@@ -34,17 +34,13 @@ async function startRelay (dir) {
 }
 
 function linkCluster (relay, a, b) {
-  const nonce = crypto.randomBytes(32).toString('hex');
-  relay.identityCluster.ingestCrossSign({
-    localPubkey: a.pubkey,
-    peerPubkey: b.pubkey,
-    nonce
-  });
-  relay.identityCluster.ingestCrossSign({
-    localPubkey: b.pubkey,
-    peerPubkey: a.pubkey,
-    nonce
-  });
+  const session = {
+    sessionId: crypto.randomBytes(24).toString('hex'),
+    nonce: crypto.randomBytes(32).toString('hex'),
+    origin: 'https://relay.goon.vc'
+  };
+  relay.identityCluster.ingestCrossSign(Object.assign({ localPubkey: a.pubkey, peerPubkey: b.pubkey }, session));
+  relay.identityCluster.ingestCrossSign(Object.assign({ localPubkey: b.pubkey, peerPubkey: a.pubkey }, session));
   assert.equal(relay.identityCluster.clusterEquals(a.pubkey, b.pubkey), true);
 }
 

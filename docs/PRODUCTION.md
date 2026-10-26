@@ -15,7 +15,7 @@ A public GoonCitizen relay is **LiveRelay** (`scripts/node.js`) with:
 
 | Plane | Bind | Why |
 |-------|------|-----|
-| **HTTP dashboard + REST + `/sessions`** | loopback (`127.0.0.1:3041`) behind Caddy or Nginx/TLS | D-011 site login lives on LiveRelay. The proxy terminates HTTPS. |
+| **HTTP dashboard + REST + `/sessions`** | loopback (`127.0.0.1:3041`) behind Caddy or Nginx/TLS | Passport sign-in (D-021) lives on LiveRelay. The proxy terminates HTTPS. |
 | **Fabric Peer** | public NIC **`:7777`** (TCP/NOISE) | D-010. `relay.goon.vc:7777` is a default mesh seed next to `hub.fabric.pub:7777`. |
 
 `SC_MODE=server` is required on a public origin: mutating APIs always need a
@@ -32,7 +32,7 @@ must listen on `:7777`.)
 ### Two topologies (do not mix on one `:7777`)
 1. **This tree (recommended for `relay.goon.vc` after this cut).** Caddy or
    Nginx `https://relay.goon.vc` → LiveRelay `127.0.0.1:3041`. Peer on
-   `65.21.231.149:7777`. Site login is LiveRelay `POST /sessions`.
+   `65.21.231.149:7777`. Passport sign-in is LiveRelay `POST /sessions/challenges` + `POST /sessions`.
 2. **Hub-mounted (historical).** Proxy → Fabric Hub HTTP `:8080`, which may
    embed `/services/star-citizen`. Hub owns `/sessions` *and* the Peer. Do not
    also bind LiveRelay’s Peer to the same `:7777`.
@@ -56,8 +56,8 @@ On this host the Fabric TCP port plan is:
 
 Live pm2 on meta (2026-08-14, [downstream.agents.md](https://relay.goon.vc/downstream.agents.md)): Hub ~`.166:7777` HTTP loopback `:8080`; RSI ~`.149:7777` HTTP **bare** `.149:3041`; Sensemaker `:7778` / `:3040`. Nginx still fronts `https://relay.goon.vc`. Preferred RSI HTTP remains loopback behind that proxy — the bare NIC bind is what is running today. Applied one-off patches were removed from `/patches/` ([README](https://relay.goon.vc/patches/README.md)). Set `SC_OFFICERS` before treating the public register as locked down.
 
-## Node: pin 24.15.0 with nvm
-`.nvmrc` / `package.json` `engines` is **Node.js 24.15.0**. A default alias of
+## Node: pin 26.12.1 with nvm
+`.nvmrc` / `package.json` `engines` is **Node.js 26.12.1**. A default alias of
 Node 12 (or anything else) will 502 or crash the process.
 
 ```bash
@@ -67,13 +67,13 @@ curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.3/install.sh | bash
 cd /opt/star-citizen-live   # or wherever this clone lives
 nvm install
 nvm use
-node -v   # must print v24.15.0
+node -v   # must print v26.12.1
 ```
 
 Pin the shell default so `pm2 resurrect` after reboot does not pick up Node 12:
 
 ```bash
-nvm alias default 24.15.0
+nvm alias default 26.12.1
 ```
 
 Install deps **without wiping the lockfile**:
@@ -99,11 +99,11 @@ boot) **or** export them in the pm2 process environment. Never commit
 `FABRIC_XPRV`, Discord tokens, or `settings/local.js`.
 
 ```bash
-nvm use 24.15.0
+nvm use 26.12.1
 export NVM_DIR="$HOME/.nvm"
-# interpreter MUST be the 24.15 binary — pm2 otherwise uses whatever `node`
+# interpreter MUST be the 26.12 binary — pm2 otherwise uses whatever `node`
 # was on PATH when the daemon started (often the distro Node).
-NODE_BIN="$(nvm which 24.15.0)"
+NODE_BIN="$(nvm which 26.12.1)"
 cp deploy/env.relay.goon.vc.example .env
 # edit .env: FABRIC_XPRV, SC_OFFICERS, Discord, …
 
@@ -197,8 +197,10 @@ sudo certbot --nginx -d relay.goon.vc
 sudo nginx -t && sudo systemctl reload nginx
 ```
 
-Keep `proxy_set_header Host $host` and `X-Forwarded-Proto` so `POST /sessions`
-sees `https://relay.goon.vc`. WebSocket `Upgrade` headers are in the example for
+Keep `proxy_set_header Host $host` and `X-Forwarded-Proto`. Passport sign-in
+does not read them: its origin is pinned from `FABRIC_PUBLIC_HOST`
+(`https://relay.goon.vc`), so set that, and a browser on any other `Origin`
+gets 403. WebSocket `Upgrade` headers are in the example for
 long-lived dashboard sockets; they do not carry Fabric Peer frames.
 
 Optional static files (`/downstream.agents.md`, `/patches/`, `/probes/`,
@@ -238,10 +240,10 @@ upload. Tighten if you do not need large `POST …/documents`.
 ```bash
 # HTTP (loopback — what Caddy / Nginx hits)
 curl -sS -D- http://127.0.0.1:3041/services/star-citizen | head
-curl -sS -X POST http://127.0.0.1:3041/sessions \
+# A Passport challenge for the pinned public origin (403 for any other Origin):
+curl -sS -X POST http://127.0.0.1:3041/sessions/challenges \
   -H 'Content-Type: application/json' -H 'Accept: application/json' \
-  -H 'Origin: https://relay.goon.vc' \
-  -d '{"origin":"https://relay.goon.vc"}'
+  -H 'Origin: https://relay.goon.vc' -d '{}'
 
 # Public HTTPS
 curl -sS https://relay.goon.vc/services/star-citizen
@@ -294,8 +296,8 @@ GitHub’s published keys; do not disable `StrictHostKeyChecking` globally.
 
 ## What not to do
 
-- `nvm use default` when default is not 24.15.0
-- `pm2 start scripts/node.js` without `--interpreter "$(nvm which 24.15.0)"`
+- `nvm use default` when default is not 26.12.1
+- `pm2 start scripts/node.js` without `--interpreter "$(nvm which 26.12.1)"`
 - `npm run report:install` (wipes lockfile)
 - `SC_MODE=server` **and** `SC_FABRIC=0` on a host advertised as
   `relay.goon.vc:7777`

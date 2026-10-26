@@ -26,12 +26,12 @@ const identityLib = require('./functions/identity');
 const identityStore = require('./functions/identityStore');
 const settingsStore = require('./functions/settingsStore');
 const { storeRoot, registerPath } = require('./functions/storePaths');
-const { FABRIC_PROTOCOL, parseFabricLoginUrl } = require('./functions/fabricProtocolLogin');
 const { parseFabricDeviceLinkUrl } = require('./functions/fabricDeviceLinkProtocol');
-const {
-  fetchPendingLoginSession,
-  completeClientSignedLogin
-} = require('./functions/fabricLoginClient');
+const { signInToRelay } = require('./functions/fabricLoginClient');
+const { assertAllowedFabricHub } = require('./functions/fabricHubAllowlist');
+
+/** URL scheme for fabric://link device links and opaque fabric: shares. */
+const FABRIC_PROTOCOL = 'fabric';
 const {
   fetchPendingDeviceLink,
   completeDeviceLinkAsResponder
@@ -65,15 +65,27 @@ let activePort = null;
 let isQuitting = false;
 /** Decrypted identity, held in main-process memory only while unlocked. */
 let unlockedIdentity = null;
-/** Pending fabric://login prompt for the renderer (or queued before window ready). */
-let pendingFabricLoginPrompt = null;
-/** In-flight login prompts keyed by sessionId (message retained for sign). */
-const fabricLoginBySession = new Map();
+/** Pending fabric://link prompt for the renderer (or queued before window ready). */
+let pendingDeviceLinkPrompt = null;
+/** In-flight device-link prompts keyed by sessionId. */
+const deviceLinkBySession = new Map();
 /** Pending opaque fabric: group share prompt. */
 let pendingGroupSharePrompt = null;
 
-const startHidden = process.argv.includes('--hidden') ||
-  process.argv.includes('--open-as-hidden');
+let startHiddenCached = null;
+/** Tray-only start: `--hidden` (Windows / Linux login items) or a macOS login launch. */
+function startHidden () {
+  if (startHiddenCached === null) {
+    let openedAtLogin = false;
+    try {
+      openedAtLogin = !!app.getLoginItemSettings().wasOpenedAtLogin;
+    } catch (_) {}
+    startHiddenCached = process.argv.includes('--hidden') ||
+      process.argv.includes('--open-as-hidden') ||
+      openedAtLogin;
+  }
+  return startHiddenCached;
+}
 
 const gotLock = app.requestSingleInstanceLock();
 if (!gotLock) {
@@ -202,7 +214,8 @@ function buildRelaySettings (port) {
     // not the repo tree — survives restarts and is the Analyze default.
     historyFile: path.join(appStoreRoot, 'history.json'),
     cursorsFile: path.join(appStoreRoot, 'log-cursors.json'),
-    store: appStore // shared, already-started Fabric Store
+    store: appStore, // shared, already-started Fabric Store
+    fabricSignApprover: approveFabricSignRequest
   };
 }
 
@@ -267,6 +280,31 @@ function showMainWindow () {
   if (process.platform === 'darwin' && app.dock) app.dock.show();
 }
 
+/**
+ * Native approval for a Passport sign-in or device link (local signer).
+ * Lives in the main process so no web page — the dashboard included — can approve.
+ * @param {object} prompt `{ kind, origin, purpose, device, expiresAt }`
+ * @returns {Promise<boolean>}
+ */
+async function approveFabricSignRequest (prompt = {}) {
+  const { fabricSignApprovalDialog } = require('./functions/fabricSignApprovalDialog');
+  const ms = Math.max(1000, Math.min(2 * 60 * 1000, Number(prompt.expiresAt || 0) - Date.now()));
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), ms);
+  try {
+    const options = Object.assign(fabricSignApprovalDialog(prompt, BRAND_NAME), { signal: controller.signal });
+    const parent = mainWindow && !mainWindow.isDestroyed() && mainWindow.isVisible() ? mainWindow : null;
+    const { response } = parent
+      ? await dialog.showMessageBox(parent, options)
+      : await dialog.showMessageBox(options);
+    return !controller.signal.aborted && response === 0;
+  } catch (_) {
+    return false;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 function hideMainWindow () {
   if (!mainWindow) return;
   mainWindow.hide();
@@ -287,6 +325,16 @@ function openAtLoginEnabled () {
   }
 }
 
+/**
+ * Electron 44 dropped `openAsHidden`: macOS login launches are detected with
+ * `wasOpenedAtLogin` (see `startHidden`), and `path` is only passed off macOS.
+ */
+function loginItemSettings (enable) {
+  const out = { openAtLogin: enable, args: enable ? ['--hidden'] : [] };
+  if (process.platform !== 'darwin') out.path = process.execPath;
+  return out;
+}
+
 /** Enable launch at OS login for installed builds (and opt-in via settings). */
 function configureAutoLaunch () {
   const persisted = settingsStore.loadSettings(appStore); // {} until the store opens
@@ -295,12 +343,7 @@ function configureAutoLaunch () {
   const enable = forceOn || (!forceOff && app.isPackaged);
 
   try {
-    app.setLoginItemSettings({
-      openAtLogin: enable,
-      openAsHidden: true,
-      path: process.execPath,
-      args: enable ? ['--hidden'] : []
-    });
+    app.setLoginItemSettings(loginItemSettings(enable));
     console.log('[ELECTRON]', '[STATUS]', `Open at login: ${enable ? 'on' : 'off'}`);
   } catch (error) {
     console.warn('[ELECTRON]', '[WARNING]', 'Could not set login item:', error.message || error);
@@ -309,12 +352,7 @@ function configureAutoLaunch () {
 
 function setOpenAtLogin (enabled) {
   try {
-    app.setLoginItemSettings({
-      openAtLogin: !!enabled,
-      openAsHidden: true,
-      path: process.execPath,
-      args: enabled ? ['--hidden'] : []
-    });
+    app.setLoginItemSettings(loginItemSettings(!!enabled));
   } catch (error) {
     console.warn('[ELECTRON]', '[WARNING]', 'Could not update login item:', error.message || error);
   }
@@ -409,7 +447,7 @@ function createWindow (port) {
   mainWindow.once('ready-to-show', () => {
     mainWindow.setTitle(BRAND_NAME);
     mainWindow.setMenuBarVisibility(false);
-    if (!startHidden) {
+    if (!startHidden()) {
       mainWindow.show();
       if (isDev) mainWindow.focus();
     } else {
@@ -420,7 +458,7 @@ function createWindow (port) {
 
   // If the page never becomes ready, still show unless we intentionally hid.
   setTimeout(() => {
-    if (mainWindow && !mainWindow.isVisible() && !startHidden) {
+    if (mainWindow && !mainWindow.isVisible() && !startHidden()) {
       mainWindow.show();
     }
   }, 2500);
@@ -681,34 +719,34 @@ function registerFabricProtocol () {
   }
 }
 
-function pruneFabricLoginPrompts () {
-  for (const [id, p] of fabricLoginBySession) {
-    if (isDeviceLinkPromptExpired(p)) fabricLoginBySession.delete(id);
+function pruneDeviceLinkPrompts () {
+  for (const [id, p] of deviceLinkBySession) {
+    if (isDeviceLinkPromptExpired(p)) deviceLinkBySession.delete(id);
   }
-  if (pendingFabricLoginPrompt && isDeviceLinkPromptExpired(pendingFabricLoginPrompt)) {
-    pendingFabricLoginPrompt = null;
+  if (pendingDeviceLinkPrompt && isDeviceLinkPromptExpired(pendingDeviceLinkPrompt)) {
+    pendingDeviceLinkPrompt = null;
   }
 }
 
-function deliverFabricLoginPrompt (payload) {
+function deliverDeviceLinkPrompt (payload) {
   if (!payload) return;
   stampCreatedAt(payload);
-  pruneFabricLoginPrompts();
+  pruneDeviceLinkPrompts();
   if (payload.kind === 'device-link') {
-    for (const [id, p] of fabricLoginBySession) {
+    for (const [id, p] of deviceLinkBySession) {
       if (p && p.kind === 'device-link' && String(id) !== String(payload.sessionId)) {
-        fabricLoginBySession.delete(id);
+        deviceLinkBySession.delete(id);
       }
     }
   }
-  pendingFabricLoginPrompt = payload;
-  fabricLoginBySession.set(String(payload.sessionId), payload);
+  pendingDeviceLinkPrompt = payload;
+  deviceLinkBySession.set(String(payload.sessionId), payload);
   showMainWindow();
   const w = mainWindow && !mainWindow.isDestroyed() ? mainWindow : null;
   if (w && w.webContents) {
     const send = () => {
       if (!mainWindow || mainWindow.isDestroyed()) return;
-      mainWindow.webContents.send('fabric-login-prompt', payload);
+      mainWindow.webContents.send('device-link-prompt', payload);
     };
     // Avoid dropping the IPC if the dashboard has not finished loading yet.
     if (w.webContents.isLoadingMainFrame && w.webContents.isLoadingMainFrame()) {
@@ -735,7 +773,7 @@ function mergeLinkedDeviceLocal (entry) {
 }
 
 /**
- * Handle fabric://login, fabric://link, or opaque fabric: group shares.
+ * Handle fabric://link or opaque fabric: group shares.
  */
 async function handleFabricProtocolUrl (urlStr) {
   const linkParsed = parseFabricDeviceLinkUrl(urlStr);
@@ -743,42 +781,7 @@ async function handleFabricProtocolUrl (urlStr) {
     await handleFabricDeviceLinkUrl(linkParsed);
     return;
   }
-  const parsed = parseFabricLoginUrl(urlStr);
-  if (parsed.ok) {
-    const { sessionId, hubBase } = parsed;
-    try {
-      const pending = await fetchPendingLoginSession(hubBase, sessionId);
-      if (!pending.ok) {
-        console.error('[ELECTRON]', '[ERROR]', 'fabric login session:', pending.error);
-        deliverFabricLoginPrompt({
-          kind: 'login',
-          sessionId,
-          hubBase,
-          origin: hubBase,
-          message: '',
-          nonce: '',
-          identityLocked: !unlockedIdentity,
-          error: pending.error
-        });
-        return;
-      }
-      deliverFabricLoginPrompt({
-        kind: 'login',
-        sessionId,
-        hubBase,
-        origin: pending.origin || hubBase,
-        message: pending.message,
-        nonce: pending.nonce || '',
-        identityLocked: !unlockedIdentity
-      });
-      console.log('[ELECTRON]', '[STATUS]', 'fabric login prompt delivered:', sessionId.slice(0, 12) + '…');
-    } catch (e) {
-      console.error('[ELECTRON]', '[ERROR]', 'fabric login:', e && e.message ? e.message : e);
-    }
-    return;
-  }
-
-  // Opaque AMP Message: fabric:<hex|base64>
+  // Opaque AMP Message: fabric:<frame>
   try {
     const {
       parseOpaqueFabricMessage,
@@ -790,9 +793,8 @@ async function handleFabricProtocolUrl (urlStr) {
       if (classified.kind === 'GroupOffer' || classified.kind === 'FederationContractInvite' || classified.kind === 'GroupPublish' || classified.kind === 'MissionBroadcast') {
         deliverGroupSharePrompt({
           kind: classified.kind,
-          protocolUrl: urlStr.startsWith('fabric:') ? urlStr.trim() : ('fabric:' + opaque.hex),
+          protocolUrl: opaque.protocolUrl,
           messageHex: opaque.hex,
-          messageBase64: opaque.base64 || null,
           contractId: classified.contractId,
           groupId: classified.groupId,
           missionId: classified.missionId || null,
@@ -815,7 +817,7 @@ async function handleFabricProtocolUrl (urlStr) {
     console.warn('[ELECTRON]', '[WARNING]', 'fabric: opaque parse:', e && e.message ? e.message : e);
   }
 
-  console.warn('[ELECTRON]', '[WARNING]', 'fabric: url ignored:', parsed.error || linkParsed.error);
+  console.warn('[ELECTRON]', '[WARNING]', 'fabric: url ignored:', linkParsed.error);
 }
 
 function deliverGroupSharePrompt (payload) {
@@ -845,7 +847,7 @@ async function handleFabricDeviceLinkUrl (parsed) {
     const pending = await fetchPendingDeviceLink(hubBase, sessionId);
     if (!pending.ok) {
       console.error('[ELECTRON]', '[ERROR]', 'fabric device-link session:', pending.error);
-      deliverFabricLoginPrompt({
+      deliverDeviceLinkPrompt({
         kind: 'device-link',
         sessionId,
         hubBase,
@@ -858,7 +860,7 @@ async function handleFabricDeviceLinkUrl (parsed) {
       return;
     }
     if (pending.status !== 'pending') {
-      deliverFabricLoginPrompt({
+      deliverDeviceLinkPrompt({
         kind: 'device-link',
         sessionId,
         hubBase,
@@ -872,14 +874,15 @@ async function handleFabricDeviceLinkUrl (parsed) {
       });
       return;
     }
-    deliverFabricLoginPrompt({
+    deliverDeviceLinkPrompt({
       kind: 'device-link',
       sessionId,
       hubBase,
-      origin: pending.origin || hubBase,
+      origin: pending.origin,
       label: pending.label || '',
       nonce: pending.nonce || '',
-      initiator: pending.initiator || null,
+      initiator: pending.initiator,
+      fingerprint: pending.fingerprint,
       identityLocked: !unlockedIdentity
     });
     console.log('[ELECTRON]', '[STATUS]', 'fabric device-link prompt delivered:', sessionId.slice(0, 12) + '…');
@@ -958,11 +961,11 @@ if (gotLock) {
   });
 }
 
-ipcMain.handle('fabric-login:pull-pending', () => {
-  pruneFabricLoginPrompts();
-  const p = pendingFabricLoginPrompt;
+ipcMain.handle('device-link:pull-pending', () => {
+  pruneDeviceLinkPrompts();
+  const p = pendingDeviceLinkPrompt;
   if (p && isDeviceLinkPromptExpired(p)) {
-    pendingFabricLoginPrompt = null;
+    pendingDeviceLinkPrompt = null;
     return null;
   }
   return p || null;
@@ -979,16 +982,16 @@ ipcMain.handle('fabric-group-share:resolve', async (_e, { dismiss, approve } = {
   return { ok: true };
 });
 
-ipcMain.handle('fabric-login:resolve', async (_e, { approve, sessionId } = {}) => {
+ipcMain.handle('device-link:resolve', async (_e, { approve, sessionId } = {}) => {
   const sid = sessionId != null ? String(sessionId).trim() : '';
-  const prompt = (sid && fabricLoginBySession.get(sid)) || pendingFabricLoginPrompt;
+  const prompt = (sid && deviceLinkBySession.get(sid)) || pendingDeviceLinkPrompt;
   if (!prompt || !prompt.sessionId) return { error: 'No pending request.' };
   if (sid && String(prompt.sessionId) !== sid) return { error: 'Session mismatch.' };
 
   const clearPrompt = () => {
-    fabricLoginBySession.delete(String(prompt.sessionId));
-    if (pendingFabricLoginPrompt && String(pendingFabricLoginPrompt.sessionId) === String(prompt.sessionId)) {
-      pendingFabricLoginPrompt = null;
+    deviceLinkBySession.delete(String(prompt.sessionId));
+    if (pendingDeviceLinkPrompt && String(pendingDeviceLinkPrompt.sessionId) === String(prompt.sessionId)) {
+      pendingDeviceLinkPrompt = null;
     }
   };
 
@@ -1015,29 +1018,30 @@ ipcMain.handle('fabric-login:resolve', async (_e, { approve, sessionId } = {}) =
       prompt.hubBase,
       {
         sessionId: prompt.sessionId,
-        status: 'pending',
         nonce: prompt.nonce,
         label: prompt.label,
+        origin: prompt.origin,
         initiator: prompt.initiator
       }
     );
     if (!result.ok) return { error: result.error || 'Device link failed.' };
-    const peerPk = peerPubkeyFromParty(prompt.initiator) || result.peerPubkeyHex;
     mergeLinkedDeviceLocal({
       kind: 'device-link',
-      peerFabricId: result.peerFabricId || (prompt.initiator && prompt.initiator.id),
-      peerXpub: result.peerXpub || (prompt.initiator && prompt.initiator.xpub),
-      peerPubkey: peerPk,
-      nonce: prompt.nonce || null,
-      label: result.label || prompt.label || 'Linked device',
-      hubOrigin: prompt.origin || prompt.hubBase,
+      peerFabricId: result.peerFabricId,
+      peerXpub: result.peerXpub,
+      peerPubkey: result.peerPubkeyHex,
+      sessionId: result.sessionId,
+      nonce: result.nonce,
+      label: result.label || 'Linked device',
+      hubOrigin: result.origin,
       role: 'responder'
     });
-    if (starCitizenService && peerPk && prompt.nonce &&
-      typeof starCitizenService.publishLocalIdentityCrossSign === 'function') {
+    if (starCitizenService && typeof starCitizenService.publishLocalIdentityCrossSign === 'function') {
       void starCitizenService.publishLocalIdentityCrossSign({
-        peerPubkey: peerPk,
-        nonce: prompt.nonce
+        peerPubkey: result.peerPubkeyHex,
+        nonce: result.nonce,
+        sessionId: result.sessionId,
+        origin: result.origin
       }).catch((e) => {
         console.warn('[ELECTRON]', '[WARNING]', 'IdentityCrossSign:', e && e.message ? e.message : e);
       });
@@ -1046,22 +1050,20 @@ ipcMain.handle('fabric-login:resolve', async (_e, { approve, sessionId } = {}) =
     clearPrompt();
     return { ok: true, approved: true, kind: 'device-link', status: result.status };
   }
-
-  if (!prompt.message) {
-    return { error: prompt.error || 'No challenge message to sign.' };
-  }
-
-  const result = await completeClientSignedLogin(
-    unlockedIdentity,
-    prompt.hubBase,
-    prompt.sessionId,
-    prompt.message
-  );
-  if (!result.ok) return { error: result.error || 'Sign-in failed.' };
-
-  armIdentityAutoLock();
   clearPrompt();
-  return { ok: true, approved: true, identity: result.identity, signer: result.signer };
+  return { error: 'Unknown request.' };
+});
+
+// Passport v2 native sign-in to an allowlisted relay / Hub. The Bearer token
+// goes back to the renderer's memory only; nothing stores it.
+ipcMain.handle('identity:sign-in-relay', async (_e, { origin } = {}) => {
+  if (!unlockedIdentity) return { error: 'Identity is locked — unlock it, then sign in.' };
+  const allowed = assertAllowedFabricHub(String(origin || ''));
+  if (!allowed.ok) return { error: allowed.error || 'That relay is not allowlisted.' };
+  const result = await signInToRelay(unlockedIdentity, allowed.hubBase);
+  if (!result.ok) return { error: result.error || 'Sign-in failed.' };
+  armIdentityAutoLock();
+  return { ok: true, token: result.token, session: result.session };
 });
 
 // --- Identity (first-run onboarding + Hub-style key safety) ---------------
@@ -1113,13 +1115,7 @@ function applyIdentityToService () {
     });
     if (typeof starCitizenService.setLocalSigner === 'function') {
       starCitizenService.setLocalSigner(unlockedIdentity
-        ? (message) => {
-          const key = identityLib.keyFromIdentity(unlockedIdentity);
-          return {
-            pubkey: key.pubkey,
-            signature: Buffer.from(key.signSchnorr(Buffer.from(message))).toString('hex')
-          };
-        }
+        ? (proposal) => require('./functions/groupChangeProposal').signProposalVote(unlockedIdentity, proposal)
         : null);
     }
   }
@@ -1192,40 +1188,54 @@ function setUnlockedIdentity (identity) {
 
 function identitySummary () {
   const blob = identityStore.loadEncrypted(identityDir());
-  return {
+  const vault = identityLib.identityBlobSummary(blob);
+  return Object.assign({
     exists: !!blob,
-    pubkey: blob ? blob.pubkey : null,
-    xpub: blob ? blob.xpub : null,
-    createdAt: blob ? blob.createdAt : null,
-    unlocked: !!unlockedIdentity,
+    legacy: !!blob && !vault,
+    pubkey: null,
+    account: null,
+    network: null,
+    label: null,
+    wallet: null,
+    cosigner: null,
+    accounts: [],
+    createdAt: null
+  }, vault || {}, {
+    unlocked: !!unlockedIdentity && !!vault,
     autoLockMinutes: identityAutoLockMinutes(),
     pendingDeviceLinkOffer: compactPendingOffer(pendingDeviceLinkOffer)
-  };
+  });
 }
 
 ipcMain.handle('identity:get', () => identitySummary());
 
-ipcMain.handle('identity:create', (_e, { password } = {}) => {
+ipcMain.handle('identity:create', (_e, { password, passphrase, account, network } = {}) => {
   if (identityStore.hasIdentity(identityDir())) {
     return { error: 'An identity already exists. Restore or forget it first.' };
   }
   if (!password || password.length < 8) return { error: 'Password must be at least 8 characters.' };
   try {
-    const identity = identityLib.createIdentity();
+    const identity = identityLib.createIdentity({ passphrase, account, network });
     const blob = identityLib.encryptIdentity(identity, password);
     identityStore.saveEncrypted(identityDir(), blob);
-    setUnlockedIdentity(identity);
-    // Mnemonic is returned exactly once so the UI can show the backup step.
-    return { pubkey: identity.pubkey, mnemonic: identity.mnemonic };
+    const { mnemonic, ...unlocked } = identity;
+    setUnlockedIdentity(unlocked);
+    // The seed phrase is returned exactly once so the UI can show the backup step.
+    return { pubkey: identity.pubkey, mnemonic };
   } catch (error) {
     return { error: error.message || String(error) };
   }
 });
 
-ipcMain.handle('identity:restore', (_e, { mnemonic, xprv, password } = {}) => {
+ipcMain.handle('identity:restore', (_e, { mnemonic, passphrase, xprv, password, account, network } = {}) => {
   if (!password || password.length < 8) return { error: 'Password must be at least 8 characters.' };
+  if (identityStore.hasIdentity(identityDir())) {
+    return { error: 'An identity already exists. Forget it first.' };
+  }
   try {
-    const identity = identityLib.restoreIdentity(xprv ? { xprv } : { mnemonic });
+    const identity = identityLib.restoreIdentity(xprv
+      ? { xprv, account, network }
+      : { mnemonic, passphrase, account, network });
     const blob = identityLib.encryptIdentity(identity, password);
     identityStore.saveEncrypted(identityDir(), blob);
     setUnlockedIdentity(identity);
@@ -1258,69 +1268,60 @@ ipcMain.handle('identity:sign-envelope', (_e, payload) => {
   }
 });
 
-// Raw BIP340 Schnorr over message bytes — used for k-of-n authority
-// acceptances (mission completion approval / group decisions), where every
-// signer signs the same canonical message.
-ipcMain.handle('identity:sign-message', (_e, { message } = {}) => {
-  if (!unlockedIdentity) return { error: 'Identity is locked.' };
-  if (typeof message !== 'string' || !message.length) return { error: 'message string required' };
-  try {
-    const key = identityLib.keyFromIdentity(unlockedIdentity);
-    const signature = Buffer.from(key.signSchnorr(Buffer.from(message))).toString('hex');
-    armIdentityAutoLock();
-    return { pubkey: key.pubkey, signature };
-  } catch (error) {
-    return { error: error.message || String(error) };
-  }
-});
-
 ipcMain.handle('identity:lock', () => {
   lockIdentity();
   return { unlocked: false };
 });
 
-// Reveal the recovery phrase / xprv — always re-verifies the password, even
-// while unlocked, so a walk-up attacker at an unlocked app cannot exfiltrate
-// the seed (mirrors the Hub's reveal discipline).
-ipcMain.handle('identity:reveal', (_e, { password } = {}) => {
+// Switch account / network. Locked, only pairs already in the vault can be
+// picked; unlocked, any pair is derived and cached.
+ipcMain.handle('identity:select-account', (_e, { account, network, label } = {}) => {
   const blob = identityStore.loadEncrypted(identityDir());
   if (!blob) return { error: 'No identity found.' };
   try {
-    const identity = identityLib.decryptIdentity(blob, password);
-    return { mnemonic: identity.mnemonic, xprv: identity.xprv, pubkey: identity.pubkey };
+    const result = identityLib.selectIdentityAccount(blob, { account, network, label }, unlockedIdentity);
+    identityStore.saveEncrypted(identityDir(), result.blob);
+    if (result.identity) setUnlockedIdentity(result.identity);
+    else broadcastIdentityChanged();
+    return identitySummary();
   } catch (error) {
-    return { error: 'Incorrect password.' };
+    if (error && error.code === 'FABRIC_ACCOUNT_LOCKED') return { error: 'Unlock to add this account.' };
+    return { error: error.message || String(error) };
   }
 });
 
-// Export the at-rest encrypted blob as a portable backup file. Password is
-// re-verified first; the file itself stays sealed with the same password.
+// Export the sealed vault as a portable backup file. Password is re-verified
+// first; the file holds only the master xprv sealed with that password.
 ipcMain.handle('identity:export-backup', (_e, { password } = {}) => {
   const blob = identityStore.loadEncrypted(identityDir());
   if (!blob) return { error: 'No identity found.' };
   try {
     identityLib.decryptIdentity(blob, password); // verify only
   } catch (error) {
-    return { error: 'Incorrect password.' };
+    return { error: error.message === identityLib.LEGACY_BLOB_ERROR ? error.message : 'Incorrect password.' };
   }
+  const summary = identityLib.identityBlobSummary(blob);
   return {
-    filename: `gooncitizen-identity-${(blob.pubkey || 'backup').slice(0, 8)}.enc.json`,
-    backup: Object.assign({ type: 'gooncitizen-identity-backup' }, blob)
+    filename: `gooncitizen-identity-${((summary && summary.pubkey) || 'backup').slice(0, 8)}.enc.json`,
+    backup: { type: 'gooncitizen-identity-backup', v: 2, createdAt: new Date().toISOString(), vault: blob }
   };
 });
 
-// Import a backup file (the encrypted blob format above). Requires the
-// backup's password; refuses to overwrite an existing identity unless
-// `replace` is set.
+// Import a backup file (the sealed vault above). Requires the backup's
+// password; refuses to overwrite an existing identity unless `replace` is set.
 ipcMain.handle('identity:import-backup', (_e, { backup, password, replace } = {}) => {
-  if (!backup || !backup.ciphertext) return { error: 'Not a GoonCitizen identity backup file.' };
+  const vault = backup && backup.type === 'gooncitizen-identity-backup' ? backup.vault : backup;
+  if (!identityLib.isIdentityVault(vault)) {
+    return { error: backup && (backup.ciphertext || (backup.vault == null && backup.version != null))
+      ? identityLib.LEGACY_BLOB_ERROR
+      : 'Not a GoonCitizen identity backup file.' };
+  }
   if (identityStore.hasIdentity(identityDir()) && !replace) {
     return { error: 'An identity already exists. Check "replace" to overwrite it.' };
   }
   try {
-    const identity = identityLib.decryptIdentity(backup, password);
-    const { type, ...blob } = backup;
-    identityStore.saveEncrypted(identityDir(), blob);
+    const identity = identityLib.decryptIdentity(vault, password);
+    identityStore.saveEncrypted(identityDir(), vault);
     setUnlockedIdentity(identity);
     return { pubkey: identity.pubkey };
   } catch (error) {
@@ -1406,9 +1407,10 @@ async function finishDeviceLinkLinked (res) {
     peerFabricId: res.peerFabricId,
     peerXpub: res.peerXpub,
     peerPubkey: peerPk,
+    sessionId: res.sessionId,
     nonce: res.nonce,
     label: res.label || 'Linked device',
-    hubOrigin: res.hubBase,
+    hubOrigin: res.origin || res.hubBase,
     role: 'initiator'
   });
   clearPendingDeviceLinkOffer();
@@ -1417,7 +1419,9 @@ async function finishDeviceLinkLinked (res) {
     try {
       await starCitizenService.publishLocalIdentityCrossSign({
         peerPubkey: peerPk,
-        nonce: res.nonce
+        nonce: res.nonce,
+        sessionId: res.sessionId,
+        origin: res.origin || res.hubBase
       });
     } catch (e) {
       console.warn('[ELECTRON]', '[WARNING]', 'IdentityCrossSign:', e && e.message ? e.message : e);
@@ -1427,6 +1431,26 @@ async function finishDeviceLinkLinked (res) {
   broadcastIdentityChanged();
 }
 
+/**
+ * A device answered this desktop's add-device code: show its key in a native
+ * dialog, and countersign only when the user confirms it.
+ */
+async function confirmAcceptedDeviceLink (offer, accepted) {
+  const approved = await approveFabricSignRequest({
+    kind: 'device-link-confirm',
+    origin: accepted.origin,
+    purpose: accepted.label,
+    fingerprint: accepted.fingerprint,
+    expiresAt: Date.now() + 2 * 60 * 1000
+  });
+  if (!approved) {
+    await abandonDeviceLinkOffer(offer);
+    return { ok: false, declined: true, error: 'Link declined. Nothing was signed.' };
+  }
+  const { confirmDeviceLinkOffer } = require('./functions/fabricDeviceLinkOffer');
+  return confirmDeviceLinkOffer(unlockedIdentity, offer, accepted.responder && accepted.responder.id);
+}
+
 async function runDeviceLinkTick () {
   if (!unlockedIdentity) return { error: 'Identity is locked' };
   if (!pendingDeviceLinkOffer) return { error: 'no pending device-link offer', expired: true };
@@ -1434,9 +1458,11 @@ async function runDeviceLinkTick () {
   deviceLinkTickBusy = true;
   try {
     const { tickDeviceLinkOffer } = require('./functions/fabricDeviceLinkOffer');
-    const res = await tickDeviceLinkOffer(unlockedIdentity, pendingDeviceLinkOffer);
+    const offer = pendingDeviceLinkOffer;
+    let res = await tickDeviceLinkOffer(unlockedIdentity, offer);
+    if (res.ok && res.status === 'accepted') res = await confirmAcceptedDeviceLink(offer, res);
     if (!res.ok) {
-      if (res.expired || isStaleDeviceLinkError(res)) clearPendingDeviceLinkOffer();
+      if (res.expired || res.declined || isStaleDeviceLinkError(res)) clearPendingDeviceLinkOffer();
       return res;
     }
     if (res.status === 'linked') await finishDeviceLinkLinked(res);
@@ -1518,14 +1544,14 @@ ipcMain.handle('fabric:identity-cluster', (_e, { pubkey } = {}) => {
   return { data: snap, transport: 'fabric' };
 });
 
-ipcMain.handle('fabric:publish-cross-sign', async (_e, { peerPubkey, nonce, type } = {}) => {
+ipcMain.handle('fabric:publish-cross-sign', async (_e, { peerPubkey, nonce, sessionId, origin, type } = {}) => {
   if (!starCitizenService || typeof starCitizenService.publishLocalIdentityCrossSign !== 'function') {
     return { error: 'relay not ready' };
   }
   if (!starCitizenService._identity) return { error: 'Identity is locked' };
   try {
     const data = await starCitizenService.publishLocalIdentityCrossSign(
-      { peerPubkey, nonce },
+      { peerPubkey, nonce, sessionId, origin },
       type || undefined
     );
     return { data, transport: 'fabric' };

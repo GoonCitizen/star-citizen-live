@@ -11,21 +11,10 @@ describe('local @fabric re-exports', () => {
     assert.equal(typeof local.chatTextOf, 'function');
   });
 
-  it('keeps site-login verify on the http pin', () => {
-    const local = require('../../functions/fabricSiteLoginVerify');
-    const pkg = require('@fabric/http/functions/fabricSiteLoginVerify');
-    assert.equal(local, pkg);
-    assert.equal(typeof local.buildLoginMessage, 'function');
-  });
-
-  it('keeps device-link protocol and protocol-login on the http pin', () => {
+  it('keeps the device-link protocol on the http pin', () => {
     assert.equal(
       require('../../functions/fabricDeviceLinkProtocol'),
       require('@fabric/http/functions/fabricDeviceLinkProtocol')
-    );
-    assert.equal(
-      require('../../functions/fabricProtocolLogin'),
-      require('@fabric/http/functions/fabricProtocolLogin')
     );
   });
 
@@ -80,10 +69,7 @@ describe('local @fabric re-exports', () => {
     const core = require('@fabric/core/functions/contractSidechainLocal');
     assert.equal(local.fromCore, true);
     assert.equal(typeof local.storePathsForContract, 'function');
-    assert.equal(
-      local.storePathsForContract,
-      core.storePathsForContract || core.storePathsForLocalContract
-    );
+    assert.equal(local.storePathsForContract, core.storePathsForLocalContract);
   });
 
   it('uses http fabricPeerHost and httpSharedMode when the package is staged', () => {

@@ -11,14 +11,19 @@ const {
   encryptIdentity,
   decryptIdentity,
   signEnvelope,
-  verifyEnvelope
+  verifyEnvelope,
+  identityBlobSummary,
+  selectIdentityAccount,
+  isIdentityVault
 } = require('../../functions/identity');
 
 test('createIdentity produces a mnemonic and compressed pubkey', () => {
   const identity = createIdentity();
   assert.ok(identity.mnemonic, 'has mnemonic');
   assert.ok(identity.mnemonic.split(' ').length >= 12, '>= 12 words');
-  assert.ok(identity.xprv.startsWith('xprv'), 'has xprv');
+  assert.ok(identity.xprv.startsWith('xprv'), 'has the master xprv');
+  assert.strictEqual(identity.account, 0);
+  assert.strictEqual(keyFromIdentity(identity).pubkey, identity.pubkey, 'pubkey is the identity leaf, not the master');
   assert.match(identity.pubkey, /^0[23][0-9a-f]{64}$/, 'compressed pubkey hex');
   assert.strictEqual(identity.id, identity.pubkey, 'actor id is the pubkey');
 });
@@ -31,22 +36,44 @@ test('restoreIdentity is deterministic from mnemonic and xprv', () => {
   assert.strictEqual(fromXprv.pubkey, original.pubkey);
 });
 
+test('the derivation password (BIP39 passphrase) gives another master', () => {
+  const original = createIdentity({ passphrase: 'derive-me' });
+  assert.strictEqual(restoreIdentity({ mnemonic: original.mnemonic, passphrase: 'derive-me' }).pubkey, original.pubkey);
+  assert.notStrictEqual(restoreIdentity({ mnemonic: original.mnemonic }).pubkey, original.pubkey);
+});
+
+test('accounts and networks derive different identities from one master', () => {
+  const original = createIdentity({ network: 'regtest' });
+  const a1 = restoreIdentity({ xprv: original.xprv, account: 1, network: 'regtest' });
+  const main = restoreIdentity({ xprv: original.xprv, account: 0, network: 'mainnet' });
+  assert.notStrictEqual(a1.pubkey, original.pubkey);
+  assert.notStrictEqual(main.pubkey, original.pubkey);
+  assert.strictEqual(a1.xprv, original.xprv, 'the master is the same');
+});
+
 test('restoreIdentity rejects empty input', () => {
-  assert.throws(() => restoreIdentity({}), /mnemonic, seed hex, or xprv/);
+  assert.throws(() => restoreIdentity({}), /seed phrase, seed hex, or master xprv/);
 });
 
 test('encrypt/decrypt round-trips with the right password only', () => {
-  const identity = createIdentity();
+  const identity = createIdentity({ network: 'regtest' });
   const blob = encryptIdentity(identity, 'correct horse battery staple');
 
+  assert.ok(isIdentityVault(blob));
   assert.ok(!JSON.stringify(blob).includes(identity.xprv), 'xprv not in plaintext');
-  assert.ok(!JSON.stringify(blob).includes(identity.mnemonic), 'mnemonic not in plaintext');
-  assert.strictEqual(blob.pubkey, identity.pubkey, 'pubkey stays readable');
+  for (const word of new Set(identity.mnemonic.split(' '))) {
+    if (word.length > 5) assert.ok(!JSON.stringify(blob).includes(`"${word}`), 'no seed words stored');
+  }
+  const summary = identityBlobSummary(blob);
+  assert.strictEqual(summary.pubkey, identity.pubkey, 'pubkey stays readable');
+  assert.strictEqual(summary.network, 'regtest', 'network is kept in the record');
+  assert.strictEqual(summary.account, 0);
 
   const decrypted = decryptIdentity(blob, 'correct horse battery staple');
   assert.strictEqual(decrypted.xprv, identity.xprv);
-  assert.strictEqual(decrypted.mnemonic, identity.mnemonic);
+  assert.strictEqual(decrypted.mnemonic, undefined, 'the seed phrase is not kept');
   assert.strictEqual(decrypted.pubkey, identity.pubkey);
+  assert.strictEqual(decrypted.network, 'regtest');
 
   assert.throws(() => decryptIdentity(blob, 'wrong password'), /Could not decrypt/);
 });
@@ -84,16 +111,33 @@ test('keyFromIdentity signs consistently with the original key', () => {
   assert.strictEqual(key.pubkey, identity.pubkey);
 });
 
-// Backup portability: the exported backup file is the at-rest blob plus a
-// `type` marker; importing strips the marker and decrypts with the password.
+test('selectIdentityAccount: locked switches only to cached pairs, unlocked derives new ones', () => {
+  const identity = createIdentity({ network: 'regtest' });
+  const blob = encryptIdentity(identity, 'switch password 1');
+  assert.throws(() => selectIdentityAccount(blob, { account: 2, network: 'regtest' }, null), (e) => e.code === 'FABRIC_ACCOUNT_LOCKED');
+  const added = selectIdentityAccount(blob, { account: 2, network: 'regtest' }, identity);
+  assert.ok(added.identity);
+  assert.notStrictEqual(added.identity.pubkey, identity.pubkey);
+  assert.strictEqual(identityBlobSummary(added.blob).account, 2);
+  const back = selectIdentityAccount(added.blob, { account: 0, network: 'regtest' }, null);
+  assert.strictEqual(back.identity, null);
+  assert.strictEqual(identityBlobSummary(back.blob).pubkey, identity.pubkey);
+  const again = selectIdentityAccount(back.blob, { account: 2, network: 'regtest' }, null);
+  assert.strictEqual(identityBlobSummary(again.blob).pubkey, added.identity.pubkey, 'a cached pair switches while locked');
+});
+
+// Backup portability: the exported backup file wraps the sealed vault; importing
+// unwraps it and decrypts with the password.
 test('encrypted backup file round-trips through export/import shape', () => {
   const identity = createIdentity();
   const password = 'orbital drop shock trooper';
   const blob = encryptIdentity(identity, password);
 
-  const backupFile = Object.assign({ type: 'gooncitizen-identity-backup' }, blob);
-  const { type, ...restored } = JSON.parse(JSON.stringify(backupFile));
-  assert.strictEqual(type, 'gooncitizen-identity-backup');
+  const backupFile = { type: 'gooncitizen-identity-backup', v: 2, vault: blob };
+  const parsed = JSON.parse(JSON.stringify(backupFile));
+  assert.strictEqual(parsed.type, 'gooncitizen-identity-backup');
+  assert.ok(!JSON.stringify(parsed).includes(identity.xprv));
+  const restored = parsed.vault;
 
   const decrypted = decryptIdentity(restored, password);
   assert.strictEqual(decrypted.pubkey, identity.pubkey);
@@ -110,15 +154,20 @@ test('identityStore refuses to persist plaintext secrets', () => {
 
   const identity = createIdentity();
   assert.throws(() => identityStore.saveEncrypted(dir, identity), /not an encrypted identity blob/);
+  const blob = encryptIdentity(identity, 'a strong password here');
   assert.throws(
-    () => identityStore.saveEncrypted(dir, Object.assign({ ciphertext: 'aa' }, { xprv: identity.xprv })),
+    () => identityStore.saveEncrypted(dir, Object.assign({}, blob, { xprv: identity.xprv })),
+    /plaintext secrets/
+  );
+  assert.throws(
+    () => identityStore.saveEncrypted(dir, Object.assign({}, blob, { mnemonic: identity.mnemonic })),
     /plaintext secrets/
   );
 
-  const blob = encryptIdentity(identity, 'a strong password here');
   const file = identityStore.saveEncrypted(dir, blob);
   assert.ok(fs.existsSync(file));
+  assert.strictEqual((fs.statSync(file).mode & 0o777).toString(8), '600');
   const loaded = identityStore.loadEncrypted(dir);
-  assert.strictEqual(loaded.pubkey, identity.pubkey);
+  assert.strictEqual(identityBlobSummary(loaded).pubkey, identity.pubkey);
   fs.rmSync(dir, { recursive: true, force: true });
 });

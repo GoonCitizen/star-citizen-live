@@ -9,7 +9,8 @@
  */
 
 const commit = require('./contractMessageCommit');
-const { pubkeyXOnly } = require('./groupChatSeal');
+const { MESSAGE_RECEIPT: RECEIPT_TAG } = require('@fabric/core/functions/signingTags');
+const { pubkeyXOnly } = require('@fabric/core/functions/pubkey');
 
 /**
  * BIP340 hex signature over the MessageReceipt id (wire hash).
@@ -22,7 +23,7 @@ function signReceiptSig (signerKey, messageId) {
     throw new Error('signerKey with signSchnorr required for receiptSig');
   }
   const msg = commit.receiptSigningMessage(messageId);
-  return Buffer.from(signerKey.signSchnorr(msg)).toString('hex');
+  return Buffer.from(signerKey.signSchnorr(msg, RECEIPT_TAG)).toString('hex');
 }
 
 /**

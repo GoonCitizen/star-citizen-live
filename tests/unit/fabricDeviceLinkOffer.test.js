@@ -11,9 +11,55 @@ const {
   offerPassportDeviceLink,
   startDeviceLinkOffer,
   tickDeviceLinkOffer,
+  confirmDeviceLinkOffer,
   DEFAULT_DEVICE_LINK_HUB
 } = require('../../functions/fabricDeviceLinkOffer');
-const { buildDeviceLinkOfferMessage } = require('@fabric/http/functions/fabricDeviceLinkMessages');
+const {
+  buildDeviceLinkOfferMessage,
+  buildDeviceLinkMessage,
+  DEVICE_LINK_OFFER_TAG,
+  DEVICE_LINK_TAG
+} = require('@fabric/http/functions/fabricDeviceLinkClient');
+const { buildFabricIdentitySignedPayload } = require('@fabric/core/functions/fabricIdentitySchnorr');
+const { signingIdentity, keyFingerprint } = require('../../functions/fabricDeviceLinkClient');
+
+/**
+ * An initiator offer and the Hub session a responder accepted, signed for real.
+ * @returns {{ offer: object, accepted: object, me: object, peer: object }}
+ */
+function acceptedSession (opts = {}) {
+  const ident = opts.ident || createIdentity();
+  const me = signingIdentity(ident);
+  const peer = signingIdentity(opts.peerIdent || createIdentity());
+  const sessionId = crypto.randomBytes(24).toString('hex');
+  const nonce = crypto.randomBytes(32).toString('hex');
+  const origin = DEFAULT_DEVICE_LINK_HUB;
+  const label = 'GoonCitizen';
+  const linkMessage = buildDeviceLinkMessage(opts.signedSessionId || sessionId, nonce, me.id, peer.id, label, origin);
+  const signed = buildFabricIdentitySignedPayload(peer.key, linkMessage, DEVICE_LINK_TAG);
+  const accepted = {
+    ok: true,
+    status: 'accepted',
+    sessionId,
+    nonce,
+    label,
+    origin,
+    initiator: { id: me.id, xpub: me.xpub, pubkeyHex: me.pubkeyHex },
+    responder: { id: peer.id, xpub: peer.xpub, pubkeyHex: signed.pubkeyHex, signature: signed.signature }
+  };
+  const offer = { sessionId, hubBase: origin, origin, nonce, label, createdAt: Date.now() };
+  return { ident, offer, accepted, me, peer };
+}
+
+function hubFetch (state, calls = []) {
+  return async (url, init) => {
+    calls.push({ url, method: init && init.method, body: init && init.body && JSON.parse(init.body) });
+    if (init && init.method === 'POST') {
+      return { ok: true, status: 200, json: async () => ({ ok: true, status: 'linked', sessionId: state.sessionId }) };
+    }
+    return { ok: true, status: 200, json: async () => state };
+  };
+}
 
 describe('fabricDeviceLinkOffer landing', () => {
   it('builds an HTTPS Passport landing URL on the rendezvous hub', () => {
@@ -72,11 +118,51 @@ describe('fabricDeviceLinkOffer landing', () => {
 });
 
 describe('fabricDeviceLinkOffer initiator', () => {
-  it('POSTs a signed offer to the allowlisted hub', async () => {
+  it('prepares a session, then POSTs the session-bound offer it signed', async () => {
     const ident = createIdentity();
-    let posted = null;
+    const sessionId = 'ee'.repeat(24);
+    const nonce = 'ff'.repeat(32);
+    const posts = [];
     const fetchImpl = async (url, init) => {
-      posted = { url, init };
+      const body = JSON.parse(init.body);
+      posts.push({ url, body });
+      return {
+        ok: true,
+        status: 200,
+        json: async () => (body.signature
+          ? { ok: true, status: 'pending', sessionId, nonce, protocolUrl: 'fabric://link?sessionId=ee&hub=https%3A%2F%2Frelay.goon.vc' }
+          : { ok: true, status: 'awaiting_offer', sessionId, nonce, pollSecret: 'aa'.repeat(32) })
+      };
+    };
+    const res = await startDeviceLinkOffer(ident, { fetchImpl, label: 'GoonCitizen Android' });
+    assert.equal(res.ok, true, res.error);
+    assert.equal(res.hubBase, DEFAULT_DEVICE_LINK_HUB);
+    assert.equal(res.sessionId, sessionId);
+    assert.equal(res.nonce, nonce);
+    assert.ok(res.httpsUrl.includes('#device-link='));
+    assert.equal(posts.length, 2);
+    assert.equal(posts[0].body.signature, undefined);
+    assert.equal(posts[0].body.nonce, undefined);
+    const body = posts[1].body;
+    assert.match(posts[1].url, /\/device-links$/);
+    assert.equal(body.sessionId, sessionId);
+    assert.equal(body.origin, DEFAULT_DEVICE_LINK_HUB);
+    assert.equal(body.label, 'GoonCitizen Android');
+    assert.match(body.signature, /^[a-f0-9]{128}$/i);
+    const offerMessage = buildDeviceLinkOfferMessage(sessionId, nonce, body.identity.id, body.label, body.origin);
+    assert.ok(keyFromIdentity(ident).verifySchnorr(
+      Buffer.from(offerMessage, 'utf8'),
+      Buffer.from(body.signature, 'hex'),
+      DEVICE_LINK_OFFER_TAG
+    ));
+  });
+
+  it('refuses to sign a hub offer it did not build', async () => {
+    const ident = createIdentity();
+    let signedPosts = 0;
+    const fetchImpl = async (url, init) => {
+      const body = JSON.parse(init.body);
+      if (body.signature) signedPosts += 1;
       return {
         ok: true,
         status: 200,
@@ -84,131 +170,88 @@ describe('fabricDeviceLinkOffer initiator', () => {
           ok: true,
           sessionId: 'ee'.repeat(24),
           nonce: 'ff'.repeat(32),
-          protocolUrl: 'fabric://link?sessionId=ee&hub=https%3A%2F%2Frelay.goon.vc'
+          offerMessage: 'fabric:login:something-else'
         })
       };
     };
-    const res = await startDeviceLinkOffer(ident, { fetchImpl, label: 'GoonCitizen Android' });
-    assert.equal(res.ok, true, res.error);
-    assert.equal(res.hubBase, DEFAULT_DEVICE_LINK_HUB);
-    assert.ok(res.httpsUrl.includes('#device-link='));
-    assert.match(posted.url, /\/device-links$/);
-    const body = JSON.parse(posted.init.body);
-    assert.equal(body.origin, DEFAULT_DEVICE_LINK_HUB);
-    assert.equal(body.label, 'GoonCitizen Android');
-    assert.match(body.signature, /^[a-f0-9]{128}$/i);
-    const offerMessage = buildDeviceLinkOfferMessage(
-      body.nonce,
-      body.identity.id,
-      body.label,
-      body.origin
-    );
-    assert.ok(keyFromIdentity(ident).verifySchnorr(
-      Buffer.from(offerMessage, 'utf8'),
-      Buffer.from(body.signature, 'hex')
-    ));
+    const res = await startDeviceLinkOffer(ident, { fetchImpl });
+    assert.equal(res.ok, false);
+    assert.equal(signedPosts, 0);
   });
 
-  it('countersigns when the responder has accepted', async () => {
-    const ident = createIdentity();
-    const sessionId = crypto.randomBytes(24).toString('hex');
-    const nonce = crypto.randomBytes(32).toString('hex');
-    const linkMessage = `fabric:device-link:1:${nonce}:id1a:id1b:GoonCitizen`;
+  it('reports an accepted session with the responder fingerprint and signs nothing', async () => {
+    const { ident, offer, accepted, peer } = acceptedSession();
     const calls = [];
-    const fetchImpl = async (url, init) => {
-      calls.push({ url, method: init && init.method, body: init && init.body });
-      if (init && init.method === 'POST') {
-        return {
-          ok: true,
-          status: 200,
-          json: async () => ({
-            ok: true,
-            status: 'linked',
-            sessionId,
-            responder: { id: 'id1b', xpub: 'xpub1', pubkeyHex: 'ab'.repeat(33) }
-          })
-        };
-      }
-      return {
-        ok: true,
-        status: 200,
-        json: async () => ({
-          ok: true,
-          status: 'accepted',
-          sessionId,
-          nonce,
-          linkMessage,
-          responder: { id: 'id1b', pubkeyHex: 'ab'.repeat(33) }
-        })
-      };
-    };
-    const res = await tickDeviceLinkOffer(ident, {
-      sessionId,
-      hubBase: DEFAULT_DEVICE_LINK_HUB,
-      origin: DEFAULT_DEVICE_LINK_HUB,
-      nonce,
-      label: 'GoonCitizen'
-    }, { fetchImpl });
+    const res = await tickDeviceLinkOffer(ident, offer, { fetchImpl: hubFetch(accepted, calls) });
+    assert.equal(res.ok, true, res.error);
+    assert.equal(res.status, 'accepted');
+    assert.equal(res.responder.id, peer.id);
+    assert.equal(res.fingerprint, keyFingerprint(peer.pubkeyHex));
+    assert.equal(res.origin, DEFAULT_DEVICE_LINK_HUB);
+    assert.equal(calls.some((c) => c.method === 'POST'), false);
+  });
+
+  it('countersigns only after the user confirms that responder', async () => {
+    const { ident, offer, accepted, me, peer } = acceptedSession();
+    const calls = [];
+    const res = await confirmDeviceLinkOffer(ident, offer, peer.id, { fetchImpl: hubFetch(accepted, calls) });
     assert.equal(res.ok, true, res.error);
     assert.equal(res.status, 'linked');
-    assert.equal(res.peerFabricId, 'id1b');
-    assert.equal(res.peerPubkey, 'ab'.repeat(33));
-    assert.equal(calls.some((c) => c.method === 'POST'), true);
+    assert.equal(res.peerFabricId, peer.id);
+    assert.equal(res.peerPubkey, peer.pubkeyHex);
+    assert.equal(res.sessionId, offer.sessionId);
+    assert.equal(res.origin, DEFAULT_DEVICE_LINK_HUB);
+    const post = calls.find((c) => c.method === 'POST');
+    assert.ok(post);
+    assert.equal(post.body.role, 'initiator');
+    const linkMessage = buildDeviceLinkMessage(offer.sessionId, offer.nonce, me.id, peer.id, offer.label, offer.origin);
+    assert.ok(me.key.verifySchnorr(Buffer.from(linkMessage, 'utf8'), Buffer.from(post.body.signature, 'hex'), DEVICE_LINK_TAG));
+    assert.equal(offer.countersigned, peer.id);
+
+    const linked = Object.assign({}, accepted, { status: 'linked' });
+    const after = await tickDeviceLinkOffer(ident, offer, { fetchImpl: hubFetch(linked) });
+    assert.equal(after.status, 'linked');
+    assert.equal(after.peerFabricId, peer.id);
   });
 
-  it('returns peer pubkey when GET already reports linked', async () => {
-    const ident = createIdentity();
-    const sessionId = crypto.randomBytes(24).toString('hex');
-    const nonce = crypto.randomBytes(32).toString('hex');
-    const fetchImpl = async () => ({
-      ok: true,
-      status: 200,
-      json: async () => ({
-        ok: true,
-        status: 'linked',
-        sessionId,
-        nonce,
-        responder: { id: 'id1z', xpub: 'xpubz', pubkeyHex: 'cd'.repeat(33) }
-      })
+  it('refuses to confirm when the Hub now names another responder', async () => {
+    const { ident, offer, peer } = acceptedSession();
+    const swapped = acceptedSession({ ident });
+    const state = Object.assign({}, swapped.accepted, {
+      sessionId: offer.sessionId,
+      nonce: offer.nonce
     });
-    const res = await tickDeviceLinkOffer(ident, {
-      sessionId,
-      hubBase: DEFAULT_DEVICE_LINK_HUB,
-      origin: DEFAULT_DEVICE_LINK_HUB,
-      nonce
-    }, { fetchImpl });
-    assert.equal(res.ok, true);
-    assert.equal(res.status, 'linked');
-    assert.equal(res.peerPubkey, 'cd'.repeat(33));
-    assert.equal(res.peerFabricId, 'id1z');
+    const calls = [];
+    const res = await confirmDeviceLinkOffer(ident, offer, peer.id, { fetchImpl: hubFetch(state, calls) });
+    assert.equal(res.ok, false);
+    assert.equal(calls.some((c) => c.method === 'POST'), false);
   });
 
-  it('recovers peerPubkey from responder xpub when Hub omits pubkeyHex', async () => {
-    const ident = createIdentity();
-    const peer = createIdentity();
-    const { keyFromIdentity } = require('../../functions/identity');
-    const peerKey = keyFromIdentity(peer);
-    const sessionId = crypto.randomBytes(24).toString('hex');
-    const nonce = crypto.randomBytes(32).toString('hex');
-    const fetchImpl = async () => ({
-      ok: true,
-      status: 200,
-      json: async () => ({
-        ok: true,
-        status: 'linked',
-        sessionId,
-        nonce,
-        responder: { id: peer.id, xpub: peerKey.xpub }
-      })
-    });
-    const res = await tickDeviceLinkOffer(ident, {
-      sessionId,
-      hubBase: DEFAULT_DEVICE_LINK_HUB,
-      origin: DEFAULT_DEVICE_LINK_HUB,
-      nonce
-    }, { fetchImpl });
-    assert.equal(res.ok, true);
-    assert.equal(String(res.peerPubkey).toLowerCase(), String(peerKey.pubkey).toLowerCase());
+  it('refuses a responder signature bound to another session', async () => {
+    const other = crypto.randomBytes(24).toString('hex');
+    const { ident, offer, accepted, peer } = acceptedSession({ signedSessionId: other });
+    const calls = [];
+    const tick = await tickDeviceLinkOffer(ident, offer, { fetchImpl: hubFetch(accepted, calls) });
+    assert.equal(tick.ok, false);
+    const res = await confirmDeviceLinkOffer(ident, offer, peer.id, { fetchImpl: hubFetch(accepted, calls) });
+    assert.equal(res.ok, false);
+    assert.equal(calls.some((c) => c.method === 'POST'), false);
+  });
+
+  it('refuses a session offered by another identity', async () => {
+    const { offer, accepted, peer } = acceptedSession();
+    const calls = [];
+    const res = await confirmDeviceLinkOffer(createIdentity(), offer, peer.id, { fetchImpl: hubFetch(accepted, calls) });
+    assert.equal(res.ok, false);
+    assert.equal(calls.some((c) => c.method === 'POST'), false);
+  });
+
+  it('does not report a link this device never countersigned', async () => {
+    const { ident, offer, accepted } = acceptedSession();
+    const linked = Object.assign({}, accepted, { status: 'linked' });
+    const res = await tickDeviceLinkOffer(ident, offer, { fetchImpl: hubFetch(linked) });
+    assert.equal(res.ok, false);
+    assert.equal(res.expired, true);
   });
 
   it('marks a 404 hub poll as expired', async () => {

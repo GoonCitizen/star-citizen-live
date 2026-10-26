@@ -19,8 +19,10 @@ Intel desk / Groups as orgs: [`INTELLIGENCE.md`](INTELLIGENCE.md).
   loopback — Caddy or Nginx to `127.0.0.1:3041` would otherwise look like the operator.
   Android is the same: the APK loads a **local node** first; remote hubs are not
   the UI origin.
-- **Site login / device-link** use client-signed Schnorr over Hub HTTPS
-  rendezvous; desktop and Android only complete against an **allowlisted** hub origin
+- **Sign-in** is Passport v2 (D-021): challenges for pinned origins only, each
+  redeemed once by the browser that asked. **Device-link** uses client-signed
+  Schnorr over Hub HTTPS rendezvous. Native sign-in and device-link go only to
+  an **allowlisted** hub origin
   (defaults + `FABRIC_HUB_ALLOWLIST`). After device-link, **IdentityCrossSign**
   is gossiped **on Fabric** so other peers treat the keys as one actor; a stolen device key
   **is** the person until another cluster member publishes `IdentityCrossSignRevoke`.

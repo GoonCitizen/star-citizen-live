@@ -5,7 +5,7 @@ QA and patches from G00N SQUAD / PERMAFLEET (and forks) go through
 [`DEVELOPERS.md`](DEVELOPERS.md). Desktop counterpart: [`ELECTRON_BUILD.md`](ELECTRON_BUILD.md).
 Threat model for the local node: [`docs/THREAT-MODEL.md`](docs/THREAT-MODEL.md).
 
-D-011 / D-013 **HTTPS** to an allowlisted hub remains pairing / site-login **rendezvous only**.
+D-021 / D-013 **HTTPS** to an allowlisted hub remains sign-in / pairing **rendezvous only**.
 
 ## Identity
 
@@ -35,7 +35,7 @@ After `status: linked`, each side publishes `IdentityCrossSign` from its **local
 
 **Revoke** lives on Devices / Security (Android) / Identity and on Settings / Security & privacy (desktop). It publishes `IdentityCrossSignRevoke` (same BIP340 construction). A stolen device **is** the person until another cluster member revokes.
 
-Site login (D-011) stays interchangeable: `fabric://login` and Passport `FABRIC_SITE_LOGIN_REQUEST` sign `POST /sessions`. Desktop, Passport, and Android can each sign in to a supporting Fabric site — that does **not** share a seed. Canonical display id = lexicographically smallest x-only pubkey.
+Sign-in is Passport v2 (D-021). Android signs in to a relay as a native client (`functions/fabricLoginClient.js`: `POST /sessions/challenges` with `X-Fabric-Native: 1` through native HTTP, so the WebView adds no `Origin`; `POST /sessions` with the binding secret; Bearer token in memory). Desktop, Passport, and Android can each sign in to a supporting Fabric site — that does **not** share a seed. There is no `fabric://login`. Canonical display id = lexicographically smallest x-only pubkey.
 
 ## Architecture (threat model)
 
@@ -53,7 +53,7 @@ The Capacitor-NodeJS engine loads `android-www/nodejs/index.js`, which **always 
 
 ## Build (sideload)
 
-Requires Android Studio / SDK **and** Homebrew **OpenJDK 21** (`JAVA_HOME=/opt/homebrew/opt/openjdk@21/libexec/openjdk.jdk/Contents/Home`). Node 24.15.0 on the build machine. Capacitor 7 compiles the Android project as Java 21. The APK embeds `@choreruiz/capacitor-node-js` (Node 18 runtime + `libnode`).
+Requires Android Studio / SDK **and** Homebrew **OpenJDK 21** (`JAVA_HOME=/opt/homebrew/opt/openjdk@21/libexec/openjdk.jdk/Contents/Home`). Node 26.12.1 on the build machine. Capacitor 7 compiles the Android project as Java 21. The APK embeds `@choreruiz/capacitor-node-js` (Node 18 runtime + `libnode`).
 
 ```bash
 export JAVA_HOME=/opt/homebrew/opt/openjdk@21/libexec/openjdk.jdk/Contents/Home
@@ -72,7 +72,7 @@ Optional desktop-shaped check of the same settings: `npm run start:android`.
 
 App id: `vc.goon.android`. The first paint is a local-node wait screen, then the dashboard. There is **no origin picker** for `relay.goon.vc`.
 
-Deep links: `fabric://login` and `fabric://link` open the in-app approval card (hub origin + purpose). Non-allowlisted hubs are refused. After device-link, `IdentityCrossSign` is posted to the **local** node, which gossips it on Fabric.
+Deep links: `fabric://link` opens the in-app approval card (hub origin + purpose); the app registers no `fabric://login` (`scripts/android-patch.js` removes one left by an older patch). Non-allowlisted hubs are refused. After device-link, `IdentityCrossSign` is posted to the **local** node, which gossips it on Fabric.
 
 Embedded Node: `@choreruiz/capacitor-node-js` loads `android-www/nodejs/` (`startMode: auto`). `npm run android:sync` copies LiveRelay sources into `android-www/nodejs/app` (gitignored; dashboard HTML stays in `android-www/index.html`, not the Node tree), **location and ship catalogs** from `data/locations` and `data/ships` (not personal `data/fleets` dumps), Fabric runtime packages into `android-www/nodejs/node_modules` (JS `level` shim, no `classic-level` `.node`; Hub UI deps such as webpack / React / discord.js are skipped; fills hoisted nested deps such as `xtend` for `through2@2`), and Node `builtin_modules` into app assets. After install, wipe `files/nodejs` once (`run-as vc.goon.android rm -rf files/nodejs`) so Capacitor recopies assets.
 
@@ -97,7 +97,7 @@ The device still shows Groups, Chat (Fabric), Missions, Fleets, Network (Feed + 
 - Unlock identity → **Devices → Add a device** (or paste / open a `fabric://link` started on desktop — camera QR or **Open link** on Devices / Security) → both `IdentityCrossSign` verified on the mesh (Devices shows **waiting-cross-sign** until mutual) → a third peer’s Profile/Chat shows **one** actor with two device pubkeys. Same-WiFi phone and desktop should log `fabric peering webrtc-hub` then `fabric sync … DeviceDataShare`.
 - Group membership on the desktop pubkey → a linked mobile device in the same cluster can post GroupChat without a second invite.
 - Revoke from **Devices** or **Security** on the device (or Identity / Settings on desktop) on any remaining cluster member → the revoked device loses cluster equivalence.
-- Laptop SiteLogin QR → mobile D-011 still works; Passport `postMessage` on Chrome still works.
+- Passport sign-in on Chrome still works (D-021); there is no login QR to scan.
 - Non-allowlisted hub refused.
 - Chat POST to `http://127.0.0.1:3041/services/star-citizen/chat/messages` succeeds after the wait screen (the local node must be listening).
 

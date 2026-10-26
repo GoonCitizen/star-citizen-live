@@ -7,8 +7,8 @@ require('../helpers/installReactStub');
 const { textOf, findType, collect, findByClass, classList } = require('../helpers/reactTree');
 const Dashboard = require('../../components/Dashboard');
 const GlobalChatDock = require('../../components/GlobalChatDock');
-const SiteLogin = require('../../components/SiteLogin');
-const FabricLoginModal = require('../../components/FabricLoginModal');
+const PassportSignIn = require('../../components/PassportSignIn');
+const DeviceLinkModal = require('../../components/DeviceLinkModal');
 const PubkeyEmoji = require('../../components/PubkeyEmoji');
 const MissionBroadcastBanner = require('../../components/MissionBroadcastBanner');
 const { emojiFingerprint } = require('../../functions/pubkeyEmoji');
@@ -145,23 +145,50 @@ describe('Dashboard chrome', () => {
     }
   });
 
-  it('offers GoonCitizen and Passport site login in the browser shell', () => {
-    const login = new SiteLogin({});
+  it('offers Passport sign-in in the browser shell', () => {
+    const login = new PassportSignIn({});
     const text = textOf(login.render());
-    assert.match(text, /Sign in with GoonCitizen/);
     assert.match(text, /Sign in with Passport/);
+    assert.doesNotMatch(text, /Sign in with GoonCitizen/);
 
     const dash = new Dashboard({});
     dash.state.tab = 'home';
     dash.state.online = true;
-    assert.strictEqual(findType(dash.render(), SiteLogin).length, 1);
+    assert.strictEqual(findType(dash.render(), PassportSignIn).length, 1);
+  });
+
+  it('asks for a Passport update when an older Passport marks the page', async () => {
+    const prev = window.document;
+    const marked = (value) => ({ documentElement: { getAttribute: (name) => (name === 'data-fabric-passport' ? value : null) } });
+    try {
+      for (const [marker, expected] of [['abcdefghijklmnopabcdefghijklmnop', /Update Fabric Passport/], [null, /Install Fabric Passport/]]) {
+        window.document = marked(marker);
+        const login = new PassportSignIn({});
+        login.setState = (next) => Object.assign(login.state, next);
+        await login._signIn();
+        assert.match(login.state.status, expected);
+        assert.strictEqual(login.state.error, true);
+      }
+    } finally {
+      window.document = prev;
+    }
+  });
+
+  it('shows the signed-in Passport identity with Sign out', () => {
+    const login = new PassportSignIn({
+      session: { identity: { id: 'id1abc', pubkey: ME }, network: 'regtest' }
+    });
+    const text = textOf(login.render());
+    assert.match(text, /id1abc/);
+    assert.match(text, /Sign out/);
+    assert.doesNotMatch(text, /Sign in with Passport/);
   });
 
   it('is a no-op when Electron already owns identity', () => {
     const prev = window.electronAPI;
     window.electronAPI = { identity: { get: async () => ({}) } };
     try {
-      const login = new SiteLogin({});
+      const login = new PassportSignIn({});
       assert.strictEqual(login.render(), null);
     } finally {
       window.electronAPI = prev;
@@ -215,29 +242,20 @@ describe('Public shoutbox dock', () => {
   });
 });
 
-describe('Fabric login modal', () => {
+describe('Device link modal', () => {
   it('renders nothing until a prompt arrives', () => {
-    const modal = new FabricLoginModal({});
+    const modal = new DeviceLinkModal({});
     assert.strictEqual(modal.render(), null);
   });
 
-  it('asks to approve site login', () => {
-    const modal = new FabricLoginModal({});
-    modal.state.prompt = {
-      kind: 'site-login',
-      sessionId: 'sess-1',
-      origin: 'https://hub.fabric.pub',
-      message: 'challenge-hex'
-    };
-    const text = textOf(modal.render());
-    assert.match(text, /Sign in to website/);
-    assert.match(text, /Approve & sign/);
-    assert.match(text, /Ignore/);
-    assert.match(text, /hub\.fabric\.pub/);
+  it('ignores anything but a device-link prompt', () => {
+    const modal = new DeviceLinkModal({});
+    modal._setPrompt({ kind: 'site-login', sessionId: 'sess-1', origin: 'https://hub.fabric.pub' });
+    assert.strictEqual(modal.render(), null);
   });
 
   it('asks to approve a device link', () => {
-    const modal = new FabricLoginModal({});
+    const modal = new DeviceLinkModal({});
     modal.state.prompt = {
       kind: 'device-link',
       sessionId: 'link-1',
@@ -257,7 +275,7 @@ describe('Fabric login modal', () => {
   });
 
   it('clears the card when the prompt is dismissed', () => {
-    const modal = new FabricLoginModal({});
+    const modal = new DeviceLinkModal({});
     modal.state.prompt = { kind: 'device-link', sessionId: 'link-gone' };
     modal._setPrompt(null);
     assert.equal(modal.state.prompt, null);
@@ -265,7 +283,7 @@ describe('Fabric login modal', () => {
   });
 
   it('keeps Ignore enabled while Approve is in flight', () => {
-    const modal = new FabricLoginModal({});
+    const modal = new DeviceLinkModal({});
     modal.state.prompt = {
       kind: 'device-link',
       sessionId: 'link-busy',
@@ -280,7 +298,7 @@ describe('Fabric login modal', () => {
   });
 
   it('surfaces a hub error on a failed device-link prompt', () => {
-    const modal = new FabricLoginModal({});
+    const modal = new DeviceLinkModal({});
     modal.state.prompt = {
       kind: 'device-link',
       sessionId: 'link-dead',

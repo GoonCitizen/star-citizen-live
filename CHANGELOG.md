@@ -7,6 +7,17 @@ All notable changes to this project will be documented in this file.
 > most of which was removed in the fabric-free rebuild — treat them as historical.
 
 ## [Unreleased] — Fabric-free rebuild (`feature/fabric-free-m1`)
+### Changed
+- **Passport v2 sign-in (D-021, supersedes D-011):** relays sign players in with
+  Passport challenges for pinned origins, redeemed once into an HttpOnly session
+  cookie; desktop and Android sign in to a relay as native clients. The desktop
+  local signer answers `PASSPORT_SIGN_REQUEST`s behind a native dialog after a
+  six-digit pairing. Removed `fabric://login` (and its Android intent filter),
+  `/sessions/:id/signatures`, and the delegation token. Each account now has an
+  identity key (`m/44'/F'/n'/0/0`), a wallet (`m/84'` receive, `m/44'` watched),
+  and a cosigner key (`m/87'`) under one sealed master key; identity files from
+  before this change are restored from the seed.
+
 ### Added
 - **Group voice:** Opt-in Federation-group voice with push-to-talk (**Shift+Tab**,
   rebindable from Chat ⚙ → Voice or Settings → Voice). Uncheck Push-to-talk for
@@ -40,6 +51,12 @@ All notable changes to this project will be documented in this file.
   `parent` to the previous `Message.id`. Session/peering/ping stay genesis
   zeros. Log + journal rows store `frameId` / `parent`.
 ### Changed
+- **Group wallets are core named federations** (`@fabric/core/types/federation`, `services/GroupWallets.js`). A group's signers and threshold form the federation descriptor, and every member derives the same Taproot vault and federation id — the ones Hub and Passport derive. Any signer requests a withdrawal (`POST /groups/:id/withdrawals { destinationAddress, amountSats, feeSats }`) and signs it; the others sign with `POST /groups/:id/withdrawals/:id/signatures`, and the node that reaches the threshold broadcasts. The messages are core `FederationWithdrawal*` / `FederationSync` frames under the federation id. Earlier vaults stay listed and spendable after a signer change. Mainnet is refused unless `payouts.allowMainnet`. Removed: the `Policy` spend-ladder address (`functions/groupSpendLadder.js`, `Group.spendLadder`), the legacy P2WSH group address and `PayoutManager#multisigAddress`, and the `…/witness` / `…/finalize` routes, which never built a transaction. Coins sent to an old ladder address are not spendable through GoonCitizen. Mission escrows stay P2WSH.
+- **Electron 44.9.3** (from `^43.1.1`, now exact, same as Hub) and **electron-builder 26.18.0** (exact). Desktop builds need macOS 13 or later. Login items no longer pass `openAsHidden` (removed in 44). macOS login launches are detected through `app.getLoginItemSettings().wasOpenedAtLogin`, and `path` is only passed on Windows and Linux, which still get `--hidden`.
+- **Bitcoin libraries:** `bitcoinjs-lib@7.0.4`, `bip32@5.0.1`, `ecpair@3.0.2`, matching `@fabric/core` and Hub. `hubBitcoinProxy` already wraps derived public keys in `Buffer.from`, so receive-address derivation is unchanged.
+- **Node 26.12.1:** `.nvmrc` and `engines.node` move from `24.15.0` to `26.12.1`, matching `@fabric/core`, `@fabric/http`, and Hub (the Oct 21 security release; 26 becomes LTS on 2026-10-28). Public relays: `nvm install 26.12.1`, `nvm alias default 26.12.1`, and restart pm2 with
+  `--interpreter "$(nvm which 26.12.1)"` (`docs/PRODUCTION.md`). The Android APK still
+  embeds Capacitor-NodeJS's Node 18 runtime; only the build machine moves.
 - **When you fly:** the Home heatmap tab moved to the operator’s own profile
   (identity chip → **My profile**), with a **Publish when I fly** checkbox
   (`sharePlaytimes`) to gossip the weekday×hour grid to Federation groups.

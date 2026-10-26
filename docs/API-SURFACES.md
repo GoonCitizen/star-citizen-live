@@ -1,7 +1,7 @@
 # API surfaces (IPC, HTTP, Fabric, …)
 How GoonCitizen clients talk to a node — and how that node talks to the mesh.
-**Last reviewed against source:** 2026-08-21 (`LiveRelay._handle`,
-`functions/fabricSiteLogin.js`, `functions/fabricDeviceLinkRelay.js`,
+**Last reviewed against source:** 2026-10-26 (`LiveRelay._handle`,
+`functions/liveRelayPassport.js`, `functions/fabricDeviceLinkRelay.js`,
 `functions/fabricDeviceLinkLocalHttp.js`, `functions/liveRelayPeeringHttp.js`,
 `functions/groupVoiceHttp.js`, `preload.js`, `services/FabricNetwork.js`).
 HTTP path inventory below is complete against those handlers. Lock:
@@ -27,7 +27,7 @@ Second application / fork: [`APPLICATION.md`](APPLICATION.md).
 | Seed, unlock, sign, reveal, backup | **IPC** (`window.electronAPI.identity`) or Passport | Put keys on HTTP, in the SPA bundle, or on Fabric |
 | Dashboard reads / register mutations | **HTTP** `GET\|POST /services/star-citizen/…` | Invent a parallel IPC “API” for chat/groups/missions |
 | Gossip to other nodes | **Fabric Peer** AMP/`Message` on TCP/NOISE `:7777` | HTTPS batch uplink or `POST …/events` as peering |
-| Site login / device-link *rendezvous* | **HTTP** Hub-shaped `/sessions`, `/device-links` | Mesh-flood pairing secrets |
+| Passport sign-in / device-link *rendezvous* | **HTTP** `/sessions` (Passport v2), `/device-links` | Mesh-flood pairing secrets |
 | After device-link, one actor on the mesh | **Fabric** `IdentityCrossSign` then `DeviceDataShare` (`account.peers` LAN dial + Hub WebRTC *registry* for LAN hints + collection replay) | HTTPS account restore as the primary path; LiveRelay hosting ICE |
 | Native OS (dialogs, tray, `fabric:` URLs) | **IPC** | HTTP file pickers on desktop |
 | Discord channel I/O | **Discord gateway + REST** (local bot) | Fabric as a Discord transport |
@@ -45,7 +45,7 @@ preload helpers (delivery receipt). That split is intentional (D-010).
 ```text
 Passport popup          Electron renderer / Android WebView
    │ postMessage              │ fetch()              │ electronAPI (IPC)
-   │ FABRIC_SITE_LOGIN_*      │                      │ identity / dialogs /
+   │ PASSPORT_CHALLENGE       │                      │ identity / dialogs /
    ▼                          ▼                      │ fabric: / notify
 Hub or LiveRelay HTTP     LiveRelay HTTP :3041  ◄────┘
  /sessions /device-links   /services/star-citizen/*
@@ -83,8 +83,9 @@ Exposed as `window.electronAPI`:
 |---------|------|
 | `identity:*` | Create / restore / unlock / lock / sign envelope or message / reveal / backup / forget / autolock |
 | `identity:device-link-*` | Start / tick / cancel a `/device-links` offer (Node holds the key) |
-| `identity:open-protocol-url` | Handle `fabric://login`, `fabric://link`, opaque `fabric:<hex>` |
-| `fabric-login:*` | Prompt + approve/reject client-signed site login (D-011) |
+| `identity:open-protocol-url` | Handle `fabric://link` and opaque `fabric:<frame>` shares |
+| `identity:sign-in-relay` | Sign in to a relay origin with Passport v2 as the player key (main signs; returns a Bearer token) |
+| `device-link:*` | Prompt + approve/reject a `fabric://link` device-link offer (D-013) |
 | `fabric-group-share:*` | Prompt + ingest opaque GroupOffer / Federation invite |
 | `fabric:delivery-receipt` | Sign+publish a Fabric `MessageReceipt` without HTTP |
 | `fabric:publish-cross-sign` | Sign+gossip `IdentityCrossSign` / Revoke via the local Peer |
@@ -155,17 +156,23 @@ behind Caddy (`docs/PRODUCTION.md`).
 
 | Bind | Reads | Writes |
 |------|-------|--------|
-| Loopback (Electron / local browser / Android) | Unlocked identity is the viewer | Unlocked identity; optional Bearer |
-| `httpSharedMode` from a non-loopback peer | Session required on the privacy-sensitive GETs that call `_requireSession` | Schnorr/Bearer (`functions/httpRemoteAuth.js`) |
-| `SC_MODE=server` | Same; public Caddy→loopback **must** use server mode so the unlocked path is not inherited | Always Bearer / signed envelope |
+| Loopback (Electron / local browser / Android) | Unlocked identity is the viewer | Unlocked identity; optional Bearer. A browser write from another web origin (any `Origin` other than loopback on the port it arrived on, or `Sec-Fetch-Site: cross-site`) without a Bearer gets **403 `FOREIGN_ORIGIN`** (`isForeignBrowserWrite`) — that stops other sites and DNS rebinding from acting as the operator. Exempt: `identity/cross-sign` (self-authenticating BIP340) and, on Android, the WebView's own origins (`capacitor://`, loopback) |
+| `httpSharedMode` from a non-loopback peer | Session required on the privacy-sensitive GETs that call `_requireSession` | Passport session: Bearer, or the `fabric.session` cookie from the session's own `Origin` |
+| `SC_MODE=server` | Same; public Caddy→loopback **must** use server mode so the unlocked path is not inherited | Always a Passport session |
 
-Two login contracts (do not collapse without owner go-ahead):
-
-1. **D-011 site login** — Hub-compatible `POST /sessions` → `fabric://login` →
-   `POST /sessions/:id/signatures` → Bearer `delegationToken`.
-2. **Legacy dashboard login** — `POST /services/star-citizen/auth` with a
-   Schnorr envelope `{ intent: 'login', ts }`. `_requireSession` still cites
-   this path.
+One login contract: **Passport v2** (`functions/liveRelayPassport.js` on
+`@fabric/http` `passportRelyingParty` + `passportHttp`, spec in `@fabric/core`
+`docs/PASSPORT.md`). `POST /sessions/challenges` issues a
+`PASSPORT_CHALLENGE` for a pinned origin; the browser hands it to Passport
+(which may ask the GoonCitizen desktop to sign), and `POST /sessions`
+`{ assertion }` redeems the signed `PASSPORT_ASSERTION`. Browsers get an
+HttpOnly `fabric.session` cookie, bound to the `fabric.passport` cookie set
+with the challenge; native clients (`X-Fabric-Native: 1`, no `Origin`) get
+`binding` in the challenge body and a Bearer `token` in the session body.
+Pinned origins: loopback on the relay's port, `https://<FABRIC_PUBLIC_HOST>`,
+and `settings.passport.origins`. A cookie counts for a write only from the
+`Origin` the session was issued for. Sessions last 8 h and live in memory, so
+a restart signs everyone out.
 
 ### How paths are mounted
 
@@ -195,10 +202,11 @@ Passport / Hub desktop treat `relay.goon.vc` like a Hub origin.
 
 | Methods | Path | Notes |
 |---------|------|-------|
-| `POST` | `/sessions` | Create client-signed login (D-011). Rejects Hub empty-body self-sign. |
+| `POST` | `/sessions/challenges` | Passport v2 challenge for the request's pinned `Origin` (403 otherwise). Sets the `fabric.passport` binding cookie; native clients get `binding` in the body. |
+| `POST` | `/sessions` | `{ assertion }` signed `PASSPORT_ASSERTION` → `{ session }` plus the `fabric.session` cookie, or `token` for native clients. 403 when a browser redeems from another origin. |
 | `GET` | `/sessions` | `Accept: application/json` → 404; otherwise SPA. |
-| `GET` | `/sessions/:id` | Poll session. |
-| `POST` | `/sessions/:id/signatures` | Complete → Bearer `delegationToken` (8h). |
+| `GET` | `/sessions/current` | `{ session }` (`identity { id, pubkey }`, `network`, `signer`, `origin`, times) or 401. |
+| `DELETE` | `/sessions/current` | Ends the session and clears the cookie. |
 | `POST` | `/device-links` | Create device-link offer (D-013). Origin allowlist. |
 | `GET` | `/device-links/:id` | Poll offer. |
 | `DELETE` | `/device-links/:id` | Cancel. |
@@ -206,6 +214,26 @@ Passport / Hub desktop treat `relay.goon.vc` like a Hub origin.
 | `OPTIONS` | `/` | Application resource contract (ARC). |
 | `GET` `HEAD` `OPTIONS` | `/services/peering` | PeeringCapability + inline `OracleAttestation`. |
 | `GET` `HEAD` `OPTIONS` | `/services/peering/attestation` | Attestation body only. |
+
+### Passport local signer (desktop Electron only)
+
+GoonCitizen is a signing authority for Passport (`functions/fabricLocalSignerRelay.js`
+on `@fabric/http` `functions/fabricLocalSigner`). Mounted only when Electron
+main passes `fabricSignApprover` (a native `dialog.showMessageBox`,
+`functions/fabricSignApprovalDialog.js`, Decline by default). Never on
+`SC_MODE=server`, Android, or a CLI relay.
+
+| Methods | Path | Notes |
+|---------|------|-------|
+| `GET` | `/services/fabric/identity` | `{ signer: 'gooncitizen', pubkey, … }` of the unlocked player key. |
+| `POST` | `/services/fabric/sign` | Body: a `fabric:` `PASSPORT_SIGN_REQUEST` (a challenge plus what to disclose) signed by a Passport device in this player's identity cluster. After native approval → `{ fabric: <PASSPORT_ASSERTION> }` signed by the player identity key. Replayed requests 409; one prompt at a time (429). |
+| `POST` | `/services/fabric/link` | `{ sessionId }` of a device-link offer made on **this** relay's loopback `/device-links`. The native dialog shows a 6-digit pairing code that Passport shows too. After approval, signs as responder and publishes the player half of the `IdentityCrossSign`. |
+
+All three answer only a loopback socket with a loopback `Host`. `sign` and
+`link` also need a Passport extension `Origin` (`chrome-extension://<id>` for
+the ids in `settings.fabricSigner.extensionIds`, or `moz-extension://`); any
+other `Origin` gets 403. Nothing is disclosed beyond the identity key unless
+the request asks and the player approves it.
 
 ### SPA HTML (standalone `GET`)
 
@@ -248,8 +276,6 @@ use `:id` (pubkey, hash, slug, snowflake — as implemented).
 | `POST` | `/activity-tree/publish` | |
 | `GET` | `/monitor` | Session. Includes `loginfo`. |
 | `GET` | `/feed` | Session. |
-| `POST` | `/auth` | Legacy Schnorr login → Bearer. |
-| `DELETE` | `/auth` | Revoke presented Bearer. |
 | `GET` | `/identity/cluster` **also /** | Session. Snapshot + `pending`. |
 | `GET` `POST` | `/identity/cluster/sync` **also /** | Collection export / ingest / `{ publish }`, `{ mesh: true }`, `{ dial }`, `{ crossSign }`. |
 | `POST` | `/identity/session` **also /** | **Android-only**, loopback: restore xprv/mnemonic or `{ lock }`. |
@@ -285,10 +311,9 @@ use `:id` (pubkey, hash, slug, snowflake — as implemented).
 | `GET` `POST` | `/groups/:id/applications` | |
 | `POST` | `/group-applications/:id/decision` | |
 | `GET` | `/groupaudit` | Session. |
-| `GET` | `/groups/:id/wallet` | k-of-n / Taproot. |
-| `GET` `POST` | `/groups/:id/withdrawals` | |
-| `POST` | `/groups/:id/withdrawals/:id/witness` | |
-| `POST` | `/groups/:id/withdrawals/:id/finalize` | |
+| `GET` | `/groups/:id/wallet` | Named federation vault (core `Federation`): signers k-of-n, previous vaults. |
+| `GET` `POST` | `/groups/:id/withdrawals` | Any signer requests `{ destinationAddress, amountSats, feeSats }`; signs it too. |
+| `POST` | `/groups/:id/withdrawals/:id/signatures` | Signer approves; broadcast at threshold. |
 | `GET` `POST` | `/notes` | Session. |
 | `POST` | `/notes/:id/share` | |
 | `POST` | `/notes/:id/pin` | |
@@ -388,6 +413,10 @@ Discord catalog, search, files, Game.log browse, locations, fleets, snapshots.
 | `GET` | `/loginfo` `/logslice` | Session. Game.log path + byte window. |
 | `GET` `POST` | `/reparse` | Session. |
 | `GET` | `/locations` **also /** | Public location catalog. |
+| `GET` | `/rsi/orgs/:sid` | Session. Public RSI org page snapshot. |
+| `GET` | `/rsi/claim` | Session. Biography token for the unlocked Fabric key. |
+| `GET` | `/rsi/citizens/:handle` | Session. Public RSI citizen page snapshot. |
+| `GET` | `/rsi/citizens/:handle/verify` | Session. `?pubkey=` checks the biography token. |
 | `GET` | `/locations/map` **also /** | Public starmap JSON (`?system=`, `?view=galaxy`, `?view=body&body=`). |
 | `GET` | `/assets/map/manifest.json` · `/assets/map/tiles/*.png` | Allowlisted map tiles (CC0 / procedural). |
 | `GET` | `/assets/scripts/universe-explorer.js` | Lazy Three.js explorer bundle. |
@@ -410,7 +439,7 @@ Discord catalog, search, files, Game.log browse, locations, fleets, snapshots.
 **Files:** `services/FabricNetwork.js`, `contracts/applicationMessageTypes.js`,
 `contracts/gooncitizen.js`, `contracts/gooncitizenGroup.js`.
 **Transport:** AMP `Message` over TCP/NOISE. Default seeds
-`hub.fabric.pub:7777`, `relay.goon.vc:7777`. Opt-in log share (D-017).
+`hub.fabric.pub:7777`, `hub.goon.vc:7777`, `relay.goon.vc:7777`. Opt-in log share (D-017).
 
 ### Outer types (wire)
 
@@ -439,7 +468,14 @@ Request→Claim→Response, `PeerProfile`, `Presence`, …
 **Per-Group Federation genesis** (`GROUP_MESSAGE_TYPES`): `GroupChat`,
 `GroupChange` (+ proposal/vote), `GroupShare`, `GroupActivityTree`,
 `FleetShare`, `FederationContractInvite` / Response, journal catch-up,
-capability / withdrawal types.
+capability / withdrawal types. The `ContractWithdrawal*` names stay only
+because they are part of the group contract id; nothing sends them.
+
+**Group wallets** are core named federations (`@fabric/core/types/federation`,
+`services/GroupWallets.js`): bare `{ contract: federationId, type, … }`
+bodies — `FederationWithdrawalRequest` / `Signature` / `Broadcast`,
+`FederationSync` — the same frames Hub and Passport members exchange, trusted
+only by the verified frame author.
 
 Chat storage stays `{ channel, body, handle }` in the Store regardless of wire
 type (`global` vs `group:<id>` vs `discord:`).
@@ -450,9 +486,9 @@ type (`global` vs `group:<id>` vs `discord:`).
 
 | Form | Meaning | Completes via |
 |------|---------|----------------|
-| `fabric://login?sessionId&hub` | D-011 site login | IPC / Passport → `POST /sessions/:id/signatures` |
 | `fabric://link?sessionId&hub` | D-013 device-link | same, `/device-links` |
-| `fabric:<hex>` or `fabric:base64,…` | Opaque AMP `Message` (GroupOffer / invite / MissionBroadcast) (D-019) | IPC `groupShare` or `POST …/groups/share/ingest` |
+| `fabric:<frame>` (base64url) | Opaque AMP `Message` (GroupOffer / invite / MissionBroadcast) (D-019). Read with core `decodeFabricUri`: a bad body hash or author signature is refused | IPC `groupShare` or `POST …/groups/share/ingest` `{ protocolUrl }` |
+| `fabric:<frame>` `PASSPORT_CHALLENGE` / `PASSPORT_ASSERTION` / `PASSPORT_SIGN_REQUEST` | Passport v2 sign-in to any HTTPS or loopback page; the desktop answers through `POST /services/fabric/sign` | Passport ↔ page (`postMessage` over a `MessagePort`), Passport → loopback signer |
 
 These are **not** a third REST. They are envelopes that land on HTTP rendezvous
 or Fabric ingest.
@@ -461,13 +497,18 @@ or Fabric ingest.
 
 ## 6. Passport / Hub browser (`postMessage`)
 
-Fabric Passport does not use GoonCitizen IPC. Pages send
-`FABRIC_SITE_LOGIN_REQUEST` / `FABRIC_DEVICE_LINK_REQUEST`; the extension
-signs and POSTs to the **same** `/sessions` and `/device-links` contracts.
-Hub browser identity is the same pairing model (own seed).
+Fabric Passport does not use GoonCitizen IPC. A page gets a challenge from
+its own origin (`POST /sessions/challenges`), hands it to Passport
+(`@fabric/http` `functions/passportPage`), and posts the signed assertion back
+to `POST /sessions`. Passport signs only for the origin the browser reports,
+as its own identity key or — once GoonCitizen is linked (Passport **Desktop
+apps** → Link, which calls `POST /services/fabric/link`) — as the player key
+through the local signer above. Device-link pages still send
+`FABRIC_DEVICE_LINK_REQUEST` to the same `/device-links` contract.
 
-LiveRelay hosted GETs then use the issued Bearer token. The dashboard origin
-never holds the player seed.
+The hosted dashboard then rides the `fabric.session` cookie
+(`components/PassportSignIn.js`). The dashboard origin never holds the player
+seed.
 
 ---
 
@@ -510,7 +551,7 @@ not the bot bridge.
 | Share mission | HTTP GET/POST `…/missions/:id/share` | sign opaque MissionBroadcast | optional relay; clipboard `fabric:`; Import… → offer |
 | Apply to mission | HTTP POST `…/apply` (IPC only if HTTP needs a signed envelope) | MissionManager + audit | `MissionCreated` / claim types as implemented |
 | Broadcast mission | HTTP POST `…/broadcast` | inbox on receivers | `MissionBroadcast` or group `GroupShare` |
-| Site login on relay.goon.vc | IPC or Passport | `POST /sessions…` | none (Bearer stays HTTP) |
+| Sign in on relay.goon.vc | Passport, or IPC `identity.signInToRelay` | `POST /sessions/challenges` + `POST /sessions` | none (cookie / Bearer stay HTTP) |
 | Add a device | IPC / Android local HTTP | hub `/device-links` | then `IdentityCrossSign` + Hub `RegisterWebRTCPeer` LAN hints + `DeviceDataShare` |
 | Pin a file to profile | HTTP POST `…/files/:id/pin` | Store | `GroupDataShare` pack `profile.files` |
 | Sync a file to linked devices | HTTP POST `…/files/:id/cluster-sync` | Store `clusterSync` | `DeviceDataShare` `account.files` metadata + `P2P_FILE_SEND` bytes |
@@ -526,7 +567,6 @@ not the bot bridge.
 | Pair | Why both exist |
 |------|----------------|
 | IPC identity vs HTTP register | Keys vs data |
-| `/sessions` vs `POST …/auth` | Passport/Hub contract vs older dashboard envelope |
 | `/device-links` vs `/services/star-citizen/device-links` | Public rendezvous vs Android/loopback client |
 | HTTP chat POST vs Fabric publish | Local command vs distribution |
 | IPC delivery receipt vs HTTP `…/receipt` | Desktop can skip an extra round-trip; hosted/browser cannot |
@@ -556,7 +596,8 @@ Still open:
 | Surface | Residual |
 |---------|----------|
 | HTTP | Loopback socket = unlocked operator. Caddy→loopback **without** `SC_MODE=server` inherits that. Android `POST /identity/session` accepts xprv on loopback. |
-| HTTP | Bearer TTL is **8h**; `DELETE …/auth` revokes the presented Bearer (hosted/shared). |
+| HTTP | Sessions last **8h**; `DELETE /sessions/current` ends one (hosted/shared). Sessions are in memory: a restart signs everyone out. |
+| HTTP | Local signer takes only Passport extension origins; `moz-extension://` ids are random per install, so on Firefox another extension can raise native prompts. Signing still needs a device-key signature from the identity cluster. |
 | IPC | `identity:sign-envelope` / `sign-message` are a signing oracle if the dashboard is XSS’d. Reveal still requires the password. |
 | Fabric | Public shoutbox (`global` / `P2P_CHAT_MESSAGE`) is **intentionally cleartext** at relays. DirectChat and `DeviceDataShare` packs are also signed plaintext. Confidential path: sealed GroupChat (opt-in `groupChatSeal`) / onion. Cluster-gate is apply-only. Stolen device key **is** the actor until `IdentityCrossSignRevoke`. GroupChat v2 is hub-blind; v1 is not. No mesh flood limit. |
 | Discord | Webhook / bot traffic leaves Fabric. `shareDiscordCatalog` defaults **off** (Settings confirm on enable). |
@@ -573,8 +614,8 @@ Gating an HTTP GET does not encrypt the same bytes on Fabric. See
 - IPC: `preload.js`, `main.js`
 - Mesh: `services/FabricNetwork.js`, `contracts/applicationMessageTypes.js`
 - Auth bind: `functions/httpRemoteAuth.js`
-- Login / link: `functions/fabricSiteLogin.js`, `functions/fabricDeviceLinkRelay.js`,
+- Login / link: `functions/liveRelayPassport.js`, `functions/fabricDeviceLinkRelay.js`,
   `functions/fabricDeviceLinkLocalHttp.js`
-- Decisions: `DECISIONS.md` D-010, D-011, D-012, D-013, D-019
+- Decisions: `DECISIONS.md` D-010, D-012, D-013, D-019, D-021
 - Hosted bind: `docs/PRODUCTION.md`
 - Privacy: `docs/THREAT-MODEL.md`

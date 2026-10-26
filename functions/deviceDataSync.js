@@ -20,6 +20,7 @@ const identityNotes = require('./identityNotes');
 const localGroups = require('./localGroups');
 const peerProfile = require('./peerProfile');
 const clusterInventory = require('./clusterInventory');
+const { HEADER_SIZE, MAX_MESSAGE_SIZE } = require('@fabric/core/constants');
 
 const SHARE_TYPE = 'DeviceDataShare';
 const PACK_PROFILE = 'account.profile';
@@ -47,14 +48,21 @@ const MAX_NOTES = 200;
 const MAX_TAGS = 48;
 const MAX_CHAT = 80;
 const MAX_FILES = 48;
-/** Truncate on the wire so several ChatMessage rows fit one AMP frame. */
-const CHAT_BODY_MAX = 480;
 /**
- * JSON size of a DeviceDataShare object. CONTRACT_MESSAGE envelope + 208-byte
- * AMP header must stay under 4096 (`MAX_MESSAGE_SIZE` is 3888).
+ * Bytes reserved for the CONTRACT_MESSAGE JSON envelope (contractId, type,
+ * signer, timestamps, …) around the DeviceDataShare object inside one AMP body.
  */
-const AMP_OBJECT_BUDGET = 2400;
-const AMP_FRAME_MAX = 4096;
+const AMP_ENVELOPE_RESERVE = 1488;
+/**
+ * JSON size of a DeviceDataShare object. CONTRACT_MESSAGE envelope + object must
+ * stay within the core AMP body cap (`MAX_MESSAGE_SIZE`, 32 KiB on current core;
+ * 3888 on pre-2026-10 core) so the frame is never dropped at the peer gate.
+ */
+const AMP_OBJECT_BUDGET = Math.max(1024, MAX_MESSAGE_SIZE - AMP_ENVELOPE_RESERVE);
+/** Max bytes of one AMP frame on the wire (header + body), from the installed core. */
+const AMP_FRAME_MAX = HEADER_SIZE + MAX_MESSAGE_SIZE;
+/** Truncate on the wire so several ChatMessage rows fit one AMP frame (≤ chat cap of 2000). */
+const CHAT_BODY_MAX = Math.min(2000, Math.floor(AMP_OBJECT_BUDGET / 5));
 
 const SECRET_KEY = /^(mnemonic|xprv|xpub|seed|password|passwd|token|secret|adminToken|webhook|cookie|privateKey)$/i;
 

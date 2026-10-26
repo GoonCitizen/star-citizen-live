@@ -9,7 +9,8 @@ const http = require('http');
 
 const LiveRelay = require('../../services/LiveRelay');
 const registerInbox = require('../../functions/registerInbox');
-const { createIdentity, signEnvelope } = require('../../functions/identity');
+const { createIdentity } = require('../../functions/identity');
+const { passportLogin } = require('../helpers/passportLogin');
 
 const BASE = '/services/star-citizen';
 
@@ -32,11 +33,8 @@ function request (port, method, reqPath, payload, token) {
   });
 }
 
-async function login (port, identity) {
-  const envelope = signEnvelope(identity, { intent: 'login', ts: new Date().toISOString() });
-  const res = await request(port, 'POST', `${BASE}/auth`, envelope);
-  assert.strictEqual(res.status, 200, JSON.stringify(res.body));
-  return res.body.data.token;
+function login (port, identity) {
+  return passportLogin(port, identity);
 }
 
 test('registerInbox maps audits and broadcasts', () => {

@@ -24,6 +24,7 @@ const ALLOWED_KEYS = [
   'corpusDirs', // extra directories of *.log to fold into cumulative history (Feed import)
   'corpusFiles', // individually selected log files (Feed import)
   'peers',      // [{ id, address, label, enabled }] — Fabric host:port peers
+  'seedsOffered', // default seed addresses already added to a saved roster (later removals stick)
   'fabricPort', // local Fabric Peer listen port (default 7777)
   'fabricAdvertiseHost', // public host for dial pin + P2P_PEERING_OFFER; null = no dial endpoint
   'broadcastPeering',    // opt-in: publish P2P_PEERING_OFFER on the mesh (default false)
@@ -61,7 +62,6 @@ const ALLOWED_KEYS = [
   'presenceStatusText',      // short custom status line (max 64)
   'primaryGroupId',          // preferred group for overlay / defaults (local HUD; membership soft-checked)
   'groupOverlay',            // desktop: show primary-group member/ship overlay (Windows)
-  'fabricShareEncoding',     // opaque Share clipboard: 'base64' (default) or 'hex'
   // Discord bot (non-secrets). Token / app secret / webhook → discord.secrets.json or env.
   'discordBotEnable',
   'discordAppId',
@@ -89,19 +89,6 @@ function sanitizePrimaryGroupId (value) {
   if (value === undefined || value === null || value === '') return null;
   const s = String(value).trim();
   return PRIMARY_GROUP_ID_RE.test(s) ? s : null;
-}
-
-/**
- * Opaque Fabric share clipboard encoding. Unset → default base64 at runtime.
- * @param {*} value
- * @returns {'hex'|'base64'|null}
- */
-function sanitizeFabricShareEncoding (value) {
-  if (value === undefined || value === null || value === '') return null;
-  const s = String(value).trim().toLowerCase();
-  if (s === 'hex') return 'hex';
-  if (s === 'base64' || s === 'b64') return 'base64';
-  return null;
 }
 
 /**
@@ -210,7 +197,6 @@ function putSetting (store, key, value) {
   }
   if (key === 'primaryGroupId') next = sanitizePrimaryGroupId(next);
   if (key === 'groupOverlay') next = next === true;
-  if (key === 'fabricShareEncoding') next = sanitizeFabricShareEncoding(next);
   if (key === 'discordBotEnable' ||
       key === 'discordAnnounceKills' ||
       key === 'discordAnnouncePlayerJoins' ||
@@ -266,7 +252,6 @@ module.exports = {
   PRIMARY_GROUP_ID_RE,
   sanitizeNickname,
   sanitizePrimaryGroupId,
-  sanitizeFabricShareEncoding,
   sanitizeCorpusDirs,
   sanitizeCorpusFiles,
   loadSettings,

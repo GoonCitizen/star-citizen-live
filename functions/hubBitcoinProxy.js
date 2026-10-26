@@ -6,12 +6,8 @@
  */
 
 const crypto = require('crypto');
-const { BIP32Factory } = require('bip32');
-const ecc = require('tiny-secp256k1');
-const bitcoin = require('bitcoinjs-lib');
+const accountKeys = require('@fabric/core/functions/accountKeys');
 const { resolveHubAdminToken } = require('./hubAdminToken');
-
-const bip32 = BIP32Factory(ecc);
 
 const DEFAULT_HUB = 'http://127.0.0.1:8080';
 
@@ -57,122 +53,57 @@ function deriveWalletIdFromXpub (xpub = '') {
   return crypto.createHash('sha256').update(once).digest('hex');
 }
 
-function networkFromXpubPrefix (xpub = '') {
-  const raw = String(xpub || '').trim();
-  const isTest = raw.startsWith('tpub') || raw.startsWith('upub') || raw.startsWith('vpub');
-  return isTest
-    ? {
-      bech32: 'tb',
-      bip32: { public: 0x043587cf, private: 0x04358394 },
-      pubKeyHash: 0x6f,
-      scriptHash: 0xc4,
-      wif: 0xef
-    }
-    : {
-      bech32: 'bc',
-      bip32: { public: 0x0488b21e, private: 0x0488ade4 },
-      pubKeyHash: 0x00,
-      scriptHash: 0x05,
-      wif: 0x80
-    };
-}
-
-function addressNetworkForName (name) {
-  const n = String(name || 'regtest').toLowerCase();
-  if (n === 'mainnet' || n === 'bitcoin' || n === 'livenet' || n === 'main') {
-    return {
-      bech32: 'bc',
-      bip32: { public: 0x0488b21e, private: 0x0488ade4 },
-      pubKeyHash: 0x00,
-      scriptHash: 0x05,
-      wif: 0x80
-    };
-  }
-  if (n === 'testnet' || n === 'signet' || n === 'testnet3') {
-    return {
-      bech32: 'tb',
-      bip32: { public: 0x043587cf, private: 0x04358394 },
-      pubKeyHash: 0x6f,
-      scriptHash: 0xc4,
-      wif: 0xef
-    };
-  }
-  return {
-    bech32: 'bcrt',
-    bip32: { public: 0x043587cf, private: 0x04358394 },
-    pubKeyHash: 0x6f,
-    scriptHash: 0xc4,
-    wif: 0xef
-  };
-}
-
 /**
- * Derive a BIP32 receive address from an account/master xpub at m/0/index (wpkh).
- * Fabric identities use mainnet xpub version bytes; address HRP follows networkName (regtest → bcrt1).
- *
- * When `opts.xprv` (Fabric HD master) is provided, derives the Hub-aligned BIP44 payment
- * account first (`m/44'/0'/account'/0/index`) so GoonCitizen sees the same coins as
- * Hub desktop faucet → local key.
- *
- * @param {string} xpub
+ * Receive address `index` of a SegWit account xpub (`m/84'/B'/n'` → `/0/index`,
+ * wpkh). Address HRP follows networkName (regtest → bcrt1).
+ * @param {string} xpub Account xpub (`m/84'/B'/n'`).
  * @param {number} [index=0]
  * @param {string} [networkName='regtest']
- * @param {object} [opts]
- * @param {string} [opts.xprv] Fabric master xprv
- * @param {number} [opts.bip44Account=0]
- * @returns {{ address: string, index: number, path: string, accountXpub?: string }|null}
+ * @returns {{ address: string, index: number, path: string }|null}
  */
-function deriveReceiveAddress (xpub, index = 0, networkName = 'regtest', opts = {}) {
+function deriveReceiveAddress (xpub, index = 0, networkName = 'regtest') {
+  const raw = String(xpub || '').trim();
+  if (!raw) return null;
   const i = Math.max(0, Math.floor(Number(index) || 0));
-  const accountIndex = Math.max(0, Math.floor(Number(opts.bip44Account != null ? opts.bip44Account : 0) || 0));
-  const masterXprv = String(opts.xprv || '').trim();
   try {
-    if (masterXprv.startsWith('xprv') || masterXprv.startsWith('tprv')) {
-      const decodeNetwork = networkFromXpubPrefix(masterXprv);
-      const root = bip32.fromBase58(masterXprv, decodeNetwork);
-      // Hub bitcoinClient uses m/44'/0'/n' for Fabric master keys (mainnet purpose on all nets).
-      const acct = root.derivePath(`m/44'/0'/${accountIndex}'`);
-      const child = acct.derive(0).derive(i);
-      const addressNetwork = addressNetworkForName(networkName);
-      const pubkey = Buffer.from(child.publicKey);
-      const { address } = bitcoin.payments.p2wpkh({ pubkey, network: addressNetwork });
-      if (!address) return null;
-      return {
-        address,
-        index: i,
-        path: `m/44'/0'/${accountIndex}'/0/${i}`,
-        accountXpub: acct.neutered().toBase58()
-      };
-    }
-    const raw = String(xpub || '').trim();
-    if (!raw) return null;
-    const decodeNetwork = networkFromXpubPrefix(raw);
-    const account = bip32.fromBase58(raw, decodeNetwork);
-    const child = account.derive(0).derive(i);
-    const addressNetwork = addressNetworkForName(networkName);
-    const pubkey = Buffer.from(child.publicKey);
-    const { address } = bitcoin.payments.p2wpkh({ pubkey, network: addressNetwork });
-    if (!address) return null;
-    return { address, index: i, path: `m/0/${i}` };
+    const address = accountKeys.walletAddress({ xpub: raw, network: networkName, script: 'wpkh', change: 0, index: i });
+    return address ? { address, index: i, path: `m/0/${i}` } : null;
   } catch (_) {
     return null;
   }
 }
 
 /**
- * BIP44 payment-account xpub matching Hub desktop faucet / local-key watch.
- * @param {object} identity { xprv?, xpub? }
- * @param {number} [bip44Account=0]
- * @returns {string}
+ * Wallet xpubs of the identity's account on `network`: SegWit `m/84'/B'/n'`
+ * (new addresses) and standard `m/44'/B'/n'` (watched only). Null while locked.
+ * @param {object} identity Unlocked identity.
+ * @param {string} network Bitcoin network.
+ * @returns {{ xpub: string, standardXpub: string, segwitPath: string, standardPath: string }|null}
  */
-function bitcoinWatchXpubFromIdentity (identity = {}, bip44Account = 0) {
-  const xprv = String(identity.xprv || '').trim();
-  const xpub = String(identity.xpub || '').trim();
-  if (xprv.startsWith('xprv') || xprv.startsWith('tprv')) {
-    const derived = deriveReceiveAddress(xpub, 0, 'regtest', { xprv, bip44Account });
-    if (derived && derived.accountXpub) return derived.accountXpub;
+function walletKeysFromIdentity (identity, network) {
+  if (!identity || !identity.xprv) return null;
+  const { accountFromIdentity } = require('./identity');
+  const wallet = accountFromIdentity(identity, { network }).wallet;
+  return {
+    xpub: wallet.segwit.xpub,
+    standardXpub: wallet.standard.xpub,
+    segwitPath: wallet.segwit.path,
+    standardPath: wallet.standard.path
+  };
+}
+
+/** @private */
+function xpubQuery (xpub, standardXpub, extra = {}) {
+  const key = String(xpub || '').trim();
+  if (!key) {
+    const err = new Error('xpub is required');
+    err.status = 400;
+    throw err;
   }
-  return xpub;
+  const qs = new URLSearchParams(Object.assign({ xpub: key }, extra));
+  const standard = String(standardXpub || '').trim();
+  if (standard) qs.set('standardXpub', standard);
+  return qs.toString();
 }
 
 async function hubRequest (hubBase, pathAndQuery, opts = {}) {
@@ -216,40 +147,21 @@ async function fetchStatus (btc = {}) {
   return hubRequest(btc.hub, '/services/bitcoin', { method: 'GET' });
 }
 
-async function fetchWalletSummary (btc = {}, { xpub } = {}) {
-  const key = String(xpub || '').trim();
-  if (!key) {
-    const err = new Error('xpub is required');
-    err.status = 400;
-    throw err;
-  }
-  const qs = new URLSearchParams({ xpub: key });
-  return hubRequest(btc.hub, `/services/bitcoin/xpub?${qs.toString()}`, { method: 'GET' });
+async function fetchWalletSummary (btc = {}, { xpub, standardXpub } = {}) {
+  const qs = xpubQuery(xpub, standardXpub);
+  return hubRequest(btc.hub, `/services/bitcoin/xpub?${qs}`, { method: 'GET' });
 }
 
-async function fetchUtxos (btc = {}, { xpub } = {}) {
-  const key = String(xpub || '').trim();
-  if (!key) {
-    const err = new Error('xpub is required');
-    err.status = 400;
-    throw err;
-  }
-  const qs = new URLSearchParams({ xpub: key });
-  return hubRequest(btc.hub, `/services/bitcoin/xpub/utxos?${qs.toString()}`, { method: 'GET' });
+async function fetchUtxos (btc = {}, { xpub, standardXpub } = {}) {
+  const qs = xpubQuery(xpub, standardXpub);
+  return hubRequest(btc.hub, `/services/bitcoin/xpub/utxos?${qs}`, { method: 'GET' });
 }
 
-async function fetchTransactions (btc = {}, { xpub, limit = 50 } = {}) {
-  const key = String(xpub || '').trim();
-  if (!key) {
-    const err = new Error('xpub is required');
-    err.status = 400;
-    throw err;
-  }
-  const qs = new URLSearchParams({
-    xpub: key,
+async function fetchTransactions (btc = {}, { xpub, standardXpub, limit = 50 } = {}) {
+  const qs = xpubQuery(xpub, standardXpub, {
     limit: String(Math.max(1, Math.min(100, Number(limit) || 50)))
   });
-  return hubRequest(btc.hub, `/services/bitcoin/xpub/transactions?${qs.toString()}`, { method: 'GET' });
+  return hubRequest(btc.hub, `/services/bitcoin/xpub/transactions?${qs}`, { method: 'GET' });
 }
 
 /**
@@ -478,7 +390,7 @@ module.exports = {
   bitcoinRuntimeForSettings,
   deriveWalletIdFromXpub,
   deriveReceiveAddress,
-  bitcoinWatchXpubFromIdentity,
+  walletKeysFromIdentity,
   hubRequest,
   fetchStatus,
   fetchWalletSummary,

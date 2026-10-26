@@ -43,6 +43,8 @@ async function tryFabricPublishCrossSign (body) {
   const out = await api.publishCrossSign({
     peerPubkey: body && (body.peerPubkey || body.peer),
     nonce: body && body.nonce,
+    sessionId: (body && body.sessionId) || undefined,
+    origin: (body && body.origin) || undefined,
     type: (body && (body.type || body['@type'])) || undefined
   });
   if (!out) return null;

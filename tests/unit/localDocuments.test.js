@@ -34,9 +34,9 @@ describe('localDocuments', () => {
       'o7 fleet'
     );
 
-    const published = localDocuments.publish(store, created.id, { purchasePriceSats: 25 });
+    const published = localDocuments.publish(store, created.id, { purchasePriceSats: 1000 });
     assert.strictEqual(published.published, true);
-    assert.strictEqual(published.purchasePriceSats, 25);
+    assert.strictEqual(published.purchasePriceSats, 1000);
   });
 
   it('dedupes by content hash and writes blobs when a dir is set', () => {

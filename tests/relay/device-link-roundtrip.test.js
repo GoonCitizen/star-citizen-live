@@ -120,11 +120,14 @@ describe('device-link desktop ↔ Android round-trip', () => {
     assert.equal(pending.j.status, 'pending');
     assert.ok(pending.j.initiator && pending.j.initiator.pubkeyHex);
 
+    assert.equal(pending.j.origin, hub.origin);
+    assert.ok(pending.j.fingerprint);
+
     const accepted = await completeDeviceLinkAsResponder(desktopIdent, hub.origin, {
       sessionId: offer.j.sessionId,
-      status: 'pending',
       nonce: pending.j.nonce,
       label: pending.j.label,
+      origin: pending.j.origin,
       initiator: pending.j.initiator
     });
     assert.equal(accepted.ok, true, accepted.error);
@@ -136,12 +139,24 @@ describe('device-link desktop ↔ Android round-trip', () => {
       body: JSON.stringify({})
     });
     assert.equal(tick.status, 200, tick.j && tick.j.error);
-    assert.equal(tick.j.status, 'linked');
-    assert.ok(tick.j.peerPubkey);
+    assert.equal(tick.j.status, 'accepted', 'polling never countersigns');
+    assert.ok(tick.j.fingerprint);
+    assert.ok(tick.j.responder && tick.j.responder.id);
+
+    const confirmed = await jsonFetch(`${phone.origin}/services/star-citizen/device-links/confirm`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+      body: JSON.stringify({ responderId: tick.j.responder.id })
+    });
+    assert.equal(confirmed.status, 200, confirmed.j && confirmed.j.error);
+    assert.equal(confirmed.j.status, 'linked');
+    assert.ok(confirmed.j.peerPubkey);
 
     const desktopProof = signCrossSign(desktopIdent, {
       peerPubkey: phoneIdent.pubkey,
-      nonce: offer.j.nonce
+      nonce: offer.j.nonce,
+      sessionId: offer.j.sessionId,
+      origin: hub.origin
     });
     const posted = await jsonFetch(`${phone.origin}/identity/cross-sign`, {
       method: 'POST',
@@ -162,7 +177,7 @@ describe('device-link desktop ↔ Android round-trip', () => {
   });
 
   it('accepts a desktop-created fabric://link on the Android local API', async () => {
-    const { startDeviceLinkOffer, tickDeviceLinkOffer } = require('../../functions/fabricDeviceLinkOffer');
+    const { startDeviceLinkOffer, tickDeviceLinkOffer, confirmDeviceLinkOffer } = require('../../functions/fabricDeviceLinkOffer');
     const { signCrossSign } = require('../../functions/identityCrossSignVerify');
     const offer = await startDeviceLinkOffer(desktopIdent, {
       hubBase: hub.origin,
@@ -181,6 +196,7 @@ describe('device-link desktop ↔ Android round-trip', () => {
         sessionId: offer.sessionId,
         nonce: pending.j.nonce,
         label: pending.j.label,
+        origin: pending.j.origin,
         initiator: pending.j.initiator
       })
     });
@@ -188,10 +204,15 @@ describe('device-link desktop ↔ Android round-trip', () => {
     assert.equal(accept.j.ok, true);
     const tick = await tickDeviceLinkOffer(desktopIdent, offer);
     assert.equal(tick.ok, true, tick.error);
-    assert.equal(tick.status, 'linked');
+    assert.equal(tick.status, 'accepted');
+    const linked = await confirmDeviceLinkOffer(desktopIdent, offer, tick.responder.id);
+    assert.equal(linked.ok, true, linked.error);
+    assert.equal(linked.status, 'linked');
     const desktopProof = signCrossSign(desktopIdent, {
       peerPubkey: phoneIdent.pubkey,
-      nonce: offer.nonce
+      nonce: offer.nonce,
+      sessionId: offer.sessionId,
+      origin: hub.origin
     });
     const posted = await jsonFetch(`${phone.origin}/identity/cross-sign`, {
       method: 'POST',

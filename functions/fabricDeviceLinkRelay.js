@@ -10,7 +10,7 @@ const {
   pruneDeviceLinkSessions,
   clientMayAccessDeviceLink
 } = require('@fabric/http/functions/fabricDeviceLinkHttp');
-const { isLocalRequest } = require('@fabric/http/functions/fabricSiteLoginVerify');
+const { isLocalRequest } = require('@fabric/http/functions/httpRequestTrust');
 
 function wrapRes (res) {
   const wrapped = {
