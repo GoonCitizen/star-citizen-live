@@ -24,7 +24,7 @@ const HIDDEN_TABS = new Set([
   'messages',
   'live',
   'feed',
-  'devices'
+  'signers'
 ]);
 
 /**

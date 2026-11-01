@@ -92,7 +92,8 @@ function kindLabel (kind) {
     GroupChangeProposal: 'proposal',
     WalletEscrow: 'escrow',
     WalletPayout: 'payout',
-    WalletWithdrawal: 'withdrawal'
+    WalletWithdrawal: 'withdrawal',
+    DelegationRequest: 'signing request'
   };
   return map[kind] || (kind || 'notice');
 }
@@ -186,6 +187,26 @@ class Notifications extends React.Component {
         if (mid) window.location.href = `/missions/${encodeURIComponent(mid)}`;
         else window.location.hash = 'missions';
       }
+    } catch (e) {
+      this.setState({ busyId: null, error: e.message });
+    }
+  }
+
+  async actDelegationRequest (item, action) {
+    const hash = item.refs && item.refs.request;
+    if (!hash || this.state.busyId) return;
+    this.setState({ busyId: item.id, error: null });
+    try {
+      if (!this.state.pubkey) await this.ensureSession();
+      const res = await fetch(`${BASE}/delegation/requests/${encodeURIComponent(hash)}/${action}`, {
+        method: 'POST',
+        headers: this.headers(),
+        body: '{}'
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error || `HTTP ${res.status}`);
+      this.setState({ busyId: null });
+      await this.refresh();
     } catch (e) {
       this.setState({ busyId: null, error: e.message });
     }
@@ -314,6 +335,20 @@ class Notifications extends React.Component {
   }
 
   renderActions (item) {
+    if (item.kind === 'DelegationRequest' && item.status === 'pending') {
+      return React.createElement('div', { className: 'nt-row' },
+        React.createElement('button', {
+          className: 'nt-btn good',
+          disabled: this.state.busyId === item.id,
+          onClick: () => this.actDelegationRequest(item, 'sign')
+        }, this.state.busyId === item.id ? '…' : 'Sign'),
+        React.createElement('button', {
+          className: 'nt-btn ghost',
+          disabled: this.state.busyId === item.id,
+          onClick: () => this.actDelegationRequest(item, 'decline')
+        }, 'Decline')
+      );
+    }
     if (item.kind === 'MissionBroadcast' && item.status === 'pending') {
       return React.createElement('div', { className: 'nt-row' },
         React.createElement('button', {

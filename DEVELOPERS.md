@@ -22,7 +22,7 @@ We need compatible peers.
 
 **Why this tree as the basis for another application** (not Hub, not a blank
 Peer): [`docs/APPLICATION.md`](docs/APPLICATION.md) — frozen genesis, Group
-Federation contracts, LiveRelay composition, login/device-link, packaging.
+Federation contracts, LiveRelay composition, Passport sign-in / linked signers, packaging.
 
 Current product surface: [`AGENTS.md`](AGENTS.md) §3–§4. [`CONTINUE.md`](CONTINUE.md)
 still describes a retired Fabric-free `app/` skeleton — skip it.

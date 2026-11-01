@@ -126,8 +126,7 @@ const APP_RELAY_TYPES = new Set([
   CONTRACT_BODY_TYPES.NoteUpdate || 'NoteUpdate',
   CONTRACT_BODY_TYPES.GroupDataShare || 'GroupDataShare',
   CONTRACT_BODY_TYPES.DiscordCatalogShare || 'DiscordCatalogShare',
-  CONTRACT_BODY_TYPES.IdentityCrossSign || 'IdentityCrossSign',
-  CONTRACT_BODY_TYPES.IdentityCrossSignRevoke || 'IdentityCrossSignRevoke',
+  CONTRACT_BODY_TYPES.DelegationShare || 'DelegationShare',
   CONTRACT_BODY_TYPES.DeviceDataShare || 'DeviceDataShare',
   CONTRACT_BODY_TYPES.GroupVoiceJoin || 'GroupVoiceJoin',
   CONTRACT_BODY_TYPES.GroupVoiceLeave || 'GroupVoiceLeave',
@@ -278,10 +277,9 @@ function attachAppHandlers (peer, handlers = {}, _opts = {}) {
         } else if ((appType === CONTRACT_BODY_TYPES.DiscordCatalogShare || appType === 'DiscordCatalogShare') &&
           typeof handlers.onDiscordCatalogShare === 'function') {
           handlers.onDiscordCatalogShare(object, signer, meta);
-        } else if ((appType === CONTRACT_BODY_TYPES.IdentityCrossSign || appType === 'IdentityCrossSign' ||
-          appType === CONTRACT_BODY_TYPES.IdentityCrossSignRevoke || appType === 'IdentityCrossSignRevoke') &&
-          typeof handlers.onIdentityCrossSign === 'function') {
-          handlers.onIdentityCrossSign(object, signer, meta);
+        } else if ((appType === CONTRACT_BODY_TYPES.DelegationShare || appType === 'DelegationShare') &&
+          typeof handlers.onDelegationShare === 'function') {
+          handlers.onDelegationShare(object, signer, meta);
         } else if ((appType === CONTRACT_BODY_TYPES.DeviceDataShare || appType === 'DeviceDataShare') &&
           typeof handlers.onDeviceDataShare === 'function') {
           handlers.onDeviceDataShare(object, signer, meta);
@@ -289,10 +287,9 @@ function attachAppHandlers (peer, handlers = {}, _opts = {}) {
         return;
       }
 
-      if ((appType === CONTRACT_BODY_TYPES.IdentityCrossSign || appType === 'IdentityCrossSign' ||
-        appType === CONTRACT_BODY_TYPES.IdentityCrossSignRevoke || appType === 'IdentityCrossSignRevoke') &&
-        typeof handlers.onIdentityCrossSign === 'function') {
-        handlers.onIdentityCrossSign(object, signer, meta);
+      if ((appType === CONTRACT_BODY_TYPES.DelegationShare || appType === 'DelegationShare') &&
+        typeof handlers.onDelegationShare === 'function') {
+        handlers.onDelegationShare(object, signer, meta);
         return;
       }
 
@@ -317,6 +314,10 @@ function attachAppHandlers (peer, handlers = {}, _opts = {}) {
       }
       if (typeof appType === 'string' && appType.startsWith('Channel') && typeof handlers.onChannelMessage === 'function') {
         handlers.onChannelMessage(object, signer, meta);
+        return;
+      }
+      if (appType === 'WatchtowerAppointment' && typeof handlers.onWatchtowerAppointment === 'function') {
+        handlers.onWatchtowerAppointment(object, signer, meta);
         return;
       }
 
@@ -955,9 +956,9 @@ class FabricNetwork extends EventEmitter {
         this.emit('federationInviteResponse', { object, source, meta });
         this._forward('onFederationInviteResponse', object, source, meta);
       },
-      onIdentityCrossSign: (object, source, meta) => {
-        this.emit('identityCrossSign', { object, source, meta });
-        this._forward('onIdentityCrossSign', object, source, meta);
+      onDelegationShare: (object, source, meta) => {
+        this.emit('delegationShare', { object, source, meta });
+        this._forward('onDelegationShare', object, source, meta);
       },
       onDeviceDataShare: (object, source, meta) => {
         this.emit('deviceDataShare', { object, source, meta });
@@ -1447,17 +1448,17 @@ class FabricNetwork extends EventEmitter {
   }
 
   /**
-   * Gossip an IdentityCrossSign / IdentityCrossSignRevoke under GoonCitizen.
-   * @param {Object} payload verified-ready body from signCrossSign
+   * Relay one identity grant or revoke frame under GoonCitizen.
+   * @param {Object} payload
+   * @param {string} payload.frame `fabric:` `DELEGATION_GRANT` or `DELEGATION_REVOKE`
    */
-  publishIdentityCrossSign (payload) {
-    const type = (payload && (payload.type || payload['@type'])) ||
-      CONTRACT_BODY_TYPES.IdentityCrossSign || 'IdentityCrossSign';
-    return this._publishContractMessage(gooncitizenContractId(), type, Object.assign({}, payload));
+  publishDelegationShare (payload) {
+    const type = CONTRACT_BODY_TYPES.DelegationShare || 'DelegationShare';
+    return this._publishContractMessage(gooncitizenContractId(), type, { frame: String((payload && payload.frame) || '') });
   }
 
   /**
-   * Gossip a cluster-gated account snapshot after device-link.
+   * Gossip a cluster-gated account snapshot to linked signers.
    * @param {Object} payload DeviceDataShare fields
    */
   publishDeviceDataShare (payload) {
@@ -1919,6 +1920,18 @@ class FabricNetwork extends EventEmitter {
    */
   publishMarketArtifact (type, object, opts = {}) {
     return this._publishContractMessage(FabricNetwork.MARKET_CONTRACT_ID, type, object, opts);
+  }
+
+  /**
+   * File a signed `WatchtowerAppointment` with peered Fabric nodes under the
+   * watchtower contract (`sha256('fabric-watchtower')`).
+   * @param {object} appointment
+   * @param {object} [opts]
+   * @returns {object} signed Message
+   */
+  publishWatchtowerAppointment (appointment, opts = {}) {
+    const Watchtower = require('@fabric/core/services/watchtower');
+    return this._publishContractMessage(Watchtower.CONTRACT_ID, 'WatchtowerAppointment', appointment, opts);
   }
 
   /**

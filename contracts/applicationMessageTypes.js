@@ -107,14 +107,16 @@ const APP_CONTRACT_BODY_TYPES = Object.freeze({
    */
   DiscordCatalogShare: 'DiscordCatalogShare',
   /**
-   * Mutual device identity cross-sign (D-013 network). Gossiped after the
-   * `/device-links` pairing ceremony so peers can union distinct device
-   * pubkeys into one actor. Not frozen into genesis messageTypes.
+   * One identity-scope `DELEGATION_GRANT` or `DELEGATION_REVOKE` frame
+   * (`{ frame }`, `@fabric/core` docs/DELEGATION.md), relayed so peers can
+   * union keys whose holders granted each other `identity`. Each frame is
+   * checked on its own; the relayer vouches for nothing. Passport is not a
+   * mesh peer, so its grants travel this way too. Not frozen into genesis
+   * messageTypes.
    */
-  IdentityCrossSign: 'IdentityCrossSign',
-  IdentityCrossSignRevoke: 'IdentityCrossSignRevoke',
+  DelegationShare: 'DelegationShare',
   /**
-   * Cluster-gated account replay after device-link. Compact packs (profile,
+   * Cluster-gated account replay between linked signers. Compact packs (profile,
    * groups, notes, local tags, bounded chat) on the GoonCitizen contract.
    * Not frozen into genesis messageTypes. Receivers apply only when the
    * signer is in the same IdentityCluster. Never carries seeds or tokens.

@@ -17,7 +17,7 @@ describe('masterSeedVault', () => {
     const vault = deriveMasterSeedVault({ mnemonic, passphrase: 'vault-pass-1', network: 'regtest' });
     assert.equal(vault.account, 0);
     assert.equal(vault.network, 'regtest');
-    assert.equal(vault.identity.path, "m/44'/7778'/0'/0/0");
+    assert.equal(vault.identity.path, "m/7777'/7778'/0'/0/0");
     assert.equal(vault.wallet.segwit.path, "m/84'/1'/0'");
     assert.equal(vault.wallet.standard.path, "m/44'/1'/0'");
     assert.equal(vault.wallet.receive, 'segwit');
@@ -44,7 +44,7 @@ describe('masterSeedVault', () => {
     const mnemonic = generateVaultMnemonic();
     const test = deriveMasterSeedVault({ mnemonic, passphrase: 'net-pass', network: 'regtest' });
     const main = deriveMasterSeedVault({ mnemonic, passphrase: 'net-pass', network: 'mainnet' });
-    assert.equal(main.identity.path, "m/44'/7777'/0'/0/0");
+    assert.equal(main.identity.path, "m/7777'/7777'/0'/0/0");
     assert.equal(main.wallet.segwit.path, "m/84'/0'/0'");
     assert.notEqual(main.identity.pubkey, test.identity.pubkey);
   });

@@ -2,16 +2,16 @@
 
 /**
  * Identity — key management (Hub IdentityManager brought forward).
- * Desktop uses the overlay modal; Android and desktop `#devices` use
- * `layout: 'page'` on `#keys` / `#devices` / `#security` / `#privacy`
+ * Desktop uses the overlay modal; Android and desktop `#signers` (Linked signers) use
+ * `layout: 'page'` on `#keys` / `#signers` / `#security` / `#privacy`
  * (`components/Account.js`).
  *
  * Adapts hub.fabric.pub's identity safety model to the GoonCitizen desktop
  * and Android shells (plain React + IPC / Capacitor bridge):
  *   - lock / unlock with the encryption password; idle auto-lock timer
- *   - **Add a device** (peer-equivalent initiator or responder): QR `fabric://link`
- *     + HTTPS Passport landing; Android, desktop, and Passport can each create or accept
- *   - **Linked devices / Revoke** publishes IdentityCrossSignRevoke (BIP340 Fabric Message)
+ *   - **Linked signers** (`components/LinkedSigners.js`): pair with Passport,
+ *     another GoonCitizen, or a Hub through an invitation and a six-digit code;
+ *     grants and revocations are signed Fabric Messages
  *   - account + network switcher: one sealed master key, each pair derives
  *     its own identity, wallet, and cosigner keys (locked: cached pairs only)
  *   - no seed or private key is ever shown after creation; backups are the
@@ -29,13 +29,7 @@ const BitcoinWalletPanel = require('./BitcoinWalletPanel');
 const { isAndroidCompanion, androidSurface } = require('../functions/androidSurface');
 const { setAndroidSecureFlag } = require('../functions/androidSecureScreen');
 const { fetchPresence, putPresence, putPresenceShip } = require('../functions/presenceClient');
-const LinkedDevices = require('./LinkedDevices');
-const PubkeyEmoji = require('./PubkeyEmoji');
-const {
-  DEVICE_LINK_OFFER_TTL_MS,
-  isStaleDeviceLinkError,
-  isDeviceLinkLockedError
-} = require('../functions/deviceLinkLifecycle');
+const LinkedSigners = require('./LinkedSigners');
 
 const CSS = `
   .id-overlay{position:fixed;inset:0;z-index:45;background:rgba(8,10,14,.75);
@@ -150,18 +144,13 @@ class Identity extends React.Component {
       presenceStatusText: '',
       statusDraft: '',
       showKeyTools: this.props.section === 'keys',
-      linkOffer: null,
-      linkBusy: false,
       createPassword: '',
       createPassword2: '',
       createdMnemonic: null,
-      createdAck: false,
-      linkedDevices: [],
-      linkPaste: ''
+      createdAck: false
     };
     this._unsub = null;
     this._presenceTimer = null;
-    this._linkTimer = null;
   }
 
   componentDidMount () {
@@ -171,14 +160,7 @@ class Identity extends React.Component {
     this._presenceTimer = setInterval(() => this.loadPresence(), 15000);
     const b = bridge();
     if (b && b.onChanged) {
-      this._unsub = b.onChanged((summary) => {
-        const next = { info: summary };
-        if (summary && summary.pendingDeviceLinkOffer && summary.pendingDeviceLinkOffer.sessionId &&
-          !this.state.linkOffer) {
-          next.linkOffer = summary.pendingDeviceLinkOffer;
-        }
-        this.setState(next);
-      });
+      this._unsub = b.onChanged((summary) => this.setState({ info: summary }));
     }
     this.syncSeedSecureFlag();
   }
@@ -196,10 +178,7 @@ class Identity extends React.Component {
       this.setState({
         nickname: (res.settings && res.settings.nickname) || '',
         bio: profile.bio || '',
-        scHandle: profile.scHandle || '',
-        linkedDevices: Array.isArray(res.settings && res.settings.linkedDevices)
-          ? res.settings.linkedDevices
-          : []
+        scHandle: profile.scHandle || ''
       });
     } catch (_) { /* settings unavailable */ }
     try {
@@ -386,7 +365,6 @@ class Identity extends React.Component {
     setAndroidSecureFlag(false);
     if (this._unsub) this._unsub();
     if (this._presenceTimer) clearInterval(this._presenceTimer);
-    this.stopLinkPoll();
     // Never keep secrets in component state after close.
     this.setState({ unlockPassword: '', backupPassword: '', createdMnemonic: null });
   }
@@ -399,14 +377,7 @@ class Identity extends React.Component {
     const b = bridge();
     if (!b) { this.setState({ info: null }); return; }
     try {
-      const info = await b.get();
-      const pending = info && info.pendingDeviceLinkOffer;
-      const next = { info };
-      if (pending && pending.sessionId && !this.state.linkOffer) {
-        next.linkOffer = pending;
-      }
-      this.setState(next);
-      if (pending && pending.sessionId) this.startLinkPoll();
+      this.setState({ info: await b.get() });
     } catch (_) { /* bridge gone */ }
   }
 
@@ -417,7 +388,6 @@ class Identity extends React.Component {
     if (res.error) return this.setState({ busy: false, error: res.error });
     this.setState({ busy: false, unlockPassword: '', notice: 'Unlocked — signing enabled.' });
     this.load();
-    if (this.state.linkOffer) this.startLinkPoll();
   }
 
   async lock () {
@@ -509,18 +479,6 @@ class Identity extends React.Component {
     try { navigator.clipboard.writeText(text); this.setState({ notice: 'Copied.' }); } catch (_) { /* clipboard unavailable */ }
   }
 
-  stopLinkPoll () {
-    if (this._linkTimer) {
-      clearInterval(this._linkTimer);
-      this._linkTimer = null;
-    }
-  }
-
-  startLinkPoll () {
-    this.stopLinkPoll();
-    this._linkTimer = setInterval(() => { void this.tickAddDevice(); }, 2000);
-  }
-
   async createOnDevice () {
     const p = this.state.createPassword;
     if (!p || p.length < 8 || p !== this.state.createPassword2 || this.state.busy) return;
@@ -535,203 +493,9 @@ class Identity extends React.Component {
       createPassword2: '',
       createdMnemonic: res.mnemonic || null,
       createdAck: false,
-      notice: 'Identity created on this device — write down the recovery phrase. This seed stays here; linking other devices does not copy it.'
+      notice: 'Identity created on this device — write down the recovery phrase. This seed stays here; linking other apps does not copy it.'
     });
     this.load();
-  }
-
-  async startAddDevice () {
-    const b = bridge();
-    if (!b || typeof b.startDeviceLinkOffer !== 'function') {
-      this.setState({ error: 'This shell cannot create a device-link offer.' });
-      return;
-    }
-    if (this.state.linkBusy) return;
-    this.setState({ linkBusy: true, error: null, notice: null });
-    this.stopLinkPoll();
-    if (this.state.linkOffer && typeof b.cancelDeviceLinkOffer === 'function') {
-      try { await b.cancelDeviceLinkOffer(); } catch (_) { /* replace with a fresh offer */ }
-    }
-    const res = await b.startDeviceLinkOffer({
-      label: isAndroidCompanion() ? 'GoonCitizen Android' : 'GoonCitizen desktop'
-    });
-    if (res.error || !res.ok) {
-      this.setState({
-        linkBusy: false,
-        linkOffer: null,
-        error: res.error || 'Could not create device-link offer'
-      });
-      return;
-    }
-    this.setState({
-      linkBusy: false,
-      linkOffer: res,
-      notice: 'Waiting for the other device to approve. This QR expires in 10 minutes.'
-    });
-    this.startLinkPoll();
-  }
-
-  async tickAddDevice () {
-    const b = bridge();
-    if (!b || typeof b.tickDeviceLinkOffer !== 'function' || !this.state.linkOffer) return;
-    let res;
-    try {
-      res = await b.tickDeviceLinkOffer();
-    } catch (e) {
-      this.stopLinkPoll();
-      this.setState({
-        linkBusy: false,
-        error: (e && e.message) ? String(e.message) : 'Could not check the device-link offer.'
-      });
-      return;
-    }
-    if (isDeviceLinkLockedError(res)) {
-      this.setState({
-        error: 'Unlock this identity — the add-device QR is still waiting. Unlock, and this desktop will keep polling even if you leave this page.'
-      });
-      return;
-    }
-    if (res && res.ok && res.status === 'accepted') {
-      res = await this.confirmAddDevice(b, res);
-    }
-    if (res && res.declined) {
-      this.stopLinkPoll();
-      this.setState({ linkOffer: null, linkBusy: false, error: res.error || 'Link declined. Nothing was signed.' });
-      return;
-    }
-    if (!res || res.error || res.expired) {
-      if (isStaleDeviceLinkError(res) || (res && res.expired) || (res && /no pending device-link/i.test(String(res.error || '')))) {
-        this.stopLinkPoll();
-        this.setState({
-          linkOffer: null,
-          linkBusy: false,
-          error: 'That add-device offer expired or was cancelled. Start a new one.'
-        });
-      }
-      return;
-    }
-    if (res.status === 'linked') {
-      this.stopLinkPoll();
-      this.setState({
-        linkOffer: null,
-        linkBusy: false,
-        notice: 'Device linked. Both sides publish IdentityCrossSign and replay account data over Fabric (groups, notes, profile, chat). Sync continues on the mesh.'
-      });
-    }
-  }
-
-  /**
-   * A device answered the add-device code: countersign only after the user
-   * checks its key against the other screen.
-   */
-  async confirmAddDevice (b, accepted) {
-    if (this._confirmingLink) return { ok: true, status: 'pending' };
-    if (typeof b.confirmDeviceLinkOffer !== 'function') return { ok: true, status: 'pending' };
-    this._confirmingLink = true;
-    try {
-      const label = String(accepted.label || 'a device');
-      const ok = window.confirm(
-        `Link "${label}" to this identity?\n\nIts key: ${accepted.fingerprint || 'unknown'}\nVia: ${accepted.origin || 'the Hub'}\n\n` +
-        'Check that the other device shows the same key. Linked devices act as you.'
-      );
-      if (!ok) {
-        if (typeof b.cancelDeviceLinkOffer === 'function') {
-          try { await b.cancelDeviceLinkOffer(); } catch (_) { /* the offer ages out */ }
-        }
-        return { ok: false, declined: true, error: 'Link declined. Nothing was signed.' };
-      }
-      return await b.confirmDeviceLinkOffer(accepted.responder && accepted.responder.id);
-    } finally {
-      this._confirmingLink = false;
-    }
-  }
-
-  async cancelAddDevice () {
-    this.stopLinkPoll();
-    const b = bridge();
-    if (b && typeof b.cancelDeviceLinkOffer === 'function') {
-      try { await b.cancelDeviceLinkOffer(); } catch (_) { /* ignore */ }
-    }
-    this.setState({ linkOffer: null, linkBusy: false, notice: 'Device-link offer cancelled.' });
-  }
-
-  async openPastedDeviceLink () {
-    const raw = String(this.state.linkPaste || '').trim();
-    if (!raw) return;
-    const b = bridge();
-    if (!b || typeof b.openProtocolUrl !== 'function') {
-      this.setState({ error: 'This shell cannot open a fabric://link. Scan the QR or open it in GoonCitizen.' });
-      return;
-    }
-    if (this.state.linkBusy) return;
-    this.setState({ linkBusy: true, error: null, notice: null });
-    try {
-      const res = await b.openProtocolUrl(raw);
-      if (res && res.error) {
-        this.setState({ linkBusy: false, error: res.error });
-        return;
-      }
-      this.setState({
-        linkBusy: false,
-        linkPaste: '',
-        notice: 'Opening device-link — approve the card if this is your other device.'
-      });
-    } catch (e) {
-      this.setState({ linkBusy: false, error: (e && e.message) ? e.message : String(e) });
-    }
-  }
-
-  async revokeLinkedDevice (target) {
-    const row = target && typeof target === 'object' ? target : null;
-    const id = String(
-      (row && (row.pubkey || row.peerFabricId || row.peerPubkey || row.id)) ||
-      target ||
-      ''
-    );
-    if (!id) return;
-    const match = (this.state.linkedDevices || []).find((d) => {
-      const pid = d && (d.peerFabricId || d.pubkey || d.id || d.peerPubkey);
-      return String(pid || '') === id ||
-        (row && row.xonly && String(d.peerPubkey || '').toLowerCase().indexOf(String(row.xonly).toLowerCase()) >= 0);
-    });
-    const next = (this.state.linkedDevices || []).filter((d) => {
-      const pid = d && (d.peerFabricId || d.pubkey || d.id || d.peerPubkey);
-      if (String(pid || '') === id) return false;
-      if (row && row.xonly && String(d.peerPubkey || '').toLowerCase().indexOf(String(row.xonly).toLowerCase()) >= 0) {
-        return false;
-      }
-      return true;
-    });
-    const nonce = (match && match.nonce) || (row && row.nonce) || null;
-    const peerPubkey = (match && (match.peerPubkey || match.pubkey)) || id;
-    this.setState({ busy: true, error: null, notice: null });
-    try {
-      if (nonce) {
-        const { postIdentityCrossSign } = require('../functions/identityCrossSignClient');
-        const posted = await postIdentityCrossSign(window.location.origin, {
-          type: 'IdentityCrossSignRevoke',
-          peerPubkey,
-          nonce,
-          sessionId: (match && match.sessionId) || (row && row.sessionId) || undefined,
-          origin: (match && match.hubOrigin) || (row && row.hubOrigin) || undefined
-        });
-        if (!posted.ok) throw new Error(posted.error || 'Could not publish IdentityCrossSignRevoke');
-      }
-      await fetch('/settings/linkedDevices', {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ value: next })
-      });
-      this.setState({
-        busy: false,
-        linkedDevices: next,
-        notice: nonce
-          ? 'Device revoked — IdentityCrossSignRevoke published as a Fabric Message.'
-          : 'Removed the local pairing row. Scan a fresh QR to cluster again.'
-      });
-    } catch (e) {
-      this.setState({ busy: false, error: e.message });
-    }
   }
 
   renderCreateIdentity () {
@@ -790,97 +554,16 @@ class Identity extends React.Component {
     );
   }
 
-  renderAddDevice () {
-    const info = this.state.info;
-    const offer = this.state.linkOffer;
-    const b = bridge();
-    const canOffer = !!(b && typeof b.startDeviceLinkOffer === 'function');
-    if (!info) return null;
-    if (!info.unlocked) {
-      return React.createElement('div', { className: 'id-sec' },
-        React.createElement('h3', null, 'Add a device'),
-        React.createElement('div', { className: 'd' },
-          'Unlock this identity to show a QR. Phone / desktop scan fabric://link; Passport opens the HTTPS landing. Signing in to websites goes through Passport, not this QR.')
-      );
-    }
-    return React.createElement('div', { className: 'id-sec' },
-      React.createElement('h3', null, 'Add a device'),
-        React.createElement('div', { className: 'd' },
-          'Show a QR for Android, Passport, or another desktop. On the other device tap the header QR (or paste fabric://link). Matching emoji on that confirm modal is enough to approve the link. Each app keeps its own seed. Signing in to websites goes through Passport, not this QR.'),
-      React.createElement('div', { className: 'd' },
-        'If the camera does not open fabric://link, paste it here (desktop Identity → Copy fabric://link).'),
-      React.createElement('div', { className: 'id-row' },
-        React.createElement('input', {
-          className: 'id-input',
-          type: 'text',
-          placeholder: 'fabric://link?sessionId=…&hub=…',
-          value: this.state.linkPaste || '',
-          onChange: (e) => this.setState({ linkPaste: e.target.value }),
-          onKeyDown: (e) => { if (e.key === 'Enter') this.openPastedDeviceLink(); }
-        }),
-        React.createElement('button', {
-          className: 'id-btn ghost',
-          disabled: this.state.linkBusy || !String(this.state.linkPaste || '').trim(),
-          onClick: () => this.openPastedDeviceLink()
-        }, 'Open link')
-      ),
-      !offer
-        ? React.createElement('div', { className: 'id-row' },
-          React.createElement('button', {
-            className: 'id-btn',
-            disabled: this.state.linkBusy || !canOffer,
-            onClick: () => this.startAddDevice()
-          }, this.state.linkBusy ? 'Creating offer…' : 'Add a device')
-        )
-        : React.createElement(React.Fragment, null,
-          offer.qrDataUrl
-            ? React.createElement('img', {
-              className: 'id-qr',
-              src: offer.qrDataUrl,
-              alt: 'Scan fabric://link to join this identity cluster'
-            })
-            : null,
-          React.createElement(PubkeyEmoji, {
-            source: offer.initiatorId,
-            label: 'The phone modal must show these same emoji after it scans this QR. They fingerprint this device’s Fabric key — not a seed.'
-          }),
-          React.createElement('div', { className: 'd' }, 'GoonCitizen desktop / Android'),
-          React.createElement('div', { className: 'id-link' }, offer.protocolUrl || ''),
-          React.createElement('div', { className: 'd' }, 'Passport (open on relay.goon.vc)'),
-          React.createElement('div', { className: 'id-link' }, offer.httpsUrl || ''),
-          React.createElement('div', { className: 'd' },
-            'Expires in ' + Math.round(DEVICE_LINK_OFFER_TTL_MS / 60000) +
-            ' minutes. Cancel and start again if the other device never sees this QR.'),
-          React.createElement('div', { className: 'id-row' },
-            React.createElement('button', {
-              className: 'id-btn ghost',
-              onClick: () => this.copy(offer.protocolUrl)
-            }, 'Copy fabric://link'),
-            React.createElement('button', {
-              className: 'id-btn ghost',
-              onClick: () => this.copy(offer.httpsUrl)
-            }, 'Copy HTTPS landing'),
-            React.createElement('button', {
-              className: 'id-btn ghost',
-              onClick: () => this.cancelAddDevice()
-            }, 'Cancel')
-          )
-        )
-    );
-  }
-
-  renderLinkedDevices (opts = {}) {
+  renderLinkedSigners (opts = {}) {
     const info = this.state.info || {};
     const page = opts.page === true;
+    if (!page && !info.unlocked) return null;
     return React.createElement('div', { className: 'id-sec' },
-      page ? null : React.createElement('h3', null, 'Linked devices'),
-      React.createElement(LinkedDevices, {
+      page ? null : React.createElement('h3', null, 'Linked signers'),
+      React.createElement(LinkedSigners, {
         variant: page ? 'page' : 'embed',
         localPubkey: info.pubkey || '',
-        linkedDevices: this.state.linkedDevices || [],
-        addDevice: page ? this.renderAddDevice() : null,
-        onRevoke: (pk) => this.revokeLinkedDevice(pk),
-        onAddDevice: page ? null : () => this.startAddDevice()
+        invitation: this.props.invitation || null
       }),
       !page && typeof this.props.onOpenDevices === 'function'
         ? React.createElement('button', {
@@ -888,7 +571,7 @@ class Identity extends React.Component {
           className: 'id-btn ghost',
           style: { marginTop: 8 },
           onClick: () => this.props.onOpenDevices()
-        }, 'Open device manager')
+        }, 'Open linked signers')
         : null
     );
   }
@@ -1437,18 +1120,17 @@ class Identity extends React.Component {
           : null
       );
     }
-    if (section === 'devices') {
+    if (section === 'signers') {
       return React.createElement(React.Fragment, null,
         this.renderUnlockBanner(),
-        this.renderLinkedDevices({ page: true })
+        this.renderLinkedSigners({ page: true })
       );
     }
     if (section === 'security') {
       return React.createElement(React.Fragment, null,
         this.renderUnlockBanner(),
         this.renderLockRow(),
-        this.renderAddDevice(),
-        this.renderLinkedDevices(),
+        this.renderLinkedSigners(),
         React.createElement('div', { className: 'id-sec' }, this.renderForget())
       );
     }
@@ -1461,8 +1143,7 @@ class Identity extends React.Component {
     }
     return React.createElement(React.Fragment, null,
       this.renderUnlockBanner(),
-      this.renderAddDevice(),
-      this.renderLinkedDevices(),
+      this.renderLinkedSigners(),
       this.renderProfile(),
       this.renderPresence(),
       this.renderKeyTools()
@@ -1474,7 +1155,7 @@ class Identity extends React.Component {
     const section = this.props.section || 'all';
     const titles = {
       keys: '🔑 Keys',
-      devices: '📱 Devices',
+      signers: '🔗 Linked signers',
       security: '🛡️ Security',
       privacy: '🔒 Privacy',
       all: '🔑 Identity'
@@ -1504,6 +1185,6 @@ class Identity extends React.Component {
   }
 }
 
-Identity.CSS = CSS + '\n' + (BitcoinWalletPanel.CSS || '') + '\n' + (LinkedDevices.CSS || '');
+Identity.CSS = CSS + '\n' + (BitcoinWalletPanel.CSS || '') + '\n' + (LinkedSigners.CSS || '');
 
 module.exports = Identity;

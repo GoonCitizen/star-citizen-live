@@ -80,8 +80,9 @@ done
 cd "$ROOT"
 env -u FABRIC_MNEMONIC -u FABRIC_XPRV -u FABRIC_SEED node -e "
 require('./services/LiveRelay');
-for (const m of ['bulkSecurityAdvisory', 'identityCluster', 'peerIdentity']) require('@fabric/hub/functions/' + m);
-require('@fabric/http/functions/fabricLocalSigner');
+for (const m of ['bulkSecurityAdvisory', 'peerIdentity']) require('@fabric/hub/functions/' + m);
+for (const m of ['fabricDelegate', 'fabricDelegationClient', 'fabricDelegationHttp', 'fabricDelegationMailbox']) require('@fabric/http/functions/' + m);
+require('@fabric/core/types/delegation');
 console.log('$TAG LiveRelay loads against the packed @fabric packages');
 "
 env -u FABRIC_MNEMONIC -u FABRIC_XPRV -u FABRIC_SEED CSC_IDENTITY_AUTO_DISCOVERY=false npm run "$TARGET"

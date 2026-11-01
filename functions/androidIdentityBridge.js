@@ -1,10 +1,10 @@
 'use strict';
 
 /**
- * Capacitor Android polyfill for `window.electronAPI` (identity + fabric://link prompts).
+ * Capacitor Android polyfill for `window.electronAPI` (identity + signer invitations).
  * Only installs when `window.Capacitor` is set and Electron preload has not already
- * exposed an identity bridge. Each device keeps its own seed — linking is D-013
- * cross-sign, not mnemonic copy.
+ * exposed an identity bridge. Each app keeps its own seed — linked signers grant
+ * each other (`@fabric/core` docs/DELEGATION.md), they never copy a mnemonic.
  */
 
 const { Buffer } = require('buffer');
@@ -16,11 +16,6 @@ const {
   readAutoLockMinutes,
   writeAutoLockMinutes
 } = require('./androidIdentityStore');
-const {
-  stampCreatedAt,
-  isDeviceLinkPromptExpired,
-  isStaleDeviceLinkError
-} = require('./deviceLinkLifecycle');
 
 const { sealMasterWeb, unsealMasterWeb } = require('./webSealedMaster');
 
@@ -58,34 +53,16 @@ function installAndroidIdentityBridge () {
 
   const identityLib = require('./identity');
   const { assertAllowedFabricHub } = require('./fabricHubAllowlist');
-  const { parseFabricDeviceLinkUrl } = require('./fabricDeviceLinkProtocol');
+  const { delegationInvitationFromUrl } = require('./qrScanLink');
   const { signInToRelay } = require('./fabricLoginClient');
-  const { localNodeOrigin, syncIdentityToLocalNode } = require('./androidLocalNode');
-
-  async function localDeviceLinkFetch (path, opts = {}) {
-    const fetchImpl = opts.fetchImpl || globalThis.fetch;
-    const url = localNodeOrigin() + '/services/star-citizen/device-links' + path;
-    const init = {
-      method: opts.method || 'GET',
-      headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
-      cache: 'no-store'
-    };
-    if (opts.body != null) init.body = JSON.stringify(opts.body);
-    const res = await fetchImpl(url, init);
-    const data = await res.json().catch(() => ({}));
-    if (!res.ok) {
-      return { ok: false, error: (data && data.error) || `HTTP ${res.status}`, status: res.status };
-    }
-    return data && typeof data === 'object' ? Object.assign({ ok: true }, data) : { ok: true, data };
-  }
+  const { syncIdentityToLocalNode } = require('./androidLocalNode');
 
   let unlocked = null;
   let autoLockMinutes = 15;
   let autoLockTimer = null;
   const changeHandlers = [];
-  const promptHandlers = [];
-  let pendingPrompt = null;
-  let pendingDeviceLinkOffer = null;
+  const invitationHandlers = [];
+  let pendingInvitation = null;
 
   function emitChanged () {
     const summary = currentSummary();
@@ -105,14 +82,7 @@ function installAndroidIdentityBridge () {
   }
 
   function currentSummary () {
-    return Promise.resolve(readIdentityBlob()).then(async (blob) => {
-      let pending = pendingDeviceLinkOffer && pendingDeviceLinkOffer.ok
-        ? pendingDeviceLinkOffer
-        : null;
-      try {
-        const row = await localDeviceLinkFetch('/current');
-        if (row && row.ok && row.pending) pending = row;
-      } catch (_) { /* node not up yet */ }
+    return Promise.resolve(readIdentityBlob()).then((blob) => {
       const vault = identityLib.identityBlobSummary(blob);
       return Object.assign({
         exists: !!blob,
@@ -127,8 +97,7 @@ function installAndroidIdentityBridge () {
         createdAt: null
       }, vault || {}, {
         unlocked: !!unlocked && !!vault,
-        autoLockMinutes,
-        pendingDeviceLinkOffer: pending
+        autoLockMinutes
       });
     });
   }
@@ -151,47 +120,13 @@ function installAndroidIdentityBridge () {
     return backup && backup.type === 'gooncitizen-identity-backup' ? backup.vault : backup;
   }
 
-  function emitDeviceLinkPrompt (payload) {
-    if (!payload) return;
-    stampCreatedAt(payload);
-    pendingPrompt = payload;
-    promptHandlers.forEach((fn) => {
-      try { fn(payload); } catch (_) {}
+  function handleProtocolUrl (urlStr) {
+    const invitation = delegationInvitationFromUrl(urlStr);
+    if (!invitation) return;
+    pendingInvitation = { invitation, receivedAt: Date.now() };
+    invitationHandlers.forEach((fn) => {
+      try { fn(pendingInvitation); } catch (_) {}
     });
-  }
-
-  async function handleProtocolUrl (urlStr) {
-    const link = parseFabricDeviceLinkUrl(urlStr);
-    if (link && link.ok) {
-      const allowed = assertAllowedFabricHub(link.hubBase);
-      if (!allowed.ok) {
-        emitDeviceLinkPrompt({
-          kind: 'device-link',
-          sessionId: link.sessionId,
-          origin: link.hubBase,
-          hubBase: link.hubBase,
-          error: allowed.error || 'hub origin is not allowlisted',
-          identityLocked: !unlocked
-        });
-        return;
-      }
-      const q = '?sessionId=' + encodeURIComponent(link.sessionId) +
-        '&hub=' + encodeURIComponent(link.hubBase);
-      const pending = await localDeviceLinkFetch('/pending' + q);
-      emitDeviceLinkPrompt({
-        kind: 'device-link',
-        sessionId: link.sessionId,
-        origin: (pending.ok && pending.origin) || link.hubBase,
-        hubBase: link.hubBase,
-        nonce: pending.ok ? pending.nonce : null,
-        label: pending.ok ? pending.label : null,
-        initiator: pending.ok ? pending.initiator : null,
-        fingerprint: pending.ok ? (pending.fingerprint || null) : null,
-        identityLocked: !unlocked,
-        error: pending.ok ? null : pending.error
-      });
-      return;
-    }
   }
 
   /**
@@ -348,59 +283,8 @@ function installAndroidIdentityBridge () {
       void syncIdentityToLocalNode(null);
       return { ok: true };
     },
-    startDeviceLinkOffer: async (opts) => {
-      if (!unlocked) return { error: 'Identity is locked — unlock it, then add a device.' };
-      if (pendingDeviceLinkOffer) {
-        try { await localDeviceLinkFetch('/cancel', { method: 'POST', body: {} }); } catch (_) { /* ignore */ }
-        pendingDeviceLinkOffer = null;
-      }
-      const res = await localDeviceLinkFetch('/offer', {
-        method: 'POST',
-        body: {
-          hubBase: opts && opts.hubBase,
-          label: (opts && opts.label) || 'GoonCitizen Android'
-        }
-      });
-      if (!res.ok) return { error: res.error || 'Could not create device-link offer' };
-      pendingDeviceLinkOffer = res;
-      armAutoLock();
-      return res;
-    },
-    tickDeviceLinkOffer: async () => {
-      if (!unlocked) return { error: 'Identity is locked' };
-      if (!pendingDeviceLinkOffer) return { error: 'no pending device-link offer', expired: true };
-      const res = await localDeviceLinkFetch('/tick', { method: 'POST', body: {} });
-      if (!res.ok) {
-        if (res.expired || isStaleDeviceLinkError(res)) pendingDeviceLinkOffer = null;
-        return res;
-      }
-      if (res.status === 'linked') {
-        pendingDeviceLinkOffer = null;
-        armAutoLock();
-      }
-      return res;
-    },
-    confirmDeviceLinkOffer: async (responderId) => {
-      if (!unlocked) return { error: 'Identity is locked' };
-      if (!pendingDeviceLinkOffer) return { error: 'no pending device-link offer', expired: true };
-      const res = await localDeviceLinkFetch('/confirm', { method: 'POST', body: { responderId } });
-      if (!res.ok) {
-        if (res.expired || isStaleDeviceLinkError(res)) pendingDeviceLinkOffer = null;
-        return res;
-      }
-      if (res.status === 'linked') {
-        pendingDeviceLinkOffer = null;
-        armAutoLock();
-      }
-      return res;
-    },
-    cancelDeviceLinkOffer: async () => {
-      try { await localDeviceLinkFetch('/cancel', { method: 'POST', body: {} }); } catch (_) { /* ignore */ }
-      pendingDeviceLinkOffer = null;
-      return { ok: true, cancelled: true };
-    },
     openProtocolUrl: async (url) => {
-      await handleProtocolUrl(String(url || '').trim());
+      handleProtocolUrl(String(url || '').trim());
       return { ok: true };
     },
     signInToRelay: async (origin) => {
@@ -423,63 +307,24 @@ function installAndroidIdentityBridge () {
     }
   };
 
-  const deviceLinkPrompt = {
-    onPrompt: (handler) => {
-      promptHandlers.push(handler);
+  const delegationInvitation = {
+    onInvitation: (handler) => {
+      invitationHandlers.push(handler);
       return () => {
-        const i = promptHandlers.indexOf(handler);
-        if (i >= 0) promptHandlers.splice(i, 1);
+        const i = invitationHandlers.indexOf(handler);
+        if (i >= 0) invitationHandlers.splice(i, 1);
       };
     },
     pullPending: async () => {
-      if (!pendingPrompt) return null;
-      if (isDeviceLinkPromptExpired(pendingPrompt)) {
-        pendingPrompt = null;
-        return null;
-      }
-      return pendingPrompt;
-    },
-    resolve: async (opts) => {
-      const prompt = pendingPrompt;
-      if (!prompt || !prompt.sessionId) return { error: 'no pending prompt' };
-      if (!opts || !opts.approve) {
-        pendingPrompt = null;
-        return { ok: true, approved: false };
-      }
-      if (!unlocked) return { error: 'Identity is locked — unlock it, then try the link again.' };
-      if (prompt.kind === 'device-link') {
-        if (prompt.error && !prompt.initiator) {
-          pendingPrompt = null;
-          return { error: prompt.error };
-        }
-        if (isDeviceLinkPromptExpired(prompt)) {
-          pendingPrompt = null;
-          return { error: 'This device-link expired. Scan a fresh QR.' };
-        }
-        const result = await localDeviceLinkFetch('/accept', {
-          method: 'POST',
-          body: {
-            hubBase: prompt.hubBase,
-            sessionId: prompt.sessionId,
-            nonce: prompt.nonce,
-            label: prompt.label,
-            origin: prompt.origin,
-            initiator: prompt.initiator
-          }
-        });
-        if (!result.ok) return { error: result.error || 'Device link failed.' };
-        pendingPrompt = null;
-        armAutoLock();
-        return { ok: true, approved: true, linked: true };
-      }
-      pendingPrompt = null;
-      return { error: 'Unknown request.' };
+      const p = pendingInvitation;
+      pendingInvitation = null;
+      return p;
     }
   };
 
   window.electronAPI = Object.assign({}, window.electronAPI || {}, {
     identity,
-    deviceLinkPrompt,
+    delegationInvitation,
     platform: 'android',
     notify: async (payload) => {
       try {
@@ -504,12 +349,12 @@ function installAndroidIdentityBridge () {
     const CapApp = window.Capacitor.Plugins && window.Capacitor.Plugins.App;
     if (CapApp && typeof CapApp.addListener === 'function') {
       CapApp.addListener('appUrlOpen', (event) => {
-        if (event && event.url) void handleProtocolUrl(event.url);
+        if (event && event.url) handleProtocolUrl(event.url);
       });
     }
     if (CapApp && typeof CapApp.getLaunchUrl === 'function') {
       CapApp.getLaunchUrl().then((r) => {
-        if (r && r.url) void handleProtocolUrl(r.url);
+        if (r && r.url) handleProtocolUrl(r.url);
       }).catch(() => {});
     }
   } catch (_) { /* plugin optional */ }

@@ -11,7 +11,7 @@ const { isAndroidCompanion, androidSurface } = require('../functions/androidSurf
 
 const SECTIONS = [
   ['keys', 'Keys'],
-  ['devices', 'Devices'],
+  ['signers', 'Linked signers'],
   ['security', 'Security'],
   ['privacy', 'Privacy']
 ];
@@ -24,11 +24,11 @@ const CSS = `
 
 function leadFor (section) {
   const android = isAndroidCompanion();
-  if (section === 'devices') {
-    return 'This identity’s linked devices. Pair with fabric://link, then chat and notes replay over Fabric both ways (desktop ↔ phone). Signing in to websites is Passport (which can ask GoonCitizen to sign) — not this pairing QR.';
+  if (section === 'signers') {
+    return 'Passport, GoonCitizen on your phone or another computer, and Hubs you have linked. Each keeps its own key; you choose what each may do, and their signing requests arrive in your notifications.';
   }
   if (section === 'security') {
-    return 'Lock this identity, set auto-lock, and link or revoke Passport / desktop / another device. Unlock to sign. Lost the password? Forget the identity on this device, then restore from seed.';
+    return 'Lock this identity, set auto-lock, and link or unlink signers. Unlock to sign. Lost the password? Forget the identity on this device, then restore from seed.';
   }
   if (section === 'privacy') {
     return androidSurface('heatmap')
@@ -37,8 +37,8 @@ function leadFor (section) {
   }
   return android
     ? (androidSurface('associatedFunds')
-      ? 'This device’s Fabric key, recovery backups, and associated Bitcoin funds. Each app keeps its own seed — link devices from Devices.'
-      : 'This device’s Fabric key and recovery backups. Each app keeps its own seed — link devices from Devices.')
+      ? 'This device’s Fabric key, recovery backups, and associated Bitcoin funds. Each app keeps its own seed — link them from Linked signers.'
+      : 'This device’s Fabric key and recovery backups. Each app keeps its own seed — link them from Linked signers.')
     : 'This device’s Fabric key, recovery backups, and associated Bitcoin funds.';
 }
 
@@ -64,7 +64,8 @@ class Account extends React.Component {
         onForget: this.props.onForget,
         onNicknameChange: this.props.onNicknameChange,
         onPresenceChange: this.props.onPresenceChange,
-        analytics: this.props.analytics
+        analytics: this.props.analytics,
+        invitation: this.props.invitation
       }),
       section === 'privacy' && typeof this.props.onOpenSettings === 'function'
         ? React.createElement('button', {

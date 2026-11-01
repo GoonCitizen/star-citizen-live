@@ -518,8 +518,16 @@ function mergeInsightMessages (lists, limit) {
   return merged;
 }
 
-function compactStoredMessagesForShare (store) {
-  const stats = loadChannelMessageStats(store);
+/**
+ * @param {object} store
+ * @param {Object} [opts]
+ * @param {Set<string>} [opts.channelIds] only these channels (others are dropped before the 12-channel cap)
+ * @returns {{ channels: object[], truncated: boolean }}
+ */
+function compactStoredMessagesForShare (store, opts = {}) {
+  const allowed = opts.channelIds instanceof Set ? opts.channelIds : null;
+  const stats = loadChannelMessageStats(store)
+    .filter((s) => !allowed || allowed.has(String(s.channelId)));
   const channels = stats.map((s) => ({
     channelId: s.channelId,
     guildId: s.guildId,

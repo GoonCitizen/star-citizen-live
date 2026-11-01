@@ -251,6 +251,7 @@ describe('MarketManager payment channels (Phase 4)', () => {
     });
     assert.strictEqual(verdict.ok, true, verdict.reason);
     assert.strictEqual(verdict.evidence, 'inclusion');
+    assert.ok(B.watchtower && B.watchtower.size >= 1, 'revoked commitments are filed on the local watchtower');
 
     A.persist();
     const A2 = new MarketManager({ store: storeA, channels: { enable: true }, bitcoin: { network: 'regtest' } });

@@ -1,10 +1,10 @@
 'use strict';
 
 /**
- * Cluster-gated account replay after D-013 device-link.
+ * Cluster-gated account replay between linked signers.
  *
- * Pairing rendezvous stays HTTPS (`/device-links`). After `IdentityCrossSign`,
- * each device publishes a compact `DeviceDataShare` CONTRACT_MESSAGE (not
+ * Pairing is the delegation rendezvous (`/delegations`). Once two keys have
+ * granted each other `identity`, each publishes a compact `DeviceDataShare` CONTRACT_MESSAGE (not
  * frozen into genesis `messageTypes`) so the sibling can rebuild groups,
  * notes, local tags, profile, a bounded chat slice, `account.stats`
  * (counts only: notes, Game.log folds, missions, …), `account.peers`
@@ -21,6 +21,11 @@ const localGroups = require('./localGroups');
 const peerProfile = require('./peerProfile');
 const clusterInventory = require('./clusterInventory');
 const { HEADER_SIZE, MAX_MESSAGE_SIZE } = require('@fabric/core/constants');
+const {
+  ampObjectBudget,
+  compactDocumentRow,
+  contractMessageEnvelopeReserve
+} = require('@fabric/core/functions/documentList');
 
 const SHARE_TYPE = 'DeviceDataShare';
 const PACK_PROFILE = 'account.profile';
@@ -49,16 +54,16 @@ const MAX_TAGS = 48;
 const MAX_CHAT = 80;
 const MAX_FILES = 48;
 /**
- * Bytes reserved for the CONTRACT_MESSAGE JSON envelope (contractId, type,
- * signer, timestamps, …) around the DeviceDataShare object inside one AMP body.
+ * Bytes reserved around a share object inside one AMP body. Measured from a
+ * CONTRACT_MESSAGE built with Message, not a fixed constant.
  */
-const AMP_ENVELOPE_RESERVE = 1488;
+const AMP_ENVELOPE_RESERVE = contractMessageEnvelopeReserve();
 /**
  * JSON size of a DeviceDataShare object. CONTRACT_MESSAGE envelope + object must
  * stay within the core AMP body cap (`MAX_MESSAGE_SIZE`, 32 KiB on current core;
  * 3888 on pre-2026-10 core) so the frame is never dropped at the peer gate.
  */
-const AMP_OBJECT_BUDGET = Math.max(1024, MAX_MESSAGE_SIZE - AMP_ENVELOPE_RESERVE);
+const AMP_OBJECT_BUDGET = ampObjectBudget();
 /** Max bytes of one AMP frame on the wire (header + body), from the installed core. */
 const AMP_FRAME_MAX = HEADER_SIZE + MAX_MESSAGE_SIZE;
 /** Truncate on the wire so several ChatMessage rows fit one AMP frame (≤ chat cap of 2000). */
@@ -139,7 +144,9 @@ function compactGroupRow (row) {
 
 function compactFileRow (row) {
   if (!row || typeof row !== 'object') return null;
-  const id = String(row.id || row.sha256 || '').trim().toLowerCase();
+  const base = compactDocumentRow(row);
+  if (!base) return null;
+  const id = base.id;
   if (!/^[0-9a-f]{64}$/.test(id)) return null;
   const sha256 = String(row.sha256 || id).trim().toLowerCase();
   const out = {

@@ -20,12 +20,16 @@ Intel desk / Groups as orgs: [`INTELLIGENCE.md`](INTELLIGENCE.md).
   Android is the same: the APK loads a **local node** first; remote hubs are not
   the UI origin.
 - **Sign-in** is Passport v2 (D-021): challenges for pinned origins only, each
-  redeemed once by the browser that asked. **Device-link** uses client-signed
-  Schnorr over Hub HTTPS rendezvous. Native sign-in and device-link go only to
+  redeemed once by the browser that asked. **Linked signers** (D-022) pair with
+  signed delegation frames over a Hub HTTPS rendezvous (`/delegations`) and a
+  six-digit code the player matches on both screens; nothing is granted before
+  that. Native sign-in, invitations, and signing-request mailboxes go only to
   an **allowlisted** hub origin
-  (defaults + `FABRIC_HUB_ALLOWLIST`). After device-link, **IdentityCrossSign**
-  is gossiped **on Fabric** so other peers treat the keys as one actor; a stolen device key
-  **is** the person until another cluster member publishes `IdentityCrossSignRevoke`.
+  (defaults + `FABRIC_HUB_ALLOWLIST`). Mutual `identity` **DELEGATION_GRANT**s
+  are gossiped **on Fabric** (`DelegationShare`) so other peers treat the keys as
+  one actor; a stolen app key **is** the person until another linked signer
+  publishes a `DELEGATION_REVOKE`. A signing request never signs on its own:
+  it waits in Notifications for Sign / Decline.
   After that, **DeviceDataShare** is the account snapshot (cluster-gated apply).
   Node LiveRelay advertises RFC1918 `:7777` dial hints on Hub `RegisterWebRTCPeer`
   (pubkey + candidates only — not seeds or pairing secrets) so siblings can

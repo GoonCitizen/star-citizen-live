@@ -117,25 +117,8 @@ test('desktop notification settings round-trip on the Fabric Store', async () =>
   fs.rmSync(dir, { recursive: true, force: true });
 });
 
-test('pendingDeviceLinkOffer persists without QR bytes', async () => {
-  const dir = tmpDir();
-  const store = new Store({ path: path.join(dir, 'register') });
-  await store.start();
-  assert.ok(settingsStore.ALLOWED_KEYS.includes('pendingDeviceLinkOffer'));
-  settingsStore.putSetting(store, 'pendingDeviceLinkOffer', {
-    sessionId: 'ab'.repeat(24),
-    hubBase: 'https://relay.goon.vc',
-    nonce: 'cd'.repeat(32),
-    qrDataUrl: 'data:image/png;base64,AAAA'
-  });
-  const loaded = settingsStore.loadSettings(store);
-  assert.equal(loaded.pendingDeviceLinkOffer.sessionId, 'ab'.repeat(24));
-  assert.equal(loaded.pendingDeviceLinkOffer.hubBase, 'https://relay.goon.vc');
-  assert.equal(loaded.pendingDeviceLinkOffer.qrDataUrl, undefined);
-  settingsStore.putSetting(store, 'pendingDeviceLinkOffer', null);
-  assert.equal(settingsStore.loadSettings(store).pendingDeviceLinkOffer, undefined);
-  await store.stop();
-  fs.rmSync(dir, { recursive: true, force: true });
+test('retired device-link settings are not kept', () => {
+  assert.ok(!settingsStore.ALLOWED_KEYS.includes('pendingDeviceLinkOffer'));
 });
 
 test('legacy settings.json is imported into the Fabric Store once, then retired', async () => {
@@ -396,7 +379,7 @@ test('PUT /settings/offlineMode stops sharing and keeps saved share prefs', asyn
     assert.strictEqual(listed.body.settings.offlineMode, true);
     assert.strictEqual(listed.body.settings.shareLogsGlobal, true);
 
-    const links = await request(port, 'POST', '/device-links', {});
+    const links = await request(port, 'POST', '/delegations', {});
     assert.strictEqual(links.status, 503);
     assert.match(links.body.error, /Offline Mode/);
     const peers = await request(port, 'POST', '/peers', { address: 'relay.goon.vc:7777' });

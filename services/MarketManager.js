@@ -31,11 +31,13 @@ const hubBitcoinProxy = require('../functions/hubBitcoinProxy');
 const Challenge = require('@fabric/core/types/challenge');
 const ChannelBook = require('@fabric/core/types/channelBook');
 const Witness = require('@fabric/core/types/witness');
+const Watchtower = require('@fabric/core/services/watchtower');
 
 const COLLECTION = 'markettelemetry';
 const RECORD_ID = 'local';
 const AGENT_RECORD_ID = 'agent';
 const CHANNELS_RECORD_ID = 'channels';
+const WATCHTOWER_RECORD_ID = 'watchtower';
 
 function sellerIdFromEvent (ev = {}) {
   const message = ev.message || {};
@@ -57,6 +59,7 @@ class MarketManager extends EventEmitter {
     super();
     this.settings = Object.assign({ persistDebounceMs: 2000, agent: { enable: false }, channels: { enable: false } }, settings);
     this.channels = null;
+    this.watchtower = null;
     this.store = settings.store || null;
     this.book = new DocumentBook(settings.book || {});
     this.agent = null;
@@ -82,6 +85,8 @@ class MarketManager extends EventEmitter {
     if (deps.providerPrivateKey) this._providerPrivateKey = deps.providerPrivateKey;
     if (typeof deps.localTree === 'function') this._localTree = deps.localTree;
     if (typeof deps.publish === 'function') this._publish = deps.publish;
+    if (typeof deps.publishWatchtower === 'function') this._publishWatchtower = deps.publishWatchtower;
+    if (typeof deps.admit === 'function') this._admit = deps.admit;
     if (typeof deps.tipHeight === 'function') this._tipHeight = deps.tipHeight;
     if (this.agent) {
       const peer = this._peerProvider();
@@ -167,6 +172,7 @@ class MarketManager extends EventEmitter {
 
   /** Start the budget agent scheduler when enabled. */
   async start () {
+    this._ensureWatchtower();
     const agent = this._ensureAgent();
     if (agent) await agent.start();
     if (this.channelsEnabled && this._ensureChannels()) this._startChainPoll();
@@ -238,6 +244,7 @@ class MarketManager extends EventEmitter {
       this.store.put(COLLECTION, RECORD_ID, record);
       if (this.agent) this.store.put(COLLECTION, AGENT_RECORD_ID, this.agent.export());
       if (this.channels) this.store.put(COLLECTION, CHANNELS_RECORD_ID, this.channels.export());
+      if (this.watchtower) this.store.put(COLLECTION, WATCHTOWER_RECORD_ID, this.watchtower.export());
     } catch (e) {
       this.emit('error', e);
     }
@@ -367,6 +374,7 @@ class MarketManager extends EventEmitter {
     }
     const snap = this.store && typeof this.store.get === 'function' ? this.store.get(COLLECTION, CHANNELS_RECORD_ID) : null;
     if (snap) { try { this.channels.import(snap); } catch (e) { this.emit('error', e); } }
+    this._filePenalties();
     return this.channels;
   }
 
@@ -391,6 +399,108 @@ class MarketManager extends EventEmitter {
   }
 
   /**
+   * This node's watchtower: its own penalties, plus filings from clients the
+   * host admits. Restored from the register store.
+   * @returns {Watchtower}
+   * @private
+   */
+  _ensureWatchtower () {
+    if (this.watchtower) return this.watchtower;
+    const priv = this._providerKey();
+    this.watchtower = new Watchtower({
+      localPrivateKey: priv || undefined,
+      admit: (pubkey) => (this._admit ? this._admit(pubkey) : false)
+    });
+    this._restoreWatchtower();
+    return this.watchtower;
+  }
+
+  /** @private */
+  _restoreWatchtower () {
+    if (!this.watchtower || !this.store || typeof this.store.get !== 'function') return;
+    try {
+      const snap = this.store.get(COLLECTION, WATCHTOWER_RECORD_ID);
+      if (snap) this.watchtower.import(snap);
+    } catch (e) { this.emit('error', e); }
+  }
+
+  /**
+   * File this node's revoked commitments locally and, when the host gave a
+   * publisher, on the upstream node this process is registered with.
+   * @returns {number}
+   * @private
+   */
+  _filePenalties () {
+    const book = this.channels;
+    const priv = this._providerKey();
+    if (!book || !priv) return 0;
+    const tower = this._ensureWatchtower();
+    if (priv && !tower.localPubkey) {
+      try { tower.localPubkey = Witness.xOnlyPubkeyHex(priv); } catch (_) {}
+    }
+    let n = 0;
+    for (const filing of book.penaltyFilings()) {
+      let appointment;
+      try { appointment = Watchtower.appointment(filing, priv); } catch (_) { continue; }
+      let filed;
+      try { filed = tower.file(appointment); } catch (e) { this.emit('error', e); continue; }
+      if (!filed.updated) continue;
+      n += 1;
+      if (typeof this._publishWatchtower === 'function') {
+        try { this._publishWatchtower(appointment); } catch (e) { this.emit('error', e); }
+      }
+    }
+    if (n) this._schedulePersist();
+    return n;
+  }
+
+  /**
+   * Best-effort broadcast through the Hub bitcoin proxy. Resolves true when
+   * every transaction was accepted or already settled.
+   * @param {string[]} txHexes
+   * @returns {Promise<boolean>}
+   * @private
+   */
+  async _broadcastTransactions (txHexes) {
+    if (!txHexes || !txHexes.length) return true;
+    const btc = this._btc();
+    if (!btc) return false;
+    let ok = true;
+    for (const txHex of txHexes) {
+      try {
+        await hubBitcoinProxy.hubRequest(btc.hub, '/services/bitcoin/broadcast', {
+          method: 'POST',
+          headers: btc.adminToken ? { Authorization: `Bearer ${btc.adminToken}` } : {},
+          body: { hex: txHex }
+        });
+      } catch (e) {
+        if (!Watchtower.broadcastSettled(e)) {
+          ok = false;
+          this.emit('error', e instanceof Error ? e : new Error(String(e && e.message ? e.message : e)));
+        }
+      }
+    }
+    return ok;
+  }
+
+  /**
+   * Keep a filing from a client this node has registered.
+   * @param {object} appointment
+   * @returns {object|null}
+   */
+  fileWatchtowerAppointment (appointment) {
+    const tower = this._ensureWatchtower();
+    try {
+      const filed = tower.file(appointment);
+      this._schedulePersist();
+      return filed;
+    } catch (e) {
+      if (!e || e.code !== 'UNREGISTERED') this.emit('error', e instanceof Error ? e : new Error(String(e && e.message ? e.message : e)));
+      return null;
+    }
+  }
+
+  /**
    * Route an inbound `Channel*` body from the Fabric contract stream.
    * @param {object} body
    * @param {object} [meta] `{ sellerId }`
@@ -401,6 +511,7 @@ class MarketManager extends EventEmitter {
     if (!book) return null;
     try {
       const reply = book.ingest(body, meta);
+      this._filePenalties();
       this._schedulePersist();
       return reply;
     } catch (e) {
@@ -419,11 +530,16 @@ class MarketManager extends EventEmitter {
    * @returns {object|null}
    */
   onBitcoinBlock (payload = {}) {
+    const txHexes = payload.txHexes || [];
     const book = this.channels;
-    if (!book) return null;
+    if (!book) {
+      this._scanLocalWatchtower(txHexes);
+      return null;
+    }
+    this._filePenalties();
     const result = book.onBlock({
       height: payload.height,
-      txHexes: payload.txHexes || [],
+      txHexes,
       blockHeaderHex: payload.blockHeaderHex || undefined,
       txids: Array.isArray(payload.txids) ? payload.txids : undefined,
       destinationAddress: payload.destinationAddress
@@ -433,8 +549,26 @@ class MarketManager extends EventEmitter {
       this.emit('channelBreach', obs);
       if (obs.fraudProof && this._publish) this._publish('FraudProof', obs.fraudProof);
     }
+    this._broadcastTransactions(book.actionTransactions(result.actions, payload.destinationAddress ? { destinationAddress: payload.destinationAddress } : {}));
+    this._scanLocalWatchtower(txHexes);
     if (result.published.length || result.observations.length) this._schedulePersist();
     return result;
+  }
+
+  /**
+   * Broadcast justice for any filed commitment among these transactions.
+   * @param {string[]} txHexes
+   * @private
+   */
+  _scanLocalWatchtower (txHexes) {
+    const tower = this.watchtower;
+    if (!tower || !txHexes || !txHexes.length) return;
+    for (const hit of tower.match(txHexes)) {
+      this._broadcastTransactions(hit.transactions).then((ok) => {
+        if (ok) tower.drop(hit.client, hit.hint);
+        this._schedulePersist();
+      }).catch(() => {});
+    }
   }
 
   /** @private poll the Hub Bitcoin status for the tip while channels are enabled */

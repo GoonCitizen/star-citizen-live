@@ -37,7 +37,8 @@ const NOTIFICATION_KINDS = new Set([
   'WalletEscrow',
   'WalletPayout',
   'WalletWithdrawal',
-  'NoteShare'
+  'NoteShare',
+  'DelegationRequest'
 ]);
 
 /** Actions from MissionManager / GroupManager audit that become inbox rows. */
@@ -465,6 +466,30 @@ function entryFromWalletEvent (opts = {}) {
 }
 
 /**
+ * A linked signer asks the player to sign (`GoonDelegation` `request`).
+ * The row carries the request hash; Sign and Decline answer it.
+ * @param {{ hash: string, notification: object }} ev
+ * @returns {object|null}
+ */
+function entryFromDelegationRequest (ev = {}) {
+  const n = ev.notification || {};
+  const hash = String(ev.hash || n.request || '').toLowerCase();
+  if (!/^[0-9a-f]{64}$/.test(hash)) return null;
+  const from = n.from || {};
+  return normalizeEntry({
+    id: 'delegation:' + hash,
+    kind: 'DelegationRequest',
+    status: 'pending',
+    actionable: true,
+    title: n.title || 'Signing request',
+    body: n.summary || null,
+    source: from.pubkey || null,
+    handle: from.label || null,
+    refs: { request: hash, scope: n.scope || null, expiresAt: n.expiresAt || null }
+  });
+}
+
+/**
  * Local tag create / member add / remove / delete.
  * @param {object} group
  * @param {string} action `create` | `add` | `remove` | `delete` | `rename`
@@ -689,6 +714,7 @@ module.exports = {
   normalizeEntry,
   append,
   patch,
+  entryFromDelegationRequest,
   list,
   backfillFromLegacy,
   pendingCount,

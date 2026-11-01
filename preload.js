@@ -26,9 +26,6 @@ contextBridge.exposeInMainWorld('electronAPI', {
     importBackup: (backup, password, replace) => ipcRenderer.invoke('identity:import-backup', { backup, password, replace }),
     setAutoLock: (minutes) => ipcRenderer.invoke('identity:set-autolock', { minutes }),
     forget: (confirm) => ipcRenderer.invoke('identity:forget', { confirm: !!confirm }),
-    startDeviceLinkOffer: (opts) => ipcRenderer.invoke('identity:device-link-start', opts || {}),
-    tickDeviceLinkOffer: () => ipcRenderer.invoke('identity:device-link-tick'),
-    cancelDeviceLinkOffer: () => ipcRenderer.invoke('identity:device-link-cancel'),
     openProtocolUrl: (url) => ipcRenderer.invoke('identity:open-protocol-url', url),
     signInToRelay: (origin) => ipcRenderer.invoke('identity:sign-in-relay', { origin }),
     onChanged: (handler) => {
@@ -40,7 +37,6 @@ contextBridge.exposeInMainWorld('electronAPI', {
   /** Fabric mesh publish helpers (prefer over HTTP when available). */
   fabric: {
     deliveryReceipt: (opts) => ipcRenderer.invoke('fabric:delivery-receipt', opts || {}),
-    publishCrossSign: (opts) => ipcRenderer.invoke('fabric:publish-cross-sign', opts || {}),
     identityCluster: (opts) => ipcRenderer.invoke('fabric:identity-cluster', opts || {}),
     presenceStatus: () => ipcRenderer.invoke('fabric:presence-status'),
     presenceRoster: () => ipcRenderer.invoke('fabric:presence-roster'),
@@ -58,15 +54,14 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.on('notify:click', listener);
     return () => ipcRenderer.removeListener('notify:click', listener);
   },
-  /** Device link (`fabric://link`) answered on this device — approve/reject in the renderer. */
-  deviceLinkPrompt: {
-    onPrompt: (handler) => {
+  /** A signer invitation (`fabric:` link offer) opened in this app — shown on Linked signers. */
+  delegationInvitation: {
+    onInvitation: (handler) => {
       const listener = (_e, payload) => handler(payload);
-      ipcRenderer.on('device-link-prompt', listener);
-      return () => ipcRenderer.removeListener('device-link-prompt', listener);
+      ipcRenderer.on('delegation-invitation', listener);
+      return () => ipcRenderer.removeListener('delegation-invitation', listener);
     },
-    pullPending: () => ipcRenderer.invoke('device-link:pull-pending'),
-    resolve: (opts) => ipcRenderer.invoke('device-link:resolve', opts || {})
+    pullPending: () => ipcRenderer.invoke('delegation-invitation:pull-pending')
   },
   /** Opaque fabric:<hex> GroupOffer / FederationContractInvite. */
   groupShare: {

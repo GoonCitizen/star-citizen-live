@@ -17,8 +17,6 @@ const DOC = 'docs/API-SURFACES.md';
 const SOURCE_FILES = [
   'services/LiveRelay.js',
   'functions/liveRelayPassport.js',
-  'functions/fabricDeviceLinkRelay.js',
-  'functions/fabricDeviceLinkLocalHttp.js',
   'functions/liveRelayPeeringHttp.js',
   'functions/groupVoiceHttp.js'
 ];
@@ -28,9 +26,12 @@ const REQUIRED_NEEDLES = [
   '/sessions',
   '/sessions/challenges',
   '/sessions/current',
-  '/device-links',
-  '/device-links/:id',
-  '/device-links/:id/signatures',
+  '/delegations',
+  '/delegations/:linkId',
+  '/services/delegation',
+  '/services/delegation/mailbox',
+  '/services/delegation/links',
+  '/services/delegation/requests',
   '/services/peering',
   '/services/peering/attestation',
   '/overlay',
@@ -53,7 +54,6 @@ const REQUIRED_NEEDLES = [
   '/identity/cluster',
   '/identity/cluster/sync',
   '/identity/session',
-  '/identity/cross-sign',
   '/discord/link',
   '/chat/channels',
   '/chat/messages',
@@ -144,12 +144,15 @@ const REQUIRED_NEEDLES = [
   '/bitcoin/utxos',
   '/bitcoin/send',
   '/bitcoin/faucet',
-  '/device-links/offer',
-  '/device-links/current',
-  '/device-links/tick',
-  '/device-links/cancel',
-  '/device-links/pending',
-  '/device-links/accept',
+  '/delegation',
+  '/delegation/invitations',
+  '/delegation/invitations/accept',
+  '/delegation/pairing/confirm',
+  '/delegation/pairing/cancel',
+  '/delegation/requests/:hash/sign',
+  '/delegation/requests/:hash/decline',
+  '/delegation/grants/:hash/revoke',
+  '/delegation/signers/:pubkey/unlink',
   '/settings',
   '/settings/:name',
   '/settings/discord/secrets',
@@ -229,8 +232,6 @@ function extractSourcePathTokens (src) {
   while ((m = btc.exec(src))) add('/bitcoin' + (m[1] || ''));
   const docs = /pathname\s*===\s*`\$\{docsPath\}([^`]*)`/g;
   while ((m = docs.exec(src))) add('/documents' + (m[1] || ''));
-  const rest = /rest === '(\/[^']+)'/g;
-  while ((m = rest.exec(src))) add('/device-links' + m[1]);
   return out;
 }
 

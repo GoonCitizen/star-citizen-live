@@ -8,6 +8,18 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased] — Fabric-free rebuild (`feature/fabric-free-m1`)
 ### Changed
+- **Linked signers (D-022, supersedes D-013):** linking Passport, a Hub, or
+  another GoonCitizen is now delegation — signed Fabric frames (link offer,
+  grant, revoke, request, result) per `@fabric/core` `docs/DELEGATION.md`.
+  Each app keeps its own key and message store. **Linked signers** (`#signers`;
+  old `#devices` links redirect) shows or takes an invitation, both screens
+  match a six-digit code, and the player picks what the other app may do. A
+  linked signer's signing request lands in Notifications with Sign / Decline
+  and never signs on its own. This relay hosts the keyless rendezvous
+  (`/delegations`) and mailbox (`/services/delegation/mailbox`). Removed:
+  `/device-links`, `fabric://link`, `IdentityCrossSign`, `/identity/cross-sign`,
+  the local signer routes (`/services/fabric/identity|sign|link`), and the
+  device-link modal. Existing links don't carry over; link again once.
 - **Passport v2 sign-in (D-021, supersedes D-011):** relays sign players in with
   Passport challenges for pinned origins, redeemed once into an HttpOnly session
   cookie; desktop and Android sign in to a relay as native clients. The desktop

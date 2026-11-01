@@ -11,7 +11,7 @@
  */
 
 const React = require('react');
-const { passportStatus, signInWithPassport } = require('@fabric/http/functions/passportPage');
+const { probePassport, signInWithPassport } = require('@fabric/http/functions/passportPage');
 const { endSiteSession } = require('../functions/goonCitizenClientEnvironment');
 
 const CSS = `
@@ -42,7 +42,7 @@ class PassportSignIn extends React.Component {
   }
 
   async _signIn () {
-    const passport = passportStatus(window.document);
+    const passport = await probePassport(window);
     if (passport === 'outdated') {
       this.setState({ status: 'Update Fabric Passport to sign in here. This relay uses Passport v2.', error: true });
       return;

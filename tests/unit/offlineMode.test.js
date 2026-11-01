@@ -27,7 +27,7 @@ describe('offlineMode', () => {
     assert.equal(offline.tabHidden('network'), true);
     assert.equal(offline.tabHidden('wallet'), true);
     assert.equal(offline.tabHidden('documents'), true);
-    assert.equal(offline.tabHidden('devices'), true);
+    assert.equal(offline.tabHidden('signers'), true);
     assert.equal(offline.tabHidden('live'), true);
     assert.equal(offline.tabHidden('home'), false);
     assert.equal(offline.tabHidden('missions'), false);

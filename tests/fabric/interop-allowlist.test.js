@@ -7,19 +7,19 @@
 
 const { describe, it } = require('node:test');
 const assert = require('node:assert/strict');
-const crypto = require('crypto');
+const Key = require('@fabric/core/types/key');
+const { createLinkOffer } = require('@fabric/core/functions/delegation');
 
 const httpAllowlist = require('@fabric/http/functions/fabricHubAllowlist');
-const httpDeviceProtocol = require('@fabric/http/functions/fabricDeviceLinkProtocol');
+const { readLinkInvitation } = require('@fabric/http/functions/fabricDelegationClient');
 const gcAllowlist = require('../../functions/fabricHubAllowlist');
 const { signInToRelay } = require('../../functions/fabricLoginClient');
 const { createIdentity } = require('../../functions/identity');
 
-describe('Fabric interop: Hub allowlist across sign-in and link', () => {
-  it('rejects phishing hubs before any key is used (link)', () => {
-    const sid = crypto.randomBytes(24).toString('hex');
-    const evilLink = `fabric://link?sessionId=${sid}&hub=${encodeURIComponent('https://evil.example')}`;
-    const link = httpDeviceProtocol.parseFabricDeviceLinkUrl(evilLink);
+describe('Fabric interop: Hub allowlist across sign-in and signer invitations', () => {
+  it('rejects phishing rendezvous before any key is used (signer invitation)', () => {
+    const evil = createLinkOffer({ origin: 'https://evil.example', label: 'Phone', network: 'regtest' }, new Key());
+    const link = readLinkInvitation(evil.uri);
     assert.equal(link.ok, false);
     assert.equal(gcAllowlist.assertAllowedFabricHub('https://evil.example').ok, false);
   });

@@ -126,14 +126,10 @@ function dialClusterSync (origin, addresses, opts = {}) {
   }));
 }
 
-function nudgeCrossSign (origin, opts = {}) {
-  return publishClusterSync(origin, Object.assign({}, opts, { body: { crossSign: true } }));
-}
 
 module.exports = {
   fetchClusterSync,
   publishClusterSync,
   meshClusterSync,
-  dialClusterSync,
-  nudgeCrossSign
+  dialClusterSync
 };

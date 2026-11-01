@@ -2,46 +2,56 @@
 
 const { describe, it } = require('node:test');
 const assert = require('node:assert/strict');
-const { interpretQrScan } = require('../../functions/qrScanLink');
 
-const SID = 'aa'.repeat(24);
+const Key = require('@fabric/core/types/key');
+const delegation = require('@fabric/core/functions/delegation');
+const { interpretQrScan, delegationInvitationFromUrl } = require('../../functions/qrScanLink');
+
 const HUB = 'https://relay.goon.vc';
 
-describe('interpretQrScan', () => {
-  it('accepts fabric://link from the desktop Add-a-device QR', () => {
-    const url = `fabric://link?sessionId=${SID}&hub=${encodeURIComponent(HUB)}`;
-    const hit = interpretQrScan(url);
-    assert.equal(hit.ok, true);
-    assert.equal(hit.kind, 'device-link');
-    assert.equal(hit.sessionId, SID);
-    assert.equal(hit.hubBase, HUB);
-    assert.equal(hit.protocolUrl, url);
-  });
+function invitation (origin = HUB, now = Date.now()) {
+  return delegation.createLinkOffer({ origin, label: 'Passport', network: 'regtest', now }, new Key()).uri;
+}
 
-  it('converts the HTTPS Passport landing into fabric://link', () => {
-    const hit = interpretQrScan(`${HUB}/#device-link=${SID}`);
+describe('interpretQrScan', () => {
+  it('reads a signer invitation that pairs through a Hub this app uses', () => {
+    const uri = invitation();
+    const hit = interpretQrScan(uri);
     assert.equal(hit.ok, true);
-    assert.equal(hit.kind, 'device-link');
-    assert.equal(hit.sessionId, SID);
-    assert.match(hit.protocolUrl, /^fabric:\/\/link\?/);
-    assert.match(hit.protocolUrl, new RegExp(SID));
+    assert.equal(hit.kind, 'delegation-invitation');
+    assert.equal(hit.invitation, uri);
+    assert.equal(hit.rendezvous, HUB);
+    assert.equal(hit.label, 'Passport');
+    assert.equal(delegationInvitationFromUrl(uri), uri);
   });
 
   it('rejects an empty scan', () => {
-    const hit = interpretQrScan('   ');
-    assert.equal(hit.ok, false);
+    assert.equal(interpretQrScan('   ').ok, false);
   });
 
-  it('rejects a random URL', () => {
-    const hit = interpretQrScan('https://example.com/not-a-link');
-    assert.equal(hit.ok, false);
-    assert.match(hit.error, /device-link QR/i);
+  it('rejects a random URL and the retired fabric://link form', () => {
+    for (const text of ['https://example.com/not-a-link', 'fabric://link?sessionId=aa&hub=https%3A%2F%2Frelay.goon.vc']) {
+      const hit = interpretQrScan(text);
+      assert.equal(hit.ok, false);
+      assert.match(hit.error, /signer invitation/i);
+      assert.equal(delegationInvitationFromUrl(text), null);
+    }
   });
 
-  it('rejects fabric://link when the hub is not allowlisted', () => {
-    const url = `fabric://link?sessionId=${SID}&hub=${encodeURIComponent('https://evil.example')}`;
-    const hit = interpretQrScan(url);
+  it('rejects an invitation through a Hub this app does not use', () => {
+    const hit = interpretQrScan(invitation('https://evil.example'));
     assert.equal(hit.ok, false);
-    assert.match(String(hit.error || ''), /allowlist|hub/i);
+    assert.match(hit.error, /evil\.example/);
+  });
+
+  it('rejects an expired invitation', () => {
+    const hit = interpretQrScan(invitation(HUB, Date.now() - 24 * 60 * 60 * 1000));
+    assert.equal(hit.ok, false);
+    assert.match(hit.error, /expired/i);
+  });
+
+  it('rejects other fabric: frames', () => {
+    const grant = delegation.createGrant({ grantee: new Key().pubkey, scopes: ['identity'] }, new Key());
+    assert.equal(interpretQrScan(grant.uri).ok, false);
   });
 });

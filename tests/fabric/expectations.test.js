@@ -7,20 +7,18 @@
 
 const { describe, it } = require('node:test');
 const assert = require('node:assert/strict');
-const crypto = require('crypto');
 const Key = require('@fabric/core/types/key');
-const Identity = require('@fabric/core/types/identity');
+const delegation = require('@fabric/core/functions/delegation');
 
 const httpPassport = require('@fabric/http/functions/passportHttp');
 const httpAllowlist = require('@fabric/http/functions/fabricHubAllowlist');
 const httpShared = require('@fabric/http/functions/httpSharedMode');
-const httpDeviceProtocol = require('@fabric/http/functions/fabricDeviceLinkProtocol');
-const httpDeviceMessages = require('@fabric/http/functions/fabricDeviceLinkMessages');
+const httpDelegationClient = require('@fabric/http/functions/fabricDelegationClient');
 const httpInvite = require('@fabric/http/functions/federationContractInvite');
 
 const gcAllowlist = require('../../functions/fabricHubAllowlist');
 const gcShared = require('../../functions/httpSharedMode');
-const gcDeviceProtocol = require('../../functions/fabricDeviceLinkProtocol');
+const gcQrScan = require('../../functions/qrScanLink');
 const gcInvite = require('../../functions/federationContractInvite');
 const gcNamespaces = require('../../contracts/applicationMessageTypes');
 const gcSidechain = require('../../functions/contractSidechain');
@@ -44,13 +42,14 @@ describe('Fabric expectations: GoonCitizen re-exports @fabric/http', () => {
     assert.equal(httpShared.isHttpSharedModeEnabled(true), true);
   });
 
-  it('device-link URL parser re-exports http', () => {
-    const sid = crypto.randomBytes(24).toString('hex');
-    const link = gcDeviceProtocol.parseFabricDeviceLinkUrl(
-      `fabric://link?sessionId=${sid}&hub=${encodeURIComponent('https://hub.fabric.pub')}`
-    );
-    assert.equal(link.ok, true);
-    assert.equal(link.kind, 'link');
+  it('signer invitations read the same in GoonCitizen and http', () => {
+    const offer = delegation.createLinkOffer({ origin: 'https://hub.fabric.pub', label: 'Phone', network: 'regtest' }, new Key());
+    const http = httpDelegationClient.readLinkInvitation(offer.uri);
+    const gc = gcQrScan.interpretQrScan(offer.uri);
+    assert.equal(http.ok, true);
+    assert.equal(gc.ok, true);
+    assert.equal(gc.kind, 'delegation-invitation');
+    assert.equal(gc.rendezvous, http.rendezvous);
   });
 
   it('federationContractInvite re-exports http', () => {
@@ -79,30 +78,20 @@ describe('Fabric expectations: GoonCitizen re-exports @fabric/http', () => {
   });
 });
 
-describe('Fabric expectations: IdentityCrossSign (core v2 strings)', () => {
-  it('the local modules are core, and the strings name the session and origin', () => {
-    const gcSign = require('../../functions/identityCrossSign');
-    const gcVerifyCross = require('../../functions/identityCrossSignVerify');
-    assert.equal(gcSign, require('@fabric/core/functions/identityCrossSign'));
-    assert.equal(gcVerifyCross, require('@fabric/core/functions/identityCrossSignVerify'));
-    assert.equal(gcSign.SIGN_TYPE, 'IdentityCrossSign');
-    assert.equal(gcSign.REVOKE_TYPE, 'IdentityCrossSignRevoke');
-    const fields = {
-      sessionId: 'cd'.repeat(24),
-      nonce: 'ab'.repeat(32),
-      localPubkey: '02' + '11'.repeat(32),
-      peerPubkey: '03' + '22'.repeat(32),
-      origin: 'https://relay.goon.vc'
-    };
-    const msg = gcSign.buildCrossSignMessage(fields);
-    assert.equal(msg, `fabric:identity-cross-sign:2:${fields.sessionId}:${fields.nonce}:${fields.localPubkey}:${fields.peerPubkey}:${fields.origin}`);
-    assert.deepEqual(gcSign.parseCrossSignMessage(msg), fields);
-    const revoke = gcSign.buildRevokeMessage(Object.assign({ revokedAt: 1700000000000 }, fields));
-    assert.equal(revoke, `fabric:identity-cross-sign-revoke:2:${fields.sessionId}:${fields.nonce}:${fields.localPubkey}:${fields.peerPubkey}:1700000000000:${fields.origin}`);
-    assert.equal(gcSign.parseRevokeMessage(msg), null);
-    assert.equal(gcSign.parseCrossSignMessage(revoke), null);
-    assert.equal(gcSign.buildCrossSignMessage(Object.assign({}, fields, { localPubkey: 'aa:bb' })), null);
-    assert.equal(gcSign.buildCrossSignMessage(Object.assign({}, fields, { origin: undefined })), null);
+describe('Fabric expectations: delegation frames (core)', () => {
+  it('an identity grant is a signed Fabric Message and its revoke names it', () => {
+    const grantor = new Key();
+    const grantee = new Key();
+    const grant = delegation.createGrant({ grantee: grantee.pubkey, scopes: ['identity'], label: 'Desktop' }, grantor);
+    assert.match(grant.uri, /^fabric:/);
+    const read = delegation.readGrant(grant.uri);
+    assert.equal(read.ok, true, read.error);
+    assert.deepEqual(read.grant.scopes, ['identity']);
+    assert.equal(delegation.delegationType(grant.uri), 'DELEGATION_GRANT');
+    const revoke = delegation.createRevoke({ grant: grant.hash }, grantor);
+    const readRevoke = delegation.readRevoke(revoke.uri);
+    assert.equal(readRevoke.ok, true, readRevoke.error);
+    assert.equal(readRevoke.revoke.grant, grant.hash);
   });
 });
 
@@ -180,30 +169,6 @@ describe('Fabric expectations: Passport v2 assertion contract', () => {
   });
 });
 
-describe('Fabric expectations: device-link messages', () => {
-  it('canonical link message parses', () => {
-    const sessionId = 'bb'.repeat(24);
-    const nonce = 'aa'.repeat(32);
-    const a = new Identity(new Key()).id;
-    const b = new Identity(new Key()).id;
-    const origin = 'https://relay.goon.vc';
-    const msg = httpDeviceMessages.buildDeviceLinkMessage(sessionId, nonce, a, b, 'phone', origin);
-    assert.equal(msg, `fabric:device-link:3:link:${sessionId}:${nonce}:${a}:${b}:phone:${origin}`);
-    const parsed = httpDeviceMessages.parseDeviceLinkMessage(msg);
-    assert.equal(parsed.sessionId, sessionId);
-    assert.equal(parsed.nonce, nonce);
-    assert.equal(parsed.initiatorId, a);
-    assert.equal(parsed.responderId, b);
-    assert.equal(parsed.label, 'phone');
-    assert.equal(parsed.origin, origin);
-    assert.equal(
-      httpDeviceMessages.buildDeviceLinkOfferMessage(sessionId, nonce, a, 'phone', origin),
-      `fabric:device-link:3:offer:${sessionId}:${nonce}:${a}:phone:${origin}`
-    );
-    assert.throws(() => httpDeviceMessages.buildDeviceLinkMessage(sessionId, nonce, 'id1a', b, 'phone', origin), /id1/);
-  });
-});
-
 describe('Fabric expectations: application namespaces', () => {
   it('re-exports core OUTER and CONTRACT_BODY_TYPES', () => {
     assert.equal(gcNamespaces.fromCore, true);
@@ -222,8 +187,7 @@ describe('Fabric expectations: application namespaces', () => {
     assert.equal(FabricNetwork.isKnownAppRelayType('NoteUpdate'), true);
     assert.equal(FabricNetwork.isKnownAppRelayType('DiscordCatalogShare'), true);
     assert.equal(FabricNetwork.isKnownAppRelayType('GroupDataShare'), true);
-    assert.equal(FabricNetwork.isKnownAppRelayType('IdentityCrossSign'), true);
-    assert.equal(FabricNetwork.isKnownAppRelayType('IdentityCrossSignRevoke'), true);
+    assert.equal(FabricNetwork.isKnownAppRelayType('IdentityCrossSign'), false);
     assert.equal(FabricNetwork.isKnownAppRelayType('MissionClaim'), true);
     assert.equal(FabricNetwork.isKnownAppRelayType('MissionClaimDecision'), true);
     assert.equal(FabricNetwork.isKnownAppRelayType('NotARealType_XYZ'), false);

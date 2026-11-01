@@ -20,7 +20,7 @@ What actually runs: [`AGENTS.md`](../AGENTS.md) §3–§4. Call for developers:
 
 | If you start from… | You get | You still have to build |
 |---|---|---|
-| **This repo (LiveRelay)** | Peer, Store collections, site login, device-link, Federation Groups, group federation vaults, publisher-profile pinned desktops, shoutbox + `CONTRACT_*` gossip, Electron + Android shells, optional Discord adapter, public-seed runbook | Your domain (parser, missions, chrome, brand) |
+| **This repo (LiveRelay)** | Peer, Store collections, Passport sign-in, linked signers (delegation), Federation Groups, group federation vaults, publisher-profile pinned desktops, shoutbox + `CONTRACT_*` gossip, Electron + Android shells, optional Discord adapter, public-seed runbook | Your domain (parser, missions, chrome, brand) |
 | **Hub (`hub.fabric.pub`)** | Rendezvous, Beacon, Bitcoin, WebRTC signaling, document market | A whole application node (Hub is not a player client) |
 | **`@fabric/core` only** | AMP/`Message`, Peer, Key, Contract, Chain | HTTP dashboard, identity UX, Groups, packaging, Discord, deploy |
 | **Blank HTTPS service** | Familiar REST | Mesh identity, signed gossip, `fabric:` shares, hostile-peer assumptions |
@@ -67,7 +67,7 @@ Your app: keep Groups even if you are not an RSI org. Nested `parentId`, opaque
 
 [`contracts/applicationMessageTypes.js`](../contracts/applicationMessageTypes.js)
 — core generic ARC types plus product bodies (`MissionCreated`, `NoteShare`,
-`GroupDataShare`, `IdentityCrossSign`, `DeviceDataShare`, Discord/Lookup
+`GroupDataShare`, `DelegationShare`, `DeviceDataShare`, Discord/Lookup
 Request→Claim→Response, …). Pattern: **new collections attach under a
 namespace; genesis `messageTypes` stay frozen.**
 
@@ -88,8 +88,8 @@ JSON).
 
 | Artifact | Role |
 |---|---|
-| Hub-shaped `POST /sessions` (D-011) | Client-signed site login; desktop and Passport are interchangeable signers |
-| Hub-shaped `/device-links` (D-013) | Pairing rendezvous over HTTPS; then mesh `IdentityCrossSign` |
+| Hub-shaped `/sessions` (D-021) | Passport v2 sign-in: a challenge for a pinned origin, an assertion over a private port, an HttpOnly session |
+| Hub-shaped `/delegations` + `/services/delegation/mailbox` (D-022) | Linked-signer pairing rendezvous and signing-request mailbox over HTTPS; grants then gossip on the mesh as `DelegationShare` |
 | `DeviceDataShare` | Cluster-gated account replay (no seeds/tokens) |
 | Electron IPC / Android Keys pages | Secrets never on HTTP |
 
@@ -173,7 +173,7 @@ proxy, G00N/PERMAFLEET copy.
 Keep or reimplement in-kind: Peer on `:7777`, `CONTRACT_PUBLISH` genesis,
 Group Federation contracts, group federation vaults (`GroupWallets`),
 publisher-profile pinned desktops (`profile.files` + `--pin`), opaque
-`fabric:` shares, site login / device-link, Store collections,
+`fabric:` shares, Passport sign-in / linked signers, Store collections,
 unknown-namespace ignore, opt-in private data.
 
 ---

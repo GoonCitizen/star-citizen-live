@@ -492,8 +492,8 @@ class DocumentExchange extends React.Component {
       this.setState({
         busy: false,
         notice: enabled
-          ? 'This file will copy to your other linked devices over Fabric'
-          : 'Stopped syncing this file to other devices'
+          ? 'This file will copy to your linked signers over Fabric'
+          : 'Stopped syncing this file to your linked signers'
       });
       await this.refresh();
       if (this.state.selectedId === id) await this.selectDoc(id);
@@ -648,10 +648,10 @@ class DocumentExchange extends React.Component {
             className: 'dx-btn' + (doc.clusterSync ? ' primary' : ''),
             disabled: this.state.busy,
             title: doc.clusterSync
-              ? 'Stop copying this file to linked devices'
-              : 'Copy this file to other devices in your identity cluster',
+              ? 'Stop copying this file to your linked signers'
+              : 'Copy this file to the apps linked as this player',
             onClick: () => this.setClusterSync(id, !doc.clusterSync)
-          }, doc.clusterSync ? 'Stop device sync' : 'Sync to my devices')
+          }, doc.clusterSync ? 'Stop signer sync' : 'Sync to my linked signers')
           : null
       ),
       isLocal
@@ -772,7 +772,7 @@ class DocumentExchange extends React.Component {
             checked: !!this.state.createClusterSync,
             onChange: (e) => this.setState({ createClusterSync: !!(e.target && e.target.checked) })
           }),
-          ' Sync to my other devices (identity cluster)'
+          ' Sync to my linked signers (same player)'
         ),
         React.createElement('div', { className: 'dx-actions' },
           React.createElement('button', {
@@ -828,7 +828,7 @@ class DocumentExchange extends React.Component {
             'This node\'s catalog plus published listings from connected Fabric peers. Publish marks a local file listed (optional sats on the ',
             React.createElement('code', null, 'fabric-doc:'),
             ' chat wire). Pin a file to your profile with 📌 on its page so Federation groups see the listing (metadata only). ',
-            React.createElement('strong', null, 'Sync to my devices'),
+            React.createElement('strong', null, 'Sync to my linked signers'),
             ' copies opted-in files to phones and desktops in your identity cluster over Fabric — not a public listing.'),
           this.state.error
             ? React.createElement('div', { className: 'dx-err' }, this.state.error)
@@ -906,8 +906,8 @@ class DocumentExchange extends React.Component {
                             className: 'dx-btn' + (d.clusterSync ? ' primary' : ''),
                             disabled: this.state.busy,
                             title: d.clusterSync
-                              ? 'Stop copying this file to linked devices'
-                              : 'Copy this file to other devices in your identity cluster',
+                              ? 'Stop copying this file to your linked signers'
+                              : 'Copy this file to the apps linked as this player',
                             onClick: () => this.setClusterSync(id, !d.clusterSync)
                           }, d.clusterSync ? 'Synced' : 'Sync')
                           : null

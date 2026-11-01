@@ -1,7 +1,7 @@
 'use strict';
 
 /**
- * Large emoji fingerprint for in-person device-link confirmation.
+ * Large emoji fingerprint of a Fabric key, for checking a key in person.
  */
 
 const React = require('react');

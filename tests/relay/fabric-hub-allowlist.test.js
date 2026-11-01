@@ -2,13 +2,14 @@
 
 const { describe, it } = require('node:test');
 const assert = require('node:assert/strict');
-const crypto = require('crypto');
+const Key = require('@fabric/core/types/key');
+const { createLinkOffer } = require('@fabric/core/functions/delegation');
 const {
   isAllowedFabricHub,
   assertAllowedFabricHub,
   normalizeHubOrigin
 } = require('../../functions/fabricHubAllowlist');
-const { parseFabricDeviceLinkUrl } = require('../../functions/fabricDeviceLinkProtocol');
+const { readLinkInvitation } = require('@fabric/http/functions/fabricDelegationClient');
 
 describe('fabricHubAllowlist', () => {
   it('allows default network hubs and loopback', () => {
@@ -42,19 +43,18 @@ describe('fabricHubAllowlist', () => {
   });
 });
 
-describe('fabric login/link parsers enforce hub allowlist', () => {
-  const sid = crypto.randomBytes(24).toString('hex');
+describe('signer invitations enforce the hub allowlist', () => {
+  const invite = (origin) => createLinkOffer({ origin, label: 'Phone', network: 'regtest' }, new Key()).uri;
 
-  it('rejects phishing device-link hub', () => {
-    const u = `fabric://link?sessionId=${sid}&hub=${encodeURIComponent('https://evil.example')}`;
-    const p = parseFabricDeviceLinkUrl(u);
+  it('rejects a phishing rendezvous', () => {
+    const p = readLinkInvitation(invite('https://evil.example'));
     assert.equal(p.ok, false);
-    assert.match(p.error, /not allowed/);
+    assert.match(p.error, /rendezvous this app does not use/);
   });
 
-  it('accepts extra allowlist for link', () => {
-    const u = `fabric://link?sessionId=${sid}&hub=${encodeURIComponent('https://myhub.lan:8443')}`;
-    const p = parseFabricDeviceLinkUrl(u, { extra: ['https://myhub.lan:8443'] });
+  it('accepts a rendezvous on the extra allowlist', () => {
+    const p = readLinkInvitation(invite('https://myhub.lan:8443'), { allowlist: { extra: ['https://myhub.lan:8443'] } });
     assert.equal(p.ok, true);
+    assert.equal(p.rendezvous, 'https://myhub.lan:8443');
   });
 });

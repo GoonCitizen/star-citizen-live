@@ -36,14 +36,12 @@ describe('command surfaces (IPC vs HTTP vs Fabric)', () => {
   const preload = readRepo('preload.js');
   const main = readRepo('main.js');
   const android = readRepo('functions/androidIdentityBridge.js');
-  const client = readRepo('functions/identityCrossSignClient.js');
   const delivery = readRepo('components/DeliverySync.js');
 
   it('preload exposes Fabric mesh helpers, not register REST', () => {
     const channels = invokeChannels(preload);
     for (const need of [
       'fabric:delivery-receipt',
-      'fabric:publish-cross-sign',
       'fabric:identity-cluster',
       'fabric:presence-status',
       'fabric:presence-roster',
@@ -52,7 +50,7 @@ describe('command surfaces (IPC vs HTTP vs Fabric)', () => {
       'identity:get',
       'identity:sign-envelope',
       'identity:sign-in-relay',
-      'device-link:resolve',
+      'delegation-invitation:pull-pending',
       'fabric-group-share:resolve'
     ]) {
       assert.ok(channels.includes(need), `missing ${need}`);
@@ -63,7 +61,8 @@ describe('command surfaces (IPC vs HTTP vs Fabric)', () => {
     );
     assert.deepEqual(forbidden, [], `IPC must not proxy register REST: ${forbidden.join(', ')}`);
     assert.match(preload, /fabric:\s*\{/);
-    assert.match(preload, /publishCrossSign:/);
+    assert.match(preload, /delegationInvitation:/);
+    assert.doesNotMatch(preload, /publishCrossSign|device-link/);
     assert.match(preload, /identityCluster:/);
     assert.match(preload, /deliveryReceipt:/);
     assert.match(preload, /presenceStatus:/);
@@ -75,14 +74,15 @@ describe('command surfaces (IPC vs HTTP vs Fabric)', () => {
 
   it('main.js Fabric IPC calls LiveRelay in-process, not HTTP', () => {
     const channels = handleChannels(main);
-    assert.ok(channels.includes('fabric:publish-cross-sign'));
+    assert.ok(channels.includes('delegation-invitation:pull-pending'));
+    assert.ok(!channels.includes('fabric:publish-cross-sign'));
     assert.ok(channels.includes('fabric:identity-cluster'));
     assert.ok(channels.includes('fabric:delivery-receipt'));
     assert.ok(channels.includes('fabric:presence-status'));
     assert.ok(channels.includes('fabric:presence-roster'));
     assert.ok(channels.includes('fabric:presence-set'));
     assert.ok(channels.includes('fabric:presence-ship'));
-    assert.match(main, /publishLocalIdentityCrossSign/);
+    assert.doesNotMatch(main, /publishLocalIdentityCrossSign|device-link/);
     assert.match(main, /identityCluster/);
     assert.match(main, /_markDeliveryReceipt/);
     assert.match(main, /getPresenceStatus/);
@@ -105,9 +105,6 @@ describe('command surfaces (IPC vs HTTP vs Fabric)', () => {
 
   it('desktop clients try Fabric before HTTP', () => {
     const presence = readRepo('functions/presenceClient.js');
-    assert.match(client, /tryFabricPublishCrossSign/);
-    assert.match(client, /tryFabricIdentityCluster/);
-    assert.match(client, /forceHttp/);
     assert.match(delivery, /tryElectronDeliveryReceipt/);
     assert.match(delivery, /postDeliveryReceiptHttp/);
     assert.match(delivery, /\/delivery\/\$\{encodeURIComponent\(hash\)\}\/receipt/);

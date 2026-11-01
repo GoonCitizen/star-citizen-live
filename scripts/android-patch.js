@@ -2,7 +2,8 @@
 
 /**
  * Patch the Capacitor Android project after `npx cap add android` / `npx cap sync`.
- * Adds the fabric://link intent-filter (sign-in is Passport, never a link), INTERNET + notifications, and loopback-only cleartext.
+ * Adds the `fabric:` intent-filter (signer invitations and group shares; sign-in is
+ * Passport, never a link), INTERNET + notifications, and loopback-only cleartext.
  */
 
 const fs = require('fs');
@@ -20,7 +21,7 @@ const INTENT_FILTER = `
                 <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />
                 <category android:name="android.intent.category.BROWSABLE" />
-                <data android:scheme="fabric" android:host="link" />
+                <data android:scheme="fabric" />
             </intent-filter>`;
 
 const NET_SEC = `<?xml version="1.0" encoding="utf-8"?>
@@ -66,8 +67,8 @@ function patchManifest (xml) {
   if (!out.includes('android:usesCleartextTraffic')) {
     out = out.replace('<application', '<application android:usesCleartextTraffic="true" android:networkSecurityConfig="@xml/network_security_config"');
   }
-  out = dropLoginIntentFilter(out);
-  if (!out.includes('android:host="link"')) {
+  out = dropHostIntentFilters(out);
+  if (!out.includes('<data android:scheme="fabric" />')) {
     const marker = '</activity>';
     const i = out.indexOf(marker);
     if (i >= 0) {
@@ -81,9 +82,9 @@ function patchManifest (xml) {
   return disableBackup(out);
 }
 
-/** Passport v2 removed `fabric://login`; drop the filter older patches added. */
-function dropLoginIntentFilter (xml) {
-  return xml.replace(/\n?\s*<intent-filter>(?:(?!<\/intent-filter>)[\s\S])*android:host="login"(?:(?!<\/intent-filter>)[\s\S])*<\/intent-filter>/g, '');
+/** `fabric://login` and `fabric://link` are gone; drop the filters older patches added. */
+function dropHostIntentFilters (xml) {
+  return xml.replace(/\n?\s*<intent-filter>(?:(?!<\/intent-filter>)[\s\S])*android:host="(?:login|link)"(?:(?!<\/intent-filter>)[\s\S])*<\/intent-filter>/g, '');
 }
 
 /**
@@ -163,7 +164,7 @@ function main () {
   const next = patchManifest(xml);
   if (next !== xml) {
     fs.writeFileSync(manifestPath, next);
-    console.log('[ANDROID] patched AndroidManifest.xml (fabric:// + INTERNET + cleartext + backup off)');
+    console.log('[ANDROID] patched AndroidManifest.xml (fabric: + INTERNET + cleartext + backup off)');
   } else {
     console.log('[ANDROID] AndroidManifest.xml already patched');
   }

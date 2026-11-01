@@ -34,20 +34,19 @@ describe('android-patch backup exclusion', () => {
     assert.equal(twice, once);
   });
 
-  it('registers fabric://link only, and drops an older fabric://login filter', () => {
+  it('registers the fabric: scheme, and drops older fabric://login and fabric://link filters', () => {
     const out = patchManifest(CAPACITOR_DEFAULT);
-    assert.match(out, /android:host="link"/);
-    assert.doesNotMatch(out, /android:host="login"/);
-    const older = out.replace('</activity>', [
+    assert.match(out, /<data android:scheme="fabric" \/>/);
+    assert.doesNotMatch(out, /android:host=/);
+    const older = out.replace('</activity>', ['login', 'link'].map((host) => [
       '<intent-filter>',
       '                <action android:name="android.intent.action.VIEW" />',
-      '                <data android:scheme="fabric" android:host="login" />',
-      '            </intent-filter>',
-      '        </activity>'
-    ].join('\n'));
+      '                <data android:scheme="fabric" android:host="' + host + '" />',
+      '            </intent-filter>'
+    ].join('\n')).join('\n') + '\n        </activity>');
     const again = patchManifest(older);
-    assert.doesNotMatch(again, /android:host="login"/);
-    assert.match(again, /android:host="link"/);
+    assert.doesNotMatch(again, /android:host=/);
+    assert.match(again, /<data android:scheme="fabric" \/>/);
     assert.equal((again.match(/<intent-filter>/g) || []).length, (out.match(/<intent-filter>/g) || []).length);
   });
 

@@ -11,11 +11,10 @@ describe('local @fabric re-exports', () => {
     assert.equal(typeof local.chatTextOf, 'function');
   });
 
-  it('keeps the device-link protocol on the http pin', () => {
-    assert.equal(
-      require('../../functions/fabricDeviceLinkProtocol'),
-      require('@fabric/http/functions/fabricDeviceLinkProtocol')
-    );
+  it('hosts the delegation rendezvous and mailbox from the http pin', () => {
+    const { createDelegationHost } = require('../../functions/delegationRendezvous');
+    assert.equal(createDelegationHost({ origins: ['http://127.0.0.1:3041'] }).available, true);
+    assert.equal(typeof require('@fabric/http/functions/fabricDelegate').createFabricDelegate, 'function');
   });
 
   it('keeps hub allowlist and federation invite on the http pin', () => {
@@ -87,13 +86,6 @@ describe('local @fabric re-exports', () => {
     const local = require('../../functions/bulkSecurityAdvisory');
     const hub = require('@fabric/hub/functions/bulkSecurityAdvisory');
     assert.equal(local.looksLikeBulkSecurityAdvisory, hub.looksLikeBulkSecurityAdvisory);
-  });
-
-  it('uses Hub identityCluster when the package is staged', () => {
-    assert.equal(
-      require('../../functions/identityCluster'),
-      require('@fabric/hub/functions/identityCluster')
-    );
   });
 });
 

@@ -64,7 +64,8 @@ describe('Dashboard.resolveHash', () => {
 
   it('maps Keys / Devices / Security / Privacy hashes onto dedicated account pages', () => {
     assert.deepStrictEqual(Dashboard.resolveHash('#keys', false), { tab: 'keys', networkView: null });
-    assert.deepStrictEqual(Dashboard.resolveHash('#devices', false), { tab: 'devices', networkView: null });
+    assert.deepStrictEqual(Dashboard.resolveHash('#signers', false), { tab: 'signers', networkView: null });
+    assert.deepStrictEqual(Dashboard.resolveHash('#devices', false), { tab: 'signers', networkView: null });
     assert.deepStrictEqual(Dashboard.resolveHash('#security', false), { tab: 'security', networkView: null });
     assert.deepStrictEqual(Dashboard.resolveHash('#privacy', false), { tab: 'privacy', networkView: null });
   });

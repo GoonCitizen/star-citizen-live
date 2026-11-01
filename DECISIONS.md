@@ -8,6 +8,56 @@ What runs: [`AGENTS.md`](AGENTS.md) §3–§4. D-002 removed a heavyweight *tran
 
 ---
 
+## D-022 — Linked signers: a delegation protocol on Fabric Messages (supersedes D-013)
+**Date:** 2026-10-30 · **Status:** Adopted on `feature/passport-v2` (owner cuts the release)
+
+**Decision:** Linking Passport, a Hub, GoonCitizen desktop / Android, or any
+other app is **delegation** (spec: `@fabric/core` `docs/DELEGATION.md`), built
+only from signed Fabric Messages, with no support for the D-013 device-link
+flow. The linked participants are **linked signers**, not "devices": each keeps
+its own key and its own message store, and none holds another's.
+
+1. **Pairing** — one app shows an invitation (`DELEGATION_LINK_OFFER`, a
+   `fabric:` frame naming an allowlisted rendezvous Hub, `https://relay.goon.vc`
+   by default) and the other takes it (paste or QR). The rendezvous
+   (`/delegations`, keyless; this relay hosts one) carries the answer and
+   reveal; both screens show the same six-digit code, and the player matches
+   it before either side grants anything. Passport on the same computer pairs
+   over the loopback delegate (`@fabric/http` `fabricDelegate`) and the
+   native dialog confirms.
+2. **Grants** — `DELEGATION_GRANT` frames, each signed by the grantor, name the
+   grantee and scopes: `identity` (act as this player), `passport` (answer
+   Passport sign-ins), `message` (ask for signatures). `DELEGATION_REVOKE`
+   ends one; a replayed revoked grant stays revoked.
+3. **Requests** — a grantee asks with `DELEGATION_REQUEST` (loopback, or the
+   mailbox `/services/delegation/mailbox` on a Hub). Nothing signs on its own:
+   the request becomes a Notifications row with Sign / Decline and a desktop
+   toast, and Sign answers with `DELEGATION_RESULT`. A Hub may answer by rules
+   its operator sets.
+4. **One player** — mutual unrevoked `identity` grants make one actor
+   (`functions/identityCluster.js`); grants and revokes are gossiped as
+   GoonCitizen `DelegationShare`, and account sync (`DeviceDataShare`) is
+   gated on that cluster.
+
+Removed: `/device-links`, `fabric://link`, `IdentityCrossSign` /
+`IdentityCrossSignRevoke`, `/identity/cross-sign`, the local signer routes
+`/services/fabric/identity|sign|link`, `components/DeviceLinkModal.js`, and the
+`#devices` page (old links open `#signers`).
+
+**Why:** Device links only proved two keys belonged together; every other
+cross-app job (Passport sign-ins through the desktop, signing for a group
+wallet, a Hub signing by rule) needed its own endpoint and its own trust
+check. One grant / request / result protocol covers them, every step is a
+frame any participant can verify and keep, and revocation is a frame too.
+User copy says "linked signers" because the participants are apps and
+services, not hardware.
+
+**Consequences:** existing device links do not carry over; players link again
+once. Passport and Hub must ship the same cutover (`@fabric/core`,
+`@fabric/http`, Hub, Passport move together).
+
+---
+
 ## D-021 — Passport v2 sign-in (supersedes D-011)
 **Date:** 2026-10-26 · **Status:** Adopted on `feature/passport-v2` (owner cuts the release)
 
@@ -284,7 +334,7 @@ meet that bar.
 ---
 
 ## D-013 — Mutual device-link attestations (separate seeds)
-**Date:** 2026-07-20 · **Amended:** 2026-08-15 · **Status:** Adopted
+**Date:** 2026-07-20 · **Amended:** 2026-08-15 · **Status:** Superseded by D-022 (2026-10-30)
 
 **Decision:** Passport, Hub browser identity, GoonCitizen desktop, and GoonCitizen Android each keep **their own seed**. Cross-app trust is a **mutual Schnorr attestation** over a Hub / LiveRelay rendezvous (`/device-links`), not a shared mnemonic.
 

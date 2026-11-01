@@ -18,10 +18,10 @@ const FIXTURE_SEEDS = Object.freeze({
 
 /** Expected Fabric-protocol compressed pubkeys (Identity path, not HD master). */
 const FIXTURE_PUBKEYS = Object.freeze({
-  alice: '0303c3a8590fae22877856063ddcf9202bcf0c36e42acc30aaa5d122c77f123f0b',
-  bob: '0347e7a5449ad0238e5148987609d70b7a93d518b2e598db1be03e6fcdb9f97710',
-  carol: '0322210f70c00a16f8c7f92c605cd43ee8988b0c0f51b6fe7174fd4885a145f46d',
-  hub: '031c7e95d402f58468a854c5df39fff9e324df95bca149aeb906fac6f37312b94f'
+  alice: '0309b9aa77b33a34e679c3dd54180b43935f0673ff83c11f4ac9a4ffc451f85300',
+  bob: '02efb3bccba4c22c492fe743c26a263dbdcb5d2a1c3634c6a2c7749043abb91fb2',
+  carol: '037ae8230da0c06cb14c757ab115b4e2b4617c7771ba779588accc4b18d0ea7df9',
+  hub: '021c564120d08b85b29d759e75dfa951391090a03c53da64ede2a03d1936f0208b'
 });
 
 /**

@@ -61,6 +61,7 @@ const discordContract = require('../functions/discordContract');
 const discordGuildCatalog = require('../functions/discordGuildCatalog');
 const discordBotAuthorize = require('../functions/discordBotAuthorize');
 const discordCatalogAccumulate = require('../functions/discordCatalogAccumulate');
+const discordPublicChannels = require('../functions/discordPublicChannels');
 const groupDataSync = require('../functions/groupDataSync');
 const groupVoiceHttp = require('../functions/groupVoiceHttp');
 const groupVoiceSettings = require('../functions/groupVoiceSettings');
@@ -112,7 +113,6 @@ const clusterSync = require('../functions/clusterSync');
 const clusterMesh = require('../functions/clusterMesh');
 const clusterDevices = require('../functions/clusterDevices');
 const clusterInventory = require('../functions/clusterInventory');
-const { listLinkedDevices } = require('../functions/linkedDevices');
 const {
   createFabricMessageLog,
   summarizeMessage,
@@ -1155,6 +1155,15 @@ class StarCitizenService extends EventEmitter {
     }
   }
 
+  /**
+   * Public channels the ready local bot can see; empty while it is offline.
+   * @returns {Set<string>}
+   */
+  _discordPublicChannelIds () {
+    const client = (this._discordBotReady && this.discordBot && this.discordBot.client) || null;
+    return discordPublicChannels.publicDiscordChannelIds(client);
+  }
+
   _maybePublishGroupDataShare (catalog) {
     const shareChat = this._shareDiscordCatalog === true;
     const sharePlay = this._sharePlaytimes === true;
@@ -1165,9 +1174,12 @@ class StarCitizenService extends EventEmitter {
     if (!shareChat && !sharePlay && !shareFiles && !shareNotes) return;
     if (!this.fabricNetwork || !this.fabricNetwork.ready || !this._identity) return;
     if (!this.groupManager) return;
-    const guilds = catalog && Array.isArray(catalog.guilds) ? catalog.guilds : [];
-    const messagePack = (shareChat && this.registerStore)
-      ? discordCatalogAccumulate.compactStoredMessagesForShare(this.registerStore)
+    const publicIds = shareChat ? this._discordPublicChannelIds() : new Set();
+    const guilds = (shareChat && catalog && Array.isArray(catalog.guilds))
+      ? discordPublicChannels.publicCatalogGuilds(catalog.guilds, publicIds)
+      : [];
+    const messagePack = (shareChat && this.registerStore && publicIds.size)
+      ? discordCatalogAccumulate.compactStoredMessagesForShare(this.registerStore, { channelIds: publicIds })
       : { channels: [], truncated: false };
     const playtimes = sharePlay ? this._localPlaytimesPayload() : null;
     const hasChat = shareChat && (guilds.length || (messagePack.channels && messagePack.channels.length));
@@ -2968,7 +2980,9 @@ class StarCitizenService extends EventEmitter {
       this._pendingHistoricalShare = false;
       await this._stopFabric();
       await this._stopDiscordBot();
+      this._setupDelegation();
     } else {
+      this._setupDelegation();
       if (this._identity && this.settings.fabric.enable !== false) {
         await this._refreshFabric();
       }
@@ -3952,189 +3966,211 @@ class StarCitizenService extends EventEmitter {
   }
 
   _linkedDeviceForPubkey (pubkey) {
-    if (!pubkey) return null;
-    if (this.identityCluster) {
-      const snap = this.identityCluster.snapshot(pubkey);
-      if (snap.members && snap.members.length > 1) {
-        return {
-          peerFabricId: snap.canonical,
-          members: snap.members,
-          label: 'linked cluster'
-        };
-      }
-    }
-    if (!this.registerStore) return null;
-    const persisted = settingsStore.loadSettings(this.registerStore);
-    const list = Array.isArray(persisted.linkedDevices) ? persisted.linkedDevices : [];
-    return list.find((d) => d && (d.peerFabricId === pubkey || d.pubkey === pubkey)) || null;
+    if (!pubkey || !this.identityCluster) return null;
+    const snap = this.identityCluster.snapshot(pubkey);
+    if (!snap.members || snap.members.length < 2) return null;
+    return {
+      peerFabricId: snap.canonical,
+      members: snap.members,
+      label: 'linked signers'
+    };
   }
 
   /**
-   * Stored cross-sign rows whose signature still verifies; rows that no longer
-   * do (tampered, or signed under an older protocol) are deleted.
-   * @returns {Array<{ row: object, kind: string, record: object }>}
+   * Rebuild the identity cluster from stored identity grants and revokes
+   * (`delegationshares`) plus this player's own delegation record.
    */
-  _verifiedIdentityCrossSignRows () {
-    if (!this.registerStore) return [];
-    const { verifyCrossSignObject } = require('../functions/identityCrossSignVerify');
+  _loadIdentityCluster () {
+    if (!this.identityCluster) return;
     let rows = [];
     try {
-      rows = this.registerStore.all('identitycrosssigns') || [];
+      rows = (this.registerStore && this.registerStore.all('delegationshares')) || [];
     } catch (_) {
       rows = [];
     }
-    const out = [];
+    rows.sort((a, b) => (a.kind === 'DELEGATION_REVOKE') - (b.kind === 'DELEGATION_REVOKE'));
     for (const row of rows) {
-      if (!row) continue;
-      const checked = verifyCrossSignObject(row);
-      if (checked.ok) {
-        out.push({ row, kind: checked.kind, record: checked.record });
-        continue;
+      if (!row || !row.frame) continue;
+      const out = this.identityCluster.ingest(row.frame);
+      if (!out.ok && row.id) {
+        try { this.registerStore.del('delegationshares', row.id); } catch (_) { /* ignore */ }
       }
-      if (row.id) {
-        try { this.registerStore.del('identitycrosssigns', row.id); } catch (_) { /* ignore */ }
+    }
+  }
+
+  /**
+   * Take an identity grant or revoke (from this app's own signer record or a
+   * peer's `DelegationShare`); keep it when it checks.
+   * @param {string} frame `fabric:` frame (or hex)
+   * @param {{ local: (boolean|undefined) }} [meta]
+   * @returns {object|null} the cluster's answer, or null when refused
+   */
+  _ingestDelegationShare (frame, meta = {}) {
+    if (!this.identityCluster || !frame) return null;
+    const out = this.identityCluster.ingest(frame);
+    if (!out.ok) {
+      logFabricSync('DelegationShare refused', out.error);
+      return null;
+    }
+    if (out.fresh && this.registerStore) {
+      this.registerStore.put('delegationshares', out.hash, { id: out.hash, kind: out.type, frame: out.hex, at: Date.now(), local: !!meta.local });
+    }
+    if (out.fresh) {
+      logFabricSync(out.type === 'DELEGATION_REVOKE' ? 'DelegationShare revoke' : 'DelegationShare grant',
+        (meta.local ? 'local ' : 'peer ') + (out.linked ? 'linked' : (out.pending ? 'pending' : '')));
+      const me = this._identity && this._identity.pubkey;
+      if (me) {
+        const snap = this.identityCluster.snapshot(me);
+        this.emit('identity:cluster', snap);
+        if (snap.members.length > 1) this._scheduleAccountDataReplay();
       }
-      logFabricSync('IdentityCrossSign dropped', checked.error);
     }
     return out;
   }
 
-  _loadIdentityCluster () {
-    if (!this.registerStore || !this.identityCluster) return;
-    const IdentityCluster = require('../functions/identityCluster');
-    const rows = this._verifiedIdentityCrossSignRows();
-    for (const r of rows) if (r.kind !== IdentityCluster.REVOKE_TYPE) this.identityCluster.ingestCrossSign(r.record);
-    for (const r of rows) if (r.kind === IdentityCluster.REVOKE_TYPE) this.identityCluster.ingestRevoke(r.record);
-  }
-
-  _persistIdentityCrossSignRow (kind, record) {
-    if (!this.registerStore || !record) return;
-    const IdentityCluster = require('../functions/identityCluster');
-    const nonce16 = String(record.sessionId || '').slice(0, 16) + String(record.nonce || '').slice(0, 16);
-    let id = 'edge:' + String(kind || 'sign') + ':' + nonce16;
+  _gossipDelegationShare (frame) {
+    if (!frame || !this.fabricNetwork || !this.fabricNetwork.ready) return;
     try {
-      const a = IdentityCluster.keyOf
-        ? IdentityCluster.keyOf(record.localPubkey)
-        : '';
-      const b = IdentityCluster.keyOf
-        ? IdentityCluster.keyOf(record.peerPubkey)
-        : '';
-      if (a && b) id = a + '->' + b + ':' + String(kind || 'sign') + ':' + nonce16;
-      else {
-        const ek = IdentityCluster.edgeKey(record.localPubkey, record.peerPubkey) || 'edge';
-        id = ek + ':' + String(kind || 'sign') + ':' + nonce16 + ':' + String(record.localPubkey || '').slice(0, 12);
-      }
-    } catch (_) { /* stub IdentityCluster */ }
-    this.registerStore.put('identitycrosssigns', id, Object.assign({
-      id,
-      kind,
-      type: kind
-    }, record));
+      this.fabricNetwork.publishDelegationShare({ frame });
+    } catch (e) {
+      this.emit('warning', '[LiveRelay] DelegationShare publish: ' + (e && e.message));
+    }
   }
 
-  _ingestIdentityCrossSign (object, signer) {
-    const { verifyCrossSignObject } = require('../functions/identityCrossSignVerify');
-    const IdentityCluster = require('../functions/identityCluster');
-    const checked = verifyCrossSignObject(object, signer);
-    if (!checked.ok) {
-      logFabricSync('IdentityCrossSign rejected', checked.error);
-      this.emit('warning', '[LiveRelay] IdentityCrossSign rejected: ' + checked.error);
+  /**
+   * Re-gossip stored identity grants and revokes so peers that joined later
+   * see who is linked (Passport is not a mesh peer, so its grants travel here too).
+   */
+  _replayDelegationShares () {
+    if (!this.registerStore || !this.fabricNetwork || !this.fabricNetwork.ready) return;
+    const { encodeFabricUri } = require('@fabric/core/functions/fabricUri');
+    let rows = [];
+    try { rows = this.registerStore.all('delegationshares') || []; } catch (_) { rows = []; }
+    for (const row of rows) {
+      if (row && row.frame) this._gossipDelegationShare(encodeFabricUri(Buffer.from(row.frame, 'hex')));
+    }
+  }
+
+  /**
+   * Keyless delegation hosting: the pairing rendezvous (`/delegations`) and
+   * the mailbox (`/services/delegation/mailbox`). Mail for this player goes
+   * straight to its participant.
+   * @returns {{ handle: Function }}
+   */
+  _delegationHostFor () {
+    if (this._delegationHost) return this._delegationHost;
+    const { createDelegationHost } = require('../functions/delegationRendezvous');
+    const { relayPinnedOrigins } = require('../functions/liveRelayPassport');
+    const GoonDelegation = require('./GoonDelegation');
+    const server = String(this.settings.mode || '').toLowerCase() === 'server';
+    const address = this.server && typeof this.server.address === 'function' ? this.server.address() : null;
+    const port = Number((address && address.port) || this.settings.port || 3041);
+    this._delegationHost = createDelegationHost({
+      origins: server ? relayPinnedOrigins(this, port).filter((o) => o.startsWith('https://')) : [],
+      trustProxy: server,
+      store: this.registerStore ? GoonDelegation.registerKv(this.registerStore, 'delegationmailbox') : undefined,
+      deliver: (to, buffer) => {
+        const d = this.delegation;
+        const { xOnly } = require('@fabric/core/functions/delegation');
+        if (!d || xOnly(to) !== xOnly(d.pubkey)) return false;
+        d.take(buffer).catch((e) => this.emit('warning', '[LiveRelay] mailbox frame refused: ' + (e && e.message)));
+        return true;
+      }
+    });
+    return this._delegationHost;
+  }
+
+  /**
+   * The player's delegation participant (`services/GoonDelegation.js`), built
+   * for the unlocked identity. Not on a public relay (`SC_MODE=server`).
+   * @returns {object|null}
+   */
+  _setupDelegation () {
+    const identity = this._identity;
+    const mode = String(this.settings.mode || '').toLowerCase();
+    if (this.delegation && this._delegationOf === identity && !this._offlineMode) return this.delegation;
+    if (this.delegation) {
+      try { this.delegation.stop(); } catch (_) { /* ignore */ }
+      this.delegation = null;
+    }
+    this._delegationOf = identity;
+    if (!identity || !identity.xprv || mode === 'server' || this._offlineMode) {
+      this._linkedSigners = [];
       return null;
     }
-    const rec = checked.record;
-    this._persistIdentityCrossSignRow(checked.kind, Object.assign({}, object, rec));
-    if (checked.kind === IdentityCluster.REVOKE_TYPE) {
-      this.identityCluster.ingestRevoke(rec);
-      logFabricSync('IdentityCrossSignRevoke',
-        String(rec.localPubkey || '').slice(0, 12) + ' ↔ ' + String(rec.peerPubkey || '').slice(0, 12));
-    } else {
-      const ingest = this.identityCluster.ingestCrossSign(rec) || {};
-      const me = this._identity && this._identity.pubkey;
-      const mine = !!(me && IdentityCluster.keyOf &&
-        IdentityCluster.keyOf(me) === IdentityCluster.keyOf(rec.localPubkey));
-      logFabricSync(
-        'IdentityCrossSign',
-        (mine ? 'local' : 'peer') +
-          (ingest.linked ? ' linked' : (ingest.pending ? ' pending' : '')) +
-          ' ' + String(rec.localPubkey || '').slice(0, 12) +
-          ' → ' + String(rec.peerPubkey || '').slice(0, 12)
-      );
-      if (me && (
-        this.identityCluster.clusterEquals(me, rec.localPubkey) ||
-        this.identityCluster.clusterEquals(me, rec.peerPubkey)
-      )) {
-        this._scheduleAccountDataReplay();
-      }
-    }
-    this.emit('identity:cluster', this.identityCluster.snapshot(rec.localPubkey));
-    return rec;
-  }
-
-  _gossipIdentityCrossSign (object) {
-    if (!object || !this.fabricNetwork || !this.fabricNetwork.ready) return;
     try {
-      this.fabricNetwork.publishIdentityCrossSign(object);
+      const GoonDelegation = require('./GoonDelegation');
+      const { protocolKeyFromIdentity, accountFromIdentity, fabricIdentityNetwork } = require('../functions/identity');
+      const network = fabricIdentityNetwork({ network: identity.network });
+      const cfg = this.settings.delegation || {};
+      const extensionIds = [].concat(
+        Array.isArray(cfg.extensionIds) ? cfg.extensionIds : [],
+        String(process.env.FABRIC_PASSPORT_EXTENSION_IDS || '').split(',')
+      ).map((id) => String(id || '').trim()).filter(Boolean);
+      const desktop = mode !== 'android';
+      this.delegation = new GoonDelegation({
+        key: protocolKeyFromIdentity(identity),
+        network,
+        registerStore: this.registerStore,
+        getAccount: ({ network: net, account }) => {
+          try {
+            return accountFromIdentity(identity, { network: net || network, account: account != null ? account : identity.account });
+          } catch (_) {
+            return null;
+          }
+        },
+        approve: desktop ? this.settings.fabricSignApprover : null,
+        mailboxes: Array.isArray(cfg.mailboxes) ? cfg.mailboxes : ['https://relay.goon.vc'],
+        extensionIds: [...new Set(extensionIds)]
+      });
     } catch (e) {
-      this.emit('warning', '[LiveRelay] IdentityCrossSign publish: ' + (e && e.message));
+      this.emit('warning', '[LiveRelay] delegation unavailable: ' + (e && e.message));
+      this.delegation = null;
+      return null;
     }
-  }
-
-  /**
-   * Re-gossip stored BIP340 IdentityCrossSign / Revoke proofs so later peers
-   * can verify the cluster without re-running /device-links.
-   */
-  _replayIdentityCrossSigns () {
-    if (!this.registerStore || !this.fabricNetwork || !this.fabricNetwork.ready) return;
-    for (const r of this._verifiedIdentityCrossSignRows()) this._gossipIdentityCrossSign(r.row);
-  }
-
-  /**
-   * The device link a cross-sign names. Callers that only know the peer and
-   * nonce get the session and origin from the linked-device row.
-   * @param {object} fields { peerPubkey, nonce, sessionId?, origin? }
-   * @returns {{ peerPubkey: string, nonce: string, sessionId: string, origin: string }}
-   */
-  _crossSignBinding (fields = {}) {
-    const peerPubkey = String(fields.peerPubkey || '').toLowerCase();
-    const nonce = String(fields.nonce || '').toLowerCase();
-    let sessionId = fields.sessionId ? String(fields.sessionId) : '';
-    let origin = fields.origin ? String(fields.origin) : '';
-    if ((!sessionId || !origin) && this.registerStore) {
-      const persisted = settingsStore.loadSettings(this.registerStore);
-      const list = Array.isArray(persisted.linkedDevices) ? persisted.linkedDevices : [];
-      const IdentityCluster = require('../functions/identityCluster');
-      const keyOf = (v) => (IdentityCluster.keyOf ? IdentityCluster.keyOf(v) : String(v || '').toLowerCase());
-      const row = list.find((d) => d && String(d.nonce || '').toLowerCase() === nonce &&
-        keyOf(d.peerPubkey || d.pubkey) === keyOf(peerPubkey));
-      if (row) {
-        sessionId = sessionId || String(row.sessionId || '');
-        origin = origin || String(row.hubOrigin || '');
+    const d = this.delegation;
+    d.on('warning', (msg) => this.emit('warning', msg));
+    d.on('identity', (frame) => {
+      if (this.delegation !== d) return;
+      const out = this._ingestDelegationShare(frame, { local: true });
+      if (out && out.fresh) this._gossipDelegationShare(frame);
+    });
+    d.on('signers', () => {
+      if (this.delegation === d) this._refreshLinkedSigners().catch(() => {});
+    });
+    d.on('request', (ev) => {
+      if (this.delegation !== d) return;
+      this._appendInbox(registerInbox.entryFromDelegationRequest(ev));
+    });
+    d.identityFrames().then((frames) => {
+      for (const frame of frames) {
+        const out = this._ingestDelegationShare(frame, { local: true });
+        if (out && out.fresh) this._gossipDelegationShare(frame);
       }
-    }
-    if (!sessionId || !origin) {
-      throw new Error('This device was linked with an older version. Link it again.');
-    }
-    return { peerPubkey, nonce, sessionId, origin };
+    }).catch(() => {});
+    this._refreshLinkedSigners().catch(() => {});
+    d.start();
+    return d;
   }
 
   /**
-   * Sign + ingest + gossip a cross-sign or revoke for the unlocked identity.
-   * @param {object} fields { peerPubkey, nonce, sessionId?, origin?, revokedAt? }
-   * @param {string} [kind]
+   * Answer a linked signer's request from the dashboard (Notifications).
+   * @param {string} hash
+   * @param {'sign'|'decline'} action
+   * @returns {Promise<{ status: number, json: object }>}
    */
-  async publishLocalIdentityCrossSign (fields, kind) {
-    const IdentityCluster = require('../functions/identityCluster');
-    const { signCrossSign } = require('../functions/identityCrossSignVerify');
-    if (!this._identity) throw new Error('Identity is locked');
-    const k = kind || IdentityCluster.SIGN_TYPE;
-    const binding = this._crossSignBinding(fields || {});
-    if (fields && fields.revokedAt != null) binding.revokedAt = fields.revokedAt;
-    const obj = signCrossSign(this._identity, binding, k);
-    this._ingestIdentityCrossSign(obj, this._identity.pubkey);
-    await this._ensureFabric().catch(() => null);
-    this._gossipIdentityCrossSign(obj);
-    this._scheduleAccountDataReplay();
-    return obj;
+  async answerDelegationRequest (hash, action) {
+    const d = this.delegation;
+    if (!d) return { status: 503, json: { ok: false, error: 'Unlock your identity to answer signing requests.' } };
+    const out = await d.answer(hash, action);
+    if (out.status < 300 && this.registerStore) {
+      const id = 'delegation:' + String(hash || '').toLowerCase();
+      const signed = out.json && out.json.status === 'signed';
+      try {
+        registerInbox.patch(this.registerStore, id, { status: signed ? 'accepted' : 'rejected', actionable: false, resolvedAt: new Date().toISOString(), resolvedBy: 'local' });
+      } catch (_) { /* ignore */ }
+    }
+    return out;
   }
 
   /**
@@ -4279,7 +4315,11 @@ class StarCitizenService extends EventEmitter {
       });
     }
 
-    const chatPick = deviceDataSync.selectChatForShare(this.registerStore.all('chatmessages') || []);
+    const publicIds = this._discordPublicChannelIds();
+    const chatPick = deviceDataSync.selectChatForShare(
+      (this.registerStore.all('chatmessages') || [])
+        .filter((row) => discordPublicChannels.isShareableChatRow(row, publicIds))
+    );
     if (chatPick.messages.length) {
       packs.push({
         pack: deviceDataSync.PACK_CHAT,
@@ -4608,38 +4648,29 @@ class StarCitizenService extends EventEmitter {
     return queued;
   }
 
+  /**
+   * Linked signers as the cluster pages show them (`{ pubkey, label, linkedAt }`),
+   * cached from the delegation record (`_refreshLinkedSigners`).
+   * @returns {object[]}
+   */
   _listLinkedDevices () {
-    if (!this.registerStore) return [];
-    const persisted = settingsStore.loadSettings(this.registerStore);
-    return listLinkedDevices(persisted.linkedDevices);
+    return Array.isArray(this._linkedSigners) ? this._linkedSigners.slice() : [];
   }
 
-  /**
-   * Re-publish IdentityCrossSign for paired devices that are not yet a cluster
-   * edge (desktop overlay closed before the initiator tick, or Fabric was down).
-   */
-  async _nudgePendingCrossSigns () {
-    if (!this._identity || typeof this.publishLocalIdentityCrossSign !== 'function') return 0;
-    const now = Date.now();
-    if (this._lastCrossSignNudge && now - this._lastCrossSignNudge < 8000) return 0;
-    this._lastCrossSignNudge = now;
-    const me = this._identity.pubkey;
-    const list = this._listLinkedDevices() || [];
-    let n = 0;
-    for (const row of list) {
-      const pk = row.peerPubkey || row.peerPubkeyHex;
-      const nonce = row.nonce;
-      if (!pk || !nonce || !row.sessionId || !row.hubOrigin) continue;
-      if (this.identityCluster && this.identityCluster.clusterEquals(me, pk)) continue;
-      try {
-        await this.publishLocalIdentityCrossSign({ peerPubkey: pk, nonce, sessionId: row.sessionId, origin: row.hubOrigin });
-        n += 1;
-      } catch (e) {
-        this.emit('warning', '[LiveRelay] IdentityCrossSign nudge: ' + ((e && e.message) || e));
-      }
+  async _refreshLinkedSigners () {
+    const d = this.delegation;
+    if (!d) {
+      this._linkedSigners = [];
+      return [];
     }
-    try { this._replayIdentityCrossSigns(); } catch (_) { /* ignore */ }
-    return n;
+    const view = await d.signers();
+    this._linkedSigners = view.signers.map((p) => ({
+      pubkey: p.pubkey,
+      peerPubkey: p.pubkey,
+      label: p.label || 'Linked signer',
+      linkedAt: p.linkedAt || null
+    }));
+    return this._linkedSigners;
   }
 
   _clusterAllowPubkeys () {
@@ -7699,13 +7730,15 @@ class StarCitizenService extends EventEmitter {
     const passport = this._passportSignIn();
     if (await passport.handle(req, res, pathname)) return;
     req._passportSession = await passport.requestSession(req);
-    if (this._fabricLocalSigner === undefined) {
-      this._fabricLocalSigner = require('../functions/fabricLocalSignerRelay').createFabricLocalSignerRelay(this);
+    // Linked signers: the keyless rendezvous + mailbox, then the player's
+    // loopback delegate (Passport on this computer; it checks its callers).
+    if (pathname === '/delegations' || pathname.startsWith('/delegations/') || pathname.startsWith('/services/delegation')) {
+      if (this._offlineMode) return send(503, { error: offlineMode.OFFLINE_ERROR, code: 'OFFLINE' });
+      if (await this._delegationHostFor().handle(req, res)) return;
+      if (this.delegation && this.delegation.delegate.handle(req, res, pathname)) return;
     }
-    if (this._fabricLocalSigner && this._fabricLocalSigner.handle(req, res, pathname)) return;
-    // Loopback writes act as the unlocked identity. `identity/cross-sign` carries its own
-    // BIP340 proof, and Passport posts it from its extension origin.
-    if (pathname.startsWith(`${base}/`) && pathname !== `${base}/identity/cross-sign` &&
+    // Loopback writes act as the unlocked identity.
+    if (pathname.startsWith(`${base}/`) &&
       !this._enforceRemoteAuth(req) && !this._authPubkey(req) &&
       isForeignBrowserWrite(req, {
         port: (req.socket && req.socket.localPort) || this.settings.port,
@@ -7721,13 +7754,6 @@ class StarCitizenService extends EventEmitter {
     };
 
     try {
-      const { tryHandleDeviceLink } = require('../functions/fabricDeviceLinkRelay');
-      if (this._offlineMode && String(pathname || '').startsWith('/device-links')) {
-        return send(503, { error: offlineMode.OFFLINE_ERROR, code: 'OFFLINE' });
-      }
-      if (await tryHandleDeviceLink(this, req, res, pathname, body)) return;
-      const { tryHandleDeviceLinkLocal } = require('../functions/fabricDeviceLinkLocalHttp');
-      if (await tryHandleDeviceLinkLocal(this, req, res, pathname, body, send)) return;
       // Hub-compatible peering discovery (OPTIONS ARC + /services/peering).
       // Must run before the SPA GET `/` branch so OPTIONS is not 404'd.
       const liveRelayPeeringHttp = require('../functions/liveRelayPeeringHttp');
@@ -9148,11 +9174,6 @@ class StarCitizenService extends EventEmitter {
             this._clusterMeshTick();
             return send(200, this._clusterSyncSnapshot());
           }
-          if (d && (d.crossSign === true || d.action === 'cross-sign')) {
-            await this._nudgePendingCrossSigns();
-            this._scheduleAccountDataReplay();
-            return send(200, this._clusterSyncSnapshot());
-          }
           const applied = this._ingestClusterSyncCollection(d, this._requestViewer(req));
           if (!applied) return send(400, { error: 'invalid cluster sync collection' });
           return send(200, { type: 'ClusterSync', data: applied });
@@ -9181,38 +9202,53 @@ class StarCitizenService extends EventEmitter {
           return send(400, { error: e.message || String(e) });
         }
       }
-      if (pathname === `${base}/identity/cross-sign` || pathname === '/identity/cross-sign') {
-        if (req.method === 'POST') {
-          const d = await body();
-          const IdentityCluster = require('../functions/identityCluster');
-          const kind = (d && (d.type || d['@type'])) || IdentityCluster.SIGN_TYPE;
-          if (d && d.signature && d.identity) {
-            try {
-              const rec = this._ingestIdentityCrossSign(d, d.pubkeyHex || d.localPubkey);
-              if (!rec) return send(400, { error: 'invalid IdentityCrossSign' });
-              this._gossipIdentityCrossSign(d);
-              return send(200, { type: kind, data: rec });
-            } catch (e) {
-              return send(400, { error: (e && e.message) || 'invalid IdentityCrossSign' });
-            }
-          }
-          if (!this._identity) return send(401, { error: 'Unlock your identity' });
-          if (this._enforceRemoteAuth(req) && !this._authPubkey(req)) {
-            return send(401, { error: 'Authentication required (sign in with Passport at /sessions)' });
-          }
-          try {
-            const obj = await this.publishLocalIdentityCrossSign({
-              peerPubkey: d.peerPubkey,
-              nonce: d.nonce,
-              sessionId: d.sessionId,
-              origin: d.origin,
-              revokedAt: d.revokedAt
-            }, kind);
-            return send(200, { type: kind, data: obj });
-          } catch (e) {
-            return send(400, { error: e.message || String(e) });
-          }
+      // ---- Linked signers (delegation; services/GoonDelegation.js) ----
+      if (pathname === `${base}/delegation` || pathname.startsWith(`${base}/delegation/`)) {
+        if (!this._requireSession(req, send)) return;
+        const d = this.delegation;
+        if (!d) {
+          const why = this.settings.mode === 'server'
+            ? 'This relay hosts pairing and mailboxes only; it links no signers of its own.'
+            : 'Unlock your identity to manage linked signers.';
+          return send(503, { error: why, locked: !this._identity });
         }
+        const rest = pathname.slice(`${base}/delegation`.length).split('/').filter(Boolean);
+        const fail = (e) => send((e && e.status) || 400, { error: (e && e.message) || String(e) });
+        if (!rest.length && req.method === 'GET') {
+          const view = await d.signers();
+          view.pending = await d.pending();
+          return send(200, { type: 'LinkedSigners', data: view });
+        }
+        if (req.method !== 'POST') return send(405, { error: 'POST' });
+        if (this._offlineResponse(send)) return;
+        const input = await body();
+        try {
+          if (rest[0] === 'invitations' && rest.length === 1) {
+            return send(200, { type: 'Pairing', data: await d.invite(input && input.hub) });
+          }
+          if (rest[0] === 'invitations' && rest[1] === 'accept' && rest.length === 2) {
+            return send(200, { type: 'Pairing', data: await d.accept(input && input.invitation) });
+          }
+          if (rest[0] === 'pairing' && rest[1] === 'confirm' && rest.length === 2) {
+            return send(200, { type: 'Pairing', data: await d.confirm(input && input.scopes) });
+          }
+          if (rest[0] === 'pairing' && rest[1] === 'cancel' && rest.length === 2) {
+            return send(200, await d.cancelPairing());
+          }
+          if (rest[0] === 'requests' && rest.length === 3 && (rest[2] === 'sign' || rest[2] === 'decline')) {
+            const out = await this.answerDelegationRequest(rest[1], rest[2]);
+            return send(out.status, out.json);
+          }
+          if (rest[0] === 'grants' && rest.length === 3 && rest[2] === 'revoke') {
+            return send(200, await d.revoke(rest[1]));
+          }
+          if (rest[0] === 'signers' && rest.length === 3 && rest[2] === 'unlink') {
+            return send(200, await d.unlink(rest[1]));
+          }
+        } catch (e) {
+          return fail(e);
+        }
+        return send(404, { error: 'unknown delegation route' });
       }
 
       // ---- Groups (k-of-n Schnorr multisig units / Federation contracts) ----
@@ -11179,6 +11215,9 @@ class StarCitizenService extends EventEmitter {
     this._fabricTransition = prevTransition
       .then(() => (this._identity ? this._refreshFabric() : this._stopFabric()))
       .catch((e) => this.emit('error', e));
+    if (this.state.status === 'STARTED') {
+      try { this._setupDelegation(); } catch (e) { this.emit('error', e); }
+    }
     if (this._identity && !this._offlineMode) {
       try { this._flushPendingFederationInvites(); } catch (e) { this.emit('error', e); }
       if (this._pendingHistoricalShare) this._requestHistoricalLogShare();
@@ -11241,6 +11280,27 @@ class StarCitizenService extends EventEmitter {
   }
 
   /**
+   * A Fabric peer this node has registered, or this node's own identity.
+   * Used by the local watchtower. A WebRTC id is not a key.
+   * @param {string} pubkey
+   * @returns {boolean}
+   * @private
+   */
+  _watchtowerClientRegistered (pubkey) {
+    const Key = require('@fabric/core/types/key');
+    if (this._identity && this._identity.pubkey && Key.pubkeysMatch(this._identity.pubkey, pubkey)) return true;
+    const peer = this.fabricNetwork && this.fabricNetwork.peer;
+    const rows = [];
+    if (peer && peer.peers) rows.push(...Object.values(peer.peers));
+    if (peer && Array.isArray(peer.knownPeers)) rows.push(...peer.knownPeers);
+    return rows.some((rec) => {
+      if (!rec || typeof rec !== 'object') return false;
+      const pk = rec.publicKey || rec.pubkey || rec.id;
+      return pk && Key.pubkeysMatch(pk, pubkey);
+    });
+  }
+
+  /**
    * Attach handlers to an external Fabric Peer (goon.vc Hub `agent`) so
    * MissionBroadcast / SCEventBatch / chat are ingested into this LiveRelay
    * and optionally re-relayed to other TCP peers.
@@ -11273,6 +11333,10 @@ class StarCitizenService extends EventEmitter {
       onChannelMessage: (object, signer) => {
         if (!this.marketManager) return;
         try { this.marketManager.ingestChannelMessage(object, { sellerId: signer ? String(signer) : undefined }); } catch (e) { this.emit('error', e); }
+      },
+      onWatchtowerAppointment: (object) => {
+        if (!this.marketManager) return;
+        try { this.marketManager.fileWatchtowerAppointment(object); } catch (e) { this.emit('error', e); }
       },
       onMissionCreated: (object, source, meta) => {
         const actor = meta && meta.msg && meta.msg.actor;
@@ -11825,9 +11889,11 @@ class StarCitizenService extends EventEmitter {
           this._ingestDiscordCatalogShare(object, resolveSignerPubkey(source) || source, meta);
         } catch (e) { this.emit('error', e); }
       },
-      onIdentityCrossSign: (object, source, meta) => {
+      onDelegationShare: (object) => {
         try {
-          this._ingestIdentityCrossSign(object, resolveSignerPubkey(source) || source, meta);
+          const frame = object && typeof object.frame === 'string' ? object.frame : null;
+          const out = frame ? this._ingestDelegationShare(frame) : null;
+          if (out && out.fresh) this._gossipDelegationShare(frame);
         } catch (e) { this.emit('error', e); }
       },
       onDeviceDataShare: (object, source, meta) => {
@@ -12655,7 +12721,6 @@ class StarCitizenService extends EventEmitter {
           this.emit('warning', '[LiveRelay] cluster file push: ' + (e && e.message));
         }
         this._scheduleAccountDataReplay({ resetTries: true, nudge: true, delay: 400 });
-        void this._nudgePendingCrossSigns();
       });
       this.fabricNetwork.on('peer:self', (ev) => {
         const addr = ev && ev.address
@@ -12688,7 +12753,11 @@ class StarCitizenService extends EventEmitter {
           localTree: (merkleRootHex) => this._localBlobTree(merkleRootHex),
           publish: (type, object) => {
             try { this.fabricNetwork.publishMarketArtifact(type, object); } catch (e) { this.emit('error', e); }
-          }
+          },
+          publishWatchtower: (appointment) => {
+            try { this.fabricNetwork.publishWatchtowerAppointment(appointment); } catch (e) { this.emit('error', e); }
+          },
+          admit: (pubkey) => this._watchtowerClientRegistered(pubkey)
         });
         await this.marketManager.start();
       } catch (e) { this.emit('error', e); }
@@ -12700,8 +12769,7 @@ class StarCitizenService extends EventEmitter {
     this._maybeSendPeerAlias();
     this._publishLocalProfile().catch((e) => this.emit('error', e));
     if (starting) {
-      this._replayIdentityCrossSigns();
-      void this._nudgePendingCrossSigns();
+      this._replayDelegationShares();
       this._scheduleAccountDataReplay();
       this._dialStoredClusterPeers();
       this._startClusterMeshTimer();
@@ -13926,10 +13994,7 @@ class StarCitizenService extends EventEmitter {
       await this._rebindHttpIfNeeded();
     }
     this._loadIdentityCluster();
-    try {
-      const { restorePendingDeviceLinkOffer } = require('../functions/fabricDeviceLinkLocalHttp');
-      restorePendingDeviceLinkOffer(this);
-    } catch (_) { /* Android helper optional on hosted */ }
+    this._setupDelegation();
     this._applyDiscordConfig();
     if (this.missionManager) await this.missionManager.start();
     if (this.groupManager) await this.groupManager.start();
@@ -13990,10 +14055,9 @@ class StarCitizenService extends EventEmitter {
   async stop () {
     this.state.status = 'STOPPING';
     this._stopping = true;
-    try {
-      const { stopDeviceLinkTick } = require('../functions/fabricDeviceLinkLocalHttp');
-      stopDeviceLinkTick(this);
-    } catch (_) { /* ignore */ }
+    if (this.delegation) {
+      try { this.delegation.stop(); } catch (_) { /* ignore */ }
+    }
     if (this._pollTimer) { clearTimeout(this._pollTimer); this._pollTimer = null; }
     if (this._historyFlushTimer) { clearTimeout(this._historyFlushTimer); this._historyFlushTimer = null; }
     if (this._cosignerTimer) { clearTimeout(this._cosignerTimer); this._cosignerTimer = null; }

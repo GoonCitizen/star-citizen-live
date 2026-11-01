@@ -2,8 +2,8 @@
 
 /**
  * BIP340 tags for GoonCitizen-only signatures, alongside `@fabric/core`
- * `functions/signingTags` (receipts, federation witnesses, cross-signs, device
- * links). A signature made for one of these never verifies as another.
+ * `functions/signingTags` (receipts, federation witnesses, …). A signature
+ * made for one of these never verifies as another.
  */
 
 module.exports = Object.freeze({

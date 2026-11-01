@@ -13,7 +13,6 @@
 const React = require('react');
 const { showDesktopNotification, ensureNotifyPermission } = require('../functions/desktopNotify');
 const { isAndroidCompanion } = require('../functions/isAndroidCompanion');
-const { postIdentityCrossSign, fetchIdentityCluster } = require('../functions/identityCrossSignClient');
 const DataSyncStatus = require('./DataSyncStatus');
 const groupVoiceSettings = require('../functions/groupVoiceSettings');
 const VoiceSettingsPanel = require('./VoiceSettingsPanel');
@@ -54,10 +53,6 @@ const CSS = `
     border:1px solid var(--line);background:var(--panel2);color:var(--muted)}
   .st-chip.on{border-color:rgba(63,185,80,.45);color:var(--good);background:rgba(63,185,80,.08)}
   .st-chip.warn{border-color:rgba(210,153,34,.45);color:var(--warn);background:rgba(210,153,34,.08)}
-  .st-devices{display:grid;gap:6px;margin-top:8px}
-  .st-device{display:flex;gap:8px;align-items:center;justify-content:space-between;
-    background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:8px 10px;font-size:12px}
-  .st-device .id{font-family:'Cascadia Code',Consolas,monospace;color:var(--muted);font-size:11px}
   .gear{background:var(--panel2);border:1px solid var(--line);color:var(--text);border-radius:7px;
     padding:5px 11px;font-size:14px;cursor:pointer;line-height:1}
   .gear:hover{border-color:var(--accent)}
@@ -102,8 +97,6 @@ class Settings extends React.Component {
       requireSealedGroupChat: false,
       sharePresence: false,
       presenceVisibility: 'private',
-      linkedDevices: [],
-      identityCluster: null,
       fabricReady: false,
       fabricConnected: 0,
       offlineMode: false,
@@ -169,8 +162,6 @@ class Settings extends React.Component {
         sharePresence: s.sharePresence === true || (settingsRes.runtime && settingsRes.runtime.sharePresence === true),
         presenceVisibility: s.presenceVisibility ||
           (settingsRes.runtime && settingsRes.runtime.presenceVisibility) || 'private',
-        linkedDevices: Array.isArray(s.linkedDevices) ? s.linkedDevices : [],
-        identityCluster: null,
         fabricReady: !!(settingsRes.runtime && settingsRes.runtime.fabricReady),
         offlineMode: s.offlineMode === true || (settingsRes.runtime && settingsRes.runtime.offlineMode === true),
         fabricConnected: Number(settingsRes.runtime && settingsRes.runtime.fabricConnected) || 0,
@@ -191,10 +182,6 @@ class Settings extends React.Component {
         discordAppSecret: '',
         discordWebhook: ''
       });
-      try {
-        const cluster = await fetchIdentityCluster(window.location.origin);
-        if (cluster.ok) this.setState({ identityCluster: cluster.data });
-      } catch (_) { /* optional */ }
     } catch (e) {
       this.setState({ loading: false, error: e.message });
     }
@@ -301,43 +288,6 @@ class Settings extends React.Component {
     }
   }
 
-  async revokeLinkedDevice (peerFabricId) {
-    const id = String(peerFabricId || '');
-    if (!id) return;
-    const match = (this.state.linkedDevices || []).find((d) => {
-      const pid = d && (d.peerFabricId || d.pubkey || d.id || d.peerPubkey);
-      return String(pid || '') === id;
-    });
-    const next = (this.state.linkedDevices || []).filter((d) => {
-      const pid = d && (d.peerFabricId || d.pubkey || d.id || d.peerPubkey);
-      return String(pid || '') !== id;
-    });
-    this.setState({ busy: true, error: null });
-    try {
-      const nonce = match && match.nonce;
-      const peerPubkey = (match && (match.peerPubkey || match.pubkey)) || id;
-      if (!nonce) {
-        throw new Error('No pairing nonce on file — unlock this identity and complete fabric://link again before revoking.');
-      }
-      const posted = await postIdentityCrossSign(window.location.origin, {
-        type: 'IdentityCrossSignRevoke',
-        peerPubkey,
-        nonce,
-        sessionId: (match && match.sessionId) || undefined,
-        origin: (match && match.hubOrigin) || undefined
-      });
-      if (!posted.ok) {
-        throw new Error(posted.error || 'Could not publish IdentityCrossSignRevoke. Unlock this identity, then retry.');
-      }
-      await this.put('linkedDevices', next);
-      this.setState({ linkedDevices: next, busy: false });
-      await this.load();
-    } catch (err) {
-      this.setState({ busy: false, error: err.message });
-      await this.load();
-    }
-  }
-
   privacyChip (label, on, warn) {
     return React.createElement('span', {
       className: 'st-chip' + (on ? ' on' : '') + (warn ? ' warn' : ''),
@@ -372,19 +322,11 @@ class Settings extends React.Component {
     const lanOn = this.state.httpSharedMode === true;
     const announceOn = this.state.broadcastPeering === true;
     const sealOn = this.state.groupChatSeal === true;
-    const cluster = this.state.identityCluster;
-    const clusterMembers = (cluster && Array.isArray(cluster.members) && cluster.members.length > 1)
-      ? cluster.members
-      : null;
-    const devices = clusterMembers
-      ? clusterMembers.map((pk) => {
-        const local = (this.state.linkedDevices || []).find((d) => {
-          const pid = d && (d.peerFabricId || d.pubkey || d.peerPubkey || d.id);
-          return String(pid || '') === pk || (d && d.peerPubkey === pk);
-        });
-        return local || { peerFabricId: pk, peerPubkey: pk, label: 'cluster device' };
-      })
-      : (this.state.linkedDevices || []);
+    const openSigners = () => {
+      if (typeof this.props.onOpenIdentity !== 'function') return;
+      if (typeof this.props.onClose === 'function') this.props.onClose();
+      this.props.onOpenIdentity('signers');
+    };
 
     return React.createElement('div', { className: 'st-sec', id: 'settings-privacy' },
       React.createElement('h3', null, 'Privacy'),
@@ -583,52 +525,20 @@ class Settings extends React.Component {
         React.createElement('code', null, 'DISCORD_WEBHOOK_URL'),
         ' only — never stored in the Fabric Store.'),
 
-      React.createElement('h3', { style: { marginTop: 10, fontSize: 12.5 } }, 'Linked devices'),
+      React.createElement('h3', { style: { marginTop: 10, fontSize: 12.5 } }, 'Linked signers'),
       React.createElement('div', { className: 'd' },
-        'Peer-equivalent identity cluster. Add a device here to show a QR, or scan one from the header QR button. After both approve, account data replays over Fabric both ways. Revoke publishes an IdentityCrossSignRevoke Fabric Message (BIP340) — a stolen device stays you until another cluster member revokes.'),
+        'Apps you link (Passport, GoonCitizen elsewhere, a Hub) keep their own keys. One you let act as this player gets your notes, groups, tags, and recent chat over Fabric until you unlink it there.'),
       React.createElement(DataSyncStatus, {
         variant: 'panel',
-        onAddDevice: () => {
-          if (typeof this.props.onOpenIdentity === 'function') {
-            if (typeof this.props.onClose === 'function') this.props.onClose();
-            this.props.onOpenIdentity('security');
-          }
-        }
+        onAddSigner: openSigners
       }),
       React.createElement('div', { className: 'st-row', style: { marginBottom: 10 } },
         React.createElement('button', {
           type: 'button',
           className: 'st-btn',
-          onClick: () => {
-            if (typeof this.props.onOpenIdentity === 'function') {
-              if (typeof this.props.onClose === 'function') this.props.onClose();
-              this.props.onOpenIdentity('security');
-            }
-          }
-        }, 'Add a device')
-      ),
-      devices.length
-        ? React.createElement('div', { className: 'st-devices' },
-          devices.map((d, i) => {
-            const pid = (d && (d.peerFabricId || d.pubkey || d.id)) || '';
-            const label = (d && (d.label || d.name)) || 'device';
-            return React.createElement('div', { className: 'st-device', key: pid || ('dev-' + i) },
-              React.createElement('div', null,
-                React.createElement('div', null, label),
-                React.createElement('div', { className: 'id' },
-                  pid ? (String(pid).slice(0, 16) + '…') : '—')
-              ),
-              React.createElement('button', {
-                type: 'button',
-                className: 'st-btn ghost',
-                style: { padding: '3px 10px', fontSize: 11 },
-                disabled: !this.state.editable || this.state.busy || !pid,
-                onClick: () => this.revokeLinkedDevice(pid)
-              }, 'Revoke')
-            );
-          })
-        )
-        : React.createElement('div', { className: 'd', style: { marginBottom: 0 } }, 'No linked devices yet.')
+          onClick: openSigners
+        }, 'Manage linked signers')
+      )
     );
   }
 

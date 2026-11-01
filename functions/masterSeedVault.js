@@ -5,13 +5,13 @@
  * BIP39 passphrase) → master xprv. The install keeps only that master,
  * sealed with the lock password; every account's keys come from it:
  *
- *   m/44'/F'/n'/0/0   Fabric identity (F = 7777 mainnet, 7778 otherwise)
+ *   m/7777'/F'/n'/0/0 Fabric identity (F = 7777 mainnet, 7778 otherwise)
  *   m/84'/B'/n'       wallet, SegWit (new addresses)
  *   m/44'/B'/n'       wallet, standard (watched)
  *   m/87'/B'/n'/0/0   multisig cosigner (group wallets, escrow)
  *
  * No per-device xprvs are exported. A second device imports the same seed
- * and derivation password, or keeps its own seed and links with device-link.
+ * and derivation password, or keeps its own seed and is linked as a signer.
  */
 
 const accountKeys = require('@fabric/core/functions/accountKeys');

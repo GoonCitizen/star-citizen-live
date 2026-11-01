@@ -60,9 +60,10 @@ re-audit; 2026-08-15 presence/Game.log/fleets gates + shoutbox labels;
    rotation); Tombstone does not erase disk history.
 9. **Peering HTTP claim fingerprinting** — optional strip of detailed
    `/services/peering` fields on hostile networks.
-10. **Login / device-link redeem possession proof** — bind `sessionId` into
-   attest messages (http + Passport + GC). Tracked in Hub/`@fabric/http`
-   OUTSTANDING.
+10. ~~**Login / device-link redeem possession proof**~~ — done: Passport v2
+   assertions name their challenge (D-021), and every delegation frame names
+   its link (the offer hash), so a pairing step can't be replayed into
+   another link (D-022).
 11. **Production shared Hub:** keep `FABRIC_WS_REQUIRE_TOKEN=1` +
     `webrtc.requireTransportAuth` in real env (example file now documents it).
 

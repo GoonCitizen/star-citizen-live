@@ -106,7 +106,9 @@ describe('androidIdentityBridge', () => {
     assert.equal(result.skipped, true);
   });
 
-  it('opens fabric://link through the local node, not the public hub', async () => {
+  it('hands an opened signer invitation to the page without calling any hub', async () => {
+    const Key = require('@fabric/core/types/key');
+    const { createLinkOffer } = require('@fabric/core/functions/delegation');
     const prevWindow = global.window;
     const prevCap = typeof window !== 'undefined' ? window.Capacitor : undefined;
     const prevApi = typeof window !== 'undefined' ? window.electronAPI : undefined;
@@ -117,29 +119,28 @@ describe('androidIdentityBridge', () => {
     window.electronAPI = null;
     globalThis.fetch = async (url) => {
       calls.push(String(url));
-      return {
-        ok: true,
-        status: 200,
-        json: async () => ({
-          ok: true,
-          status: 'pending',
-          sessionId: 'aa'.repeat(24),
-          nonce: 'bb'.repeat(32),
-          origin: 'https://relay.goon.vc',
-          initiator: { id: 'id1peer', pubkeyHex: '02' + 'ab'.repeat(32) }
-        })
-      };
+      return { ok: true, status: 200, json: async () => ({}) };
     };
     try {
       assert.equal(installAndroidIdentityBridge(), true);
+      const seen = [];
+      const off = window.electronAPI.delegationInvitation.onInvitation((ev) => seen.push(ev));
+      const offer = createLinkOffer({ origin: 'https://relay.goon.vc', label: 'Desktop', network: 'regtest' }, new Key());
+      await window.electronAPI.identity.openProtocolUrl(offer.uri);
+      assert.equal(calls.length, 0);
+      assert.equal(seen.length, 1);
+      assert.equal(seen[0].invitation, offer.uri);
+      const pulled = await window.electronAPI.delegationInvitation.pullPending();
+      assert.equal(pulled.invitation, offer.uri);
+      assert.equal(await window.electronAPI.delegationInvitation.pullPending(), null);
+
       const sid = 'aa'.repeat(24);
-      const url = `fabric://link?sessionId=${sid}&hub=${encodeURIComponent('https://relay.goon.vc')}`;
-      await window.electronAPI.identity.openProtocolUrl(url);
-      assert.equal(calls.length, 1);
-      assert.match(calls[0], /^http:\/\/127\.0\.0\.1:3041\/services\/star-citizen\/device-links\/pending/);
-      assert.doesNotMatch(calls[0], /relay\.goon\.vc\/device-links/);
-      const locked = await window.electronAPI.identity.startDeviceLinkOffer({});
-      assert.match(locked.error || '', /locked/i);
+      await window.electronAPI.identity.openProtocolUrl(`fabric://link?sessionId=${sid}&hub=${encodeURIComponent('https://relay.goon.vc')}`);
+      const evil = createLinkOffer({ origin: 'https://evil.example', label: 'x', network: 'regtest' }, new Key());
+      await window.electronAPI.identity.openProtocolUrl(evil.uri);
+      assert.equal(seen.length, 1, 'retired links and foreign rendezvous are ignored');
+      off();
+      assert.equal(typeof window.electronAPI.identity.startDeviceLinkOffer, 'undefined');
     } finally {
       globalThis.fetch = prevFetch;
       window.Capacitor = prevCap;

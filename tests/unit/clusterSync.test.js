@@ -100,7 +100,7 @@ describe('clusterSync', () => {
     });
     assert.equal(solo.state, 'solo');
     assert.equal(solo.tone, 'muted');
-    assert.match(solo.detail, /add a device/i);
+    assert.match(solo.detail, /link a signer/i);
 
     const pending = clusterSync.summarizeSyncStatus({
       members: ['aa', 'bb'],

@@ -47,8 +47,6 @@ const ALLOWED_KEYS = [
   'nickname',                // operator display name for chat (pubkey remains the actor id)
   'profile',                 // local social profile { bio, scHandle } (nickname is separate)
   'notifyMissionBroadcasts', // desktop notify when a peer broadcasts a mission (default true)
-  'linkedDevices',           // mutual device-link attestations [{ peerFabricId, label, … }]
-  'pendingDeviceLinkOffer',  // in-flight initiator QR (sessionId, hub, nonce — no secrets)
   'sharePresence',           // publish PeerPresence on Fabric (default false)
   'shareDiscordCatalog',     // gossip chat catalog/message packs (Discord first) to Federation groups (default false)
   'sharePlaytimes',          // gossip profile.playtimes pack to Federation groups (default false)
@@ -219,28 +217,6 @@ function putSetting (store, key, value) {
   }
   if (key === 'voice') {
     next = sanitizeVoiceSettings(next);
-  }
-  if (key === 'pendingDeviceLinkOffer') {
-    if (!next || typeof next !== 'object') next = null;
-    else {
-      const sessionId = String(next.sessionId || '').trim();
-      const hubBase = String(next.hubBase || next.origin || '').trim().replace(/\/$/, '');
-      if (!sessionId || !/^https?:\/\//i.test(hubBase)) next = null;
-      else {
-        next = {
-          sessionId,
-          hubBase,
-          origin: String(next.origin || hubBase).replace(/\/$/, ''),
-          nonce: String(next.nonce || '').trim() || null,
-          label: String(next.label || '').slice(0, 64) || null,
-          createdAt: Number(next.createdAt) || Date.now(),
-          protocolUrl: String(next.protocolUrl || '').slice(0, 512) || null,
-          httpsUrl: String(next.httpsUrl || '').slice(0, 512) || null,
-          initiatorId: String(next.initiatorId || '').slice(0, 128) || null,
-          status: 'pending'
-        };
-      }
-    }
   }
   store.put('settings', key, { id: key, value: next });
   return loadSettings(store);
