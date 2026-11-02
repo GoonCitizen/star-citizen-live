@@ -1519,7 +1519,7 @@ class GroupManager extends EventEmitter {
    * @param {string} groupId
    * @param {Object} record From `createGroupCosigner` (`member` must be `actor`).
    * @param {string} actor Member identity pubkey.
-   * @returns {{ group: Object|null, applied: boolean, skipped?: string }}
+   * @returns {{ group: (Object|null), applied: boolean, skipped: (string|undefined) }}
    */
   setCosigner (groupId, record = {}, actor) {
     const group = this.getGroup(groupId);

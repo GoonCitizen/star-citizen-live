@@ -571,7 +571,10 @@ class MarketManager extends EventEmitter {
     }
   }
 
-  /** @private poll the Hub Bitcoin status for the tip while channels are enabled */
+  /**
+   * Poll the Hub Bitcoin status for the tip while channels are enabled.
+   * @private
+   */
   _startChainPoll () {
     if (this._chainTimer || !this.channelsEnabled) return;
     const every = Math.max(5000, Number((this.settings.channels || {}).tipPollMs) || 60000);
@@ -629,7 +632,10 @@ class MarketManager extends EventEmitter {
     return out;
   }
 
-  /** @private 32-byte provider key (Buffer) or null. */
+  /**
+   * 32-byte provider key (Buffer) or null.
+   * @private
+   */
   _providerKey () {
     const k = this._providerPrivateKey;
     if (!k) return null;
