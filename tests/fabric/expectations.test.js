@@ -8,7 +8,7 @@
 const { describe, it } = require('node:test');
 const assert = require('node:assert/strict');
 const Key = require('@fabric/core/types/key');
-const delegation = require('@fabric/core/functions/delegation');
+const delegation = require('@fabric/core/types/delegation');
 
 const httpPassport = require('@fabric/http/functions/passportHttp');
 const httpAllowlist = require('@fabric/http/functions/fabricHubAllowlist');

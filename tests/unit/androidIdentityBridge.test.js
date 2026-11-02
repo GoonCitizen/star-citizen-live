@@ -108,7 +108,7 @@ describe('androidIdentityBridge', () => {
 
   it('hands an opened signer invitation to the page without calling any hub', async () => {
     const Key = require('@fabric/core/types/key');
-    const { createLinkOffer } = require('@fabric/core/functions/delegation');
+    const { createLinkOffer } = require('@fabric/core/types/delegation');
     const prevWindow = global.window;
     const prevCap = typeof window !== 'undefined' ? window.Capacitor : undefined;
     const prevApi = typeof window !== 'undefined' ? window.electronAPI : undefined;

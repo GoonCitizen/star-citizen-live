@@ -22,7 +22,7 @@
 
 const EventEmitter = require('events');
 const Delegation = require('@fabric/core/types/delegation');
-const delegation = require('@fabric/core/functions/delegation');
+const delegation = require('@fabric/core/types/delegation');
 const { encodeFabricUri } = require('@fabric/core/functions/fabricUri');
 const { createFabricDelegate } = require('@fabric/http/functions/fabricDelegate');
 const client = require('@fabric/http/functions/fabricDelegationClient');

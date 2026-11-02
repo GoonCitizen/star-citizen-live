@@ -4,7 +4,7 @@ const { describe, it } = require('node:test');
 const assert = require('node:assert/strict');
 
 const Key = require('@fabric/core/types/key');
-const delegation = require('@fabric/core/functions/delegation');
+const delegation = require('@fabric/core/types/delegation');
 
 const IdentityCluster = require('../../functions/identityCluster');
 const { createIdentity, protocolKeyFromIdentity } = require('../../functions/identity');

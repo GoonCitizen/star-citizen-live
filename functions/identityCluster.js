@@ -16,7 +16,7 @@
 
 let delegation = null;
 try {
-  delegation = require('@fabric/core/functions/delegation');
+  delegation = require('@fabric/core/types/delegation');
 } catch (_) {
   delegation = null;
 }

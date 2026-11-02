@@ -8,7 +8,7 @@ const path = require('path');
 const crypto = require('crypto');
 
 const LiveRelay = require('../../services/LiveRelay');
-const delegation = require('@fabric/core/functions/delegation');
+const delegation = require('@fabric/core/types/delegation');
 const { createIdentity, protocolKeyFromIdentity } = require('../../functions/identity');
 const { createNote, getNote, listNotes } = require('../../functions/identityNotes');
 const localGroups = require('../../functions/localGroups');

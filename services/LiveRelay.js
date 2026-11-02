@@ -4071,7 +4071,7 @@ class StarCitizenService extends EventEmitter {
       store: this.registerStore ? GoonDelegation.registerKv(this.registerStore, 'delegationmailbox') : undefined,
       deliver: (to, buffer) => {
         const d = this.delegation;
-        const { xOnly } = require('@fabric/core/functions/delegation');
+        const { xOnly } = require('@fabric/core/types/delegation');
         if (!d || xOnly(to) !== xOnly(d.pubkey)) return false;
         d.take(buffer).catch((e) => this.emit('warning', '[LiveRelay] mailbox frame refused: ' + (e && e.message)));
         return true;
@@ -11503,6 +11503,7 @@ class StarCitizenService extends EventEmitter {
         // Group invites also ride DirectChat so spoke↔spoke via a shared hub
         // still lands: `protocolUrl` is the same `fabric:` frame as the clipboard clip.
         const opaqueClip = typeof object.protocolUrl === 'string' ? object.protocolUrl : null;
+        let embedded = null;
         if (opaqueClip) {
           try {
             const {
@@ -11512,6 +11513,7 @@ class StarCitizenService extends EventEmitter {
             const parsed = parseOpaqueFabricMessage(opaqueClip);
             if (parsed.ok) {
               const classified = classifyGroupShareMessage(parsed.message);
+              if (classified.kind === 'FederationContractInvite' || classified.kind === 'GroupOffer') embedded = classified.object || null;
               if (classified.kind === 'FederationContractInvite') {
                 this._ingestFederationInvite(classified.object, author, Object.assign({}, meta || {}, {
                   contract: classified.contractId,

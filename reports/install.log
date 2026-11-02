@@ -3,7 +3,7 @@ npm warn deprecated esbuild-plugin-polyfill-node@0.3.0: Package no longer suppor
 npm warn deprecated boolean@3.2.0: Package no longer supported. Contact Support at https://www.npmjs.com/support for more info.
 npm warn gitignore-fallback No .npmignore file found, using .gitignore for file exclusion. Consider creating a .npmignore file to explicitly control published files.
 
-added 987 packages, and audited 988 packages in 2m
+added 974 packages, and audited 975 packages in 2m
 
 161 packages are looking for funding
   run `npm fund` for details

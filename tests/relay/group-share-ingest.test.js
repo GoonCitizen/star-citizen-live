@@ -319,3 +319,43 @@ test('targeted invite clip is refused by a different identity; invitee accept jo
     fs.rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test('a DirectChat DM lands in the transcript; an invite clip shows as a line, not raw JSON', async () => {
+  const ChatManager = require('../../services/ChatManager');
+  const alice = createIdentity();
+  const bob = createIdentity();
+  const def = groupContractDefinition({
+    groupId: 'group-dm-invite-1',
+    creator: alice.pubkey,
+    validators: [alice.pubkey],
+    threshold: 1,
+    createdAt: '2026-01-01T00:00:00.000Z',
+    meta: { name: 'DM Wing', visibility: 'private' }
+  });
+  const contractId = groupContractId(def);
+  const invite = parseFederationContractInvite(buildFederationContractInviteJson({
+    inviteId: 'inv-dm-1',
+    inviterHubId: alice.pubkey,
+    contractId,
+    proposedPolicy: def.proposedPolicy,
+    groupId: def.groupId,
+    groupName: 'DM Wing'
+  }));
+  const { service, dir } = await startRelay(bob);
+  try {
+    const channel = ChatManager.dmChannelKey(alice.pubkey, bob.pubkey);
+    const handlers = service._fabricIngestHandlers();
+    handlers.onDirectChat({ channel, body: 'hello bob', ts: '2026-01-01T00:00:01.000Z' }, alice.pubkey, {});
+    handlers.onDirectChat({
+      channel,
+      body: JSON.stringify(invite),
+      protocolUrl: opaqueInviteUrl(alice, invite, contractId),
+      ts: '2026-01-01T00:00:02.000Z'
+    }, alice.pubkey, {});
+    const bodies = service.chatManager.list(channel).map((m) => m.body);
+    assert.deepStrictEqual(bodies, ['hello bob', 'Group invite: DM Wing']);
+  } finally {
+    await service.stop();
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});

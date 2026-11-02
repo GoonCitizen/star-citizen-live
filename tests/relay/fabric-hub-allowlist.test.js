@@ -3,7 +3,7 @@
 const { describe, it } = require('node:test');
 const assert = require('node:assert/strict');
 const Key = require('@fabric/core/types/key');
-const { createLinkOffer } = require('@fabric/core/functions/delegation');
+const { createLinkOffer } = require('@fabric/core/types/delegation');
 const {
   isAllowedFabricHub,
   assertAllowedFabricHub,

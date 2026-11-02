@@ -7,7 +7,7 @@
  * must be a Hub this app uses.
  */
 
-const { readLinkOffer } = require('@fabric/core/functions/delegation');
+const { readLinkOffer } = require('@fabric/core/types/delegation');
 const { assertAllowedFabricHub } = require('./fabricHubAllowlist');
 
 const NOT_AN_INVITATION = 'Not a signer invitation. Scan the code from Link a signer on the other app.';

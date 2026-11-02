@@ -14,10 +14,9 @@
 /** @private */
 function load () {
   try {
-    return {
-      rendezvous: require('@fabric/http/functions/fabricDelegationHttp'),
-      mailbox: require('@fabric/http/functions/fabricDelegationMailbox')
-    };
+    // Rendezvous and mailbox share one module (`createDelegationRendezvous`, `createDelegationMailbox`).
+    const transports = require('@fabric/http/functions/fabricDelegationHttp');
+    return { rendezvous: transports, mailbox: transports };
   } catch (_) {
     return null;
   }
