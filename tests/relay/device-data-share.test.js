@@ -8,7 +8,8 @@ const path = require('path');
 const crypto = require('crypto');
 
 const LiveRelay = require('../../services/LiveRelay');
-const { createIdentity } = require('../../functions/identity');
+const delegation = require('@fabric/core/types/delegation');
+const { createIdentity, protocolKeyFromIdentity } = require('../../functions/identity');
 const { createNote, getNote, listNotes } = require('../../functions/identityNotes');
 const localGroups = require('../../functions/localGroups');
 const deviceDataSync = require('../../functions/deviceDataSync');
@@ -33,18 +34,12 @@ async function startRelay (dir) {
   return { relay, dir };
 }
 
+/** Both identities grant each other `identity`, as linked signers do. */
 function linkCluster (relay, a, b) {
-  const nonce = crypto.randomBytes(32).toString('hex');
-  relay.identityCluster.ingestCrossSign({
-    localPubkey: a.pubkey,
-    peerPubkey: b.pubkey,
-    nonce
-  });
-  relay.identityCluster.ingestCrossSign({
-    localPubkey: b.pubkey,
-    peerPubkey: a.pubkey,
-    nonce
-  });
+  const signer = (ident) => ident.key || protocolKeyFromIdentity(ident);
+  const grant = (from, to) => delegation.createGrant({ grantee: to.pubkey, scopes: ['identity'], label: 'test', now: Date.now() }, signer(from));
+  relay.identityCluster.ingest(grant(a, b).uri);
+  relay.identityCluster.ingest(grant(b, a).uri);
   assert.equal(relay.identityCluster.clusterEquals(a.pubkey, b.pubkey), true);
 }
 
@@ -263,7 +258,7 @@ describe('DeviceDataShare cluster-gated account replay', () => {
     const Key = require('@fabric/core/types/key');
     const clusterSync = require('../../functions/clusterSync');
     const key = new Key();
-    desktopIdent = Object.assign({}, desktopIdent, { pubkey: key.pubkey });
+    desktopIdent = Object.assign({}, desktopIdent, { pubkey: key.pubkey, key });
     phoneIdent = createIdentity();
     phone.relay.setIdentity(phoneIdent);
     linkCluster(phone.relay, desktopIdent, phoneIdent);
@@ -308,5 +303,45 @@ describe('DeviceDataShare cluster-gated account replay', () => {
     const chat = packs.find((p) => p.pack === deviceDataSync.PACK_CHAT);
     assert.ok(chat);
     assert.ok(chat.payload.messages.some((m) => m.body === 'o7 from desktop'));
+  });
+
+  it('never copies Discord DMs or non-public Discord channels into account sync', () => {
+    const { VIEW_CHANNEL } = require('../../functions/discordPublicChannels');
+    const guild = { id: 'g1', roles: { everyone: { id: 'g1' } }, channels: { cache: new Map() } };
+    for (const [id, everyone] of [['555000000001', true], ['555000000002', false]]) {
+      guild.channels.cache.set(id, {
+        id,
+        type: 0,
+        guild,
+        permissionsFor: (role) => ({ has: (bit) => role === guild.roles.everyone && bit === VIEW_CHANNEL && everyone })
+      });
+    }
+    const relay = phone.relay;
+    const rows = [
+      ['discord:555000000001', 'public hello'],
+      ['discord:555000000002', 'officer secret'],
+      ['discord:dm:123456789012', 'dm secret']
+    ];
+    for (const [channel, body] of rows) {
+      relay.chatManager.post({ channel, body, author: 'discord:777000000001', kind: channel.includes(':dm:') ? 'discord-dm' : 'discord', source: 'discord' });
+    }
+    const sharedBodies = () => {
+      const chat = relay._localDeviceDataPacks().find((p) => p.pack === deviceDataSync.PACK_CHAT);
+      return (chat ? chat.payload.messages : []).map((m) => m.body);
+    };
+    try {
+      let bodies = sharedBodies();
+      assert.ok(!bodies.some((b) => /public hello|officer secret|dm secret/.test(b)), 'bot offline: no Discord rows');
+
+      relay.discordBot = { client: { guilds: { cache: new Map([['g1', guild]]) } }, async stop () {} };
+      relay._discordBotReady = true;
+      bodies = sharedBodies();
+      assert.ok(bodies.includes('public hello'));
+      assert.ok(!bodies.includes('officer secret'));
+      assert.ok(!bodies.includes('dm secret'));
+    } finally {
+      relay.discordBot = null;
+      relay._discordBotReady = false;
+    }
   });
 });

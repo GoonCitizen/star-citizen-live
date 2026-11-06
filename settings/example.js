@@ -39,7 +39,7 @@ module.exports = {
     port: 7777,
     // Peer bind — default 0.0.0.0; pin NIC with FABRIC_INTERFACE=65.21.231.149
     // interface: process.env.FABRIC_INTERFACE || '0.0.0.0',
-    peers: ['hub.fabric.pub:7777', 'relay.goon.vc:7777']
+    peers: ['hub.fabric.pub:7777', 'hub.goon.vc:7777', 'relay.goon.vc:7777']
     // Add your public seed (host:port). A saved empty list is respected.
     // Whitelabel intel desk: docs/INTELLIGENCE.md.
     // Optional public hostname for P2P_PEERING_OFFER + self-dial filter:
@@ -64,13 +64,15 @@ module.exports = {
   // Files tab — this node's local document catalog (not hub.fabric.pub).
   // Off by default; set enable: true in settings/local.js (Advanced mode) to
   // browse / create / publish. Chat 📎 attach always writes here.
-  // defaultPriceSats: floor for tiny files / chat attach (default 25).
+  // defaultPriceSats: floor for tiny files / chat attach (default 716).
   // satsPerKiB: list price scales with content size (storage + P2P blob transfer).
-  //   1 sat/KiB → a 100 MiB installer lists at ~102400 sats; chat still floors at
-  //   defaultPriceSats. Set 0 to use a flat defaultPriceSats only.
+  //   Set 0 to use a flat defaultPriceSats only.
+  // Every paid price (the document, and each ~24 KiB blob of a packed one) is
+  // at least 716 sats — the smallest HTLC that settles on Bitcoin mainnet — so
+  // a packed 100 MiB installer lists at ~3.1M sats. Use 0 to publish free.
   documents: {
     enable: false,
-    defaultPriceSats: 25,
+    defaultPriceSats: 716,
     satsPerKiB: 1
   },
 

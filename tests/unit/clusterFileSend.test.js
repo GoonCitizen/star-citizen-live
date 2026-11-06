@@ -28,7 +28,9 @@ describe('FabricNetwork catalog file send', () => {
     assert.strictEqual(writes.length, wrote);
     const wire = Message.fromBuffer(writes[0]);
     assert.strictEqual(wire.type, 'P2P_FILE_SEND');
-    const inner = JSON.parse(wire.data);
+    const parsed = Message.tryParseLegacyBody(wire);
+    assert.strictEqual(parsed.encoding, 'fields');
+    const inner = parsed.value;
     assert.strictEqual(inner.name, documentId);
     assert.strictEqual(inner.clusterSync, true);
     assert.ok(inner.body);

@@ -204,6 +204,21 @@ function isKeepaliveType (type) {
 }
 
 /**
+ * Legacy JSON shape of a typed-field body (CONTRACT_MESSAGE, CONTRACT_PUBLISH, …).
+ * @param {object} message
+ * @returns {object|null} null for JSON or text bodies
+ */
+function fieldLayoutBody (message) {
+  try {
+    const Message = require('@fabric/core/types/message');
+    const parsed = Message.tryParseLegacyBody(message);
+    return parsed.ok && parsed.encoding === 'fields' ? parsed.value : null;
+  } catch (_) {
+    return null;
+  }
+}
+
+/**
  * Summarize a Fabric Message instance (or Message-like object) for the log.
  * @param {object} message
  * @param {{ direction?: string, peer?: string|null, via?: string|null }} [meta]
@@ -257,10 +272,12 @@ function summarizeMessage (message, meta = {}) {
   let bodyPreview = null;
   let bodyJson = null;
   if (bodyStr) {
+    const fields = fieldLayoutBody(message);
+    if (fields) bodyStr = JSON.stringify(fields);
     const trimmed = bodyStr.trim();
     if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
       try {
-        bodyJson = JSON.parse(trimmed);
+        bodyJson = fields || JSON.parse(trimmed);
         if (bodyJson && typeof bodyJson === 'object' && !Array.isArray(bodyJson)) {
           appType = bodyJson.type || null;
           contract = bodyJson.contract || (bodyJson.object && bodyJson.object.contractId) || null;

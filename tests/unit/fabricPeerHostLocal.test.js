@@ -32,6 +32,8 @@ test('canonicalizeFabricPeerDial rewrites production hub NIC :7778', () => {
     '203.0.113.9:7778'
   );
   assert.equal(host.isNetworkHubAddress('65.21.231.166:7777'), true);
+  assert.equal(host.isNetworkHubAddress('hub.goon.vc:7777'), true);
+  assert.ok(host.DEFAULT_NETWORK_HUB_SEEDS.includes('hub.goon.vc:7777'));
   assert.equal(host.isNetworkHubAddress('example.com:7777'), false);
 });
 

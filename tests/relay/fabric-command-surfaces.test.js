@@ -11,10 +11,8 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const http = require('http');
-const crypto = require('crypto');
 
 const LiveRelay = require('../../services/LiveRelay');
-const IdentityCluster = require('../../functions/identityCluster');
 const { createIdentity } = require('../../functions/identity');
 
 function tmpDir () {
@@ -76,39 +74,29 @@ describe('LiveRelay in-process Fabric commands (IPC targets)', () => {
     if (dir) fs.rmSync(dir, { recursive: true, force: true });
   });
 
-  it('publishLocalIdentityCrossSign signs and unions the cluster without HTTP', async () => {
-    const nonce = crypto.randomBytes(32).toString('hex');
-    const obj = await relay.publishLocalIdentityCrossSign({
-      peerPubkey: peer.pubkey,
-      nonce
-    });
-    assert.ok(obj.signature);
-    assert.ok(obj.peerPubkey);
-    const snap = relay.identityCluster.snapshot(local.pubkey);
-    assert.ok(snap);
-    assert.ok(Array.isArray(snap.members));
-    assert.ok(snap.members.length >= 1, 'cluster snapshot includes the local device');
-    assert.ok(snap.canonical);
+  it('the unlocked identity gets a delegation participant (linked signers) in process', async () => {
+    const d = relay.delegation;
+    assert.ok(d, 'unlocked relay has a delegation participant');
+    const view = await d.signers();
+    assert.ok(Array.isArray(view.signers));
+    assert.equal(view.signers.length, 0);
+    assert.deepEqual(await d.pending(), []);
   });
 
-  it('publishLocalIdentityCrossSign throws when identity is locked', async () => {
+  it('a locked relay links no signers', async () => {
+    const lockedDir = tmpDir();
     const locked = new LiveRelay({
       mode: 'relay',
       listen: false,
+      settingsDir: lockedDir,
       missions: { enable: false },
-      fabric: { enable: false }
+      fabric: { enable: false, listen: false, port: 0, peers: [] }
     });
     await locked.start();
     try {
-      await assert.rejects(
-        () => locked.publishLocalIdentityCrossSign({
-          peerPubkey: peer.pubkey,
-          nonce: crypto.randomBytes(32).toString('hex')
-        }),
-        /locked/i
-      );
+      assert.equal(locked.delegation || null, null);
     } finally {
-      await stopRelay(locked, null);
+      await stopRelay(locked, lockedDir);
     }
   });
 
@@ -134,10 +122,8 @@ describe('LiveRelay in-process Fabric commands (IPC targets)', () => {
 });
 
 describe('LiveRelay HTTP fallbacks for the same jobs', () => {
-  it('loopback unsigned POST /identity/cross-sign uses the unlocked identity', async () => {
+  it('loopback GET /delegation lists the linked signers of the unlocked player', async () => {
     const dir = tmpDir();
-    const local = createIdentity();
-    const peer = createIdentity();
     const relay = new LiveRelay({
       mode: 'relay',
       listen: false,
@@ -146,29 +132,28 @@ describe('LiveRelay HTTP fallbacks for the same jobs', () => {
       fabric: { enable: false, listen: false, port: 0, peers: [] }
     });
     await relay.start();
-    relay.setIdentity(local);
+    relay.setIdentity(createIdentity());
     const base = await listen(relay);
     try {
-      const nonce = crypto.randomBytes(32).toString('hex');
-      const r = await jsonFetch(`${base}/identity/cross-sign`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
-        body: JSON.stringify({
-          type: IdentityCluster.SIGN_TYPE,
-          peerPubkey: peer.pubkey,
-          nonce
-        })
-      });
+      const r = await jsonFetch(`${base}/services/star-citizen/delegation`, { headers: { Accept: 'application/json' } });
       assert.equal(r.status, 200, r.j && r.j.error);
-      assert.ok(r.j.data && r.j.data.signature);
+      assert.equal(r.j.type, 'LinkedSigners');
+      assert.deepEqual(r.j.data.signers, []);
+      assert.deepEqual(r.j.data.pending, []);
+      const foreign = await jsonFetch(`${base}/services/star-citizen/delegation/invitations`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Origin: 'https://evil.example' },
+        body: '{}'
+      });
+      assert.equal(foreign.status, 403);
+      assert.equal(foreign.j.code, 'FOREIGN_ORIGIN');
     } finally {
       await stopRelay(relay, dir);
     }
   });
 
-  it('hosted unsigned POST /identity/cross-sign without Bearer is 401 even when unlocked', async () => {
+  it('hosted GET /delegation without a session is 401, and the relay links no signers of its own', async () => {
     const dir = tmpDir();
-    const local = createIdentity();
     const relay = new LiveRelay({
       mode: 'server',
       listen: false,
@@ -177,20 +162,12 @@ describe('LiveRelay HTTP fallbacks for the same jobs', () => {
       fabric: { enable: false }
     });
     await relay.start();
-    relay.setIdentity(local);
+    relay.setIdentity(createIdentity());
     const base = await listen(relay);
     try {
-      const r = await jsonFetch(`${base}/identity/cross-sign`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
-        body: JSON.stringify({
-          type: IdentityCluster.SIGN_TYPE,
-          peerPubkey: createIdentity().pubkey,
-          nonce: crypto.randomBytes(32).toString('hex')
-        })
-      });
+      const r = await jsonFetch(`${base}/services/star-citizen/delegation`, { headers: { Accept: 'application/json' } });
       assert.equal(r.status, 401);
-      assert.match(String(r.j.error || ''), /Authentication required|Unlock/i);
+      assert.equal(relay.delegation || null, null);
     } finally {
       await stopRelay(relay, dir);
     }

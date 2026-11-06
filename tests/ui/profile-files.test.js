@@ -149,7 +149,7 @@ describe('file page UI', () => {
     assert.match(text, /gooncitizen\.dmg/);
     assert.match(text, /Pin to profile/);
     assert.match(text, /Publisher profile|Files catalog/);
-    assert.match(text, /Sync to my other devices/);
+    assert.match(text, /Sync to my linked signers/);
     assert.match(text, /identity cluster/);
   });
 

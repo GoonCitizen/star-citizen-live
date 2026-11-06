@@ -146,3 +146,43 @@ test('member Schnorr tip attests folded stateDigest; journal batch replays', () 
   assert.strictEqual(merged.verified, true);
   assert.ok(merged.group.members.map((m) => m.toLowerCase()).includes(bob.pubkey.toLowerCase()));
 });
+
+test('a journal batch with nothing new keeps a member a GroupChange added', () => {
+  const alice = fixtureIdentity('alice');
+  const bob = fixtureIdentity('bob');
+  const def = groupContractDefinition({
+    groupId: 'group-journal-stale',
+    creator: alice.pubkey,
+    validators: [alice.pubkey],
+    threshold: 1,
+    createdAt: '2026-01-01T00:00:00.000Z',
+    meta: { name: 'Stale Wing', visibility: 'private' }
+  });
+  const contractId = groupContractId(def);
+  const genesis = {
+    id: 'gchg-alice-1',
+    type: 'GroupChange',
+    message: { id: 'gchg-alice-1', action: 'member.add', groupId: def.groupId, contractId, actor: alice.pubkey, member: alice.pubkey, ts: '2026-01-01T00:30:00.000Z' },
+    acceptedAt: '2026-01-01T00:30:00.000Z'
+  };
+  const sourceStore = new Store({});
+  groupStatechain.publishFoldedContent(sourceStore, contractId, def);
+  groupStatechain.appendAccepted(sourceStore, contractId, genesis, def);
+  const batch = groupStatechain.buildJournalBatch(sourceStore, contractId, def, 0);
+
+  const peerStore = new Store({});
+  const gm = new GroupManager({ store: peerStore });
+  gm.ingestFederationInviteShell({ inviteId: 'inv-s', contractId, inviterHubId: alice.pubkey, groupId: def.groupId, groupName: 'Stale Wing', proposedPolicy: def.proposedPolicy }, alice.pubkey);
+  const data = peerStore.get('groups', def.groupId);
+  data._contractDefinition = def;
+  peerStore.put('groups', def.groupId, data);
+  gm.ingestJournalBatch(batch, alice.pubkey);
+  const record = peerStore.get('groups', def.groupId);
+  record.members = Array.from(new Set((record.members || []).concat([alice.pubkey, bob.pubkey])));
+  peerStore.put('groups', def.groupId, record);
+
+  // The same batch again (a late copy) adds nothing and must not drop Bob.
+  const again = gm.ingestJournalBatch(batch, alice.pubkey);
+  assert.strictEqual(again.applied, 0);
+  assert.ok(again.group.members.map((m) => m.toLowerCase()).includes(bob.pubkey.toLowerCase()));
+});

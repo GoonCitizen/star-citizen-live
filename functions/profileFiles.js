@@ -9,6 +9,8 @@
  * node's Files tab painted onto someone else's handle.
  */
 
+const { compactDocumentRow } = require('@fabric/core/functions/documentList');
+
 const COLLECTION = 'datasync';
 const PACK = 'profile.files';
 const MAX_FILES = 48;
@@ -72,7 +74,9 @@ function classifyProfileFileKind (row) {
 function compactFileRow (row) {
   if (!row || typeof row !== 'object') return null;
   if (row.published === false) return null;
-  const id = String(row.id || row.sha256 || '').trim().toLowerCase();
+  const base = compactDocumentRow(row);
+  if (!base) return null;
+  const id = base.id;
   if (!/^[0-9a-f]{16,128}$/.test(id)) return null;
   const size = row.size != null ? Math.max(0, Math.floor(Number(row.size) || 0)) : null;
   const out = {

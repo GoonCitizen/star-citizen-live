@@ -1,9 +1,10 @@
 'use strict';
 
 /**
- * One-actor cluster sync after D-013 device-link.
+ * One-actor cluster sync between linked signers.
  *
- * Pairing stays HTTPS `/device-links`. After `IdentityCrossSign`, siblings
+ * Pairing is the delegation rendezvous (`/delegations`). Once two keys have
+ * granted each other `identity` (`DELEGATION_GRANT`), siblings
  * share account data as `DeviceDataShare` CONTRACT_MESSAGE frames, stored and
  * replayed as a {@link FabricMessageCollection} (AMP hex — same collect /
  * store / replay as group journals and Discord packs).
@@ -11,7 +12,7 @@
  * Finding the sibling (Fabric TCP first):
  *   1. LAN RFC1918 `host:port` advertised in `account.peers` (no /24 scan)
  *   2. Optional `fabricAdvertiseHost:port`
- *   3. Already-connected Hub seeds (`hub.fabric.pub:7777`, `relay.goon.vc:7777`)
+ *   3. Already-connected Hub seeds (`hub.fabric.pub:7777`, `hub.goon.vc:7777`, `relay.goon.vc:7777`)
  *   4. Hub WebRTC *registry* (`RegisterWebRTCPeer` / `ListWebRTCPeers`) so Node
  *      LiveRelay can publish those LAN hints when NAT hides interfaces.
  *      LiveRelay does not host ICE; Passport / Hub browser still use Hub
@@ -33,12 +34,14 @@ const MAX_WEBRTC_HUBS = 4;
 
 const DEFAULT_WEBRTC_HUBS = Object.freeze([
   'https://hub.fabric.pub',
+  'https://hub.goon.vc',
   'https://relay.goon.vc'
 ]);
 
 /** Hub origins that speak RegisterWebRTCPeer (not LiveRelay on relay.goon.vc). */
 const COORDINATOR_HUBS = Object.freeze([
-  'https://hub.fabric.pub'
+  'https://hub.fabric.pub',
+  'https://hub.goon.vc'
 ]);
 
 const TRANSPORT = Object.freeze([
@@ -286,11 +289,11 @@ function shareToCollection (share, opts = {}) {
   const Message = require('@fabric/core/types/message');
   const { gooncitizenContractId } = require('../contracts/gooncitizen');
   const contract = String(opts.contractId || gooncitizenContractId()).trim();
-  const msg = Message.fromVector(['CONTRACT_MESSAGE', JSON.stringify({
+  const msg = Message.fromLegacyBody('CONTRACT_MESSAGE', {
     contract,
     type: SHARE_TYPE,
     object: sanitized
-  })]).signWithKey(key);
+  }).signWithKey(key);
   return collectionFromMessage(msg);
 }
 
@@ -361,7 +364,7 @@ function summarizeSyncStatus (data) {
       state: 'auth',
       tone: 'muted',
       label: 'Sync',
-      detail: 'Sign in to see device sync'
+      detail: 'Sign in to see account sync'
     }, base);
   }
 
@@ -369,12 +372,12 @@ function summarizeSyncStatus (data) {
     return Object.assign({
       state: 'solo',
       tone: 'muted',
-      label: 'This device',
+      label: 'This app',
       detail: ready
         ? (connected
-          ? ('Mesh ' + connected + ' peer' + (connected === 1 ? '' : 's') + ' · add a device to sync chat')
-          : 'Mesh idle · add a device to sync chat across phones and desktops')
-        : 'Fabric peer not up · add a device after it comes online'
+          ? ('Mesh ' + connected + ' peer' + (connected === 1 ? '' : 's') + ' · link a signer to sync chat')
+          : 'Mesh idle · link a signer to sync chat across phones and desktops')
+        : 'Fabric peer not up · link a signer after it comes online'
     }, base);
   }
 
@@ -383,7 +386,7 @@ function summarizeSyncStatus (data) {
       state: 'offline',
       tone: 'warn',
       label: 'Cluster offline',
-      detail: members + ' devices · Fabric peer not up'
+      detail: members + ' apps · Fabric peer not up'
     }, base);
   }
 
@@ -395,8 +398,8 @@ function summarizeSyncStatus (data) {
     return Object.assign({
       state: 'synced',
       tone: 'good',
-      label: inboundChat || localChat ? 'Chat syncing' : 'Devices synced',
-      detail: members + ' devices · ' +
+      label: inboundChat || localChat ? 'Chat syncing' : 'Apps synced',
+      detail: members + ' apps · ' +
         (connected ? connected + ' mesh peer' + (connected === 1 ? '' : 's') : 'hub relay') +
         (lan ? ' · LAN advertised' : '') +
         chatBit
@@ -407,7 +410,7 @@ function summarizeSyncStatus (data) {
     state: 'pending',
     tone: 'warn',
     label: 'Sync pending',
-    detail: members + ' devices · waiting for chat and account share' +
+    detail: members + ' apps · waiting for chat and account share' +
       (siblings ? ' · ' + siblings + ' sibling hint' + (siblings === 1 ? '' : 's') : '')
   }, base);
 }

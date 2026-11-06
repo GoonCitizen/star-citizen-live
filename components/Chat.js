@@ -301,10 +301,6 @@ function shortKey (pk) {
   return pk ? pk.slice(0, 8) + '…' : '?';
 }
 
-function identityBridge () {
-  return (typeof window !== 'undefined' && window.electronAPI && window.electronAPI.identity) || null;
-}
-
 function shortTime (ts) {
   const m = String(ts || '').match(/T(\d{2}:\d{2})/);
   return m ? m[1] : '';
@@ -747,37 +743,12 @@ class Chat extends React.Component {
     window.location.href = `/profiles/${encodeURIComponent(key)}`;
   }
 
+  /**
+   * Bearer token, when the embedder holds one (a native client). Browsers send
+   * their Passport session cookie and the app's loopback calls need none.
+   */
   async ensureAuth () {
-    if (this.state.authToken) return this.state.authToken;
-    if (this.props.authToken) return this.props.authToken;
-    try {
-      const { readStoredSiteLoginToken } = require('../functions/goonCitizenClientEnvironment');
-      const siteTok = readStoredSiteLoginToken();
-      if (siteTok) {
-        this.setState({ authToken: siteTok });
-        return siteTok;
-      }
-    } catch (_) { /* ignore */ }
-    const bridge = identityBridge();
-    if (!bridge) return null;
-    try {
-      const info = await bridge.get();
-      if (!info || !info.unlocked || !bridge.signEnvelope) return null;
-      const envelope = await bridge.signEnvelope({ intent: 'login', ts: new Date().toISOString() });
-      if (!envelope || envelope.error) return null;
-      const res = await fetch(`${BASE}/auth`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(envelope)
-      });
-      if (!res.ok) return null;
-      const json = await res.json();
-      const token = json.data && json.data.token;
-      if (token) this.setState({ authToken: token });
-      return token || null;
-    } catch (_) {
-      return null;
-    }
+    return this.state.authToken || this.props.authToken || null;
   }
 
   async openInvitePicker () {

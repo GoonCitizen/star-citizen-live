@@ -57,7 +57,6 @@ const Settings = require('../components/Settings');
 const Wallet = require('../components/Wallet');
 const WalletConstruct = require('../components/WalletConstruct');
 const DataSyncStatus = require('../components/DataSyncStatus');
-const FabricLoginModal = require('../components/FabricLoginModal');
 const PubkeyEmoji = require('../components/PubkeyEmoji');
 const GroupOfferModal = require('../components/GroupOfferModal');
 const ActiveVoicePanel = require('../components/ActiveVoicePanel');
@@ -118,7 +117,6 @@ ${Dashboard.CSS}
 ${Onboarding.CSS}
 ${Identity.CSS}
 ${Account.CSS || ''}
-${FabricLoginModal.CSS || ''}
 ${PubkeyEmoji.CSS || ''}
 ${GroupOfferModal.CSS || ''}
 ${Chat.CSS}

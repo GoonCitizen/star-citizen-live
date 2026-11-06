@@ -148,8 +148,8 @@ class FilePage extends React.Component {
       this.setState({
         clusterBusy: false,
         notice: on
-          ? 'This file will copy to your other linked devices over Fabric.'
-          : 'Stopped syncing this file to other devices.',
+          ? 'This file will copy to your linked signers over Fabric.'
+          : 'Stopped syncing this file to your linked signers.',
         detail: (j && j.data) || this.state.detail
       });
       await this.load();
@@ -202,7 +202,7 @@ class FilePage extends React.Component {
             : null,
           clusterSync
             ? React.createElement('span', { className: 'fpage-tag sync' },
-              rec.clusterPending ? 'sync pending' : 'device sync')
+              rec.clusterPending ? 'sync pending' : 'signer sync')
             : null,
           d.local === false
             ? React.createElement('span', { className: 'fpage-tag peer' }, 'peer listing')
@@ -241,7 +241,7 @@ class FilePage extends React.Component {
                 onChange: () => this.putClusterSync(!clusterSync)
               }),
               React.createElement('label', { htmlFor: 'fpage-cluster-sync' },
-                'Sync to my other devices',
+                'Sync to my linked signers',
                 React.createElement('span', { className: 'hint' },
                   'Copies this file to phones and desktops in your identity cluster over Fabric. Not a public listing, and not the same as pinning to your profile.')
               )

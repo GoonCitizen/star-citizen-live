@@ -1,98 +1,50 @@
 'use strict';
 
 /**
- * Turn a scanned QR payload into a fabric:// protocol URL for device-link
- * (or site login). Accepts fabric://link, the HTTPS Passport landing, and
- * a bare #device-link= hash.
+ * Read a scanned QR code or a `fabric:` link as a signer invitation: the
+ * `DELEGATION_LINK_OFFER` frame another signer shows to pair
+ * (`@fabric/core` docs/DELEGATION.md). The frame names its rendezvous, which
+ * must be a Hub this app uses.
  */
 
-const { parseFabricDeviceLinkUrl } = require('./fabricDeviceLinkProtocol');
-const { parseFabricLoginUrl } = require('./fabricProtocolLogin');
-const {
-  parseDeviceLinkLanding,
-  DEFAULT_DEVICE_LINK_HUB
-} = require('./fabricDeviceLinkOffer');
+const { readLinkOffer } = require('@fabric/core/types/delegation');
 const { assertAllowedFabricHub } = require('./fabricHubAllowlist');
 
-function protocolUrlFromLanding (landing) {
-  if (!landing || !landing.sessionId) return null;
-  const hub = String(landing.hubBase || DEFAULT_DEVICE_LINK_HUB).replace(/\/$/, '');
-  const allowed = assertAllowedFabricHub(hub);
-  if (!allowed.ok) return { error: allowed.error || 'hub origin is not allowlisted' };
-  return {
-    protocolUrl: 'fabric://link?sessionId=' + encodeURIComponent(landing.sessionId) +
-      '&hub=' + encodeURIComponent(allowed.hubBase),
-    sessionId: landing.sessionId,
-    hubBase: allowed.hubBase
-  };
-}
+const NOT_AN_INVITATION = 'Not a signer invitation. Scan the code from Link a signer on the other app.';
 
+/**
+ * @param {string} text
+ * @returns {{ ok: true, kind: 'delegation-invitation', invitation: string, rendezvous: string, label: string }|{ ok: false, error: string }}
+ */
 function interpretQrScan (text) {
   const raw = String(text || '').trim();
   if (!raw) return { ok: false, error: 'empty scan' };
-
-  const link = parseFabricDeviceLinkUrl(raw);
-  if (link && link.ok) {
-    return {
-      ok: true,
-      kind: 'device-link',
-      protocolUrl: raw,
-      sessionId: link.sessionId,
-      hubBase: link.hubBase
-    };
-  }
-  if (/^fabric:\/\/link\b/i.test(raw)) {
-    return { ok: false, error: (link && link.error) || 'invalid fabric://link' };
-  }
-
-  const login = parseFabricLoginUrl(raw);
-  if (login && login.ok) {
-    return { ok: true, kind: 'login', protocolUrl: raw };
-  }
-
+  if (!/^fabric:/i.test(raw)) return { ok: false, error: NOT_AN_INVITATION };
+  let read;
   try {
-    const url = new URL(raw);
-    const landing = parseDeviceLinkLanding({
-      hash: url.hash || '',
-      search: url.search || '',
-      origin: url.origin || ''
-    });
-    const converted = protocolUrlFromLanding(landing);
-    if (converted && converted.error) return { ok: false, error: converted.error };
-    if (converted && converted.protocolUrl) {
-      return {
-        ok: true,
-        kind: 'device-link',
-        protocolUrl: converted.protocolUrl,
-        sessionId: converted.sessionId,
-        hubBase: converted.hubBase
-      };
-    }
-  } catch (_) { /* not an absolute URL */ }
-
-  const hash = raw.replace(/^#/, '');
-  if (/^device-link=/i.test(hash)) {
-    const landing = parseDeviceLinkLanding({
-      hash,
-      search: '',
-      origin: DEFAULT_DEVICE_LINK_HUB
-    });
-    const converted = protocolUrlFromLanding(landing);
-    if (converted && converted.error) return { ok: false, error: converted.error };
-    if (converted && converted.protocolUrl) {
-      return {
-        ok: true,
-        kind: 'device-link',
-        protocolUrl: converted.protocolUrl,
-        sessionId: converted.sessionId,
-        hubBase: converted.hubBase
-      };
-    }
+    read = readLinkOffer(raw);
+  } catch (_) {
+    return { ok: false, error: NOT_AN_INVITATION };
   }
+  if (!read || !read.ok) {
+    return { ok: false, error: read && /expired/i.test(String(read.error)) ? 'This invitation expired. Ask for a fresh one.' : NOT_AN_INVITATION };
+  }
+  const allowed = assertAllowedFabricHub(read.offer.origin);
+  if (!allowed.ok) return { ok: false, error: `The invitation uses ${read.offer.origin}, which this app does not use.` };
+  return { ok: true, kind: 'delegation-invitation', invitation: raw, rendezvous: allowed.hubBase, label: read.offer.label || '' };
+}
 
-  return { ok: false, error: 'Not a Fabric device-link QR. Scan the code from Add a device on the other app.' };
+/**
+ * The invitation in a `fabric:` URL, or null when it is something else.
+ * @param {string} url
+ * @returns {string|null}
+ */
+function delegationInvitationFromUrl (url) {
+  const read = interpretQrScan(url);
+  return read.ok ? read.invitation : null;
 }
 
 module.exports = {
-  interpretQrScan
+  interpretQrScan,
+  delegationInvitationFromUrl
 };

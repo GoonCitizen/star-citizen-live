@@ -267,7 +267,7 @@ test('_onDocumentInventoryRequest replies with published local items only', asyn
       mime: 'text/plain',
       contentBase64: Buffer.from('mine').toString('base64')
     });
-    localDocuments.publish(svc.registerStore, created.id, { purchasePriceSats: 25 });
+    localDocuments.publish(svc.registerStore, created.id, { purchasePriceSats: 1000 });
     const remoteId = 'aa'.repeat(32);
     documentOffers.replacePeerOffers(svc.registerStore, {
       peerPubkey: '02' + 'ee'.repeat(32),
@@ -298,7 +298,7 @@ test('_onDocumentInventoryRequest replies with published local items only', asyn
     const row = catalog.documents.find((d) => d.id === created.id);
     assert.ok(row);
     assert.strictEqual(row.local, true);
-    assert.strictEqual(row.purchasePriceSats, 25);
+    assert.strictEqual(row.purchasePriceSats, 1000);
     assert.strictEqual(row.bestPeerPriceSats, 10);
     assert.strictEqual(row.costBasisSats, undefined);
 
@@ -406,13 +406,13 @@ test('POST /documents filePath publishes a repo build artifact on loopback', asy
       name: 'gooncitizen-publish-test.txt',
       mime: 'text/plain',
       publish: true,
-      purchasePriceSats: 25
+      purchasePriceSats: 1000
     });
     assert.strictEqual(created.status, 200, JSON.stringify(created.body));
     const doc = (created.body.data && created.body.data.document) || created.body.data;
     assert.ok(doc && doc.id);
     assert.strictEqual(doc.published, true);
-    assert.strictEqual(doc.purchasePriceSats, 25);
+    assert.strictEqual(doc.purchasePriceSats, 1000);
     assert.strictEqual(doc.name, 'gooncitizen-publish-test.txt');
     assert.ok(doc.merkleRootHex);
     assert.ok(doc.blobTotal >= 1);
@@ -444,7 +444,7 @@ test('POST /documents publish prices by size when no flat purchasePriceSats', as
     port: 0,
     missions: { enable: false },
     fabric: { enable: false },
-    documents: { enable: true, defaultPriceSats: 0, satsPerKiB: 1 }
+    documents: { enable: true, defaultPriceSats: 0, satsPerKiB: 100 }
   });
   await svc.start();
   try {
@@ -456,11 +456,11 @@ test('POST /documents publish prices by size when no flat purchasePriceSats', as
     });
     assert.strictEqual(created.status, 200, JSON.stringify(created.body));
     const doc = (created.body.data && created.body.data.document) || created.body.data;
-    assert.strictEqual(doc.purchasePriceSats, 50);
+    assert.strictEqual(doc.purchasePriceSats, 5000);
     assert.ok(doc.blobTotal >= 2);
     assert.equal(
       (doc.blobs || []).reduce((a, b) => a + (b.rateSats || 0), 0),
-      50
+      5000
     );
   } finally {
     await svc.stop();

@@ -10,7 +10,7 @@ register**, Federation **Groups**, signed chat, and a **Fabric Peer**.
 > still speaks the Fabric Protocol. See **[DEVELOPERS.md](DEVELOPERS.md)**.
 >
 > **What runs:** `npm start` → `services/LiveRelay.js` plus a Fabric Peer
-> (D-009 / D-010). Node.js **24.15.0**, then `npm i` (Fabric git pins). Current
+> (D-009 / D-010). Node.js **26.12.1**, then `npm i` (Fabric git pins). Current
 > surface: **[AGENTS.md](AGENTS.md) §3–§4**. D-002 removed a heavyweight
 > *transport*; the protocol is back. `services/StarCitizen.js` is reference only.
 
@@ -29,8 +29,8 @@ register**, Federation **Groups**, signed chat, and a **Fabric Peer**.
 - 💬 **Optional Discord webhook** with rich embeds.
 - 📝 **Officer-validated mission register** — post → apply → assign → claim →
   officer-validate, with a hash-chained audit trail.
-- 🌐 **Fabric Network** — Peer on `:7777` (default seeds `hub.fabric.pub` and
-  `relay.goon.vc`), Federation Groups, signed chat. Gameplay log share is **opt-in**.
+- 🌐 **Fabric Network** — Peer on `:7777` (default seeds `hub.fabric.pub`,
+  `hub.goon.vc`, and `relay.goon.vc`), Federation Groups, signed chat. Gameplay log share is **opt-in**.
 
 > **Note on kills:** CIG **removed** kill logging (`<Actor Death> CActor::Kill`,
 > `<Vehicle Destruction>`) after SC **4.3.0**. The kill feed is verified against
@@ -39,7 +39,7 @@ register**, Federation **Groups**, signed chat, and a **Fabric Peer**.
 
 ## Requirements
 
-**Node.js 24.15.0** (see `.nvmrc`). Then `npm i` — Fabric is pinned from Git
+**Node.js 26.12.1** (see `.nvmrc`). Then `npm i` — Fabric is pinned from Git
 (`.npmrc` sets `allow-git=all`). Desktop / mesh paths are not zero-dependency.
 
 ## Quick start

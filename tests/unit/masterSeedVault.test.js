@@ -3,74 +3,49 @@
 const { describe, it } = require('node:test');
 const assert = require('node:assert');
 
+const accountKeys = require('@fabric/core/functions/accountKeys');
 const {
-  BITCOIN_ACCOUNT_PATH,
-  MAX_EXTRA_DEVICES,
-  deviceAccountPath,
   generateVaultMnemonic,
-  deriveMasterSeedVault,
-  formatVaultSlips
+  deriveMasterSeedVault
 } = require('../../functions/masterSeedVault');
 const { restoreIdentity } = require('../../functions/identity');
-const { fabricCoinTypeForNetwork } = require('@fabric/core/constants');
 
 describe('masterSeedVault', () => {
-  it('derives a Bitcoin account and per-device identity xprvs from seed + password', () => {
+  it('derives once from seed + derivation password and shows public keys only', () => {
     const mnemonic = generateVaultMnemonic();
-    const a = deriveMasterSeedVault({
-      mnemonic,
-      passphrase: 'vault-pass-1',
-      extraDevices: 1
-    });
-    const b = deriveMasterSeedVault({
-      mnemonic,
-      passphrase: 'vault-pass-1',
-      extraDevices: 1
-    });
-    assert.equal(a.bitcoin.path, BITCOIN_ACCOUNT_PATH);
-    assert.match(a.bitcoin.xprv, /^[xt]prv/);
-    assert.equal(a.devices.length, 2);
-    assert.equal(a.devices[0].label, 'This device');
-    assert.equal(a.devices[1].label, 'Companion device');
-    assert.equal(a.devices[0].path, deviceAccountPath(0, a.network));
-    assert.equal(a.devices[1].path, deviceAccountPath(1, a.network));
-    assert.equal(a.devices[0].path, `m/44'/${fabricCoinTypeForNetwork(a.network)}'/0'`);
-    assert.equal(deviceAccountPath(0, 'mainnet'), `m/44'/${fabricCoinTypeForNetwork('mainnet')}'/0'`);
-    assert.notEqual(deviceAccountPath(0, 'mainnet'), deviceAccountPath(0, 'regtest'));
-    assert.equal(a.bitcoin.xprv, b.bitcoin.xprv);
-    assert.equal(a.devices[0].xprv, b.devices[0].xprv);
-    assert.equal(a.devices[0].pubkey, b.devices[0].pubkey);
-    assert.notEqual(a.devices[0].xprv, a.bitcoin.xprv);
-    assert.notEqual(a.devices[0].xprv, a.devices[1].xprv);
-    assert.notEqual(a.devices[0].pubkey, a.devices[1].pubkey);
-    assert.notEqual(a.bitcoin.xprv, a.masterXpub);
+    assert.equal(mnemonic.split(' ').length, 24);
+    const vault = deriveMasterSeedVault({ mnemonic, passphrase: 'vault-pass-1', network: 'regtest' });
+    assert.equal(vault.account, 0);
+    assert.equal(vault.network, 'regtest');
+    assert.equal(vault.identity.path, "m/7777'/7778'/0'/0/0");
+    assert.equal(vault.wallet.segwit.path, "m/84'/1'/0'");
+    assert.equal(vault.wallet.standard.path, "m/44'/1'/0'");
+    assert.equal(vault.wallet.receive, 'segwit');
+    assert.equal(vault.cosigner.path, "m/87'/1'/0'/0/0");
+    assert.doesNotMatch(JSON.stringify(vault), /[xt]prv/);
+    assert.doesNotMatch(JSON.stringify(vault), /vault-pass-1/);
 
-    const restored = restoreIdentity({ xprv: a.devices[0].xprv });
-    assert.equal(restored.pubkey, a.devices[0].pubkey);
+    // What the device installs is the same identity the preview shows: one derivation, not two.
+    const installed = restoreIdentity({ mnemonic, passphrase: 'vault-pass-1', network: 'regtest' });
+    assert.equal(installed.pubkey, vault.identity.pubkey);
+    assert.equal(installed.xprv, accountKeys.importSeed(mnemonic, 'vault-pass-1'));
   });
 
-  it('changes every child when the derivation password changes', () => {
+  it('changes every key when the derivation password changes', () => {
     const mnemonic = generateVaultMnemonic();
-    const a = deriveMasterSeedVault({ mnemonic, passphrase: 'alpha-pass', extraDevices: 0 });
-    const b = deriveMasterSeedVault({ mnemonic, passphrase: 'bravo-pass', extraDevices: 0 });
-    assert.notEqual(a.bitcoin.xprv, b.bitcoin.xprv);
-    assert.notEqual(a.devices[0].xprv, b.devices[0].xprv);
-    assert.notEqual(a.devices[0].pubkey, b.devices[0].pubkey);
+    const a = deriveMasterSeedVault({ mnemonic, passphrase: 'alpha-pass', network: 'regtest' });
+    const b = deriveMasterSeedVault({ mnemonic, passphrase: 'bravo-pass', network: 'regtest' });
+    assert.notEqual(a.identity.pubkey, b.identity.pubkey);
+    assert.notEqual(a.wallet.segwit.xpub, b.wallet.segwit.xpub);
+    assert.notEqual(a.cosigner.pubkey, b.cosigner.pubkey);
   });
 
-  it('clamps extra devices and formats slips without the derivation password', () => {
+  it('uses a different path on another network for the same account', () => {
     const mnemonic = generateVaultMnemonic();
-    const vault = deriveMasterSeedVault({
-      mnemonic,
-      passphrase: 'vault-pass-2',
-      extraDevices: 99
-    });
-    assert.equal(vault.devices.length, 1 + MAX_EXTRA_DEVICES);
-    const slips = formatVaultSlips(vault);
-    assert.match(slips, /Seed phrase:/);
-    assert.match(slips, /Associated Bitcoin wallet/);
-    assert.match(slips, /Companion device/);
-    assert.doesNotMatch(slips, /vault-pass-2/);
-    assert.match(slips, new RegExp(vault.devices[0].xprv));
+    const test = deriveMasterSeedVault({ mnemonic, passphrase: 'net-pass', network: 'regtest' });
+    const main = deriveMasterSeedVault({ mnemonic, passphrase: 'net-pass', network: 'mainnet' });
+    assert.equal(main.identity.path, "m/7777'/7777'/0'/0/0");
+    assert.equal(main.wallet.segwit.path, "m/84'/0'/0'");
+    assert.notEqual(main.identity.pubkey, test.identity.pubkey);
   });
 });

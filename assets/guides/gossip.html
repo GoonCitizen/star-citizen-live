@@ -38,7 +38,7 @@
           <li data-field="hash">hash = double-SHA256(body) <span>32 B</span></li>
           <li data-field="preimage">preimage <span>32 B</span></li>
           <li data-field="sig">BIP-340 signature <span>64 B</span></li>
-          <li data-field="body" class="amp-body">body <span>up to 3888 B</span></li>
+          <li data-field="body" class="amp-body">body <span>up to 32768 B</span></li>
         </ol>
         <ul class="gates" id="gates" aria-hidden="true">
           <li data-gate="size">size</li>
@@ -92,7 +92,7 @@
         <h2>Check, then carry</h2>
         <p>A gossip node does three checks, in order:</p>
         <ol class="plain">
-          <li><strong>Size</strong> — not shorter than the header, not larger than the cap (4096 bytes on the wire by default).</li>
+          <li><strong>Size</strong> — not shorter than the header, not larger than the cap (32976 bytes on the wire by default: 208-byte header + 32 KiB body).</li>
           <li><strong>Body hash</strong> — double-SHA256 of the body must equal the header field.</li>
           <li><strong>Signature</strong> — BIP-340 must verify for the author key.</li>
         </ol>

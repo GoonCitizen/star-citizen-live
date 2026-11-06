@@ -2,7 +2,8 @@
 
 /**
  * Classify whether this origin is a live LiveRelay HTTP API or only static/CDN
- * assets, and whether the browser has a hosted site-login or Electron identity.
+ * assets, and whether the browser is signed in (Passport session cookie) or
+ * runs inside the unlocked Electron app.
  *
  * Do **not** use GET /settings alone: on SC_MODE=server that path is unmounted
  * (404) even when LiveRelay is healthy. Prefer GET /services/peering or ships.
@@ -10,9 +11,6 @@
 
 const GC_UI_RUNTIME_LIVE = 'liveRelay';
 const GC_UI_RUNTIME_STATIC = 'static';
-
-const SITE_SESSION_KEY = 'fabric.identity.session';
-const DELEGATION_KEY = 'fabric.delegation';
 
 /**
  * @param {string} [text]
@@ -122,73 +120,91 @@ function classifyLiveRelayProbe (probe = {}) {
 }
 
 /**
- * Bearer token from SiteLogin localStorage (delegation preferred).
- * @param {Storage|null|undefined} [storage]
- * @returns {string|null}
+ * The Passport session this browser holds on `base` (`GET /sessions/current`,
+ * sent with the HttpOnly `fabric.session` cookie), or null.
+ * @param {Function} [fetchImpl]
+ * @param {string} [base] Origin prefix (default same origin).
+ * @returns {Promise<object|null>} `{ identity: { id, pubkey }, network, signer, origin, expiresAt, … }`
  */
-function readStoredSiteLoginToken (storage) {
-  const store = storage || (typeof localStorage !== 'undefined' ? localStorage : null);
-  if (!store || typeof store.getItem !== 'function') return null;
+async function fetchSiteSession (fetchImpl, base = '') {
+  const f = fetchImpl || (typeof fetch === 'function' ? fetch : null);
+  if (!f) return null;
   try {
-    const delRaw = store.getItem(DELEGATION_KEY);
-    if (delRaw) {
-      const del = JSON.parse(delRaw);
-      const t = del && (del.token || del.delegationToken);
-      if (t && String(t).trim()) return String(t).trim();
-    }
-  } catch (_) { /* ignore */ }
-  try {
-    const sessRaw = store.getItem(SITE_SESSION_KEY);
-    if (sessRaw) {
-      const sess = JSON.parse(sessRaw);
-      const t = sess && (sess.delegationToken || sess.token);
-      if (t && String(t).trim()) return String(t).trim();
-    }
-  } catch (_) { /* ignore */ }
-  return null;
-}
-
-/**
- * @param {Storage|null|undefined} [storage]
- * @returns {object|null}
- */
-function readStoredSiteLoginSession (storage) {
-  const store = storage || (typeof localStorage !== 'undefined' ? localStorage : null);
-  if (!store || typeof store.getItem !== 'function') return null;
-  try {
-    const raw = store.getItem(SITE_SESSION_KEY);
-    if (!raw) return null;
-    const parsed = JSON.parse(raw);
-    if (!parsed || !parsed.identity) return null;
-    return parsed;
+    const res = await f(String(base || '').replace(/\/$/, '') + '/sessions/current', {
+      headers: { Accept: 'application/json' },
+      credentials: 'same-origin'
+    });
+    if (!res || !res.ok) return null;
+    const json = await res.json();
+    const session = json && json.session;
+    return session && session.identity && typeof session.identity.pubkey === 'string' ? session : null;
   } catch (_) {
     return null;
   }
 }
 
 /**
- * @param {{ runtime?: string, auth?: { electronUnlocked?: boolean, siteToken?: string|null, siteSession?: object|null } }} args
+ * End this browser's Passport session (`DELETE /sessions/current`).
+ * @param {Function} [fetchImpl]
+ * @param {string} [base]
+ * @returns {Promise<boolean>}
+ */
+async function endSiteSession (fetchImpl, base = '') {
+  const f = fetchImpl || (typeof fetch === 'function' ? fetch : null);
+  if (!f) return false;
+  try {
+    const res = await f(String(base || '').replace(/\/$/, '') + '/sessions/current', {
+      method: 'DELETE',
+      headers: { Accept: 'application/json' },
+      credentials: 'same-origin'
+    });
+    return !!(res && res.ok);
+  } catch (_) {
+    return false;
+  }
+}
+
+/**
+ * Who this page acts as: the app's unlocked identity (desktop / Android, where
+ * loopback requests need no session), else this browser's Passport session.
+ * @param {Function} [fetchImpl]
+ * @returns {Promise<{ pubkey: string, source: 'app'|'passport', session?: object }|null>}
+ */
+async function currentViewer (fetchImpl) {
+  const bridge = typeof window !== 'undefined' && window.electronAPI && window.electronAPI.identity;
+  if (bridge && typeof bridge.get === 'function') {
+    try {
+      const info = await bridge.get();
+      return info && info.unlocked && info.pubkey ? { pubkey: info.pubkey, source: 'app' } : null;
+    } catch (_) {
+      return null;
+    }
+  }
+  const session = await fetchSiteSession(fetchImpl);
+  return session ? { pubkey: session.identity.pubkey, source: 'passport', session } : null;
+}
+
+/**
+ * @param {{ runtime?: string, auth?: { electronUnlocked?: boolean, siteSession?: object|null } }} args
  * @returns {boolean} True when chrome should treat the user as an anonymous visitor on a live API.
  */
 function isGoonCitizenVisitor ({ runtime, auth } = {}) {
   if (runtime === GC_UI_RUNTIME_STATIC) return false;
   const a = auth || {};
   if (a.electronUnlocked) return false;
-  if (a.siteToken && String(a.siteToken).trim()) return false;
-  if (a.siteSession && (a.siteSession.delegationToken || a.siteSession.identity)) return false;
+  if (a.siteSession && a.siteSession.identity && a.siteSession.identity.pubkey) return false;
   return true;
 }
 
 module.exports = {
   GC_UI_RUNTIME_LIVE,
   GC_UI_RUNTIME_STATIC,
-  SITE_SESSION_KEY,
-  DELEGATION_KEY,
   looksLikeHtmlDocument,
   isLiveRelayPeeringJson,
   isLiveRelayShipsJson,
   classifyLiveRelayProbe,
-  readStoredSiteLoginToken,
-  readStoredSiteLoginSession,
+  fetchSiteSession,
+  endSiteSession,
+  currentViewer,
   isGoonCitizenVisitor
 };

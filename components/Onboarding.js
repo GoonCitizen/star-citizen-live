@@ -66,6 +66,7 @@ class Onboarding extends React.Component {
       password2: '',
       mnemonic: null, // shown once after create
       restoreWords: '',
+      restorePassphrase: '',
       acked: false,
       pubkey: null,
       importPassword: '',
@@ -187,14 +188,15 @@ class Onboarding extends React.Component {
     if (!this.passwordsOk() || !this.state.restoreWords.trim()) return;
     this.setState({ busy: true, error: null });
     const words = this.state.restoreWords.trim().replace(/\s+/g, ' ');
-    const opts = words.startsWith('xprv')
+    const opts = /^[xt]prv/.test(words)
       ? { xprv: words, password: this.state.password }
-      : { mnemonic: words, password: this.state.password };
+      : { mnemonic: words, passphrase: this.state.restorePassphrase, password: this.state.password };
     const res = await identityBridge().restore(opts);
     if (res.error) {
       this.setState({ busy: false, error: res.error });
       return;
     }
+    this.setState({ restoreWords: '', restorePassphrase: '' });
     this.finish(res.pubkey, { firstRun: true });
   }
 
@@ -466,8 +468,8 @@ class Onboarding extends React.Component {
       React.createElement('h2', { key: 'h' }, 'Restore identity'),
       React.createElement('div', { className: 'sub', key: 's' },
         isAndroidCompanion()
-          ? 'Paste your 12/24-word seed phrase, or an xprv, then choose a password for this device.'
-          : 'Enter your 12/24-word seed phrase (or an xprv), then choose a password for this machine.'),
+          ? 'Paste your 12/24-word seed phrase, or a master xprv, then choose a password for this device.'
+          : 'Enter your 12/24-word seed phrase (or a master xprv), then choose a password for this machine.'),
       React.createElement('div', { className: 'ob-field', key: 'f' },
         React.createElement('label', null, 'Seed phrase or xprv'),
         React.createElement('textarea', {
@@ -476,6 +478,11 @@ class Onboarding extends React.Component {
           onChange: (e) => this.setState({ restoreWords: e.target.value })
         })
       ),
+      /^[xt]prv/.test(this.state.restoreWords.trim())
+        ? null
+        : this.field('Derivation password (only if you set one with the seed)', 'restorePassphrase', {
+          placeholder: 'BIP39 passphrase — leave empty if none'
+        }),
       ...this.passwordFields(),
       React.createElement('div', { className: 'ob-actions', key: 'a' },
         React.createElement('button', {

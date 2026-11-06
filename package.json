@@ -22,16 +22,19 @@
     "build:installer:deb": "npm run build:browser && electron-builder --linux --publish never",
     "build:installer:win": "npm run build:browser && electron-builder --win --publish never",
     "build:installers": "npm run build:browser && electron-builder --win --linux --mac --publish never",
+    "build:installers:packed": "bash scripts/build-installers-packed.sh",
     "android:sync": "npm run build:browser && node scripts/android-stage.js && npx cap sync android",
     "start:android": "SC_MODE=android node scripts/android-node.js",
     "android:run": "npx cap run android",
     "android:open": "npx cap open android",
     "build": "npm run make:api && npm run build:browser",
     "coverage": "c8 npm test",
+    "make:coverage": "npm run coverage && c8 report --reporter html",
+    "report:coverage": "npm run make:coverage && mkdir -p reports && c8 report --reporter=text-lcov > reports/coverage.lcov",
     "desktop:dev": "node scripts/desktop.js . --dev",
     "desktop": "node scripts/desktop.js .",
     "fabric:env": "node scripts/fabric-env.js",
-    "make:api": "jsdoc2md --configure jsdoc.json --files types/*.js services/*.js README.md > API.md.tmp && mv API.md.tmp API.md",
+    "make:api": "npx --yes -p jsdoc-to-markdown@9.1.3 jsdoc2md --configure jsdoc.json --files types/*.js services/*.js README.md > API.md.tmp && mv API.md.tmp API.md",
     "make:icons": "node scripts/render-gooncitizen-icon.js",
     "playnet:deploy-gooncitizen": "node scripts/playnet-deploy-gooncitizen.js",
     "publish:gooncitizen": "node scripts/playnet-deploy-gooncitizen.js",
@@ -43,6 +46,8 @@
     "adversary:chaos": "ADV_PEERS=4 ADV_HOLD_MS=20000 node scripts/adversary-local-probe.js --chaos",
     "adversary:chaos:production": "ADV_PEERS=4 ADV_HOLD_MS=20000 node scripts/adversary-local-probe.js --production --chaos",
     "publish:builds": "node scripts/publish-build-documents.js",
+    "publisher:relay": "node scripts/publisher-relay.js",
+    "deploy:local": "node scripts/deploy-local.js",
     "refresh:ships": "node scripts/refresh-ship-catalog.js",
     "refresh:locations": "node scripts/refresh-location-catalog.js",
     "refresh:starmap-space": "node scripts/refresh-starmap-space.js",
@@ -105,20 +110,20 @@
   },
   "homepage": "https://github.com/GoonCitizen/star-citizen-live#readme",
   "dependencies": {
-    "@choreruiz/capacitor-node-js": "^1.0.2",
-    "@fabric/core": "github:FabricLabs/fabric#feature/rsi",
-    "@fabric/discord": "github:FabricLabs/fabric-discord#feature/rsi",
-    "@fabric/http": "github:FabricLabs/fabric-http#feature/rsi",
-    "@fabric/hub": "github:FabricLabs/hub.fabric.pub#feature/rsi",
-    "bip32": "=4.0.0",
-    "bitcoinjs-lib": "=6.1.7",
-    "cross-fetch": "=4.0.0",
-    "ecpair": "=3.0.1",
+    "@choreruiz/capacitor-node-js": "=1.0.2",
+    "@fabric/core": "FabricLabs/fabric#feature/schemas",
+    "@fabric/discord": "FabricLabs/fabric-discord#feature/passport",
+    "@fabric/http": "FabricLabs/fabric-http#feature/passport",
+    "@fabric/hub": "FabricLabs/hub.fabric.pub#feature/passport",
+    "bip32": "=5.0.1",
+    "bitcoinjs-lib": "=7.0.4",
+    "cross-fetch": "=4.1.0",
+    "ecpair": "=3.0.2",
     "lodash.merge": "=4.6.2",
     "qrcode": "=1.5.4",
     "screenshot-desktop": "=1.15.4",
     "tail": "=2.2.6",
-    "three": "^0.170.0",
+    "three": "=0.170.0",
     "tiny-secp256k1": "=2.2.4"
   },
   "devDependencies": {
@@ -127,13 +132,25 @@
     "@capacitor/cli": "^7.4.3",
     "@capacitor/core": "^7.4.3",
     "@capacitor/preferences": "^7.0.2",
-    "c8": "=7.11.3",
-    "electron": "^43.1.1",
-    "electron-builder": "^26.15.3",
+    "c8": "=12.0.0",
+    "electron": "=44.9.3",
+    "electron-builder": "=26.18.0",
     "esbuild": "^0.25.12",
     "esbuild-plugin-polyfill-node": "^0.3.0",
-    "jsdoc-to-markdown": "=9.0.5",
-    "mocha": "=10.8.2"
+    "mocha": "=12.0.3"
+  },
+  "overrides": {
+    "@electron/asar": "=4.3.1",
+    "@electron/universal": "=3.0.6",
+    "ejs": "=7.0.2",
+    "glob@>=9.0.0 <14.0.2": "=14.0.3",
+    "minimatch@>=9.0.0 <11.0.1": "=11.0.3",
+    "page": {
+      "path-to-regexp": "=1.9.0"
+    },
+    "temp": {
+      "rimraf": "=6.1.3"
+    }
   },
   "build": {
     "appId": "vc.goon.desktop",
@@ -325,7 +342,7 @@
     "report-dir": "./coverage"
   },
   "engines": {
-    "node": "24.15.0",
+    "node": "26.12.1",
     "npm": ">=12.0.0"
   },
   "allowScripts": {

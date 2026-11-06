@@ -7,6 +7,7 @@
 
 const crypto = require('crypto');
 const { pubkeyXOnly, pubkeysMatch } = require('./identity');
+const { GROUP_CHANGE_PROPOSAL } = require('./signingTags');
 
 const ACTIONS = new Set(['member.add', 'member.remove', 'update']);
 const INVITE_VIA = 'FederationContractInvite';
@@ -278,7 +279,7 @@ function verifyProposalVote (proposal, pubkey, signatureHex) {
     if (sig.startsWith('local:')) return false;
     const key = new Key({ pubkey: pk });
     const message = signingStringForGroupChangeProposal(proposal);
-    return key.verify(Buffer.from(message, 'utf8'), Buffer.from(sig, 'hex')) === true;
+    return key.verifySchnorr(Buffer.from(message, 'utf8'), Buffer.from(sig, 'hex'), GROUP_CHANGE_PROPOSAL) === true;
   } catch (_) {
     return false;
   }
@@ -299,7 +300,7 @@ function signProposalVote (keyOrIdentity, proposal) {
       ? keyFromIdentity(keyOrIdentity)
       : new Key(keyOrIdentity || {}));
   const message = signingStringForGroupChangeProposal(proposal);
-  const signature = Buffer.from(key.signSchnorr(Buffer.from(message, 'utf8'))).toString('hex');
+  const signature = Buffer.from(key.signSchnorr(Buffer.from(message, 'utf8'), GROUP_CHANGE_PROPOSAL)).toString('hex');
   return { pubkey: String(key.pubkey).toLowerCase(), signature, message };
 }
 

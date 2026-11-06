@@ -11,7 +11,7 @@ describe('protocolQr', () => {
   });
 
   it('returns a PNG data URL when qrcode is installed', async () => {
-    const url = await protocolQrDataUrl('fabric://login?sessionId=ab&hub=https://relay.goon.vc');
+    const url = await protocolQrDataUrl('fabric://link?sessionId=ab&hub=https://relay.goon.vc');
     if (url === null) return; // optional dep missing
     assert.match(url, /^data:image\/png;base64,/);
   });

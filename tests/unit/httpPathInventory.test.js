@@ -16,9 +16,7 @@ const DOC = 'docs/API-SURFACES.md';
 
 const SOURCE_FILES = [
   'services/LiveRelay.js',
-  'functions/fabricSiteLogin.js',
-  'functions/fabricDeviceLinkRelay.js',
-  'functions/fabricDeviceLinkLocalHttp.js',
+  'functions/liveRelayPassport.js',
   'functions/liveRelayPeeringHttp.js',
   'functions/groupVoiceHttp.js'
 ];
@@ -26,11 +24,14 @@ const SOURCE_FILES = [
 /** Distinctive path tokens that must appear (backticks optional). */
 const REQUIRED_NEEDLES = [
   '/sessions',
-  '/sessions/:id',
-  '/sessions/:id/signatures',
-  '/device-links',
-  '/device-links/:id',
-  '/device-links/:id/signatures',
+  '/sessions/challenges',
+  '/sessions/current',
+  '/delegations',
+  '/delegations/:linkId',
+  '/services/delegation',
+  '/services/delegation/mailbox',
+  '/services/delegation/links',
+  '/services/delegation/requests',
   '/services/peering',
   '/services/peering/attestation',
   '/overlay',
@@ -50,11 +51,9 @@ const REQUIRED_NEEDLES = [
   '/activity-tree/publish',
   '/monitor',
   '/feed',
-  '/auth',
   '/identity/cluster',
   '/identity/cluster/sync',
   '/identity/session',
-  '/identity/cross-sign',
   '/discord/link',
   '/chat/channels',
   '/chat/messages',
@@ -88,8 +87,7 @@ const REQUIRED_NEEDLES = [
   '/groupaudit',
   '/groups/:id/wallet',
   '/groups/:id/withdrawals',
-  '/groups/:id/withdrawals/:id/witness',
-  '/groups/:id/withdrawals/:id/finalize',
+  '/groups/:id/withdrawals/:id/signatures',
   '/notes',
   '/notes/:id',
   '/notes/:id/share',
@@ -146,12 +144,15 @@ const REQUIRED_NEEDLES = [
   '/bitcoin/utxos',
   '/bitcoin/send',
   '/bitcoin/faucet',
-  '/device-links/offer',
-  '/device-links/current',
-  '/device-links/tick',
-  '/device-links/cancel',
-  '/device-links/pending',
-  '/device-links/accept',
+  '/delegation',
+  '/delegation/invitations',
+  '/delegation/invitations/accept',
+  '/delegation/pairing/confirm',
+  '/delegation/pairing/cancel',
+  '/delegation/requests/:hash/sign',
+  '/delegation/requests/:hash/decline',
+  '/delegation/grants/:hash/revoke',
+  '/delegation/signers/:pubkey/unlink',
   '/settings',
   '/settings/:name',
   '/settings/discord/secrets',
@@ -190,6 +191,10 @@ const REQUIRED_NEEDLES = [
   '/logslice',
   '/reparse',
   '/locations',
+  '/rsi/claim',
+  '/rsi/orgs/:sid',
+  '/rsi/citizens/:handle',
+  '/rsi/citizens/:handle/verify',
   '/locations/map',
   '/locations/reports',
   '/locations/:slug',
@@ -227,8 +232,6 @@ function extractSourcePathTokens (src) {
   while ((m = btc.exec(src))) add('/bitcoin' + (m[1] || ''));
   const docs = /pathname\s*===\s*`\$\{docsPath\}([^`]*)`/g;
   while ((m = docs.exec(src))) add('/documents' + (m[1] || ''));
-  const rest = /rest === '(\/[^']+)'/g;
-  while ((m = rest.exec(src))) add('/device-links' + m[1]);
   return out;
 }
 

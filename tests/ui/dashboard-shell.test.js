@@ -154,7 +154,7 @@ describe('Dashboard shell UI', () => {
     dash.state.status = 'ok';
     dash.state.azLoading = false;
     dash.state.analytics = {
-      error: 'Authentication required (POST …/auth with a signed login envelope)'
+      error: 'Authentication required (sign in with Passport at /sessions)'
     };
     assert.doesNotThrow(() => dash.render());
     assert.equal(dash.buildAnalyzeModel(), null);

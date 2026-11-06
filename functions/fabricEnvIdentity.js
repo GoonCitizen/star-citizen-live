@@ -141,7 +141,7 @@ function restoreFromKeySettings (settings) {
  * @param {object} [opts]
  * @param {boolean} [opts.allowLocalIdentityFallback=true]
  * @param {boolean} [opts.allowWalletFallback]
- * @returns {{ mnemonic: string|null, seed: string|null, xprv: string, xpub: string, pubkey: string, id: string }|null}
+ * @returns {{ xprv: string, account: number, network: string, pubkey: string, id: string }|null}
  */
 function loadFabricEnvIdentity (env = process.env, opts = {}) {
   const allowLocal = opts.allowLocalIdentityFallback !== false;
@@ -183,13 +183,7 @@ function loadFabricEnvIdentity (env = process.env, opts = {}) {
       home: env.HOME,
       password: env.FABRIC_PASSWORD
     });
-    if (wallet && wallet.xprv) {
-      return restoreIdentity({
-        xprv: wallet.xprv,
-        mnemonic: wallet.mnemonic || undefined,
-        seed: wallet.seed || undefined
-      });
-    }
+    if (wallet && wallet.xprv) return restoreIdentity({ xprv: wallet.xprv });
   }
 
   if (!allowLocal) return null;
@@ -202,7 +196,7 @@ function loadFabricEnvIdentity (env = process.env, opts = {}) {
 
 /**
  * Derive Key material from FABRIC_* env (preferred) and stamp FABRIC_XPRV
- * (plus FABRIC_XPUB / FABRIC_PUBKEY) onto `env` when missing.
+ * (plus FABRIC_PUBKEY, the account's identity key) onto `env` when missing.
  *
  * @param {NodeJS.ProcessEnv} [env]
  * @returns {{ identity: object|null, updated: boolean, source: string|null }}
@@ -230,10 +224,6 @@ function applyFabricEnvConfig (env = process.env) {
     env.FABRIC_XPRV = identity.xprv;
     updated = true;
   }
-  if (!env.FABRIC_XPUB) {
-    env.FABRIC_XPUB = identity.xpub;
-    updated = true;
-  }
   if (!env.FABRIC_PUBKEY) {
     env.FABRIC_PUBKEY = identity.pubkey;
     updated = true;
@@ -251,15 +241,8 @@ function formatFabricEnvExports (identity) {
   if (!identity || !identity.xprv) return '';
   const lines = [
     `export FABRIC_XPRV=${JSON.stringify(identity.xprv)}`,
-    `export FABRIC_XPUB=${JSON.stringify(identity.xpub)}`,
     `export FABRIC_PUBKEY=${JSON.stringify(identity.pubkey)}`
   ];
-  if (identity.seed) {
-    lines.push(`export FABRIC_SEED=${JSON.stringify(identity.seed)}`);
-  }
-  if (identity.mnemonic) {
-    lines.push(`export FABRIC_MNEMONIC=${JSON.stringify(identity.mnemonic)}`);
-  }
   return lines.join('\n') + '\n';
 }
 

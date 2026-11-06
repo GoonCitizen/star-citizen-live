@@ -13,7 +13,7 @@
  *                                        Fabric Peer on unless SC_FABRIC=0)
  *   SC_MODE=android node scripts/node.js mobile local node (no Game.log; Fabric Peer on)
  *
- * Public-seed operators: docs/PRODUCTION.md (nvm 24.15 + pm2).
+ * Public-seed operators: docs/PRODUCTION.md (nvm 26.12 + pm2).
  */
 
 const fs = require('fs');

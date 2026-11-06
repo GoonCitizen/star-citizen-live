@@ -7,37 +7,31 @@
 
 const { describe, it } = require('node:test');
 const assert = require('node:assert/strict');
-const crypto = require('crypto');
 const Key = require('@fabric/core/types/key');
-const Identity = require('@fabric/core/types/identity');
+const delegation = require('@fabric/core/types/delegation');
 
-const httpVerify = require('@fabric/http/functions/fabricSiteLoginVerify');
+const httpPassport = require('@fabric/http/functions/passportHttp');
 const httpAllowlist = require('@fabric/http/functions/fabricHubAllowlist');
 const httpShared = require('@fabric/http/functions/httpSharedMode');
-const httpProtocol = require('@fabric/http/functions/fabricProtocolLogin');
-const httpDeviceProtocol = require('@fabric/http/functions/fabricDeviceLinkProtocol');
-const httpDeviceMessages = require('@fabric/http/functions/fabricDeviceLinkMessages');
+const httpDelegationClient = require('@fabric/http/functions/fabricDelegationClient');
 const httpInvite = require('@fabric/http/functions/federationContractInvite');
 
-const gcVerify = require('../../functions/fabricSiteLoginVerify');
 const gcAllowlist = require('../../functions/fabricHubAllowlist');
 const gcShared = require('../../functions/httpSharedMode');
-const gcProtocol = require('../../functions/fabricProtocolLogin');
-const gcDeviceProtocol = require('../../functions/fabricDeviceLinkProtocol');
+const gcQrScan = require('../../functions/qrScanLink');
 const gcInvite = require('../../functions/federationContractInvite');
 const gcNamespaces = require('../../contracts/applicationMessageTypes');
 const gcSidechain = require('../../functions/contractSidechain');
-const { pubkeyXOnly, pubkeysMatch } = require('../../functions/identity');
+const { pubkeyXOnly, pubkeysMatch, createIdentity, accountFromIdentity } = require('../../functions/identity');
+const gcLogin = require('../../functions/fabricLoginClient');
+const passport = require('@fabric/core/functions/passport');
 const ChatManager = require('../../services/ChatManager');
 const FabricNetwork = require('../../services/FabricNetwork');
 
 describe('Fabric expectations: GoonCitizen re-exports @fabric/http', () => {
-  it('site-login verify is the http module (or API-compatible)', () => {
-    assert.equal(gcVerify.DESKTOP_LOGIN_PREFIX, httpVerify.DESKTOP_LOGIN_PREFIX);
-    assert.equal(gcVerify.DESKTOP_LOGIN_PREFIX, 'fabric:hub-login:1');
-    assert.equal(typeof gcVerify.buildLoginMessage, 'function');
-    assert.equal(typeof gcVerify.verifyFabricDesktopLoginSignedPayload, 'function');
-    assert.equal(typeof gcVerify.originsMatchForDesktopSession, 'function');
+  it('native sign-in headers are the ones the http relying party reads', () => {
+    assert.equal(gcLogin.NATIVE_HEADER.toLowerCase(), httpPassport.NATIVE_HEADER);
+    assert.equal(gcLogin.BINDING_HEADER.toLowerCase(), httpPassport.BINDING_HEADER);
   });
 
   it('hub allowlist and httpSharedMode re-export http APIs', () => {
@@ -48,19 +42,14 @@ describe('Fabric expectations: GoonCitizen re-exports @fabric/http', () => {
     assert.equal(httpShared.isHttpSharedModeEnabled(true), true);
   });
 
-  it('protocol URL parsers re-export http', () => {
-    const sid = crypto.randomBytes(24).toString('hex');
-    const login = gcProtocol.parseFabricLoginUrl(
-      `fabric://login?sessionId=${sid}&hub=${encodeURIComponent('https://relay.goon.vc')}`
-    );
-    assert.equal(login.ok, true);
-    assert.equal(login.hubBase, 'https://relay.goon.vc');
-    const link = gcDeviceProtocol.parseFabricDeviceLinkUrl(
-      `fabric://link?sessionId=${sid}&hub=${encodeURIComponent('https://hub.fabric.pub')}`
-    );
-    assert.equal(link.ok, true);
-    assert.equal(link.kind, 'link');
-    assert.equal(typeof httpProtocol.fabricLoginRequestHeaders, 'function');
+  it('signer invitations read the same in GoonCitizen and http', () => {
+    const offer = delegation.createLinkOffer({ origin: 'https://hub.fabric.pub', label: 'Phone', network: 'regtest' }, new Key());
+    const http = httpDelegationClient.readLinkInvitation(offer.uri);
+    const gc = gcQrScan.interpretQrScan(offer.uri);
+    assert.equal(http.ok, true);
+    assert.equal(gc.ok, true);
+    assert.equal(gc.kind, 'delegation-invitation');
+    assert.equal(gc.rendezvous, http.rendezvous);
   });
 
   it('federationContractInvite re-exports http', () => {
@@ -89,54 +78,20 @@ describe('Fabric expectations: GoonCitizen re-exports @fabric/http', () => {
   });
 });
 
-describe('Fabric expectations: IdentityCrossSign (local, lockstep strings)', () => {
-  it('canonical strings match the Hub/Passport gossip format', () => {
-    const gcSign = require('../../functions/identityCrossSign');
-    assert.equal(gcSign.SIGN_TYPE, 'IdentityCrossSign');
-    assert.equal(gcSign.REVOKE_TYPE, 'IdentityCrossSignRevoke');
-    const nonce = 'ab'.repeat(32);
-    const local = '11'.repeat(32);
-    const peer = '22'.repeat(32);
-    const msg = gcSign.buildCrossSignMessage(nonce, local, peer);
-    assert.equal(msg, `fabric:identity-cross-sign:1:${nonce}:${local}:${peer}`);
-    const parsed = gcSign.parseCrossSignMessage(msg);
-    assert.equal(parsed.nonce, nonce);
-    assert.equal(parsed.localPubkey, local);
-    assert.equal(parsed.peerPubkey, peer);
-    // Core pin `5557a2bf` ships these files. Keep the local copy so the
-    // dashboard webpack bundle does not pull `@fabric/core`.
-    const coreSign = require('@fabric/core/functions/identityCrossSign');
-    assert.equal(
-      gcSign.buildCrossSignMessage(nonce, local, peer),
-      coreSign.buildCrossSignMessage(nonce, local, peer)
-    );
-    assert.equal(gcSign.buildCrossSignMessage(nonce, 'aa:bb', peer), null);
-    assert.equal(coreSign.buildCrossSignMessage(nonce, 'aa:bb', peer), null);
-
-    // Lockstep is a hand-maintained copy, so assert it over the whole shared
-    // surface rather than one happy path. A silent divergence on the revoke
-    // strings would mean device revocations stop verifying across the mesh.
-    for (const name of ['CROSS_SIGN_PREFIX', 'REVOKE_PREFIX', 'SIGN_TYPE', 'REVOKE_TYPE']) {
-      assert.equal(gcSign[name], coreSign[name], `${name} drifted from @fabric/core`);
-    }
-    const revoke = gcSign.buildRevokeMessage(nonce, local, peer);
-    assert.equal(revoke, `fabric:identity-cross-sign-revoke:1:${nonce}:${local}:${peer}`);
-    assert.equal(revoke, coreSign.buildRevokeMessage(nonce, local, peer));
-    assert.equal(gcSign.buildRevokeMessage(nonce, 'aa:bb', peer), null);
-    assert.equal(coreSign.buildRevokeMessage(nonce, 'aa:bb', peer), null);
-    assert.deepEqual(gcSign.parseRevokeMessage(revoke), coreSign.parseRevokeMessage(revoke));
-    assert.equal(gcSign.parseRevokeMessage(msg), null);
-    assert.equal(gcSign.parseCrossSignMessage(revoke), null);
-    for (const type of [gcSign.SIGN_TYPE, gcSign.REVOKE_TYPE, 'Nope', '']) {
-      assert.equal(gcSign.isCrossSignType(type), coreSign.isCrossSignType(type), type);
-    }
-
-    // Core may add exports; the local copy must not fall behind. The reverse is
-    // allowed — `coerceCrossSignObject` unwraps CONTRACT_MESSAGE bodies and is
-    // GoonCitizen-only until it lands upstream.
-    const missing = Object.keys(coreSign).filter((k) => !(k in gcSign));
-    assert.deepEqual(missing, [], `local copy missing @fabric/core exports: ${missing.join(', ')}`);
-    assert.equal(typeof gcSign.coerceCrossSignObject, 'function');
+describe('Fabric expectations: delegation frames (core)', () => {
+  it('an identity grant is a signed Fabric Message and its revoke names it', () => {
+    const grantor = new Key();
+    const grantee = new Key();
+    const grant = delegation.createGrant({ grantee: grantee.pubkey, scopes: ['identity'], label: 'Desktop' }, grantor);
+    assert.match(grant.uri, /^fabric:/);
+    const read = delegation.readGrant(grant.uri);
+    assert.equal(read.ok, true, read.error);
+    assert.deepEqual(read.grant.scopes, ['identity']);
+    assert.equal(delegation.delegationType(grant.uri), 'DELEGATION_GRANT');
+    const revoke = delegation.createRevoke({ grant: grant.hash }, grantor);
+    const readRevoke = delegation.readRevoke(revoke.uri);
+    assert.equal(readRevoke.ok, true, readRevoke.error);
+    assert.equal(readRevoke.revoke.grant, grant.hash);
   });
 });
 
@@ -189,47 +144,28 @@ describe('Fabric expectations: @fabric/discord pin', () => {
   });
 });
 
-describe('Fabric expectations: site-login challenge contract', () => {
-  it('build/parse/verify round-trip matches Hub Passport wire format', () => {
-    const key = new Key();
-    const ident = new Identity(key);
-    const sessionId = crypto.randomBytes(24).toString('hex');
-    const nonce = crypto.randomBytes(32).toString('hex');
+describe('Fabric expectations: Passport v2 assertion contract', () => {
+  it('a GoonCitizen assertion verifies with core for its own challenge only', () => {
+    const player = createIdentity();
     const origin = 'https://relay.goon.vc';
-    const message = gcVerify.buildLoginMessage(sessionId, origin, nonce);
-    assert.match(message, /^fabric:hub-login:1:/);
-    const parsed = gcVerify.parseDesktopLoginMessage(message);
-    assert.equal(parsed.sessionId, sessionId);
-    assert.equal(parsed.origin, origin);
-    const payload = gcVerify.buildFabricIdentitySignedPayload(ident, message);
-    const verified = gcVerify.verifyFabricDesktopLoginSignedPayload({
-      ...payload,
-      message
-    }, { sessionId, origin });
-    assert.equal(verified.ok, true);
-    assert.equal(payload.pubkeyHex, ident.fabricKey.pubkey);
-    assert.equal(payload.identity.xpub, ident.fabricKey.xpub);
-  });
-
-  it('rejects phishing hub origins on fabric://login', () => {
-    const sid = crypto.randomBytes(24).toString('hex');
-    const bad = gcProtocol.parseFabricLoginUrl(
-      `fabric://login?sessionId=${sid}&hub=${encodeURIComponent('https://evil.example')}`
-    );
-    assert.equal(bad.ok, false);
-    assert.match(bad.error, /not allowed/);
-  });
-});
-
-describe('Fabric expectations: device-link messages', () => {
-  it('canonical link message parses', () => {
-    const nonce = 'aa'.repeat(32);
-    const msg = httpDeviceMessages.buildDeviceLinkMessage(nonce, 'id1a', 'id1b', 'phone');
-    const parsed = httpDeviceMessages.parseDeviceLinkMessage(msg);
-    assert.equal(parsed.nonce, nonce);
-    assert.equal(parsed.initiatorId, 'id1a');
-    assert.equal(parsed.responderId, 'id1b');
-    assert.equal(parsed.label, 'phone');
+    const challenge = passport.createChallenge({ origin, network: 'regtest', purpose: 'Sign in to GoonCitizen' });
+    const account = accountFromIdentity(player, { network: 'regtest' });
+    const { uri } = passport.signAssertion({ challenge: challenge.uri, origin, signer: 'gooncitizen', network: 'regtest' }, account.identity.key);
+    const expected = {
+      origin,
+      nonce: challenge.nonce,
+      challengeHash: challenge.hash,
+      network: 'regtest',
+      allow: challenge.request,
+      challengeExpiresAt: challenge.expiresAt
+    };
+    const verified = passport.verifyAssertion(uri, expected);
+    assert.equal(verified.ok, true, verified.error);
+    assert.equal(verified.signer, 'gooncitizen');
+    assert.equal(verified.identity.pubkey, account.identity.pubkey);
+    assert.equal(passport.verifyAssertion(uri, Object.assign({}, expected, { origin: 'https://evil.example' })).ok, false);
+    const other = passport.createChallenge({ origin, network: 'regtest' });
+    assert.equal(passport.verifyAssertion(uri, Object.assign({}, expected, { nonce: other.nonce, challengeHash: other.hash })).ok, false);
   });
 });
 
@@ -251,8 +187,7 @@ describe('Fabric expectations: application namespaces', () => {
     assert.equal(FabricNetwork.isKnownAppRelayType('NoteUpdate'), true);
     assert.equal(FabricNetwork.isKnownAppRelayType('DiscordCatalogShare'), true);
     assert.equal(FabricNetwork.isKnownAppRelayType('GroupDataShare'), true);
-    assert.equal(FabricNetwork.isKnownAppRelayType('IdentityCrossSign'), true);
-    assert.equal(FabricNetwork.isKnownAppRelayType('IdentityCrossSignRevoke'), true);
+    assert.equal(FabricNetwork.isKnownAppRelayType('IdentityCrossSign'), false);
     assert.equal(FabricNetwork.isKnownAppRelayType('MissionClaim'), true);
     assert.equal(FabricNetwork.isKnownAppRelayType('MissionClaimDecision'), true);
     assert.equal(FabricNetwork.isKnownAppRelayType('NotARealType_XYZ'), false);

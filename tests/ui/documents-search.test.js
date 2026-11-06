@@ -147,7 +147,7 @@ describe('DocumentExchange disk upload + cluster sync', () => {
     const files = findType(tree, 'input').filter((n) => n.props && n.props.type === 'file');
     assert.strictEqual(files.length, 1);
     assert.ok(textOf(tree).includes('Choose from disk'));
-    assert.ok(textOf(tree).includes('Sync to my other devices'));
+    assert.ok(textOf(tree).includes('Sync to my linked signers'));
     const createBtn = findType(tree, 'button').find((n) => textOf(n).includes('Create on this node'));
     assert.ok(createBtn);
     assert.strictEqual(createBtn.props.disabled, true);
@@ -167,7 +167,7 @@ describe('DocumentExchange disk upload + cluster sync', () => {
       { id: 'aa'.repeat(32), name: 'wing.txt', mime: 'text/plain', local: true, clusterSync: false }
     ];
     const tree = view.render();
-    assert.ok(textOf(tree).includes('Sync to my devices'));
+    assert.ok(textOf(tree).includes('Sync to my linked signers'));
     assert.ok(textOf(tree).includes('Sync'));
   });
 });

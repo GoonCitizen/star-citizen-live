@@ -16,21 +16,22 @@ contextBridge.exposeInMainWorld('electronAPI', {
   getGroupOverlay: () => ipcRenderer.invoke('get-group-overlay'),
   identity: {
     get: () => ipcRenderer.invoke('identity:get'),
-    create: (password) => ipcRenderer.invoke('identity:create', { password }),
+    create: (password, opts) => ipcRenderer.invoke('identity:create', Object.assign({}, opts || {}, { password })),
     restore: (opts) => ipcRenderer.invoke('identity:restore', opts),
     unlock: (password) => ipcRenderer.invoke('identity:unlock', { password }),
+    selectAccount: (pair) => ipcRenderer.invoke('identity:select-account', pair || {}),
     signEnvelope: (payload) => ipcRenderer.invoke('identity:sign-envelope', payload),
-    signMessage: (message) => ipcRenderer.invoke('identity:sign-message', { message }),
     lock: () => ipcRenderer.invoke('identity:lock'),
-    reveal: (password) => ipcRenderer.invoke('identity:reveal', { password }),
     exportBackup: (password) => ipcRenderer.invoke('identity:export-backup', { password }),
     importBackup: (backup, password, replace) => ipcRenderer.invoke('identity:import-backup', { backup, password, replace }),
     setAutoLock: (minutes) => ipcRenderer.invoke('identity:set-autolock', { minutes }),
     forget: (confirm) => ipcRenderer.invoke('identity:forget', { confirm: !!confirm }),
-    startDeviceLinkOffer: (opts) => ipcRenderer.invoke('identity:device-link-start', opts || {}),
-    tickDeviceLinkOffer: () => ipcRenderer.invoke('identity:device-link-tick'),
-    cancelDeviceLinkOffer: () => ipcRenderer.invoke('identity:device-link-cancel'),
     openProtocolUrl: (url) => ipcRenderer.invoke('identity:open-protocol-url', url),
+    signInToRelay: (origin) => ipcRenderer.invoke('identity:sign-in-relay', { origin }),
+    /** Peer session (Passport v3): sign in to the relay by its key; the session stays in the main process. */
+    signInToRelayPeer: (origin) => ipcRenderer.invoke('identity:sign-in-relay-peer', { origin }),
+    /** `X-Fabric-Request` for one request to a relay signed in with `signInToRelayPeer`. */
+    authorizeRelayRequest: (request) => ipcRenderer.invoke('identity:authorize-relay-request', request || {}),
     onChanged: (handler) => {
       const listener = (_e, summary) => handler(summary);
       ipcRenderer.on('identity:changed', listener);
@@ -40,7 +41,6 @@ contextBridge.exposeInMainWorld('electronAPI', {
   /** Fabric mesh publish helpers (prefer over HTTP when available). */
   fabric: {
     deliveryReceipt: (opts) => ipcRenderer.invoke('fabric:delivery-receipt', opts || {}),
-    publishCrossSign: (opts) => ipcRenderer.invoke('fabric:publish-cross-sign', opts || {}),
     identityCluster: (opts) => ipcRenderer.invoke('fabric:identity-cluster', opts || {}),
     presenceStatus: () => ipcRenderer.invoke('fabric:presence-status'),
     presenceRoster: () => ipcRenderer.invoke('fabric:presence-roster'),
@@ -58,15 +58,14 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.on('notify:click', listener);
     return () => ipcRenderer.removeListener('notify:click', listener);
   },
-  /** Client-signed Fabric site login (`fabric://login`) — approve/reject in the renderer. */
-  fabricLogin: {
-    onPrompt: (handler) => {
+  /** A signer invitation (`fabric:` link offer) opened in this app — shown on Linked signers. */
+  delegationInvitation: {
+    onInvitation: (handler) => {
       const listener = (_e, payload) => handler(payload);
-      ipcRenderer.on('fabric-login-prompt', listener);
-      return () => ipcRenderer.removeListener('fabric-login-prompt', listener);
+      ipcRenderer.on('delegation-invitation', listener);
+      return () => ipcRenderer.removeListener('delegation-invitation', listener);
     },
-    pullPending: () => ipcRenderer.invoke('fabric-login:pull-pending'),
-    resolve: (opts) => ipcRenderer.invoke('fabric-login:resolve', opts || {})
+    pullPending: () => ipcRenderer.invoke('delegation-invitation:pull-pending')
   },
   /** Opaque fabric:<hex> GroupOffer / FederationContractInvite. */
   groupShare: {

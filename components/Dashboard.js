@@ -9,10 +9,9 @@
 const React = require('react');
 const Onboarding = require('./Onboarding');
 const Identity = require('./Identity');
-const FabricLoginModal = require('./FabricLoginModal');
 const QrScanOverlay = require('./QrScanOverlay');
 const GroupOfferModal = require('./GroupOfferModal');
-const SiteLogin = require('./SiteLogin');
+const PassportSignIn = require('./PassportSignIn');
 const Chat = require('./Chat');
 const DeliverySync = require('./DeliverySync');
 const GlobalChatDock = require('./GlobalChatDock');
@@ -32,7 +31,7 @@ const DocumentExchange = require('./DocumentExchange');
 const LogBrowser = require('./LogBrowser');
 const AppSearch = require('./AppSearch');
 const DataSyncStatus = require('./DataSyncStatus');
-const LinkedDevices = require('./LinkedDevices');
+const LinkedSigners = require('./LinkedSigners');
 const ShipPicker = require('./ShipPicker');
 const LocationPicker = require('./LocationPicker');
 const StarMap = require('./StarMap');
@@ -47,14 +46,12 @@ const {
   androidSurface,
   androidDashboardTabVisible
 } = require('../functions/androidSurface');
-const { offerPassportDeviceLink } = require('../functions/fabricDeviceLinkOffer');
 const offlineMode = require('../functions/offlineMode');
 const {
   GC_UI_RUNTIME_LIVE,
   GC_UI_RUNTIME_STATIC,
   classifyLiveRelayProbe,
-  readStoredSiteLoginToken,
-  readStoredSiteLoginSession,
+  fetchSiteSession,
   isGoonCitizenVisitor
 } = require('../functions/goonCitizenClientEnvironment');
 const { dashboardAuthHeaders } = require('../functions/dashboardAuthHeaders');
@@ -139,12 +136,12 @@ const NETWORK_ADVANCED_VIEWS = [
 const ADVANCED_TABS = new Set(['documents']);
 
 // Notifications is opened from the header bell (not a primary feature tab).
-// Legacy #analyze / #live / #peers / #messages hash aliases resolve in resolveHash().
+// Legacy #analyze / #live / #peers / #messages / #devices hash aliases resolve in resolveHash().
 const TAB_KEYS = TABS.map(([k]) => k).concat([
   'notifications', 'analyze', 'live', 'peers', 'messages', 'feed',
-  'keys', 'devices', 'security', 'privacy'
+  'keys', 'signers', 'security', 'privacy'
 ]);
-const ACCOUNT_TABS = new Set(['keys', 'devices', 'security', 'privacy']);
+const ACCOUNT_TABS = new Set(['keys', 'signers', 'security', 'privacy']);
 
 function preferAccountPages () {
   return isAndroidCompanion();
@@ -157,9 +154,9 @@ function resolveHash (rawHash, advancedMode) {
   const { path } = readAppHash(rawHash);
   let h = path;
   if (!h || h === 'analyze') return { tab: 'home', networkView: null };
-  if (/^device-link=/i.test(h)) return { tab: 'home', networkView: null };
   if (h === 'live' || h === 'feed') return { tab: 'network', networkView: 'feed' };
   if (h === 'peers') return { tab: 'network', networkView: 'peers' };
+  if (h === 'devices') h = 'signers';
   if (h === 'messages') {
     return advancedMode
       ? { tab: 'network', networkView: 'messages' }
@@ -726,34 +723,46 @@ class Dashboard extends React.Component {
       /** liveRelay | static | null until first probe */
       apiRuntime: null,
       apiRuntimeReason: null,
-      siteToken: null,
+      /** Passport session on this origin (browser), from GET /sessions/current */
+      siteSession: null,
       capabilityChecked: false
     };
     this._timer = null;
     this._copiedTimers = {};
     this._identityUnsub = null;
     this._feedRef = React.createRef();
-    this._onStorageAuth = null;
   }
 
   authHeaders (extra) {
     return dashboardAuthHeaders({
-      token: this.state.siteToken,
       headers: Object.assign({ Accept: 'application/json' }, extra || {})
     });
   }
 
-  refreshSiteAuth () {
-    const siteToken = readStoredSiteLoginToken();
-    const siteSession = readStoredSiteLoginSession();
+  /** Read this browser's Passport session (the app itself needs none). */
+  async refreshSiteAuth () {
+    if (typeof window !== 'undefined' && window.electronAPI && window.electronAPI.identity) return null;
+    const siteSession = await fetchSiteSession();
     this.setState({
-      siteToken: siteToken || null,
+      siteSession,
       identityExists: !!(this.state.identityExists || siteSession),
-      identityPubkey: this.state.identityPubkey ||
-        (siteSession && (siteSession.pubkeyHex || (siteSession.identity && siteSession.identity.id))) ||
-        null
+      identityPubkey: this.state.identityPubkey || (siteSession && siteSession.identity.pubkey) || null
     });
-    return siteToken;
+    return siteSession;
+  }
+
+  onSiteSignedIn (session) {
+    this.setState({
+      siteSession: session || null,
+      identityExists: true,
+      identityPubkey: this.state.identityPubkey || (session && session.identity && session.identity.pubkey) || null
+    });
+    this.poll();
+    this.loadNickname();
+  }
+
+  onSiteSignedOut () {
+    this.setState({ siteSession: null, identityExists: false, identityPubkey: null });
   }
 
   isStaticClient () {
@@ -770,8 +779,7 @@ class Dashboard extends React.Component {
       runtime: this.state.apiRuntime || GC_UI_RUNTIME_LIVE,
       auth: {
         electronUnlocked: !!(this.state.identityPubkey && !this.state.identityLocked),
-        siteToken: this.state.siteToken,
-        siteSession: this.state.siteToken ? { delegationToken: this.state.siteToken } : null
+        siteSession: this.state.siteSession
       }
     });
   }
@@ -828,19 +836,18 @@ class Dashboard extends React.Component {
     React.createElement('p', { style: { color: 'var(--muted)', lineHeight: 1.5 } },
       this.isStaticClient()
         ? 'This origin is only serving the HTML client. Point a browser at a live GoonCitizen / LiveRelay HTTP API.'
-        : 'This hosted relay needs a Fabric site login (Passport or GoonCitizen) before session-backed tabs work.'),
-    React.createElement(SiteLogin, {
-      onSignedIn: () => {
-        this.refreshSiteAuth();
-        this.poll();
-      }
+        : 'This hosted relay needs you to sign in with Fabric Passport (or a GoonCitizen desktop linked to it) before session-backed tabs work.'),
+    React.createElement(PassportSignIn, {
+      session: this.state.siteSession,
+      onSignedIn: (session) => this.onSiteSignedIn(session),
+      onSignedOut: () => this.onSiteSignedOut()
     })
     );
   }
 
   componentDidMount () {
-    this.refreshSiteAuth();
-    this.probeApiRuntime().then(() => {
+    this.probeApiRuntime().then(async () => {
+      await this.refreshSiteAuth();
       if (!this.isStaticClient() && !this.isPublicVisitor()) {
         this.poll();
         if (androidSurface('heatmap')) {
@@ -864,7 +871,6 @@ class Dashboard extends React.Component {
       if (!this.isStaticClient() && !this.isPublicVisitor()) this.loadPresenceChip();
     }, 15000);
     this._onHash = () => {
-      if (!this.state.offlineMode && offerPassportDeviceLink()) return;
       const h = String(window.location.hash || '').replace(/^#/, '');
       if (h === 'analyze') {
         try { history.replaceState(null, '', window.location.pathname + window.location.search); } catch (_) { /* ignore */ }
@@ -877,13 +883,10 @@ class Dashboard extends React.Component {
       }
     };
     window.addEventListener('hashchange', this._onHash);
-    if (!offlineMode.readOfflinePref()) offerPassportDeviceLink();
     this._onDocClick = () => {
       if (this.state.showIdFlyout) this.setState({ showIdFlyout: false });
     };
     document.addEventListener('click', this._onDocClick);
-    this._onStorageAuth = () => this.refreshSiteAuth();
-    window.addEventListener('storage', this._onStorageAuth);
     // Live lock-state from the desktop shell (auto-lock, manual lock, forget).
     const idBridge = (window.electronAPI && window.electronAPI.identity) || null;
     if (idBridge && idBridge.onChanged) {
@@ -899,6 +902,27 @@ class Dashboard extends React.Component {
         }));
       });
     }
+    const invitations = window.electronAPI && window.electronAPI.delegationInvitation;
+    if (invitations) {
+      if (typeof invitations.onInvitation === 'function') {
+        this._invitationUnsub = invitations.onInvitation((p) => this.showInvitation(p && p.invitation));
+      }
+      if (typeof invitations.pullPending === 'function') {
+        Promise.resolve(invitations.pullPending()).then((p) => this.showInvitation(p && p.invitation)).catch(() => {});
+      }
+    }
+  }
+
+  /**
+   * A signer invitation arrived (a fabric: link, the QR scanner, or the
+   * shell): open Linked signers with it filled in.
+   * @param {string} invitation
+   */
+  showInvitation (invitation) {
+    if (!invitation) return;
+    this.setState({ delegationInvitation: invitation });
+    if (this.preferAccountPages()) this.openAccount('signers');
+    else this.setState({ showIdentity: true });
   }
 
   componentDidUpdate (_prevProps, prevState) {
@@ -908,8 +932,8 @@ class Dashboard extends React.Component {
   componentWillUnmount () {
     if (this._onHash) window.removeEventListener('hashchange', this._onHash);
     if (this._onDocClick) document.removeEventListener('click', this._onDocClick);
-    if (this._onStorageAuth) window.removeEventListener('storage', this._onStorageAuth);
     if (this._identityUnsub) this._identityUnsub();
+    if (this._invitationUnsub) this._invitationUnsub();
     if (this._timer) clearInterval(this._timer);
     if (this._analyticsTimer) clearInterval(this._analyticsTimer);
     if (this._presenceTimer) clearInterval(this._presenceTimer);
@@ -1291,7 +1315,7 @@ class Dashboard extends React.Component {
         className: 'btn',
         onClick: () => {
           this.setState({ showIdFlyout: false });
-          this.openAccount('devices');
+          this.openAccount('signers');
         }
       }, 'Devices'),
       this.preferAccountPages()
@@ -1616,23 +1640,8 @@ class Dashboard extends React.Component {
       this.setState({ qrScanError: hit.error, showQrScan: true });
       return;
     }
-    const identity = typeof window !== 'undefined' && window.electronAPI && window.electronAPI.identity;
-    if (!identity || typeof identity.openProtocolUrl !== 'function') {
-      this.setState({
-        qrScanError: 'Unlock this GoonCitizen identity first, then scan again.',
-        showQrScan: false
-      });
-      if (this.preferAccountPages()) this.openAccount('devices');
-      else this.setState({ showIdentity: true });
-      return;
-    }
     this.setState({ showQrScan: false, qrScanError: null });
-    try {
-      const res = await identity.openProtocolUrl(hit.protocolUrl);
-      if (res && res.error) this.setState({ qrScanError: res.error });
-    } catch (e) {
-      this.setState({ qrScanError: (e && e.message) ? e.message : String(e) });
-    }
+    this.showInvitation(hit.invitation);
   }
 
   async openQrScanner () {
@@ -1666,8 +1675,8 @@ class Dashboard extends React.Component {
     return React.createElement('button', {
       type: 'button',
       className: 'qrscan',
-      title: 'Scan QR to link a device',
-      'aria-label': 'Scan QR to link a device',
+      title: 'Scan QR to link a signer',
+      'aria-label': 'Scan QR to link a signer',
       onClick: () => { void this.openQrScanner(); }
     },
     React.createElement('svg', {
@@ -3202,7 +3211,7 @@ class Dashboard extends React.Component {
     const visitor = this.isPublicVisitor();
     const sessionTabs = new Set([
       'home', 'live', 'network', 'peers', 'messages', 'missions', 'wallet', 'documents',
-      'library', 'fleet', 'chat', 'groups', 'notifications', 'keys', 'devices', 'security', 'privacy'
+      'library', 'fleet', 'chat', 'groups', 'notifications', 'keys', 'signers', 'security', 'privacy'
     ]);
     if (visitor && sessionTabs.has(this.state.tab) && this.state.tab !== 'map') {
       return this.renderSignInPrompt();
@@ -3216,8 +3225,7 @@ class Dashboard extends React.Component {
       case 'missions': return React.createElement(Missions, {
         offlineMode: this.state.offlineMode === true,
         identityPubkey: this.state.identityPubkey,
-        analytics: this.state.analytics,
-        authToken: this.state.siteToken
+        analytics: this.state.analytics
       });
       case 'wallet': return this.walletVisible()
         ? React.createElement(Wallet, {
@@ -3250,8 +3258,7 @@ class Dashboard extends React.Component {
         nickname: this.state.nickname,
         documentsEnable: this.state.documentsEnable === true,
         documentsDefaultPriceSats: (this.state.documentsRuntime &&
-          this.state.documentsRuntime.defaultPriceSats) || 25,
-        authToken: this.state.siteToken
+          this.state.documentsRuntime.defaultPriceSats) || 716
       });
       case 'groups': return React.createElement(Groups, {
         identityPubkey: this.state.identityPubkey,
@@ -3259,30 +3266,28 @@ class Dashboard extends React.Component {
         advancedMode: this.state.advancedMode,
         bitcoinEnable: this.state.bitcoinEnable === true,
         onPrimaryGroupTheme: (hex) => this.applyPrimaryGroupTheme(hex),
-        onRequestImport: () => this.setState({ showFabricImport: true }),
-        authToken: this.state.siteToken
+        onRequestImport: () => this.setState({ showFabricImport: true })
       });
       case 'map': return React.createElement(MapPage, null);
       case 'notifications': return React.createElement(Notifications, {
-        authToken: this.state.siteToken,
         onPendingCount: (n) => {
           if (n !== this.state.notifyPending) this.setState({ notifyPending: n });
         }
       });
       case 'keys':
-      case 'devices':
+      case 'signers':
       case 'security':
       case 'privacy':
         return React.createElement(Account, {
           section: this.state.tab,
+          invitation: this.state.delegationInvitation || null,
           analytics: this.state.analytics,
           onSection: (s) => this.openAccount(s),
           onClose: () => this.showTab('home'),
           onForget: () => this.setState({ identityPubkey: null, identityExists: false, identityLocked: false }),
           onNicknameChange: (n) => this.setState({ nickname: n || null }),
           onPresenceChange: (p) => this.applyPresenceChip(p),
-          onOpenSettings: () => this.setState({ showSettings: true }),
-          authToken: this.state.siteToken
+          onOpenSettings: () => this.setState({ showSettings: true })
         });
       default:
         return this.renderHome();
@@ -3311,7 +3316,6 @@ class Dashboard extends React.Component {
           showIdentity: false
         })
       }),
-      React.createElement(FabricLoginModal, null),
       this.state.showQrScan
         ? React.createElement(QrScanOverlay, {
           error: this.state.qrScanError,
@@ -3372,6 +3376,7 @@ class Dashboard extends React.Component {
       this.state.showIdentity && !this.preferAccountPages()
         ? React.createElement(Identity, {
           offlineMode: this.state.offlineMode === true,
+          invitation: this.state.delegationInvitation || null,
           onClose: () => {
             this.setState({ showIdentity: false });
             this.loadPresenceChip();
@@ -3381,7 +3386,7 @@ class Dashboard extends React.Component {
           onPresenceChange: (p) => this.applyPresenceChip(p),
           onOpenDevices: () => {
             this.setState({ showIdentity: false });
-            this.openAccount('devices');
+            this.openAccount('signers');
           },
           analytics: this.state.analytics
         })
@@ -3436,11 +3441,10 @@ class Dashboard extends React.Component {
             !(this.isOfflineMode() || this.isStaticClient() || this.isPublicVisitor())
               ? React.createElement(DataSyncStatus, {
                 variant: 'compact',
-                authToken: this.state.siteToken,
-                onAddDevice: () => {
-                  this.openAccount('devices');
+                onAddSigner: () => {
+                  this.openAccount('signers');
                 },
-                onManageDevices: () => this.openAccount('devices')
+                onManageSigners: () => this.openAccount('signers')
               })
               : null,
             !(this.isOfflineMode() || this.isStaticClient() || this.isPublicVisitor())
@@ -3513,12 +3517,10 @@ class Dashboard extends React.Component {
                 ),
                 this.renderIdentityFlyout()
               )
-              : React.createElement(SiteLogin, {
-                onSignedIn: () => {
-                  this.refreshSiteAuth();
-                  this.poll();
-                  this.loadNickname();
-                }
+              : React.createElement(PassportSignIn, {
+                session: this.state.siteSession,
+                onSignedIn: (session) => this.onSiteSignedIn(session),
+                onSignedOut: () => this.onSiteSignedOut()
               }),
             !(this.isStaticClient() || this.isPublicVisitor())
               ? React.createElement('button', {
@@ -3558,7 +3560,6 @@ class Dashboard extends React.Component {
           ),
           !(this.isStaticClient() || this.isPublicVisitor())
             ? React.createElement(AppSearch, {
-              authToken: this.state.siteToken,
               onNavigate: (hit, dest) => this.openSearchHit(hit, dest)
             })
             : null
@@ -3578,10 +3579,9 @@ class Dashboard extends React.Component {
         identityPubkey: this.state.meshPubkey || this.state.identityPubkey,
         nickname: this.state.nickname,
         hide: this.state.tab === 'chat' || this.isStaticClient() || this.isPublicVisitor(),
-        authToken: this.state.siteToken,
         documentsEnable: this.state.documentsEnable === true,
         documentsDefaultPriceSats: (this.state.documentsRuntime &&
-          this.state.documentsRuntime.defaultPriceSats) || 25,
+          this.state.documentsRuntime.defaultPriceSats) || 716,
         onUnread: (n) => {
           if (n !== this.state.chatUnread) this.setState({ chatUnread: n });
         }
@@ -3589,7 +3589,6 @@ class Dashboard extends React.Component {
       this.isOfflineMode() ? null : React.createElement(MissionBroadcastBanner, {
         hide: this.state.tab === 'notifications' || this.isStaticClient() || this.isPublicVisitor(),
         raised: this.state.voiceJoined,
-        authToken: this.state.siteToken,
         onResolved: () => {
           if (this.state.tab === 'missions') this.showTab('missions');
         },
@@ -3614,10 +3613,9 @@ const CHROME_CSS = `
 
 Dashboard.TITLE = TITLE;
 Dashboard.CHROME_CSS = CHROME_CSS;
-Dashboard.CSS = CSS + '\n' + (SiteLogin.CSS || '') + '\n' + (LogBrowser.CSS || '') + '\n' +
+Dashboard.CSS = CSS + '\n' + (PassportSignIn.CSS || '') + '\n' + (LogBrowser.CSS || '') + '\n' +
   (AppSearch.CSS || '') + '\n' + (Account.CSS || '') + '\n' + (DataSyncStatus.CSS || '') + '\n' +
-  (LinkedDevices.CSS || '') + '\n' + (Settings.CSS || '') + '\n' + (ActiveVoicePanel.CSS || '') + '\n' + CHROME_CSS;
+  (LinkedSigners.CSS || '') + '\n' + (Settings.CSS || '') + '\n' + (ActiveVoicePanel.CSS || '') + '\n' + CHROME_CSS;
 Dashboard.resolveHash = resolveHash;
-Dashboard.offerPassportDeviceLink = offerPassportDeviceLink;
 
 module.exports = Dashboard;

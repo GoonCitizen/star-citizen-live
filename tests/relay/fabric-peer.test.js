@@ -59,8 +59,9 @@ test('FabricNetwork.normalizeFabricAddress validates host:port and migrates http
   assert.strictEqual(FabricNetwork.normalizeFabricAddress('relay.goon.vc:7777'), 'relay.goon.vc:7777');
   assert.strictEqual(FabricNetwork.normalizeFabricAddress('https://relay.goon.vc/', { migrate: true }), 'relay.goon.vc:7777');
   assert.strictEqual(FabricNetwork.normalizeFabricAddress('https://relay.goon.vc/', { migrate: false }), null);
-  assert.deepStrictEqual(FabricNetwork.DEFAULT_SEEDS, ['hub.fabric.pub:7777', 'relay.goon.vc:7777']);
+  assert.deepStrictEqual(FabricNetwork.DEFAULT_SEEDS, ['hub.fabric.pub:7777', 'hub.goon.vc:7777', 'relay.goon.vc:7777']);
   assert.strictEqual(FabricNetwork.isNetworkHubAddress('hub.fabric.pub:7777'), true);
+  assert.strictEqual(FabricNetwork.isNetworkHubAddress('hub.goon.vc:7777'), true);
   assert.strictEqual(FabricNetwork.isNetworkHubAddress('relay.goon.vc:7777'), true);
   assert.strictEqual(FabricNetwork.isNetworkHubAddress('example.com:7777'), false);
 });

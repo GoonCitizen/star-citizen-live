@@ -7,11 +7,9 @@ require('../helpers/installReactStub');
 const { textOf, findType, collect, findByClass, classList } = require('../helpers/reactTree');
 const Dashboard = require('../../components/Dashboard');
 const GlobalChatDock = require('../../components/GlobalChatDock');
-const SiteLogin = require('../../components/SiteLogin');
-const FabricLoginModal = require('../../components/FabricLoginModal');
-const PubkeyEmoji = require('../../components/PubkeyEmoji');
+const PassportSignIn = require('../../components/PassportSignIn');
+const LinkedSigners = require('../../components/LinkedSigners');
 const MissionBroadcastBanner = require('../../components/MissionBroadcastBanner');
-const { emojiFingerprint } = require('../../functions/pubkeyEmoji');
 
 const ME = '02' + 'ab'.repeat(32);
 
@@ -43,13 +41,13 @@ describe('Dashboard chrome', () => {
     assert.ok(findType(chat, GlobalChatDock)[0].props.hide);
   });
 
-  it('offers a header QR scanner for device-link', () => {
+  it('offers a header QR scanner for signer invitations', () => {
     const dash = new Dashboard({});
     dash.state.online = true;
     dash.state.status = 'ok';
     const tree = dash.render();
     const buttons = collect(tree, (n) => n && n.$$typeof === 'element' && n.type === 'button');
-    const scan = buttons.find((n) => n.props && n.props['aria-label'] === 'Scan QR to link a device');
+    const scan = buttons.find((n) => n.props && n.props['aria-label'] === 'Scan QR to link a signer');
     assert.ok(scan, 'missing QR scan button');
     assert.equal(typeof dash.openQrScanner, 'function');
     assert.equal(typeof dash.applyScannedLink, 'function');
@@ -145,23 +143,61 @@ describe('Dashboard chrome', () => {
     }
   });
 
-  it('offers GoonCitizen and Passport site login in the browser shell', () => {
-    const login = new SiteLogin({});
+  it('offers Passport sign-in in the browser shell', () => {
+    const login = new PassportSignIn({});
     const text = textOf(login.render());
-    assert.match(text, /Sign in with GoonCitizen/);
     assert.match(text, /Sign in with Passport/);
+    assert.doesNotMatch(text, /Sign in with GoonCitizen/);
 
     const dash = new Dashboard({});
     dash.state.tab = 'home';
     dash.state.online = true;
-    assert.strictEqual(findType(dash.render(), SiteLogin).length, 1);
+    assert.strictEqual(findType(dash.render(), PassportSignIn).length, 1);
+  });
+
+  it('asks for a Passport update when only an older Passport marks the page', async () => {
+    const prev = { document: window.document, MessageChannel: window.MessageChannel, postMessage: window.postMessage, location: window.location };
+    const marked = (value) => ({ documentElement: { getAttribute: (name) => (name === 'data-fabric-passport' ? value : null) } });
+    window.MessageChannel = MessageChannel;
+    window.location = { origin: 'https://relay.goon.vc' };
+    window.postMessage = (msg, origin, ports) => {
+      if (window.answerHello) ports[0].postMessage({ type: 'PASSPORT_HELLO', v: 1 });
+    };
+    try {
+      for (const [marker, hello, expected] of [
+        ['abcdefghijklmnopabcdefghijklmnop', false, /Update Fabric Passport/],
+        [null, true, /Update Fabric Passport/],
+        [null, false, /Install Fabric Passport/]
+      ]) {
+        window.document = marked(marker);
+        window.answerHello = hello;
+        const login = new PassportSignIn({});
+        login.setState = (next) => Object.assign(login.state, next);
+        await login._signIn();
+        assert.match(login.state.status, expected);
+        assert.strictEqual(login.state.error, true);
+      }
+    } finally {
+      Object.assign(window, prev);
+      delete window.answerHello;
+    }
+  });
+
+  it('shows the signed-in Passport identity with Sign out', () => {
+    const login = new PassportSignIn({
+      session: { identity: { id: 'id1abc', pubkey: ME }, network: 'regtest' }
+    });
+    const text = textOf(login.render());
+    assert.match(text, /id1abc/);
+    assert.match(text, /Sign out/);
+    assert.doesNotMatch(text, /Sign in with Passport/);
   });
 
   it('is a no-op when Electron already owns identity', () => {
     const prev = window.electronAPI;
     window.electronAPI = { identity: { get: async () => ({}) } };
     try {
-      const login = new SiteLogin({});
+      const login = new PassportSignIn({});
       assert.strictEqual(login.render(), null);
     } finally {
       window.electronAPI = prev;
@@ -215,84 +251,74 @@ describe('Public shoutbox dock', () => {
   });
 });
 
-describe('Fabric login modal', () => {
-  it('renders nothing until a prompt arrives', () => {
-    const modal = new FabricLoginModal({});
-    assert.strictEqual(modal.render(), null);
+describe('Linked signers', () => {
+  const PEER = '03' + 'cd'.repeat(32);
+  const view = (extra = {}) => Object.assign({
+    pubkey: ME,
+    signers: [],
+    identityPeers: [],
+    mailboxes: ['https://relay.goon.vc'],
+    pairing: null,
+    pending: []
+  }, extra);
+  const buttonsOf = (tree) => collect(tree, (n) => n && n.$$typeof === 'element' && n.type === 'button').map((n) => textOf(n).trim());
+
+  it('offers an invitation or a pasted one when nothing is pairing', () => {
+    const ls = new LinkedSigners({});
+    ls.state.view = view();
+    ls.state.hub = 'https://relay.goon.vc';
+    const tree = ls.render();
+    const text = textOf(tree);
+    assert.match(text, /Add a signer/);
+    assert.match(text, /Nothing linked yet/);
+    assert.ok(buttonsOf(tree).includes('Show an invitation'));
+    assert.ok(buttonsOf(tree).includes('Use invitation'));
+    assert.doesNotMatch(text, /device/i);
   });
 
-  it('asks to approve site login', () => {
-    const modal = new FabricLoginModal({});
-    modal.state.prompt = {
-      kind: 'site-login',
-      sessionId: 'sess-1',
-      origin: 'https://hub.fabric.pub',
-      message: 'challenge-hex'
-    };
-    const text = textOf(modal.render());
-    assert.match(text, /Sign in to website/);
-    assert.match(text, /Approve & sign/);
-    assert.match(text, /Ignore/);
-    assert.match(text, /hub\.fabric\.pub/);
+  it('takes an invitation handed in by the scanner', () => {
+    const ls = new LinkedSigners({ invitation: 'fabric:abc' });
+    ls.takeInvitation(ls.props.invitation);
+    assert.equal(ls.state.invitationInput, 'fabric:abc');
   });
 
-  it('asks to approve a device link', () => {
-    const modal = new FabricLoginModal({});
-    modal.state.prompt = {
-      kind: 'device-link',
-      sessionId: 'link-1',
-      origin: 'https://relay.goon.vc',
-      label: 'Passport',
-      initiator: { id: ME }
-    };
-    const text = textOf(modal.render());
-    assert.match(text, /Link this device/);
-    assert.match(text, /Approve & link/);
-    assert.match(text, /Passport/);
-    assert.match(text, /chat and account data sync over Fabric/i);
-    const [el] = findType(modal.render(), PubkeyEmoji);
-    assert.ok(el, 'missing pubkey emoji');
-    const fp = emojiFingerprint({ id: ME });
-    assert.match(textOf(new PubkeyEmoji(el.props).render()), new RegExp(fp.emoji.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
+  it('shows the code and asks for scopes before granting', () => {
+    const ls = new LinkedSigners({});
+    ls.state.view = view({ pairing: { mode: 'invite', status: 'confirm', sas: '123456', peerLabel: 'Passport', rendezvous: 'https://relay.goon.vc' } });
+    const tree = ls.render();
+    const text = textOf(tree);
+    assert.match(text, /123456/);
+    assert.match(text, /Only continue if Passport shows the same six digits/);
+    assert.match(text, /Act as this player/);
+    assert.ok(buttonsOf(tree).includes('The codes match'));
+    assert.doesNotMatch(text, /Add a signer/, 'no second pairing while one is open');
+    ls.state.scopes = [];
+    const match = collect(ls.render(), (n) => n && n.type === 'button' && textOf(n).trim() === 'The codes match')[0];
+    assert.equal(match.props.disabled, true);
   });
 
-  it('clears the card when the prompt is dismissed', () => {
-    const modal = new FabricLoginModal({});
-    modal.state.prompt = { kind: 'device-link', sessionId: 'link-gone' };
-    modal._setPrompt(null);
-    assert.equal(modal.state.prompt, null);
-    assert.strictEqual(modal.render(), null);
-  });
-
-  it('keeps Ignore enabled while Approve is in flight', () => {
-    const modal = new FabricLoginModal({});
-    modal.state.prompt = {
-      kind: 'device-link',
-      sessionId: 'link-busy',
-      origin: 'https://relay.goon.vc',
-      initiator: { id: ME }
-    };
-    modal.state.busy = true;
-    const buttons = collect(modal.render(), (n) => n && n.$$typeof === 'element' && n.type === 'button');
-    const ignore = buttons.find((n) => /Ignore|Dismiss/.test(textOf(n)));
-    assert.ok(ignore, 'missing Ignore');
-    assert.equal(ignore.props.disabled, false);
-  });
-
-  it('surfaces a hub error on a failed device-link prompt', () => {
-    const modal = new FabricLoginModal({});
-    modal.state.prompt = {
-      kind: 'device-link',
-      sessionId: 'link-dead',
-      origin: 'https://relay.goon.vc',
-      error: 'unknown or expired device link'
-    };
-    const text = textOf(modal.render());
-    assert.match(text, /unknown or expired/);
-    const buttons = collect(modal.render(), (n) => n && n.$$typeof === 'element' && n.type === 'button');
-    const approve = buttons.find((n) => /Approve/.test(textOf(n)));
-    assert.ok(approve);
-    assert.equal(approve.props.disabled, true);
+  it('lists waiting requests with Sign and Decline, and signers with their grants', () => {
+    const ls = new LinkedSigners({});
+    ls.state.view = view({
+      pending: [{ hash: 'ab'.repeat(32), title: 'Sign in to goon.vc', summary: 'Passport asks', from: { label: 'Passport' } }],
+      signers: [{
+        pubkey: PEER,
+        label: 'Passport',
+        sameIdentity: true,
+        linkedAt: Date.now(),
+        given: [{ hash: '01'.repeat(32), direction: 'given', scopes: ['identity', 'passport'], revoked: false }],
+        received: [{ hash: '02'.repeat(32), direction: 'received', scopes: ['identity'], revoked: false }]
+      }]
+    });
+    const tree = ls.render();
+    const text = textOf(tree);
+    assert.match(text, /Waiting for you/);
+    assert.match(text, /Sign in to goon.vc/);
+    assert.match(text, /Same player/);
+    assert.match(text, /You allow: Act as this player, Sign in to websites/);
+    assert.match(text, /It allows you: Act as this player/);
+    const labels = buttonsOf(tree);
+    for (const need of ['Sign', 'Decline', 'Revoke', 'Unlink']) assert.ok(labels.includes(need), need);
   });
 });
 

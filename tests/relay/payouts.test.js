@@ -6,9 +6,10 @@ const assert = require('node:assert');
 const MissionManager = require('../../services/MissionManager');
 const PayoutManager = require('../../services/PayoutManager');
 const { createIdentity, keyFromIdentity } = require('../../functions/identity');
+const { FEDERATION_WITNESS } = require('@fabric/core/functions/signingTags');
 
 function sign (identity, message) {
-  return keyFromIdentity(identity).signSchnorr(Buffer.from(message)).toString('hex');
+  return keyFromIdentity(identity).signSchnorr(Buffer.from(message), FEDERATION_WITNESS).toString('hex');
 }
 
 /** Fake bitcoind: enough of createmultisig/scantxoutset/createpsbt/sendrawtransaction. */
