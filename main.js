@@ -26,7 +26,7 @@ const identityLib = require('./functions/identity');
 const identityStore = require('./functions/identityStore');
 const settingsStore = require('./functions/settingsStore');
 const { storeRoot, registerPath } = require('./functions/storePaths');
-const { signInToRelay } = require('./functions/fabricLoginClient');
+const { signInToRelay, signInToRelayPeer } = require('./functions/fabricLoginClient');
 const { assertAllowedFabricHub } = require('./functions/fabricHubAllowlist');
 const { delegationInvitationFromUrl } = require('./functions/qrScanLink');
 
@@ -889,6 +889,43 @@ ipcMain.handle('identity:sign-in-relay', async (_e, { origin } = {}) => {
   return { ok: true, token: result.token, session: result.session };
 });
 
+// Passport v3 peer sessions: sign in to a relay by its key, keep the session
+// (and its key) here in memory, and sign each renderer request with it. The
+// relay's key is remembered per origin for this run; a changed key is refused.
+const relayPeerSessions = new Map();
+const relayPeerKeys = new Map();
+
+ipcMain.handle('identity:sign-in-relay-peer', async (_e, { origin } = {}) => {
+  if (!unlockedIdentity) return { error: 'Identity is locked — unlock it, then sign in.' };
+  const allowed = assertAllowedFabricHub(String(origin || ''));
+  if (!allowed.ok) return { error: allowed.error || 'That relay is not allowlisted.' };
+  const result = await signInToRelayPeer(unlockedIdentity, allowed.hubBase, { peer: relayPeerKeys.get(allowed.hubBase) });
+  if (!result.ok) return { error: result.error || 'Sign-in failed.' };
+  relayPeerKeys.set(allowed.hubBase, result.peer);
+  const previous = relayPeerSessions.get(allowed.hubBase);
+  if (previous) previous.close();
+  relayPeerSessions.set(allowed.hubBase, result.session);
+  armIdentityAutoLock();
+  return { ok: true, session: result.view };
+});
+
+ipcMain.handle('identity:authorize-relay-request', async (_e, { url, method, body } = {}) => {
+  let target;
+  try {
+    target = new URL(String(url || ''));
+  } catch (_) {
+    return { error: 'invalid url' };
+  }
+  const session = relayPeerSessions.get(target.origin);
+  if (!session || session.expiresAt <= Date.now()) return { error: 'not signed in to that relay' };
+  if (body != null && typeof body !== 'string') return { error: 'body must be a string' };
+  try {
+    return { ok: true, header: session.authorize({ method: String(method || 'GET'), target: `${target.pathname}${target.search}`, body: body || '' }) };
+  } catch (e) {
+    return { error: (e && e.message) ? String(e.message) : 'could not sign the request' };
+  }
+});
+
 // --- Identity (first-run onboarding + Hub-style key safety) ---------------
 //
 // Safety model brought forward from hub.fabric.pub's IdentityManager:
@@ -985,6 +1022,8 @@ function broadcastIdentityChanged () {
 
 function lockIdentity () {
   unlockedIdentity = null;
+  for (const session of relayPeerSessions.values()) session.close();
+  relayPeerSessions.clear();
   if (identityAutoLockTimer) { clearTimeout(identityAutoLockTimer); identityAutoLockTimer = null; }
   applyIdentityToService();
   broadcastIdentityChanged();

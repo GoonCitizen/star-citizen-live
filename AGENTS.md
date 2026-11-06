@@ -487,8 +487,9 @@ npm run deploy:local -- start --network regtest --no-apk  # relay-goon-vc + buil
   (`functions/liveRelayPassport.js` on `@fabric/http` `passportRelyingParty` +
   `passportHttp`; spec `@fabric/core` `docs/PASSPORT.md`) so `relay.goon.vc`
   (or any `SC_MODE=server` deploy) signs players in without a Hub in front:
-  `POST /sessions/challenges` (pinned origins: loopback on the relay's port,
-  `https://<FABRIC_PUBLIC_HOST>`, `settings.passport.origins`) → Passport over
+  `POST /sessions/challenges` (pinned origins: `https://<FABRIC_PUBLIC_HOST>`,
+  `settings.passport.origins`, and loopback on the relay's port except on a
+  `SC_MODE=server` relay that has a public origin) → Passport over
   a `MessagePort` → `POST /sessions { assertion }` → HttpOnly `fabric.session`
   cookie, bound to the `fabric.passport` cookie set with the challenge;
   `GET|DELETE /sessions/current`. Sessions last 8 h, in memory. The hosted
@@ -857,3 +858,9 @@ reading gigabytes into the main thread. Adopted as the default for big batches.
 **Active docs:** prefer this file’s **Release posture** + §3–§4. `REVIEW.md` holds
 dated collaboration notes; June-2026 `app/` review requests are **historical** —
 not the current work order unless the owner re-opens them.
+
+## Fabric ecosystem workflow (shared)
+This repo is **6 of 6 — @rsi/star-citizen (depends on core, http, discord, hub)** in the Fabric dependency order. Before installing or testing, read [docs/agents/](docs/agents/README.md):
+- **Install** with `npm run report:install` (fresh lock, latest Git pins; log in `reports/install.log`).
+- **Strictly serial:** one install or test run at a time across all Fabric repos, top down (core → http → discord → hub → passport → star-citizen). Stop on upstream failure.
+- **Consolidate** into common APIs; Core messaging stays free of HTTP, HTTP is an adapter ([API_CONSOLIDATION.md](docs/agents/API_CONSOLIDATION.md)).

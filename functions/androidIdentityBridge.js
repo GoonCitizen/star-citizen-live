@@ -54,7 +54,14 @@ function installAndroidIdentityBridge () {
   const identityLib = require('./identity');
   const { assertAllowedFabricHub } = require('./fabricHubAllowlist');
   const { delegationInvitationFromUrl } = require('./qrScanLink');
-  const { signInToRelay } = require('./fabricLoginClient');
+  const { signInToRelay, signInToRelayPeer } = require('./fabricLoginClient');
+  // Passport v3 peer sessions to relays, by origin; ended when the identity locks.
+  const relayPeerSessions = new Map();
+  const relayPeerKeys = new Map();
+  const endRelayPeerSessions = () => {
+    for (const session of relayPeerSessions.values()) session.close();
+    relayPeerSessions.clear();
+  };
   const { syncIdentityToLocalNode } = require('./androidLocalNode');
 
   let unlocked = null;
@@ -77,6 +84,7 @@ function installAndroidIdentityBridge () {
     if (!unlocked || !autoLockMinutes) return;
     autoLockTimer = setTimeout(() => {
       unlocked = null;
+      endRelayPeerSessions();
       emitChanged();
     }, autoLockMinutes * 60 * 1000);
   }
@@ -229,6 +237,7 @@ function installAndroidIdentityBridge () {
     },
     lock: async () => {
       unlocked = null;
+      endRelayPeerSessions();
       armAutoLock();
       emitChanged();
       void syncIdentityToLocalNode(null);
@@ -277,6 +286,7 @@ function installAndroidIdentityBridge () {
     forget: async (confirm) => {
       if (!confirm) return { error: 'confirmation required' };
       unlocked = null;
+      endRelayPeerSessions();
       armAutoLock();
       await clearIdentityBlob();
       emitChanged();
@@ -297,6 +307,39 @@ function installAndroidIdentityBridge () {
       if (!result.ok) return { error: result.error || 'Sign-in failed.' };
       armAutoLock();
       return { ok: true, token: result.token, session: result.session };
+    },
+    /** Peer session (Passport v3): sign in to the relay by its key; the session stays in this bridge. */
+    signInToRelayPeer: async (origin) => {
+      if (!unlocked) return { error: 'Identity is locked — unlock it, then sign in.' };
+      const allowed = assertAllowedFabricHub(String(origin || ''));
+      if (!allowed.ok) return { error: allowed.error || 'That relay is not allowlisted.' };
+      const fetchImpl = nativeHttpFetch();
+      if (!fetchImpl) return { error: 'Native HTTP is not available on this device.' };
+      const result = await signInToRelayPeer(unlocked, allowed.hubBase, { fetchImpl, peer: relayPeerKeys.get(allowed.hubBase) });
+      if (!result.ok) return { error: result.error || 'Sign-in failed.' };
+      relayPeerKeys.set(allowed.hubBase, result.peer);
+      const previous = relayPeerSessions.get(allowed.hubBase);
+      if (previous) previous.close();
+      relayPeerSessions.set(allowed.hubBase, result.session);
+      armAutoLock();
+      return { ok: true, session: result.view };
+    },
+    /** `X-Fabric-Request` for one request to a relay signed in with `signInToRelayPeer`. */
+    authorizeRelayRequest: async ({ url, method, body } = {}) => {
+      let target;
+      try {
+        target = new URL(String(url || ''));
+      } catch (_) {
+        return { error: 'invalid url' };
+      }
+      const session = relayPeerSessions.get(target.origin);
+      if (!session || session.expiresAt <= Date.now()) return { error: 'not signed in to that relay' };
+      if (body != null && typeof body !== 'string') return { error: 'body must be a string' };
+      try {
+        return { ok: true, header: session.authorize({ method: String(method || 'GET'), target: `${target.pathname}${target.search}`, body: body || '' }) };
+      } catch (e) {
+        return { error: (e && e.message) ? String(e.message) : 'could not sign the request' };
+      }
     },
     onChanged: (handler) => {
       changeHandlers.push(handler);

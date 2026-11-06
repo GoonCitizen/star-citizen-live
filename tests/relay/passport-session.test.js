@@ -85,7 +85,7 @@ describe('LiveRelay Passport sign-in', () => {
       fabric: { enable: false, listen: false, port: 0, peers: [] },
       missions: { enable: false },
       discord: { enable: false },
-      passport: { origins: ['https://relay.example'] }
+      passport: { origins: ['https://relay.example', 'https://www.relay.example'] }
     });
     await svc.start();
     port = svc.server.address().port;
@@ -96,12 +96,16 @@ describe('LiveRelay Passport sign-in', () => {
     if (dir) fs.rmSync(dir, { recursive: true, force: true });
   });
 
-  it('pins the loopback origins on its own port plus the configured ones', () => {
+  it('pins only its public origins in server mode, never loopback', () => {
     const pinned = relayPinnedOrigins(svc, port);
-    assert.ok(pinned.includes(`http://127.0.0.1:${port}`));
-    assert.ok(pinned.includes(`http://localhost:${port}`));
-    assert.ok(pinned.includes('https://relay.example'));
-    assert.ok(!pinned.includes('http://127.0.0.1:1'));
+    assert.deepEqual(pinned.sort(), ['https://relay.example', 'https://www.relay.example']);
+    assert.ok(!pinned.includes(`http://127.0.0.1:${port}`), 'a page on the player\'s own machine cannot sign in here');
+    const advertised = { settings: { mode: 'server' }, _fabricAdvertiseHost: 'relay.goon.vc' };
+    assert.deepEqual(relayPinnedOrigins(advertised, port), ['https://relay.goon.vc']);
+    const bare = { settings: { mode: 'server' } };
+    assert.ok(relayPinnedOrigins(bare, port).includes(`http://127.0.0.1:${port}`), 'a server run with no public origin stays usable locally');
+    const desktop = { settings: { passport: { origins: ['https://relay.example'] } } };
+    assert.ok(relayPinnedOrigins(desktop, port).includes(`http://localhost:${port}`), 'a desktop relay keeps its loopback origins');
   });
 
   it('refuses challenges for an origin it does not serve', async () => {
@@ -115,7 +119,7 @@ describe('LiveRelay Passport sign-in', () => {
   });
 
   it('signs a browser in with a cookie that writes only from its own origin', async () => {
-    const origin = `http://127.0.0.1:${port}`;
+    const origin = 'https://relay.example';
     const { token, session } = await browserSignIn(port, player, origin);
     assert.equal(session.identity.pubkey, player.pubkey);
 
@@ -132,7 +136,7 @@ describe('LiveRelay Passport sign-in', () => {
 
     const sibling = await request(port, 'POST', `${BASE}/notes`, {
       body: note,
-      headers: { Cookie: `fabric.session=${token}`, Origin: `http://localhost:${port}` }
+      headers: { Cookie: `fabric.session=${token}`, Origin: 'https://www.relay.example' }
     });
     assert.equal(sibling.status, 401, 'a same-site page on another origin cannot write with the cookie');
 
@@ -152,7 +156,7 @@ describe('LiveRelay Passport sign-in', () => {
   });
 
   it('refuses an assertion redeemed from another origin than it was issued for', async () => {
-    const origin = `http://127.0.0.1:${port}`;
+    const origin = 'https://relay.example';
     const issued = await request(port, 'POST', '/sessions/challenges', { body: {}, headers: { Origin: origin } });
     const binding = cookieValue(issued.cookies, 'fabric.passport');
     const read = readChallenge(issued.body.challenge);
@@ -160,13 +164,13 @@ describe('LiveRelay Passport sign-in', () => {
     const { uri } = signAssertion({ challenge: issued.body.challenge, origin, signer: 'passport', network: read.challenge.network }, account.identity.key);
     const r = await request(port, 'POST', '/sessions', {
       body: { assertion: uri },
-      headers: { Origin: `http://localhost:${port}`, Cookie: `fabric.passport=${binding}` }
+      headers: { Origin: 'https://www.relay.example', Cookie: `fabric.passport=${binding}` }
     });
     assert.equal(r.status, 403);
   });
 
   it('gives native clients a Bearer token through signInToRelay', async () => {
-    const token = await passportLogin(port, player);
+    const token = await passportLogin(port, player, { origin: 'https://relay.example' });
     assert.match(token, /^[0-9a-f]{64}$/);
     const notes = await request(port, 'GET', `${BASE}/notes`, { headers: { Authorization: `Bearer ${token}` } });
     assert.equal(notes.status, 200);

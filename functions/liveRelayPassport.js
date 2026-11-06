@@ -14,6 +14,13 @@
  * A cookie session counts for a write only when the request's `Origin` is the
  * origin the session was issued for: sibling pages on the same site (another
  * loopback port, another `*.goon.vc` host) send the cookie too.
+ *
+ * Peer sessions (Passport v3, `@fabric/http` `passportPeer`): with an unlocked
+ * identity the relay also signs users in by its own key, from any origin, on
+ * `GET|POST /sessions/peer`. Each request then carries an `X-Fabric-Request`
+ * signed by the session key, bound to its method, path, body, and a one-time
+ * nonce, so it needs no cookie and no origin check. An `@fabric/http` without
+ * `passportPeer` leaves this off.
  */
 
 const {
@@ -24,7 +31,15 @@ const {
   bearerToken
 } = require('@fabric/http/functions/passportHttp');
 const { normalizeOrigin } = require('@fabric/core/functions/passport');
-const { fabricIdentityNetwork } = require('./identity');
+const { fabricIdentityNetwork, accountFromIdentity } = require('./identity');
+
+/** `@fabric/http` peer sessions, when the installed version has them. */
+let passportPeerModule = null;
+try {
+  passportPeerModule = require('@fabric/http/functions/passportPeer');
+} catch (_) {
+  passportPeerModule = null;
+}
 
 const SAFE_METHODS = new Set(['GET', 'HEAD', 'OPTIONS']);
 const RELAY_SESSION_TTL_MS = 8 * 60 * 60 * 1000;
@@ -52,19 +67,25 @@ function publicOriginOf (host) {
  * @returns {string[]}
  */
 function relayPinnedOrigins (relay, port) {
-  const out = new Set([
+  const loopback = [
     `http://127.0.0.1:${port}`,
     `http://localhost:${port}`,
     `http://[::1]:${port}`
-  ]);
+  ];
+  const published = new Set();
   const advertised = publicOriginOf(relay._fabricAdvertiseHost);
-  if (advertised) out.add(advertised);
+  if (advertised) published.add(advertised);
   const cfg = (relay.settings && relay.settings.passport) || {};
   for (const raw of Array.isArray(cfg.origins) ? cfg.origins : []) {
     const origin = publicOriginOf(raw);
-    if (origin) out.add(origin);
+    if (origin) published.add(origin);
   }
-  return [...out];
+  // A public relay signs in only on its public origins: a native client may name any pinned
+  // origin, and a sign-in a player approved for a page on their own machine must not open
+  // a session here.
+  const serverMode = relay.settings && relay.settings.mode === 'server';
+  if (serverMode && published.size) return [...published];
+  return [...new Set([...loopback, ...published])];
 }
 
 /**
@@ -102,6 +123,8 @@ function createLiveRelayPassport (relay, opts = {}) {
   });
   const http = createPassportHttp({ relyingParty });
   const routes = new Map(http.routes.map((r) => [`${r.method} ${r.path}`, r.handler]));
+  const peer = createRelayPassportPeer(relay, { network, homes: pinnedOrigins, now: opts.now });
+  if (peer) for (const r of peer.http.routes) routes.set(`${r.method} ${r.path}`, r.handler);
 
   /**
    * Answer a Passport route. Resolves true when it did.
@@ -124,6 +147,14 @@ function createLiveRelayPassport (relay, opts = {}) {
    * @returns {Promise<object|null>}
    */
   async function requestSession (req) {
+    if (peer && req && req.headers && req.headers[passportPeerModule.PASSPORT_REQUEST_HEADER]) {
+      try {
+        const view = await peer.http.readRequestSession(req);
+        return view ? Object.assign({}, view, { pubkey: view.identity.pubkey, identityId: view.identity.id }) : null;
+      } catch (_) {
+        return null;
+      }
+    }
     let session = null;
     try {
       session = await http.readRequestSession(req);
@@ -137,11 +168,51 @@ function createLiveRelayPassport (relay, opts = {}) {
     return origin && origin === session.origin ? session : null;
   }
 
-  return { relyingParty, http, pinnedOrigins, network, handle, requestSession };
+  return { relyingParty, http, pinnedOrigins, network, handle, requestSession, peer: peer ? peer.passportPeer : null };
+}
+
+/**
+ * Peer sign-in by the relay's own identity key, or null when the identity is
+ * locked or `@fabric/http` has no `passportPeer`.
+ * @param {object} relay
+ * @param {{ network: string, homes: string[], now: (Function|undefined) }} opts
+ * @returns {{ passportPeer: object, http: object }|null}
+ */
+function createRelayPassportPeer (relay, opts) {
+  if (!passportPeerModule || !relay || !relay._identity) return null;
+  let key = null;
+  try {
+    key = accountFromIdentity(relay._identity, { network: opts.network }).identity.key;
+  } catch (_) {
+    return null;
+  }
+  const passportPeer = passportPeerModule.createPassportPeer({
+    key,
+    network: opts.network,
+    purpose: 'Sign in to GoonCitizen',
+    homes: opts.homes.slice(0, 16),
+    sessionTtlMs: RELAY_SESSION_TTL_MS,
+    now: opts.now
+  });
+  return { passportPeer, http: passportPeerModule.createPassportPeerHttp(passportPeer) };
+}
+
+/**
+ * Pubkey the relay's peer sign-in answers as (its identity), for cache keys.
+ * @param {object} relay
+ * @returns {string}
+ */
+function relayPeerKeyId (relay) {
+  try {
+    return relay && relay._identity ? String(accountFromIdentity(relay._identity).identity.key.pubkey) : '';
+  } catch (_) {
+    return '';
+  }
 }
 
 module.exports = {
   createLiveRelayPassport,
+  relayPeerKeyId,
   publicOriginOf,
   relayPinnedOrigins,
   relayPassportNetwork

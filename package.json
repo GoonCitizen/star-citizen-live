@@ -111,7 +111,7 @@
   "homepage": "https://github.com/GoonCitizen/star-citizen-live#readme",
   "dependencies": {
     "@choreruiz/capacitor-node-js": "=1.0.2",
-    "@fabric/core": "FabricLabs/fabric#feature/passport",
+    "@fabric/core": "FabricLabs/fabric#feature/schemas",
     "@fabric/discord": "FabricLabs/fabric-discord#feature/passport",
     "@fabric/http": "FabricLabs/fabric-http#feature/passport",
     "@fabric/hub": "FabricLabs/hub.fabric.pub#feature/passport",

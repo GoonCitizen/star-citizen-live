@@ -28,6 +28,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
     forget: (confirm) => ipcRenderer.invoke('identity:forget', { confirm: !!confirm }),
     openProtocolUrl: (url) => ipcRenderer.invoke('identity:open-protocol-url', url),
     signInToRelay: (origin) => ipcRenderer.invoke('identity:sign-in-relay', { origin }),
+    /** Peer session (Passport v3): sign in to the relay by its key; the session stays in the main process. */
+    signInToRelayPeer: (origin) => ipcRenderer.invoke('identity:sign-in-relay-peer', { origin }),
+    /** `X-Fabric-Request` for one request to a relay signed in with `signInToRelayPeer`. */
+    authorizeRelayRequest: (request) => ipcRenderer.invoke('identity:authorize-relay-request', request || {}),
     onChanged: (handler) => {
       const listener = (_e, summary) => handler(summary);
       ipcRenderer.on('identity:changed', listener);

@@ -29,7 +29,7 @@ const { isHttpSharedModeEnabled, resolveHttpListenHost } = require('../functions
 const { shouldEnforceRemoteAuth, isForeignBrowserWrite } = require('../functions/httpRemoteAuth');
 const { httpBindWarning } = require('../functions/httpBindWarning');
 const { applyGoonCitizenEnvAliases } = require('../functions/goonCitizenEnvAliases');
-const { createLiveRelayPassport } = require('../functions/liveRelayPassport');
+const { createLiveRelayPassport, relayPeerKeyId } = require('../functions/liveRelayPassport');
 let resolveFabricPeerInterface;
 try {
   ({ resolveFabricPeerInterface } = require('@fabric/core/functions/fabricListenInterface'));
@@ -5052,12 +5052,18 @@ class StarCitizenService extends EventEmitter {
   _localDashboardCorsHeaders (req) {
     if (!this._isAndroidMode()) return {};
     const origin = String((req.headers && req.headers.origin) || '');
-    const allow = origin && (
-      /^https?:\/\/localhost(?::\d+)?$/i.test(origin) ||
-      /^https?:\/\/127\.0\.0\.1(?::\d+)?$/i.test(origin) ||
-      /^capacitor:\/\//i.test(origin)
-    );
-    if (!allow) return {};
+    // Only the app's own WebView (androidScheme https, default host) and this relay's own
+    // port: any other localhost port is some other app's page and must not read the player's data.
+    const port = this.server && typeof this.server.address === 'function' && this.server.address()
+      ? this.server.address().port
+      : this.settings.port;
+    const allowed = new Set([
+      'https://localhost',
+      'capacitor://localhost',
+      `http://127.0.0.1:${port}`,
+      `http://localhost:${port}`
+    ]);
+    if (!allowed.has(origin.toLowerCase())) return {};
     return {
       'Access-Control-Allow-Origin': origin,
       'Access-Control-Allow-Methods': 'GET, POST, PUT, PATCH, DELETE, OPTIONS',
@@ -6058,8 +6064,10 @@ class StarCitizenService extends EventEmitter {
   _passportSignIn () {
     const address = this.server && typeof this.server.address === 'function' ? this.server.address() : null;
     const port = Number((address && address.port) || (this.settings && this.settings.port) || 3041);
-    if (!this._passport || this._passport.port !== port) {
-      this._passport = Object.assign(createLiveRelayPassport(this, { port }), { port });
+    // Rebuilt when the identity changes too: peer sign-in answers as that key.
+    const keyId = relayPeerKeyId(this);
+    if (!this._passport || this._passport.port !== port || this._passport.keyId !== keyId) {
+      this._passport = Object.assign(createLiveRelayPassport(this, { port }), { port, keyId });
     }
     return this._passport;
   }
@@ -7750,6 +7758,8 @@ class StarCitizenService extends EventEmitter {
     // has already consumed the stream and parsed req.body — use it directly.
     const body = async () => {
       if (req.body && typeof req.body === 'object' && Object.keys(req.body).length) return req.body;
+      // A signed request's bytes were read to check its signature (Passport peer session).
+      if (Buffer.isBuffer(req.rawBody)) return req.rawBody.length ? JSON.parse(req.rawBody.toString()) : {};
       const c = []; for await (const ch of req) c.push(ch); return c.length ? JSON.parse(Buffer.concat(c).toString()) : {};
     };
 

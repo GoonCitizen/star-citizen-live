@@ -524,9 +524,12 @@ class GroupManager extends EventEmitter {
       { name: GROUP_CONTRACT_NAME, parentContractId: gooncitizenContractId() }
     );
 
-    // Fold roster from Statechain content when present.
+    // Fold roster from Statechain content when present. A batch that adds no
+    // entries carries nothing newer than this peer has, and a member added by a
+    // GroupChange (kept on the record, not the journal) must survive it.
     const content = merged.content || {};
-    if (Array.isArray(content.members) && content.members.length) {
+    const rosterKnown = Array.isArray(data.members) && data.members.length > 0;
+    if (Array.isArray(content.members) && content.members.length && (merged.applied > 0 || !rosterKnown)) {
       data.members = content.members.slice();
       if (Array.isArray(content.signers) && content.signers.length) {
         data.validators = content.signers.slice();
