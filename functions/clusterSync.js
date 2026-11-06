@@ -289,11 +289,11 @@ function shareToCollection (share, opts = {}) {
   const Message = require('@fabric/core/types/message');
   const { gooncitizenContractId } = require('../contracts/gooncitizen');
   const contract = String(opts.contractId || gooncitizenContractId()).trim();
-  const msg = Message.fromVector(['CONTRACT_MESSAGE', JSON.stringify({
+  const msg = Message.fromLegacyBody('CONTRACT_MESSAGE', {
     contract,
     type: SHARE_TYPE,
     object: sanitized
-  })]).signWithKey(key);
+  }).signWithKey(key);
   return collectionFromMessage(msg);
 }
 

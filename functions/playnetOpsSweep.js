@@ -171,7 +171,7 @@ function buildGoonCitizenPublishMessage (key, definition) {
   if (!key) throw new Error('key required to sign CONTRACT_PUBLISH');
   const def = definition || gooncitizenContractDefinition();
   const contractId = gooncitizenContractId();
-  const msg = Message.fromVector(['CONTRACT_PUBLISH', JSON.stringify(def)]);
+  const msg = Message.fromLegacyBody('CONTRACT_PUBLISH', def);
   if (typeof msg.signWithKey === 'function') {
     msg.signWithKey(key);
   }

@@ -623,8 +623,10 @@ class FabricNetwork extends EventEmitter {
       || (this._peer && this._peer.key)
       || (this._identity ? keyFromIdentity(this._identity) : null);
     if (!key) throw new Error('signing key required (unlock identity)');
-    const wireBody = typeof body === 'string' ? body : JSON.stringify(body);
-    const msg = Message.fromVector([vectorType, wireBody]);
+    // Peers drop JSON bodies of these types; they travel as typed fields.
+    const msg = Message.LEGACY_BODY_TYPES.includes(Message.canonicalTypeName(vectorType))
+      ? Message.fromLegacyBody(vectorType, typeof body === 'string' ? JSON.parse(body) : body)
+      : Message.fromVector([vectorType, typeof body === 'string' ? body : JSON.stringify(body)]);
     const skip = opts.chain === false || FabricNetwork.skipsParentChain(vectorType);
     let parent = opts.parent;
     if (parent == null && !skip) {

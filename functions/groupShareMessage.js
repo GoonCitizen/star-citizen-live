@@ -130,18 +130,9 @@ function buildGroupOfferContractMessage (offerBody, actorPubkey) {
 
 function _parseMessageBody (message) {
   if (!message) return null;
-  const raw = message.raw && message.raw.data
-    ? (Buffer.isBuffer(message.raw.data) ? message.raw.data : Buffer.from(message.raw.data))
-    : null;
-  const text = raw
-    ? raw.toString('utf8')
-    : (typeof message.data === 'string' ? message.data : '');
-  if (!text || !text.trim().startsWith('{')) return null;
-  try {
-    return JSON.parse(text);
-  } catch (_) {
-    return null;
-  }
+  const Message = require('@fabric/core/types/message');
+  const parsed = Message.tryParseLegacyBody(message);
+  return parsed.ok ? parsed.value : null;
 }
 
 /**

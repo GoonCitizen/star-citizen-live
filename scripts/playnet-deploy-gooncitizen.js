@@ -247,7 +247,7 @@ async function main () {
     throw new Error('no Fabric peer connections — cannot publish');
   }
 
-  const msg = Message.fromVector(['CONTRACT_PUBLISH', JSON.stringify(gc.definition)]).signWithKey(peer.key);
+  const msg = Message.fromLegacyBody('CONTRACT_PUBLISH', gc.definition).signWithKey(peer.key);
   if (typeof peer.broadcast === 'function') {
     peer.broadcast(msg.toBuffer());
   } else if (typeof peer.relayFrom === 'function') {
