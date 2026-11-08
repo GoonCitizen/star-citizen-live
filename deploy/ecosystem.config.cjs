@@ -3,8 +3,8 @@
 /**
  * pm2 process file for a public GoonCitizen relay.
  *
- *   nvm use 26.12.1
- *   pm2 start deploy/ecosystem.config.cjs --interpreter "$(nvm which 26.12.1)"
+ *   nvm use 26.13.0
+ *   pm2 start deploy/ecosystem.config.cjs --interpreter "$(nvm which 26.13.0)"
  *
  * Secrets belong in repo-root `.env` (loaded at boot) or the pm2 env — not here.
  * See docs/PRODUCTION.md.

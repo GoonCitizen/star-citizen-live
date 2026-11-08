@@ -190,7 +190,7 @@ unknown-namespace ignore, opt-in private data.
 
 ## Minimum path (second application)
 
-1. Clone this repo (or fork). Node **26.12.1**, `npm i`, `npm test`, `npm start`.
+1. Clone this repo (or fork). Node **26.13.0**, `npm i`, `npm test`, `npm start`.
 2. Keep [`contracts/gooncitizenGroup.js`](../contracts/gooncitizenGroup.js) until
    you have a reason to split Groups.
 3. Add your genesis next to [`contracts/gooncitizen.js`](../contracts/gooncitizen.js)

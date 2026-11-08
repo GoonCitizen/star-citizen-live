@@ -17,6 +17,7 @@ const http = require('http');
 const crypto = require('crypto');
 const EventEmitter = require('events');
 const fs = require('fs');
+const os = require('os');
 const path = require('path');
 const readline = require('readline');
 const { randomUnit } = require('@fabric/core/functions/bytes');
@@ -26,7 +27,7 @@ const { channelFromPath } = require('../functions/locate');
 const settingsStore = require('../functions/settingsStore');
 const offlineMode = require('../functions/offlineMode');
 const { isHttpSharedModeEnabled, resolveHttpListenHost } = require('../functions/httpSharedMode');
-const { shouldEnforceRemoteAuth, isForeignBrowserWrite } = require('../functions/httpRemoteAuth');
+const { shouldEnforceRemoteAuth, isForeignBrowserWrite, isRebindingHost } = require('../functions/httpRemoteAuth');
 const { httpBindWarning } = require('../functions/httpBindWarning');
 const { applyGoonCitizenEnvAliases } = require('../functions/goonCitizenEnvAliases');
 const { createLiveRelayPassport, relayPeerKeyId } = require('../functions/liveRelayPassport');
@@ -1569,6 +1570,13 @@ class StarCitizenService extends EventEmitter {
       channel: cfg.channel,
       app: cfg.app,
       authority: this.settings.authority || 'localhost:3041',
+      // Chat bridging reads message text, members, and presence: privileged
+      // intents the bot owner must enable (@fabric/discord asks for none by default).
+      intents: [
+        'Guilds', 'GuildMessages', 'GuildMessageReactions', 'GuildMessageTyping',
+        'DirectMessages', 'DirectMessageReactions', 'DirectMessageTyping',
+        'GuildVoiceStates', 'GuildMembers', 'GuildPresences', 'MessageContent'
+      ],
       // Fabric DiscordRequest/Claim/Response owns replies (multi-operator safe).
       autoCommands: false
     });
@@ -4067,6 +4075,7 @@ class StarCitizenService extends EventEmitter {
     const port = Number((address && address.port) || this.settings.port || 3041);
     this._delegationHost = createDelegationHost({
       origins: server ? relayPinnedOrigins(this, port).filter((o) => o.startsWith('https://')) : [],
+      mailboxOrigins: server ? undefined : relayPinnedOrigins(this, port),
       trustProxy: server,
       store: this.registerStore ? GoonDelegation.registerKv(this.registerStore, 'delegationmailbox') : undefined,
       deliver: (to, buffer) => {
@@ -6088,6 +6097,22 @@ class StarCitizenService extends EventEmitter {
    * @param {http.IncomingMessage} req
    * @returns {boolean}
    */
+  /**
+   * Host names besides IP literals and loopback that the dashboard answers to.
+   * @returns {Array<string>}
+   */
+  _knownHostNames () {
+    const listed = String(process.env.SC_HTTP_ALLOWED_HOSTS || process.env.FABRIC_HUB_ALLOWED_HOSTS || '').split(',');
+    const hostname = String(os.hostname() || '').toLowerCase();
+    return [
+      this._fabricAdvertiseHost,
+      process.env.FABRIC_PUBLIC_HOST,
+      process.env.FABRIC_ADVERTISE_HOST,
+      hostname,
+      hostname && !hostname.endsWith('.local') ? `${hostname}.local` : null
+    ].concat(listed).filter(Boolean);
+  }
+
   _enforceRemoteAuth (req) {
     return shouldEnforceRemoteAuth({
       mode: this.settings.mode,
@@ -7717,6 +7742,10 @@ class StarCitizenService extends EventEmitter {
     const base = '/services/star-citizen';
     const url = new URL(req.url, `http://localhost:${this.settings.port}`);
     const pathname = url.pathname;
+    if (this.settings.mode !== 'server' && isRebindingHost(req, { names: this._knownHostNames() })) {
+      res.writeHead(421, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({ error: 'This relay does not answer to that host name', code: 'UNKNOWN_HOST' }));
+    }
     const cors = this._localDashboardCorsHeaders(req);
     if (cors && Object.keys(cors).length) {
       const origWriteHead = res.writeHead.bind(res);
@@ -7745,9 +7774,9 @@ class StarCitizenService extends EventEmitter {
       if (await this._delegationHostFor().handle(req, res)) return;
       if (this.delegation && this.delegation.delegate.handle(req, res, pathname)) return;
     }
-    // Loopback writes act as the unlocked identity.
-    if (pathname.startsWith(`${base}/`) &&
-      !this._enforceRemoteAuth(req) && !this._authPubkey(req) &&
+    // Loopback writes act as the unlocked identity, on every path: many write
+    // routes also answer without the `/services/star-citizen` prefix.
+    if (!this._enforceRemoteAuth(req) && !this._authPubkey(req) &&
       isForeignBrowserWrite(req, {
         port: (req.socket && req.socket.localPort) || this.settings.port,
         allowOrigin: () => Object.keys(cors || {}).length > 0
@@ -11932,7 +11961,8 @@ class StarCitizenService extends EventEmitter {
   // ---- Personal fleets (Starjump / FleetViewer) ---------------------------
 
   _fleetsDir () {
-    return path.join(__dirname, '..', 'data', 'fleets');
+    const configured = this.settings.fleets && this.settings.fleets.samplesDir;
+    return configured ? path.resolve(String(configured)) : path.join(__dirname, '..', 'data', 'fleets');
   }
 
   listFleetSamples () {

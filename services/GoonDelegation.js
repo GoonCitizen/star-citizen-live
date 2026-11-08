@@ -201,7 +201,7 @@ class GoonDelegation extends EventEmitter {
     try {
       for (const origin of this.mailboxes) {
         const since = this._cursors.get(origin) || 0;
-        const proof = delegation.createMailboxFetch({ since, now: this._now() }, this.settings.key);
+        const proof = delegation.createMailboxFetch({ origin, purpose: 'delegation-mailbox', since, now: this._now() }, this.settings.key);
         const out = await client.fetchMailbox(origin, proof.uri, { fetch: this._fetch });
         if (!out.ok) continue;
         for (const f of Array.isArray(out.frames) ? out.frames : []) {
@@ -515,7 +515,7 @@ class GoonDelegation extends EventEmitter {
     if (p) {
       this._update(p.token, { status: 'cancelled' });
       if (p.rendezvous && p.linkId) {
-        const proof = delegation.createMailboxFetch({ now: this._now() }, this.settings.key);
+        const proof = delegation.createMailboxFetch({ origin: p.rendezvous, purpose: 'delegation-cancel', now: this._now() }, this.settings.key);
         await client.cancelLink(p.rendezvous, p.linkId, proof.uri, { fetch: this._fetch }).catch(() => null);
       }
     }

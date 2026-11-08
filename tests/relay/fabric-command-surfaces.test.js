@@ -152,6 +152,41 @@ describe('LiveRelay HTTP fallbacks for the same jobs', () => {
     }
   });
 
+  it('refuses a cross-site write on an unprefixed route, and a rebinding Host name', async () => {
+    const dir = tmpDir();
+    const relay = new LiveRelay({
+      mode: 'relay',
+      listen: false,
+      settingsDir: dir,
+      missions: { enable: false },
+      fabric: { enable: false, listen: false, port: 0, peers: [] }
+    });
+    await relay.start();
+    relay.setIdentity(createIdentity());
+    const base = await listen(relay);
+    try {
+      const foreign = await jsonFetch(`${base}/peers`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'text/plain', Origin: 'https://evil.example' },
+        body: JSON.stringify({ address: 'evil.example:7777', shareLogs: true })
+      });
+      assert.equal(foreign.status, 403);
+      assert.equal(foreign.j.code, 'FOREIGN_ORIGIN');
+      const rebound = await new Promise((resolve, reject) => {
+        const { port } = relay.server.address();
+        const req = http.request({ host: '127.0.0.1', port, path: '/services/star-citizen/feed', headers: { Host: `rebind.evil.example:${port}` } }, (res) => {
+          res.resume();
+          res.on('end', () => resolve(res.statusCode));
+        });
+        req.on('error', reject);
+        req.end();
+      });
+      assert.equal(rebound, 421);
+    } finally {
+      await stopRelay(relay, dir);
+    }
+  });
+
   it('hosted GET /delegation without a session is 401, and the relay links no signers of its own', async () => {
     const dir = tmpDir();
     const relay = new LiveRelay({

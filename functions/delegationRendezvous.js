@@ -25,6 +25,7 @@ function load () {
 /**
  * @param {Object} [options]
  * @param {string[]} [options.origins] Public origins the rendezvous answers for (any when empty).
+ * @param {string[]} [options.mailboxOrigins] Origins mailbox read proofs may name (default `origins`; none = no reads).
  * @param {boolean} [options.trustProxy] Behind Caddy / Nginx: rate-limit by the last forwarded hop.
  * @param {Object} [options.store] `{ get, set }` so queued mail survives a restart.
  * @param {Function} [options.deliver] `(to, buffer) => boolean`; true takes the frame.
@@ -41,6 +42,7 @@ function createDelegationHost (options = {}) {
     now: options.now
   });
   const mailbox = mods.mailbox.createDelegationMailbox({
+    origins: (options.mailboxOrigins || origins).filter(Boolean),
     store: options.store,
     trustProxy: !!options.trustProxy,
     now: options.now,

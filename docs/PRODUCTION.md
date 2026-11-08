@@ -56,8 +56,8 @@ On this host the Fabric TCP port plan is:
 
 Live pm2 on meta (2026-08-14, [downstream.agents.md](https://relay.goon.vc/downstream.agents.md)): Hub ~`.166:7777` HTTP loopback `:8080`; RSI ~`.149:7777` HTTP **bare** `.149:3041`; Sensemaker `:7778` / `:3040`. Nginx still fronts `https://relay.goon.vc`. Preferred RSI HTTP remains loopback behind that proxy — the bare NIC bind is what is running today. Applied one-off patches were removed from `/patches/` ([README](https://relay.goon.vc/patches/README.md)). Set `SC_OFFICERS` before treating the public register as locked down.
 
-## Node: pin 26.12.1 with nvm
-`.nvmrc` / `package.json` `engines` is **Node.js 26.12.1**. A default alias of
+## Node: pin 26.13.0 with nvm
+`.nvmrc` / `package.json` `engines` is **Node.js 26.13.0**. A default alias of
 Node 12 (or anything else) will 502 or crash the process.
 
 ```bash
@@ -67,13 +67,13 @@ curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.3/install.sh | bash
 cd /opt/star-citizen-live   # or wherever this clone lives
 nvm install
 nvm use
-node -v   # must print v26.12.1
+node -v   # must print v26.13.0
 ```
 
 Pin the shell default so `pm2 resurrect` after reboot does not pick up Node 12:
 
 ```bash
-nvm alias default 26.12.1
+nvm alias default 26.13.0
 ```
 
 Install deps **without wiping the lockfile**:
@@ -99,11 +99,11 @@ boot) **or** export them in the pm2 process environment. Never commit
 `FABRIC_XPRV`, Discord tokens, or `settings/local.js`.
 
 ```bash
-nvm use 26.12.1
+nvm use 26.13.0
 export NVM_DIR="$HOME/.nvm"
-# interpreter MUST be the 26.12 binary — pm2 otherwise uses whatever `node`
+# interpreter MUST be the 26.13 binary — pm2 otherwise uses whatever `node`
 # was on PATH when the daemon started (often the distro Node).
-NODE_BIN="$(nvm which 26.12.1)"
+NODE_BIN="$(nvm which 26.13.0)"
 cp deploy/env.relay.goon.vc.example .env
 # edit .env: FABRIC_XPRV, SC_OFFICERS, Discord, …
 
@@ -296,8 +296,8 @@ GitHub’s published keys; do not disable `StrictHostKeyChecking` globally.
 
 ## What not to do
 
-- `nvm use default` when default is not 26.12.1
-- `pm2 start scripts/node.js` without `--interpreter "$(nvm which 26.12.1)"`
+- `nvm use default` when default is not 26.13.0
+- `pm2 start scripts/node.js` without `--interpreter "$(nvm which 26.13.0)"`
 - `npm run report:install` (wipes lockfile)
 - `SC_MODE=server` **and** `SC_FABRIC=0` on a host advertised as
   `relay.goon.vc:7777`

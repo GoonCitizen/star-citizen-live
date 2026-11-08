@@ -471,9 +471,9 @@ function createWindow (port) {
   mainWindow.webContents.on('will-navigate', (event, navigationUrl) => {
     try {
       const parsedUrl = new URL(navigationUrl);
+      // No `file:` pages: the main window's preload exposes identity IPC.
       const ok = parsedUrl.origin === `http://127.0.0.1:${port}` ||
-        parsedUrl.origin === `http://localhost:${port}` ||
-        parsedUrl.protocol.startsWith('file:');
+        parsedUrl.origin === `http://localhost:${port}`;
       if (!ok) event.preventDefault();
     } catch (_) {
       event.preventDefault();
@@ -481,7 +481,10 @@ function createWindow (port) {
   });
 
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
-    shell.openExternal(url);
+    // Only web links leave the app; `file:`, `smb:`, and custom schemes would launch local programs.
+    let protocol = '';
+    try { protocol = new URL(url).protocol; } catch (_) { protocol = ''; }
+    if (protocol === 'https:' || protocol === 'http:') shell.openExternal(url);
     return { action: 'deny' };
   });
 }

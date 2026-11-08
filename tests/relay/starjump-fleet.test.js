@@ -11,7 +11,8 @@ const starjumpFleet = require('../../functions/starjumpFleet');
 const shipCatalog = require('../../functions/shipCatalog');
 const LiveRelay = require('../../services/LiveRelay');
 
-const SAMPLE = path.join(__dirname, '..', '..', 'data', 'fleets', 'fleetviewer-thejohnram.json');
+const SAMPLES = path.join(__dirname, '..', 'fixtures', 'fleets');
+const SAMPLE = path.join(SAMPLES, 'fleetviewer-thejohnram.json');
 
 function tmpDir (prefix) {
   return fs.mkdtempSync(path.join(os.tmpdir(), prefix));
@@ -141,7 +142,8 @@ test('custom fleet create + add/remove ships', async () => {
     logfile: null,
     settingsDir: dir,
     fabric: { enable: false },
-    missions: { enable: false }
+    missions: { enable: false },
+    fleets: { samplesDir: SAMPLES }
   });
   await svc.start();
   const port = svc.server.address().port;
@@ -184,7 +186,8 @@ test('fleet REST import sample + list + delete', async () => {
     logfile: null,
     settingsDir: dir,
     fabric: { enable: false },
-    missions: { enable: false }
+    missions: { enable: false },
+    fleets: { samplesDir: SAMPLES }
   });
   await svc.start();
   const port = svc.server.address().port;

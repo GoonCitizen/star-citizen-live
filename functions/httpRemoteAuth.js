@@ -1,5 +1,6 @@
 'use strict';
 
+const net = require('net');
 const { isLoopbackRequest } = require('./isLoopbackRequest');
 
 /**
@@ -60,4 +61,28 @@ function isForeignBrowserWrite (req, opts = {}) {
   return !(LOOPBACK_HOSTS.has(host) && port === Number(opts.port));
 }
 
-module.exports = { shouldEnforceRemoteAuth, isForeignBrowserWrite };
+/**
+ * A request whose `Host` is a DNS name this relay doesn't answer to: a DNS
+ * rebinding page pointed at 127.0.0.1 would otherwise read the dashboard as
+ * its own origin. IP literals, loopback names, and `names` are fine; so is a
+ * request with no `Host` (not a browser).
+ *
+ * @param {http.IncomingMessage} req
+ * @param {object} [opts]
+ * @param {Array<string>} [opts.names] Further host names this relay answers to
+ * @returns {boolean}
+ */
+function isRebindingHost (req, opts = {}) {
+  const raw = req && req.headers ? req.headers.host : null;
+  if (raw == null || raw === '') return false;
+  const value = String(raw).trim().toLowerCase();
+  const host = value.startsWith('[')
+    ? value.slice(1, value.indexOf(']') > 0 ? value.indexOf(']') : undefined)
+    : value.replace(/:\d*$/, '');
+  if (!host) return true;
+  if (LOOPBACK_HOSTS.has(host) || net.isIP(host)) return false;
+  const names = (opts.names || []).map((name) => String(name || '').trim().toLowerCase().replace(/:\d*$/, '')).filter(Boolean);
+  return !names.includes(host.replace(/\.$/, ''));
+}
+
+module.exports = { shouldEnforceRemoteAuth, isForeignBrowserWrite, isRebindingHost };

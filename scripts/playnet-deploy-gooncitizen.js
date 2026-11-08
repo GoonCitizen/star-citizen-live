@@ -228,8 +228,7 @@ async function main () {
     networking: true,
     peers,
     key: peerKey,
-    peersDb: null,
-    flushChainMinTrustedScore: -1
+    peersDb: null
   });
   peer.on('error', (err) => console.error('[playnet:deploy] peer error', err && err.message ? err.message : err));
   peer.on('warning', (w) => console.warn('[playnet:deploy] warning', w));

@@ -4,13 +4,12 @@
  * One-time playnet (regtest) operator sweep — testable plan + injectable runners.
  *
  * Steps:
- *   1. Wipe / realign chain tip (local invalidateblock and/or P2P_FLUSH_CHAIN)
+ *   1. Wipe / realign the local chain tip (invalidateblock)
  *   2. Acquire funds from the local Hub Beacon faucet
  *   3. Deploy GoonCitizen CONTRACT_PUBLISH (+ optional Accept on Hub)
  *
  * Live CLI:
  *   star-citizen-live: npm run playnet:deploy-gooncitizen | publish:gooncitizen
- *   hub.fabric.pub: npm run playnet:reset | playnet:flush (mesh / chain ops)
  * Deploy lives in this repo and publishes to Hub as a generic registry.
  */
 
@@ -37,22 +36,6 @@ function normalizeSnapshotHash (hash) {
 }
 
 /**
- * Body for Peer#sendFlushChainToTrustedPeers / P2P_FLUSH_CHAIN.
- * @param {object} opts
- * @param {string} opts.snapshotBlockHash
- * @param {string} [opts.network]
- * @param {string} [opts.label]
- * @returns {{ snapshotBlockHash: string, network: string, label: string }}
- */
-function buildFlushChainBody (opts = {}) {
-  return {
-    snapshotBlockHash: normalizeSnapshotHash(opts.snapshotBlockHash),
-    network: String(opts.network || process.env.FABRIC_FLUSH_NETWORK || 'regtest').trim() || 'regtest',
-    label: String(opts.label || process.env.FABRIC_FLUSH_LABEL || 'playnet-ops-sweep').trim() || 'playnet-ops-sweep'
-  };
-}
-
-/**
  * Ordered plan for a one-shot playnet realign.
  * @param {object} [opts]
  * @returns {{ steps: string[], wipe: object, faucet: object, deploy: object }}
@@ -66,15 +49,7 @@ function planPlaynetSweep (opts = {}) {
     wipe: {
       snapshotBlockHash,
       localInvalidate: opts.localInvalidate !== false,
-      flushPeers: opts.flushPeers !== false,
-      network: String(opts.network || 'regtest'),
-      flushBody: snapshotBlockHash
-        ? buildFlushChainBody({
-          snapshotBlockHash,
-          network: opts.network,
-          label: opts.flushLabel
-        })
-        : null
+      network: String(opts.network || 'regtest')
     },
     faucet: {
       hub: opts.hub || process.env.FABRIC_HUB_RPC_URL || 'http://127.0.0.1:8080',
@@ -229,7 +204,6 @@ module.exports = {
   SNAPSHOT_RE,
   SWEEP_STEPS,
   normalizeSnapshotHash,
-  buildFlushChainBody,
   planPlaynetSweep,
   runLocalChainWipe,
   acquireHubFaucetFunds,

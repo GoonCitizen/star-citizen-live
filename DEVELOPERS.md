@@ -117,7 +117,7 @@ or that Hub is production-hardened against every adversary.
 **Kickoff checklist** (full detail: [`docs/THREAT-MODEL.md`](docs/THREAT-MODEL.md)
 “Trusted mesh weeks”):
 
-1. `npm i` → `npm start` or `npm run desktop` (Node **26.12.1**).
+1. `npm i` → `npm start` or `npm run desktop` (Node **26.13.0**).
 2. Unlock identity; Peers tab shows a connection to hub and/or relay.
 3. Leave **Share logs globally** off; enable **Seal outbound group chat**.
 4. Keep HTTP on loopback (no LAN shared mode unless the LAN is trusted).
@@ -174,7 +174,7 @@ Fabric out loud.
 ```bash
 git clone https://github.com/GoonCitizen/star-citizen-live.git
 cd star-citizen-live
-# Node.js 26.12.1 — see .nvmrc
+# Node.js 26.13.0 — see .nvmrc
 npm i          # .npmrc already sets allow-git=all for Fabric git pins
 npm test       # unit + fabric + relay + integration + ui
 npm start      # LiveRelay → http://localhost:3041/
@@ -209,7 +209,7 @@ brand. File-level list of what to copy vs delete:
 
 ## Contributor mechanics
 
-**Node.js 26.12.1.** Fabric git deps need `npm i` (see `.npmrc`). Desktop /
+**Node.js 26.13.0.** Fabric git deps need `npm i` (see `.npmrc`). Desktop /
 mesh paths are not zero-dependency.
 
 | Command | What |
@@ -249,7 +249,7 @@ professional engineer.
 
 Repo: https://github.com/GoonCitizen/star-citizen-live
 Guide: DEVELOPERS.md (branch feature/rsi)
-Run: Node 26.12 → npm i → npm start → http://localhost:3041/
+Run: Node 26.13 → npm i → npm start → http://localhost:3041/
 
 Useful: real log lines for the parser, Discord bot ops, fleet JSON,
 desktop/Android QA, tests next to a fix. PRs against feature/rsi. Do not

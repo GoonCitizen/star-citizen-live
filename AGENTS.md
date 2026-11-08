@@ -51,7 +51,7 @@
   `npm run playnet:deploy-gooncitizen -- --production --accept`
   publishes the GoonCitizen application contract to both peers and Accepts it on Hub.
   Local registry cutover: `npm run playnet:deploy-gooncitizen -- --local-registry --accept`.
-- **Public relays:** operators of `relay.goon.vc` (nvm 26.12 + pm2, Caddy or
+- **Public relays:** operators of `relay.goon.vc` (nvm 26.13 + pm2, Caddy or
   Nginx → loopback HTTP, Peer on the dedicated NIC) read **`docs/PRODUCTION.md`**.
 
 ---
@@ -116,7 +116,7 @@ live tail). New work must protect these.
 
 ## 3. Build / run / test commands
 
-Requires **Node.js 26.12.1** (see `.nvmrc` / `package.json` `engines`). Desktop /
+Requires **Node.js 26.13.0** (see `.nvmrc` / `package.json` `engines`). Desktop /
 Fabric mesh paths need **`npm i`** (pins `@fabric/core`, `@fabric/http`,
 `@fabric/hub` from Git). **`.npmrc` sets `allow-git=all`** — npm 12+
 `allow-git=root` still fails during nested git-dep preparation of commit SHAs.
@@ -724,6 +724,18 @@ Which wire to use is **[`docs/API-SURFACES.md`](docs/API-SURFACES.md)** — not
   bridging and packaging already exist in some form on this branch.
 - Keep docs honest: `CONTINUE.md` / parts of `PROGRESS.md` still describe the
   retired M1 `app/` path; prefer **this file §3–§4** over those until refreshed.
+- **Inherit contract / Federation navigation from Hub** (follow-up, needs owner
+  go-ahead and a Hub pin bump). Hub is now upstream for it (Hub `AGENTS.md`,
+  "Contract and federation navigation"): framework-free `@fabric/hub/functions/`
+  `federationView`, `fabricMessageView`, `contractJournalView`,
+  `collectionRecords`, `hubContractsClient` (plus `federationVault`,
+  `federationRegistry`, `federationContractInvite`). The plan: replace this
+  tree's own copies (`functions/collectionRecords.js`, group wallet / withdrawal
+  rows, the group Log journal rows, `functions/fabricMessageCollection.js`
+  links) with those, extending `collectionRecords.KINDS` with group, mission,
+  person, location; keep GoonCitizen's React components and Statechain data.
+  `federationView.vaultRows` / `signerList` already read a group wallet as
+  `GET …/groups/:id/wallet` serves it (`address`, `keys`, `previous`).
 
 ---
 
@@ -770,7 +782,7 @@ Discord webhook into a tracked file.**
 | `DEVELOPERS.md` / `CONTRIBUTING.md` | Call for G00N SQUAD, PERMAFLEET, and other orgs (fork + Fabric mesh). |
 | `docs/APPLICATION.md` | Why LiveRelay is the application basis (artifacts vs Hub / core / blank Peer). |
 | `docs/INTELLIGENCE.md` | Downstream orgs: Groups as the org, `settings/local.js` whitelabel. |
-| `docs/PRODUCTION.md` | Public relay operators (`relay.goon.vc`): nvm 26.12, pm2, Caddy or Nginx, Peer bind. |
+| `docs/PRODUCTION.md` | Public relay operators (`relay.goon.vc`): nvm 26.13, pm2, Caddy or Nginx, Peer bind. |
 | `@fabric/core` `docs/TYPES_AND_SERVICES.md` | Suite `types/` + `services/` layering (core / http / Hub / Passport / this app). |
 | `CONTINUE.md` | Quick-start — **partially stale** (still describes M1 `app/`); prefer §3. |
 | `PROGRESS.md` | Milestone + retrospective trail (newest first). The live status log. |

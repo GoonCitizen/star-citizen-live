@@ -50,7 +50,7 @@ The Capacitor-NodeJS engine loads `android-www/nodejs/index.js`, which **always 
 
 ## Build (sideload)
 
-Requires Android Studio / SDK **and** Homebrew **OpenJDK 21** (`JAVA_HOME=/opt/homebrew/opt/openjdk@21/libexec/openjdk.jdk/Contents/Home`). Node 26.12.1 on the build machine. Capacitor 7 compiles the Android project as Java 21. The APK embeds `@choreruiz/capacitor-node-js` (Node 18 runtime + `libnode`).
+Requires Android Studio / SDK **and** Homebrew **OpenJDK 21** (`JAVA_HOME=/opt/homebrew/opt/openjdk@21/libexec/openjdk.jdk/Contents/Home`). Node 26.13.0 on the build machine. Capacitor 7 compiles the Android project as Java 21. The APK embeds `@choreruiz/capacitor-node-js` (Node 18 runtime + `libnode`).
 
 ```bash
 export JAVA_HOME=/opt/homebrew/opt/openjdk@21/libexec/openjdk.jdk/Contents/Home

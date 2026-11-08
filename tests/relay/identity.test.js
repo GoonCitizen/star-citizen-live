@@ -61,9 +61,14 @@ test('encrypt/decrypt round-trips with the right password only', () => {
 
   assert.ok(isIdentityVault(blob));
   assert.ok(!JSON.stringify(blob).includes(identity.xprv), 'xprv not in plaintext');
-  for (const word of new Set(identity.mnemonic.split(' '))) {
-    if (word.length > 5) assert.ok(!JSON.stringify(blob).includes(`"${word}`), 'no seed words stored');
-  }
+  // Field names like "account" and "network" are BIP39 words too: check values only.
+  const values = [];
+  (function collect (value) {
+    if (typeof value === 'string') values.push(value);
+    else if (value && typeof value === 'object') Object.values(value).forEach(collect);
+  })(blob);
+  const words = new Set(identity.mnemonic.split(' '));
+  assert.ok(values.every((value) => !value.includes(identity.mnemonic) && !words.has(value)), 'no seed words stored');
   const summary = identityBlobSummary(blob);
   assert.strictEqual(summary.pubkey, identity.pubkey, 'pubkey stays readable');
   assert.strictEqual(summary.network, 'regtest', 'network is kept in the record');
