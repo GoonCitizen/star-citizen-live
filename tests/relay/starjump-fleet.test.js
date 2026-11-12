@@ -12,7 +12,7 @@ const shipCatalog = require('../../functions/shipCatalog');
 const LiveRelay = require('../../services/LiveRelay');
 
 const SAMPLES = path.join(__dirname, '..', 'fixtures', 'fleets');
-const SAMPLE = path.join(SAMPLES, 'fleetviewer-thejohnram.json');
+const SAMPLE = path.join(SAMPLES, 'fleetviewer-testpilot.json');
 
 function tmpDir (prefix) {
   return fs.mkdtempSync(path.join(os.tmpdir(), prefix));
@@ -54,12 +54,12 @@ test('ownerFromSourceFile + owner-tagged extract/filter', () => {
   assert.ok(fs.existsSync(SAMPLE), 'sample fleet JSON should exist');
   const raw = JSON.parse(fs.readFileSync(SAMPLE, 'utf8'));
   const fleet = starjumpFleet.parseStarjumpExport(raw, {
-    name: 'John',
-    sourceFile: 'fleetviewer-thejohnram.json'
+    name: 'Test Pilot',
+    sourceFile: 'fleetviewer-testpilot.json'
   });
-  assert.ok(fleet.ships.every((s) => s.owner === 'thejohnram'));
+  assert.ok(fleet.ships.every((s) => s.owner === 'testpilot'));
   assert.equal(fleet.ownerCount, 1);
-  assert.deepEqual(fleet.owners || starjumpFleet.listOwners(fleet.ships), ['thejohnram']);
+  assert.deepEqual(fleet.owners || starjumpFleet.listOwners(fleet.ships), ['testpilot']);
 
   const merged = starjumpFleet.normalizeShips([
     ...fleet.ships,
@@ -78,8 +78,8 @@ test('ownerFromSourceFile + owner-tagged extract/filter', () => {
   assert.ok(byOwner.every((s) => s.owner === 'kersa'));
   const byQty = starjumpFleet.filterSortShips(merged, { minCount: 2, sort: 'count' });
   assert.ok(byQty.every((s) => (s.count || 1) >= 2));
-  const search = starjumpFleet.filterSortShips(merged, { q: 'thejohnram' });
-  assert.ok(search.every((s) => /thejohnram/i.test(s.owner || '')));
+  const search = starjumpFleet.filterSortShips(merged, { q: 'testpilot' });
+  assert.ok(search.every((s) => /testpilot/i.test(s.owner || '')));
 
   const byHull = starjumpFleet.filterSortShips(merged, { consolidate: 'hull', sort: 'count' });
   const polarisHull = byHull.find((s) => /polaris/i.test(s.slug) || /polaris/i.test(s.name || ''));
@@ -105,9 +105,9 @@ test('parseStarjumpExport extracts ships from sample', () => {
   const raw = JSON.parse(fs.readFileSync(SAMPLE, 'utf8'));
   assert.equal(starjumpFleet.isStarjumpExport(raw), true);
   const fleet = starjumpFleet.parseStarjumpExport(raw, {
-    name: 'John',
+    name: 'Test Pilot',
     ownerPubkey: '03aa',
-    sourceFile: 'fleetviewer-thejohnram.json'
+    sourceFile: 'fleetviewer-testpilot.json'
   });
   assert.equal(fleet.type, 'GoonCitizenFleet');
   assert.equal(fleet.uniqueShips, 2);
@@ -194,14 +194,14 @@ test('fleet REST import sample + list + delete', async () => {
   try {
     const samples = await request(port, 'GET', '/services/star-citizen/fleets/samples');
     assert.equal(samples.status, 200);
-    assert.ok(samples.body.data.some((s) => s.name === 'starjump-kersa.json'));
+    assert.ok(samples.body.data.some((s) => s.name === 'starjump-alpha.json'));
 
     const imported = await request(port, 'POST', '/services/star-citizen/fleets', {
-      sample: 'starjump-codywastaken.json',
-      name: 'Cody'
+      sample: 'starjump-bravo.json',
+      name: 'Bravo'
     });
     assert.equal(imported.status, 200);
-    assert.equal(imported.body.data.name, 'Cody');
+    assert.equal(imported.body.data.name, 'Bravo');
     assert.ok(imported.body.data.shipCount >= 1);
 
     const list = await request(port, 'GET', '/services/star-citizen/fleets');
