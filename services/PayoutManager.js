@@ -35,7 +35,7 @@ class PayoutManager extends EventEmitter {
   constructor (settings = {}) {
     super();
     this.settings = Object.assign({
-      network: 'regtest',      // regtest | signet | testnet | mainnet
+      network: 'regtest',      // regtest | signet | testnet | testnet5 | mainnet
       allowMainnet: false,
       rpc: null,               // async (method, params) => result
       feeSats: 500

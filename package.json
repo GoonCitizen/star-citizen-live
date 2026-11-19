@@ -8,6 +8,7 @@
     ".": "./services/LiveRelay.js",
     "./parser": "./functions/parser.js",
     "./locate": "./functions/locate.js",
+    "./rsi": "./functions/rsiService.js",
     "./functions/gooncitizenGameState": "./functions/gooncitizenGameState.js",
     "./functions/cumulativeHistory": "./functions/cumulativeHistory.js",
     "./services/FabricNetwork": "./services/FabricNetwork.js",
@@ -111,7 +112,7 @@
   "homepage": "https://github.com/GoonCitizen/star-citizen-live#readme",
   "dependencies": {
     "@choreruiz/capacitor-node-js": "=1.0.2",
-    "@fabric/core": "FabricLabs/fabric#feature/schemas",
+    "@fabric/core": "FabricLabs/fabric#feature/testnet5",
     "@fabric/discord": "FabricLabs/fabric-discord#feature/passport",
     "@fabric/http": "FabricLabs/fabric-http#feature/passport",
     "@fabric/hub": "FabricLabs/hub.fabric.pub#feature/passport",

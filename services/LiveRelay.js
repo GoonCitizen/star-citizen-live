@@ -3507,43 +3507,8 @@ class StarCitizenService extends EventEmitter {
    * @returns {Promise<object>}
    */
   async _verifyRsiOwnership (handle, pubkey) {
-    const rsiLookup = require('../functions/rsiLookup');
-    const rsiOwnershipClaim = require('../functions/rsiOwnershipClaim');
-    const claim = rsiOwnershipClaim.ownershipClaimToken(pubkey);
-    if (!claim) {
-      return {
-        ok: false,
-        status: 400,
-        error: 'invalid Fabric pubkey',
-        ownership: rsiOwnershipClaim.verifyOwnershipFromBio({ pubkey, handle, bio: null })
-      };
-    }
-    const out = await rsiLookup.lookupCitizen(handle);
-    if (!out.ok) {
-      return {
-        ok: false,
-        status: out.status || 502,
-        error: out.error || 'RSI citizen lookup failed',
-        ownership: rsiOwnershipClaim.verifyOwnershipFromBio({
-          pubkey,
-          handle,
-          bio: null
-        }),
-        citizen: null
-      };
-    }
-    const ownership = rsiOwnershipClaim.verifyOwnershipFromBio({
-      pubkey,
-      handle: (out.data && out.data.handle) || handle,
-      bio: out.data && out.data.bio
-    });
-    return {
-      ok: true,
-      status: 200,
-      ownership,
-      citizen: out.data,
-      cached: !!out.cached
-    };
+    const rsiService = require('../functions/rsiService');
+    return rsiService.verify(handle, pubkey);
   }
 
   /**
@@ -8432,77 +8397,14 @@ class StarCitizenService extends EventEmitter {
           if (!detail) return send(404, { error: 'Profile not found' });
           return send(200, { type: 'PeerProfileDetail', data: detail });
         }
-        let rsiMatch;
-        if ((rsiMatch = pathname.match(new RegExp(`^${base}/rsi/orgs/([^/]+)$`))) && req.method === 'GET') {
-          if (!this._requireSession(req, send)) return;
-          const rsiLookup = require('../functions/rsiLookup');
-          const out = await rsiLookup.lookupOrg(decodeURIComponent(rsiMatch[1]));
-          if (!out.ok) return send(out.status || 502, { error: out.error || 'RSI org lookup failed' });
-          return send(200, { type: 'RsiOrganization', data: out.data, cached: !!out.cached });
-        }
-        if (pathname === `${base}/rsi/claim` && req.method === 'GET') {
-          if (!this._requireSession(req, send)) return;
-          const pk = (this._identity && this._identity.pubkey) ||
-            this._authPubkey(req) || null;
-          const rsiOwnershipClaim = require('../functions/rsiOwnershipClaim');
-          const token = pk ? rsiOwnershipClaim.ownershipClaimToken(pk) : null;
-          if (!token) return send(400, { error: 'unlocked Fabric identity required' });
-          return send(200, {
-            type: 'RsiOwnershipClaim',
-            data: {
-              claim: token,
-              pubkey: pk,
-              pubkeyHash: rsiOwnershipClaim.pubkeyHashHex(pk),
-              instructions:
-                'Add this exact token to your public RSI citizen biography (Account → Bio), then Verify.'
-            }
-          });
-        }
-        if ((rsiMatch = pathname.match(new RegExp(`^${base}/rsi/citizens/([^/]+)/verify$`))) &&
-            req.method === 'GET') {
-          if (!this._requireSession(req, send)) return;
-          const handle = decodeURIComponent(rsiMatch[1]);
-          const pk = String(url.searchParams.get('pubkey') ||
-            (this._identity && this._identity.pubkey) || '').trim();
-          if (!pk) return send(400, { error: 'pubkey query required (or unlock local identity)' });
-          const result = await this._verifyRsiOwnership(handle, pk);
-          if (!result.ok && !result.citizen) {
-            return send(result.status || 502, {
-              error: result.error,
-              type: 'RsiOwnershipVerification',
-              data: result.ownership
-            });
-          }
-          return send(200, {
-            type: 'RsiOwnershipVerification',
-            data: result.ownership,
-            citizen: result.citizen || null,
-            cached: !!result.cached
-          });
-        }
-        if ((rsiMatch = pathname.match(new RegExp(`^${base}/rsi/citizens/([^/]+)$`))) && req.method === 'GET') {
-          if (!this._requireSession(req, send)) return;
-          const rsiLookup = require('../functions/rsiLookup');
-          const handle = decodeURIComponent(rsiMatch[1]);
-          const out = await rsiLookup.lookupCitizen(handle);
-          if (!out.ok) return send(out.status || 502, { error: out.error || 'RSI citizen lookup failed' });
-          const pk = String(url.searchParams.get('pubkey') || '').trim();
-          let ownership = null;
-          if (pk) {
-            const rsiOwnershipClaim = require('../functions/rsiOwnershipClaim');
-            ownership = rsiOwnershipClaim.verifyOwnershipFromBio({
-              pubkey: pk,
-              handle: (out.data && out.data.handle) || handle,
-              bio: out.data && out.data.bio
-            });
-          }
-          return send(200, {
-            type: 'RsiCitizen',
-            data: out.data,
-            cached: !!out.cached,
-            ownership
-          });
-        }
+        const rsiService = require('../functions/rsiService');
+        if (await rsiService.handle(req, res, pathname, {
+          bases: ['/services/rsi', `${base}/rsi`],
+          url,
+          send,
+          authorize: () => this._requireSession(req, send),
+          pubkey: (queryPubkey) => queryPubkey || (this._identity && this._identity.pubkey) || this._authPubkey(req) || ''
+        })) return;
         if (pathname === `${base}/presence` || pathname === '/presence') {
           if (req.method === 'GET') {
             if (!this._requireSession(req, send)) return;

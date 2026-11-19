@@ -419,6 +419,8 @@ Discord catalog, search, files, Game.log browse, locations, fleets, snapshots.
 | `GET` | `/loginfo` `/logslice` | Session. Game.log path + byte window. |
 | `GET` `POST` | `/reparse` | Session. |
 | `GET` | `/locations` **also /** | Public location catalog. |
+The same four routes are the package interface `@rsi/star-citizen/rsi`, mounted at `/services/rsi` for apps that depend on GoonCitizen (goon.vc). On this relay they also answer at `/services/rsi` and `/services/star-citizen/rsi`, and a session is required.
+
 | `GET` | `/rsi/orgs/:sid` | Session. Public RSI org page snapshot. |
 | `GET` | `/rsi/claim` | Session. Biography token for the unlocked Fabric key. |
 | `GET` | `/rsi/citizens/:handle` | Session. Public RSI citizen page snapshot. |

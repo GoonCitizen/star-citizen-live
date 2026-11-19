@@ -14,10 +14,15 @@
  * with `<hub>` = `--hub <dir>`, `FABRIC_HUB`, or the sibling `../hub.fabric.pub`.
  *
  * Usage:
- *   npm run deploy:local -- [start|publish|status|stop|reset] [--network regtest]
+ *   npm run deploy:local -- [start|publish|status|stop|reset]
+ *                           [--network regtest|signet|testnet5|mainnet]
  *                           [--profile <file> | --hub <dir>] [--dir <relay dir>]
  *                           [--port <http>] [--fabric-port <port>] [--no-apk]
  *                           [--fabric-core <dir>] [--fabric-http <dir>] [--keys] [--json]
+ *
+ * `--network` is the Hub local network, in rehearsal order: regtest, then
+ * signet and testnet5, then mainnet. The relay takes that name from the
+ * profile and does not run bitcoind.
  *
  *   start    (re)start relay-goon-vc with an empty catalog, publish the builds
  *            (npm run build:installers:packed first), check the Hubs list them

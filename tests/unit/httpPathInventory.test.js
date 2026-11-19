@@ -18,7 +18,8 @@ const SOURCE_FILES = [
   'services/LiveRelay.js',
   'functions/liveRelayPassport.js',
   'functions/liveRelayPeeringHttp.js',
-  'functions/groupVoiceHttp.js'
+  'functions/groupVoiceHttp.js',
+  'functions/rsiService.js'
 ];
 
 /** Distinctive path tokens that must appear (backticks optional). */

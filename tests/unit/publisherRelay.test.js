@@ -15,6 +15,8 @@ const {
   nextPorts,
   publishedRow
 } = require('../../functions/publisherRelay');
+const PayoutManager = require('../../services/PayoutManager');
+const GroupWallets = require('../../services/GroupWallets');
 
 describe('publisherRelay', () => {
   it('gives the relay no operator identity, Discord, or GoonCitizen config from the env', () => {
@@ -61,6 +63,27 @@ describe('publisherRelay', () => {
     assert.strictEqual(o.logfile, path.join('/tmp/relay', 'no-game.log'));
     assert.strictEqual(o.documents.enable, true);
     assert.deepStrictEqual(o.missions.officers, []);
+  });
+
+  it('keeps testnet5 on the relay, and payouts accept it without allowMainnet', () => {
+    const o = liveRelayOptions({
+      port: 33183,
+      fabricPort: 33280,
+      network: 'testnet5',
+      fabricPeers: []
+    }, '/tmp/relay', {});
+    assert.strictEqual(o.payouts.network, 'testnet5');
+    assert.strictEqual(o.payouts.ledger, true);
+    assert.notStrictEqual(o.payouts.network, 'mainnet');
+    assert.strictEqual(o.bitcoin.enable, false);
+    assert.strictEqual(o.bitcoin.network, 'testnet5');
+    const payouts = new PayoutManager({ network: 'testnet5' });
+    assert.strictEqual(payouts.settings.network, 'testnet5');
+    assert.strictEqual(payouts.settings.allowMainnet, false);
+    assert.strictEqual(payouts.mode, 'ledger');
+    const wallets = new GroupWallets({ store: { get () {}, put () {} }, network: 'testnet5' });
+    assert.strictEqual(wallets.network, 'testnet5');
+    assert.strictEqual(wallets.settings.allowMainnet, false);
   });
 
   it('keeps every relay file inside its directory', () => {
