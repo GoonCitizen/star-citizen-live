@@ -1,11 +1,12 @@
 $ npm i --allow-git=all
 npm warn deprecated esbuild-plugin-polyfill-node@0.3.0: Package no longer supported. Contact Support at https://www.npmjs.com/support for more info.
 npm warn deprecated boolean@3.2.0: Package no longer supported. Contact Support at https://www.npmjs.com/support for more info.
+npm warn deprecated @sapphire/shapeshift@4.0.0: Shapeshift was created when other validation libraries had significant limitations in performance and error reporting. Those advantages have diminished as libraries such as Zod have become faster and improved their error messages, while also gaining broader environment support, a larger community, and custom error printers.
 npm warn gitignore-fallback No .npmignore file found, using .gitignore for file exclusion. Consider creating a .npmignore file to explicitly control published files.
 
-added 984 packages, and audited 985 packages in 1m
+added 983 packages, and audited 984 packages in 1m
 
-165 packages are looking for funding
+164 packages are looking for funding
   run `npm fund` for details
 
 found 0 vulnerabilities
