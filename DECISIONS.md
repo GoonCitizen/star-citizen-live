@@ -8,6 +8,111 @@ What runs: [`AGENTS.md`](AGENTS.md) §3–§4. D-002 removed a heavyweight *tran
 
 ---
 
+## D-022 — Linked signers: a delegation protocol on Fabric Messages (supersedes D-013)
+**Date:** 2026-10-30 · **Status:** Adopted on `feature/passport-v2` (owner cuts the release)
+
+**Decision:** Linking Passport, a Hub, GoonCitizen desktop / Android, or any
+other app is **delegation** (spec: `@fabric/core` `docs/DELEGATION.md`), built
+only from signed Fabric Messages, with no support for the D-013 device-link
+flow. The linked participants are **linked signers**, not "devices": each keeps
+its own key and its own message store, and none holds another's.
+
+1. **Pairing** — one app shows an invitation (`DELEGATION_LINK_OFFER`, a
+   `fabric:` frame naming an allowlisted rendezvous Hub, `https://relay.goon.vc`
+   by default) and the other takes it (paste or QR). The rendezvous
+   (`/delegations`, keyless; this relay hosts one) carries the answer and
+   reveal; both screens show the same six-digit code, and the player matches
+   it before either side grants anything. Passport on the same computer pairs
+   over the loopback delegate (`@fabric/http` `fabricDelegate`) and the
+   native dialog confirms.
+2. **Grants** — `DELEGATION_GRANT` frames, each signed by the grantor, name the
+   grantee and scopes: `identity` (act as this player), `passport` (answer
+   Passport sign-ins), `message` (ask for signatures). `DELEGATION_REVOKE`
+   ends one; a replayed revoked grant stays revoked.
+3. **Requests** — a grantee asks with `DELEGATION_REQUEST` (loopback, or the
+   mailbox `/services/delegation/mailbox` on a Hub). Nothing signs on its own:
+   the request becomes a Notifications row with Sign / Decline and a desktop
+   toast, and Sign answers with `DELEGATION_RESULT`. A Hub may answer by rules
+   its operator sets.
+4. **One player** — mutual unrevoked `identity` grants make one actor
+   (`functions/identityCluster.js`); grants and revokes are gossiped as
+   GoonCitizen `DelegationShare`, and account sync (`DeviceDataShare`) is
+   gated on that cluster.
+
+Removed: `/device-links`, `fabric://link`, `IdentityCrossSign` /
+`IdentityCrossSignRevoke`, `/identity/cross-sign`, the local signer routes
+`/services/fabric/identity|sign|link`, `components/DeviceLinkModal.js`, and the
+`#devices` page (old links open `#signers`).
+
+**Why:** Device links only proved two keys belonged together; every other
+cross-app job (Passport sign-ins through the desktop, signing for a group
+wallet, a Hub signing by rule) needed its own endpoint and its own trust
+check. One grant / request / result protocol covers them, every step is a
+frame any participant can verify and keep, and revocation is a frame too.
+User copy says "linked signers" because the participants are apps and
+services, not hardware.
+
+**Consequences:** existing device links do not carry over; players link again
+once. Passport and Hub must ship the same cutover (`@fabric/core`,
+`@fabric/http`, Hub, Passport move together).
+
+---
+
+## D-021 — Passport v2 sign-in (supersedes D-011)
+**Date:** 2026-10-26 · **Status:** Adopted on `feature/passport-v2` (owner cuts the release)
+
+**Decision:** Websites sign players in with **Passport v2** (spec: `@fabric/core`
+`docs/PASSPORT.md`), with no support for the D-011 flow. LiveRelay mounts it
+through `functions/liveRelayPassport.js` on `@fabric/http`
+`passportRelyingParty` + `passportHttp`:
+
+1. **Challenge** — `POST /sessions/challenges` returns a signed
+   `PASSPORT_CHALLENGE` for a **pinned** origin (loopback on the relay's port,
+   `https://<FABRIC_PUBLIC_HOST>`, `settings.passport.origins`; the `Host`
+   header never adds one) and sets the HttpOnly `fabric.passport` binding
+   cookie.
+2. **Assertion** — the page hands the challenge to Passport over a
+   `MessagePort` (`@fabric/http` `functions/passportPage`). Passport compares
+   the challenge's origin with the tab's real URL, shows the site and what is
+   shared, and signs a `PASSPORT_ASSERTION` with the identity key of the
+   chosen account on the challenge's network — or, once the GoonCitizen
+   desktop is linked, asks it to sign (`POST /services/fabric/sign`,
+   `PASSPORT_SIGN_REQUEST`, native dialog, signer `gooncitizen`).
+3. **Session** — `POST /sessions { assertion }` redeems once with the binding
+   cookie and sets the HttpOnly `fabric.session` cookie. A cookie counts for a
+   write only from the origin it was issued for.
+4. **Native clients** (desktop and Android signing in to a relay themselves,
+   `functions/fabricLoginClient.js`) send `X-Fabric-Native: 1` and no
+   `Origin`, get the binding secret in the challenge body, return it in
+   `X-Fabric-Binding`, and get a Bearer token kept in memory.
+
+Removed: `fabric://login`, `/sessions/:id/signatures`, session polling,
+`delegationToken` / `fabric.delegation`, `components/SiteLogin.js`,
+`components/FabricLoginModal.js`, and the desktop's in-app approval modal.
+
+**Why:** a review of D-011 found it could be phished. A `fabric://login`
+link carries the site's own claim of who it is, and the desktop can't see
+which page launched it, so a hostile page could get a player's login for
+another site. The completion body wasn't bound to the browser that started
+it, and the delegation token was a long-lived bearer kept in `localStorage`.
+v2 binds each sign-in to an origin the browser vouches for and to the
+browser that asked, and the page never holds a token.
+
+**Consequences / guardrails:**
+- The xpub is never shared without consent; sign-in carries only the
+  identity public key of the chosen account.
+- Sessions last 8 h and live in memory: a relay restart signs everyone out.
+- The local signer pins Chrome builds of Passport by id
+  (`FABRIC_PASSPORT_EXTENSION_IDS` / `settings.fabricSigner.extensionIds`);
+  any Firefox build may ask. Linking shows a six-digit code on both sides.
+  It is mounted only under Electron (never `SC_MODE=server`, Android, or a
+  CLI relay).
+- Identity files from before v2 can't be read; players restore from their
+  seed.
+- Device-link (D-013) stays a separate contract.
+
+---
+
 ## D-020 — Fabric Message parents are a hash chain
 **Date:** 2026-08-20 · **Status:** Adopted (originate now; inbound zeros still accepted)
 
@@ -53,6 +158,11 @@ HTTP origin; clipboard/QR portability across installs.
 - Prefer `POST …/groups/:id/share` and invite responses’ `protocolUrl`.
 - Do not invent `fabric://group?…` query schemes — opaque Message is enough.
 - Invitation strings expire (default 7 days). Legacy clips without `expiresAt` stay valid.
+- **Amended 2026-10-24:** a clip is exactly core `encodeFabricUri` output
+  (`fabric:` + base64url of one signed frame) and is read only with core
+  `decodeFabricUri`. The `fabricShareEncoding` setting, raw hex/base64 paste,
+  and the `protocolUrlHex` / `protocolUrlBase64` / `messageBase64` response
+  fields are gone; HTTP carries `protocolUrl` only.
 
 ---
 
@@ -224,7 +334,7 @@ meet that bar.
 ---
 
 ## D-013 — Mutual device-link attestations (separate seeds)
-**Date:** 2026-07-20 · **Amended:** 2026-08-15 · **Status:** Adopted
+**Date:** 2026-07-20 · **Amended:** 2026-08-15 · **Status:** Superseded by D-022 (2026-10-30)
 
 **Decision:** Passport, Hub browser identity, GoonCitizen desktop, and GoonCitizen Android each keep **their own seed**. Cross-app trust is a **mutual Schnorr attestation** over a Hub / LiveRelay rendezvous (`/device-links`), not a shared mnemonic.
 
@@ -330,7 +440,7 @@ Group a Hub-compatible convergent policy.
 ---
 
 ## D-011 — Client-signed Fabric site login (Passport ↔ desktop)
-**Date:** 2026-07-20 · **Status:** Adopted
+**Date:** 2026-07-20 · **Status:** Superseded by D-021 (Passport v2); kept for history
 
 **Decision:** Websites (e.g. `relay.goon.vc`) authenticate players with a
 **client-signed** Fabric login session. GoonCitizen desktop and Fabric Passport
@@ -369,6 +479,11 @@ share one REST contract so either can complete sign-in.
   registered / default-app wins; document for operators.
 - Secrets stay in Electron main / Passport session memory; renderer only
   approves or rejects.
+- **Amended 2026-10-24:** the completion body is a signed core
+  `SiteLoginResponse` frame, `{ fabric: "fabric:…" }` (signer `gooncitizen`
+  for desktop / Android, `passport` for the extension), checked against the
+  session's own origin and nonce. LiveRelay refuses the JSON
+  `{ signature, pubkeyHex, identity }` body in step 2.
 
 ---
 

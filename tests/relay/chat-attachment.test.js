@@ -29,7 +29,8 @@ test('chatAttachment: round-trip wire body with default Hub price', () => {
   const parsed = decodeWireBody(wire);
   assert.strictEqual(parsed.caption, 'hello');
   assert.strictEqual(parsed.attachment.documentId, 'abc123');
-  assert.strictEqual(parsed.attachment.purchasePriceSats, 25);
+  assert.strictEqual(parsed.attachment.purchasePriceSats, DEFAULT_CHAT_ATTACH_PRICE_SATS);
+  assert.strictEqual(DEFAULT_CHAT_ATTACH_PRICE_SATS, 716, 'smallest mainnet-settleable HTLC');
 });
 
 test('chatAttachment: slash menu matches /fi → /file', () => {

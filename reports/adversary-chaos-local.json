@@ -1,0 +1,165 @@
+{
+  "findings": [
+    {
+      "severity": "info",
+      "title": "GET status",
+      "detail": "200",
+      "at": "2026-08-20T14:11:56.249Z"
+    },
+    {
+      "severity": "blocker",
+      "title": "Unauthenticated POST /chat/messages succeeds",
+      "detail": "author=dc6142cd08a6a385 handle= — LAN clients on shared HTTP bind as the unlocked identity",
+      "at": "2026-08-20T14:11:56.265Z"
+    },
+    {
+      "severity": "important",
+      "title": "Group chat POST without membership check (local mode)",
+      "detail": "group:group-msqxnfge-1 accepted body from unauthenticated HTTP",
+      "at": "2026-08-20T14:11:56.271Z"
+    },
+    {
+      "severity": "important",
+      "title": "Readable without auth: /settings",
+      "detail": "keys=",
+      "at": "2026-08-20T14:11:56.282Z"
+    },
+    {
+      "severity": "important",
+      "title": "Readable without auth: /services/star-citizen/discord/guilds",
+      "detail": "botReady=false guilds=0",
+      "at": "2026-08-20T14:11:56.286Z"
+    },
+    {
+      "severity": "important",
+      "title": "Readable without auth: /services/star-citizen/groups",
+      "detail": "groups=2 first=Victor's Virulent Virus",
+      "at": "2026-08-20T14:11:56.287Z"
+    },
+    {
+      "severity": "important",
+      "title": "Readable without auth: /services/star-citizen/missions",
+      "detail": "ok",
+      "at": "2026-08-20T14:11:56.289Z"
+    },
+    {
+      "severity": "important",
+      "title": "Readable without auth: /services/star-citizen/peers",
+      "detail": "peers=1",
+      "at": "2026-08-20T14:11:56.290Z"
+    },
+    {
+      "severity": "important",
+      "title": "Readable without auth: /services/star-citizen/presence/roster",
+      "detail": "ok",
+      "at": "2026-08-20T14:11:56.292Z"
+    },
+    {
+      "severity": "important",
+      "title": "POST /missions",
+      "detail": "200 accepted",
+      "at": "2026-08-20T14:11:56.298Z"
+    },
+    {
+      "severity": "info",
+      "title": "Neighbor 0 mesh",
+      "detail": "pubkey=02d36e1dc2882657… connected=2 first=127.0.0.1:7777",
+      "at": "2026-08-20T14:11:56.689Z"
+    },
+    {
+      "severity": "info",
+      "title": "Neighbor 0 signed writes",
+      "detail": "48",
+      "at": "2026-08-20T14:11:56.793Z"
+    },
+    {
+      "severity": "info",
+      "title": "Neighbor 1 mesh",
+      "detail": "pubkey=0266b95ad4b60250… connected=2 first=127.0.0.1:7777",
+      "at": "2026-08-20T14:11:57.066Z"
+    },
+    {
+      "severity": "info",
+      "title": "Neighbor 1 signed writes",
+      "detail": "48",
+      "at": "2026-08-20T14:11:57.167Z"
+    },
+    {
+      "severity": "info",
+      "title": "Neighbor 2 mesh",
+      "detail": "pubkey=034c1e4d63abe1d5… connected=2 first=127.0.0.1:7777",
+      "at": "2026-08-20T14:11:57.435Z"
+    },
+    {
+      "severity": "info",
+      "title": "Neighbor 2 signed writes",
+      "detail": "48",
+      "at": "2026-08-20T14:11:57.550Z"
+    },
+    {
+      "severity": "info",
+      "title": "Neighbor 3 mesh",
+      "detail": "pubkey=036d880488fe0da1… connected=2 first=127.0.0.1:7777",
+      "at": "2026-08-20T14:11:57.821Z"
+    },
+    {
+      "severity": "info",
+      "title": "Neighbor 3 signed writes",
+      "detail": "48",
+      "at": "2026-08-20T14:11:57.923Z"
+    },
+    {
+      "severity": "info",
+      "title": "Adversary peer up",
+      "detail": "fabric=127.0.0.1:18000 dial=127.0.0.1:7777,127.0.0.1:7778 pubkey=02ba3a44bd3561c5…",
+      "at": "2026-08-20T14:11:57.993Z"
+    },
+    {
+      "severity": "info",
+      "title": "Adversary peer up",
+      "detail": "fabric=127.0.0.1:18001 dial=127.0.0.1:7777,127.0.0.1:7778 pubkey=02d5725feb093dcd…",
+      "at": "2026-08-20T14:11:58.118Z"
+    },
+    {
+      "severity": "warn",
+      "title": "Adversary mesh state 18000",
+      "detail": "ready=true connected=0",
+      "at": "2026-08-20T14:12:06.119Z"
+    },
+    {
+      "severity": "info",
+      "title": "Flooded 5 global msgs from adversary HTTP",
+      "detail": "18000",
+      "at": "2026-08-20T14:12:06.237Z"
+    },
+    {
+      "severity": "warn",
+      "title": "Adversary mesh state 18001",
+      "detail": "ready=true connected=0",
+      "at": "2026-08-20T14:12:06.237Z"
+    },
+    {
+      "severity": "info",
+      "title": "Flooded 5 global msgs from adversary HTTP",
+      "detail": "18001",
+      "at": "2026-08-20T14:12:06.304Z"
+    },
+    {
+      "severity": "important",
+      "title": "Adversary mesh chat visible on desktop",
+      "detail": "25 adv-flood msgs in desktop global channel",
+      "at": "2026-08-20T14:12:06.316Z"
+    }
+  ],
+  "targets": {
+    "http": "http://127.0.0.1:3041",
+    "fabric": [
+      "127.0.0.1:7777",
+      "127.0.0.1:7778"
+    ],
+    "production": false,
+    "chaos": true
+  },
+  "crash": null,
+  "at": "2026-08-20T14:12:06.316Z"
+}

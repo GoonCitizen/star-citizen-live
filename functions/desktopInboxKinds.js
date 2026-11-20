@@ -3,7 +3,8 @@
 /**
  * Desktop OS toast kinds for the GoonCitizen register inbox.
  * Aligned with Passport `NOTIFICATION_WORTHY_TYPES` high-priority ARC surfaces
- * (invites, offers, proposals) plus mission completion claims and wallet events.
+ * (invites, offers, proposals) plus mission completion claims, wallet events,
+ * and signing requests from linked signers.
  *
  * Inbox `kind` values (functions/registerInbox.js), not wire body `type` strings.
  */
@@ -20,7 +21,8 @@ const DESKTOP_INBOX_KINDS = Object.freeze([
   'MissionClaimDecision',
   'WalletEscrow',
   'WalletPayout',
-  'WalletWithdrawal'
+  'WalletWithdrawal',
+  'DelegationRequest'
 ]);
 
 const DESKTOP_INBOX_KIND_SET = new Set(DESKTOP_INBOX_KINDS);
@@ -102,6 +104,8 @@ function desktopNotifyMeta (kind) {
       return { title: 'Wallet payout', notifyKind: 'walletpayout' };
     case 'WalletWithdrawal':
       return { title: 'Group withdrawal', notifyKind: 'walletwithdrawal' };
+    case 'DelegationRequest':
+      return { title: 'Signing request', notifyKind: 'delegationrequest' };
     default:
       return { title: 'Notification', notifyKind: 'inbox' };
   }

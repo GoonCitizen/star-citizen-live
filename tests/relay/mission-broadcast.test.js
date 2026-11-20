@@ -9,7 +9,8 @@ const path = require('path');
 
 const LiveRelay = require('../../services/LiveRelay');
 const MissionManager = require('../../services/MissionManager');
-const { createIdentity, signEnvelope } = require('../../functions/identity');
+const { createIdentity } = require('../../functions/identity');
+const { passportLogin } = require('../helpers/passportLogin');
 
 const BASE = '/services/star-citizen';
 
@@ -28,11 +29,8 @@ function request (port, method, reqPath, payload, token) {
   });
 }
 
-async function login (port, identity) {
-  const envelope = signEnvelope(identity, { intent: 'login', ts: new Date().toISOString() });
-  const res = await request(port, 'POST', `${BASE}/auth`, envelope);
-  assert.strictEqual(res.status, 200);
-  return res.body.data.token;
+function login (port, identity) {
+  return passportLogin(port, identity);
 }
 
 function sleep (ms) {

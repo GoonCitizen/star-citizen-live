@@ -1,0 +1,866 @@
+{
+  "generatedAt": "2026-08-17T01:28:03.661Z",
+  "commit": "5e10da874016ec27edc2888d5ef37520f21c9ee2",
+  "branch": "feature/rsi",
+  "totals": {
+    "srcFiles": 235,
+    "srcLines": 82645,
+    "testFiles": 226,
+    "untestedFiles": 41,
+    "untestedLines": 8233,
+    "unusedFiles": 27,
+    "unusedLines": 6267,
+    "prodUntestedFiles": 14,
+    "prodUntestedLines": 1966
+  },
+  "byDir": {
+    "all": {
+      "services": {
+        "files": 8,
+        "lines": 18975
+      },
+      "components": {
+        "files": 53,
+        "lines": 27537
+      },
+      "main.js": {
+        "files": 1,
+        "lines": 1716
+      },
+      "functions": {
+        "files": 142,
+        "lines": 29111
+      },
+      "scripts": {
+        "files": 21,
+        "lines": 3733
+      },
+      "types": {
+        "files": 5,
+        "lines": 1004
+      },
+      "contracts": {
+        "files": 3,
+        "lines": 450
+      },
+      "preload.js": {
+        "files": 1,
+        "lines": 95
+      },
+      "constants.js": {
+        "files": 1,
+        "lines": 24
+      }
+    },
+    "untested": {
+      "main.js": {
+        "files": 1,
+        "lines": 1716
+      },
+      "components": {
+        "files": 11,
+        "lines": 2419
+      },
+      "scripts": {
+        "files": 19,
+        "lines": 3369
+      },
+      "types": {
+        "files": 1,
+        "lines": 180
+      },
+      "functions": {
+        "files": 7,
+        "lines": 430
+      },
+      "preload.js": {
+        "files": 1,
+        "lines": 95
+      },
+      "constants.js": {
+        "files": 1,
+        "lines": 24
+      }
+    },
+    "prodUntested": {
+      "components": {
+        "files": 8,
+        "lines": 1528
+      },
+      "functions": {
+        "files": 5,
+        "lines": 414
+      },
+      "constants.js": {
+        "files": 1,
+        "lines": 24
+      }
+    },
+    "unused": {
+      "main.js": {
+        "files": 1,
+        "lines": 1716
+      },
+      "scripts": {
+        "files": 19,
+        "lines": 3369
+      },
+      "components": {
+        "files": 3,
+        "lines": 891
+      },
+      "types": {
+        "files": 1,
+        "lines": 180
+      },
+      "preload.js": {
+        "files": 1,
+        "lines": 95
+      },
+      "functions": {
+        "files": 2,
+        "lines": 16
+      }
+    }
+  },
+  "unused": [
+    {
+      "file": "main.js",
+      "lines": 1716
+    },
+    {
+      "file": "scripts/adversary-local-probe.js",
+      "lines": 465
+    },
+    {
+      "file": "scripts/android-stage.js",
+      "lines": 413
+    },
+    {
+      "file": "scripts/refresh-location-catalog.js",
+      "lines": 410
+    },
+    {
+      "file": "scripts/discord-events.js",
+      "lines": 351
+    },
+    {
+      "file": "scripts/playnet-deploy-gooncitizen.js",
+      "lines": 319
+    },
+    {
+      "file": "components/MissionHome.js",
+      "lines": 314
+    },
+    {
+      "file": "components/StarCitizenHome.js",
+      "lines": 291
+    },
+    {
+      "file": "components/Interface.js",
+      "lines": 286
+    },
+    {
+      "file": "scripts/node.js",
+      "lines": 244
+    },
+    {
+      "file": "types/StarCitizenAPI.js",
+      "lines": 180
+    },
+    {
+      "file": "scripts/publish-build-documents.js",
+      "lines": 173
+    },
+    {
+      "file": "scripts/refresh-ship-catalog.js",
+      "lines": 170
+    },
+    {
+      "file": "scripts/build.js",
+      "lines": 163
+    },
+    {
+      "file": "scripts/ensure-fabric-linked.js",
+      "lines": 156
+    },
+    {
+      "file": "scripts/test-fabric-login-against-hub.js",
+      "lines": 101
+    },
+    {
+      "file": "preload.js",
+      "lines": 95
+    },
+    {
+      "file": "scripts/android-node.js",
+      "lines": 89
+    },
+    {
+      "file": "scripts/dashboard-entry.js",
+      "lines": 86
+    },
+    {
+      "file": "scripts/discord-role-check.js",
+      "lines": 67
+    },
+    {
+      "file": "scripts/replay.js",
+      "lines": 43
+    },
+    {
+      "file": "scripts/desktop.js",
+      "lines": 41
+    },
+    {
+      "file": "scripts/fabric-env.js",
+      "lines": 27
+    },
+    {
+      "file": "scripts/fabric.js",
+      "lines": 27
+    },
+    {
+      "file": "scripts/publish-agent-probes.js",
+      "lines": 24
+    },
+    {
+      "file": "functions/normalizeDiscordSettings.js",
+      "lines": 8
+    },
+    {
+      "file": "functions/oracleAttestation.js",
+      "lines": 8
+    }
+  ],
+  "prodUntested": [
+    {
+      "file": "components/GroupFabricInspector.js",
+      "lines": 471,
+      "prod": [
+        "components/GroupPage.js",
+        "components/Groups.js",
+        "scripts/build.js"
+      ]
+    },
+    {
+      "file": "components/LocationPicker.js",
+      "lines": 253,
+      "prod": [
+        "components/Dashboard.js",
+        "components/Identity.js",
+        "scripts/build.js"
+      ]
+    },
+    {
+      "file": "components/ShipPicker.js",
+      "lines": 252,
+      "prod": [
+        "components/Dashboard.js",
+        "components/Identity.js",
+        "scripts/build.js"
+      ]
+    },
+    {
+      "file": "components/QrScanOverlay.js",
+      "lines": 167,
+      "prod": [
+        "components/Dashboard.js"
+      ]
+    },
+    {
+      "file": "functions/fabricDeviceLinkRelay.js",
+      "lines": 151,
+      "prod": [
+        "services/LiveRelay.js"
+      ]
+    },
+    {
+      "file": "components/GroupContractSummary.js",
+      "lines": 134,
+      "prod": [
+        "components/GroupPage.js",
+        "components/Groups.js"
+      ]
+    },
+    {
+      "file": "components/RegisterEventLog.js",
+      "lines": 102,
+      "prod": [
+        "components/GroupPage.js",
+        "components/MissionPage.js"
+      ]
+    },
+    {
+      "file": "functions/fabricSiteLogin.js",
+      "lines": 95,
+      "prod": [
+        "services/LiveRelay.js"
+      ]
+    },
+    {
+      "file": "functions/desktopNotify.js",
+      "lines": 87,
+      "prod": [
+        "components/GlobalChatDock.js",
+        "components/MissionBroadcastBanner.js",
+        "components/Settings.js"
+      ]
+    },
+    {
+      "file": "components/ActivityHeatmap.js",
+      "lines": 85,
+      "prod": [
+        "components/Identity.js",
+        "components/Peers.js",
+        "components/ProfilePage.js",
+        "scripts/build.js"
+      ]
+    },
+    {
+      "file": "functions/fabricKeyStoreClient.js",
+      "lines": 68,
+      "prod": [
+        "functions/androidIdentityStore.js",
+        "functions/androidSecureScreen.js"
+      ]
+    },
+    {
+      "file": "components/MissionOutcomesChart.js",
+      "lines": 64,
+      "prod": [
+        "components/Missions.js",
+        "scripts/build.js"
+      ]
+    },
+    {
+      "file": "constants.js",
+      "lines": 24,
+      "prod": [
+        "components/Dashboard.js",
+        "components/Interface.js",
+        "main.js"
+      ]
+    },
+    {
+      "file": "functions/fabricPeerHost.js",
+      "lines": 13,
+      "prod": [
+        "services/FabricNetwork.js"
+      ]
+    }
+  ],
+  "testOnly": [
+    {
+      "file": "functions/playnetOpsSweep.js",
+      "lines": 240,
+      "tests": [
+        "tests/relay/playnet-ops-sweep.test.js"
+      ]
+    },
+    {
+      "file": "functions/browserEvents.js",
+      "lines": 73,
+      "tests": [
+        "tests/unit/browserEvents.test.js"
+      ]
+    },
+    {
+      "file": "functions/androidNodeBoot.js",
+      "lines": 58,
+      "tests": [
+        "tests/unit/androidNodeBoot.test.js"
+      ]
+    },
+    {
+      "file": "functions/browserCrypto.js",
+      "lines": 50,
+      "tests": [
+        "tests/unit/browserCrypto.test.js"
+      ]
+    },
+    {
+      "file": "functions/androidMemoryLevel.js",
+      "lines": 41,
+      "tests": [
+        "tests/unit/androidMemoryLevel.test.js"
+      ]
+    },
+    {
+      "file": "functions/fabricSiteLoginVerify.js",
+      "lines": 7,
+      "tests": [
+        "tests/fabric/expectations.test.js",
+        "tests/relay/fabric-site-login.test.js"
+      ]
+    }
+  ],
+  "largestUntested": [
+    {
+      "file": "main.js",
+      "lines": 1716,
+      "prodRefs": 0,
+      "testRefs": 0
+    },
+    {
+      "file": "components/GroupFabricInspector.js",
+      "lines": 471,
+      "prodRefs": 3,
+      "testRefs": 0
+    },
+    {
+      "file": "scripts/adversary-local-probe.js",
+      "lines": 465,
+      "prodRefs": 0,
+      "testRefs": 0
+    },
+    {
+      "file": "scripts/android-stage.js",
+      "lines": 413,
+      "prodRefs": 0,
+      "testRefs": 0
+    },
+    {
+      "file": "scripts/refresh-location-catalog.js",
+      "lines": 410,
+      "prodRefs": 0,
+      "testRefs": 0
+    },
+    {
+      "file": "scripts/discord-events.js",
+      "lines": 351,
+      "prodRefs": 0,
+      "testRefs": 0
+    },
+    {
+      "file": "scripts/playnet-deploy-gooncitizen.js",
+      "lines": 319,
+      "prodRefs": 0,
+      "testRefs": 0
+    },
+    {
+      "file": "components/MissionHome.js",
+      "lines": 314,
+      "prodRefs": 0,
+      "testRefs": 0
+    },
+    {
+      "file": "components/StarCitizenHome.js",
+      "lines": 291,
+      "prodRefs": 0,
+      "testRefs": 0
+    },
+    {
+      "file": "components/Interface.js",
+      "lines": 286,
+      "prodRefs": 0,
+      "testRefs": 0
+    },
+    {
+      "file": "components/LocationPicker.js",
+      "lines": 253,
+      "prodRefs": 3,
+      "testRefs": 0
+    },
+    {
+      "file": "components/ShipPicker.js",
+      "lines": 252,
+      "prodRefs": 3,
+      "testRefs": 0
+    },
+    {
+      "file": "scripts/node.js",
+      "lines": 244,
+      "prodRefs": 0,
+      "testRefs": 0
+    },
+    {
+      "file": "types/StarCitizenAPI.js",
+      "lines": 180,
+      "prodRefs": 0,
+      "testRefs": 0
+    },
+    {
+      "file": "scripts/publish-build-documents.js",
+      "lines": 173,
+      "prodRefs": 0,
+      "testRefs": 0
+    },
+    {
+      "file": "scripts/refresh-ship-catalog.js",
+      "lines": 170,
+      "prodRefs": 0,
+      "testRefs": 0
+    },
+    {
+      "file": "components/QrScanOverlay.js",
+      "lines": 167,
+      "prodRefs": 1,
+      "testRefs": 0
+    },
+    {
+      "file": "scripts/build.js",
+      "lines": 163,
+      "prodRefs": 0,
+      "testRefs": 0
+    },
+    {
+      "file": "scripts/ensure-fabric-linked.js",
+      "lines": 156,
+      "prodRefs": 0,
+      "testRefs": 0
+    },
+    {
+      "file": "functions/fabricDeviceLinkRelay.js",
+      "lines": 151,
+      "prodRefs": 1,
+      "testRefs": 0
+    },
+    {
+      "file": "components/GroupContractSummary.js",
+      "lines": 134,
+      "prodRefs": 2,
+      "testRefs": 0
+    },
+    {
+      "file": "components/RegisterEventLog.js",
+      "lines": 102,
+      "prodRefs": 2,
+      "testRefs": 0
+    },
+    {
+      "file": "scripts/test-fabric-login-against-hub.js",
+      "lines": 101,
+      "prodRefs": 0,
+      "testRefs": 0
+    },
+    {
+      "file": "functions/fabricSiteLogin.js",
+      "lines": 95,
+      "prodRefs": 1,
+      "testRefs": 0
+    },
+    {
+      "file": "preload.js",
+      "lines": 95,
+      "prodRefs": 0,
+      "testRefs": 0
+    },
+    {
+      "file": "scripts/android-node.js",
+      "lines": 89,
+      "prodRefs": 0,
+      "testRefs": 0
+    },
+    {
+      "file": "functions/desktopNotify.js",
+      "lines": 87,
+      "prodRefs": 3,
+      "testRefs": 0
+    },
+    {
+      "file": "scripts/dashboard-entry.js",
+      "lines": 86,
+      "prodRefs": 0,
+      "testRefs": 0
+    },
+    {
+      "file": "components/ActivityHeatmap.js",
+      "lines": 85,
+      "prodRefs": 4,
+      "testRefs": 0
+    },
+    {
+      "file": "functions/fabricKeyStoreClient.js",
+      "lines": 68,
+      "prodRefs": 2,
+      "testRefs": 0
+    },
+    {
+      "file": "scripts/discord-role-check.js",
+      "lines": 67,
+      "prodRefs": 0,
+      "testRefs": 0
+    },
+    {
+      "file": "components/MissionOutcomesChart.js",
+      "lines": 64,
+      "prodRefs": 2,
+      "testRefs": 0
+    },
+    {
+      "file": "scripts/replay.js",
+      "lines": 43,
+      "prodRefs": 0,
+      "testRefs": 0
+    },
+    {
+      "file": "scripts/desktop.js",
+      "lines": 41,
+      "prodRefs": 0,
+      "testRefs": 0
+    },
+    {
+      "file": "scripts/fabric-env.js",
+      "lines": 27,
+      "prodRefs": 0,
+      "testRefs": 0
+    },
+    {
+      "file": "scripts/fabric.js",
+      "lines": 27,
+      "prodRefs": 0,
+      "testRefs": 0
+    },
+    {
+      "file": "scripts/publish-agent-probes.js",
+      "lines": 24,
+      "prodRefs": 0,
+      "testRefs": 0
+    },
+    {
+      "file": "constants.js",
+      "lines": 24,
+      "prodRefs": 3,
+      "testRefs": 0
+    },
+    {
+      "file": "functions/fabricPeerHost.js",
+      "lines": 13,
+      "prodRefs": 1,
+      "testRefs": 0
+    },
+    {
+      "file": "functions/normalizeDiscordSettings.js",
+      "lines": 8,
+      "prodRefs": 0,
+      "testRefs": 0
+    }
+  ],
+  "liveRelay": {
+    "methods": 320,
+    "unmentionedInTests": 243,
+    "sample": [
+      "super",
+      "_applyDiscordConfig",
+      "_discordRuntime",
+      "_localDiscordBotUserId",
+      "_discordGuildCatalog",
+      "_buildDiscordGuildCatalog",
+      "_discordSourceAppId",
+      "_discordBotIsReady",
+      "_mergeDiscordCatalog",
+      "_refreshDiscordCatalogFromStore",
+      "_observeDiscordCatalogFromRequest",
+      "_maybePublishDiscordCatalogShare",
+      "_localPlaytimesPayload",
+      "_localFilesPayload",
+      "_hasPinnedProfileFiles",
+      "_localNotesPayload",
+      "_hasPinnedProfileNotes",
+      "_publishGroupDataShareNow",
+      "_maybePublishGroupDataShare",
+      "_discordChannelInsight",
+      "_foldInsightMessagesIntoChat",
+      "_startDiscordBot",
+      "_isDiscordCoordCommand",
+      "_ingestDiscordChat",
+      "_handleDiscordLinkCommand",
+      "_postDiscordBridgeReply",
+      "_openDiscordUserDm",
+      "_postLocalBotDm",
+      "_localDiscordCoordReply",
+      "_pruneDiscordLinkChallenges",
+      "_listDiscordIdentityLinks",
+      "_persistDiscordIdentityLinks",
+      "_createDiscordLinkChallenge",
+      "_completeDiscordLinkChallenge",
+      "_unlinkDiscordIdentity",
+      "_discordLinkStatus",
+      "_maybeClaimDiscordRequest",
+      "_scheduleDiscordClaimSettle",
+      "_settleDiscordClaim",
+      "_discordReplyForRequest",
+      "_ingestDiscordCoordFrame",
+      "_startLookupFromChat",
+      "_appSearchCorpus",
+      "_maybeClaimLookupRequest",
+      "_scheduleLookupClaimSettle",
+      "_settleLookupClaim",
+      "_ingestLookupCoordFrame",
+      "_discordRequestIdFromLogEntry",
+      "_logInfo",
+      "_runReparse",
+      "setImmediate",
+      "_loadPersistedSettings",
+      "_opaqueShareEncoding",
+      "_applyDefaultGroupFromLocal",
+      "_primaryGroupColor",
+      "resolveAndSetDefaultGroup",
+      "_applyPresenceSettings",
+      "_rebindHttpListener",
+      "_selfFabricDialOpts",
+      "_normalizePeerRecord",
+      "_canShareLogs",
+      "_logSharePublishOpts",
+      "_liveFeedSnapshot",
+      "_peersWithStatus",
+      "_peerDetail",
+      "_playtimesForProfile",
+      "_filesForProfile",
+      "_notesForProfile",
+      "_listMyNotes",
+      "_profileDetailByPubkey",
+      "_profileDetailByActor",
+      "_collectionRecord",
+      "_locationRecord",
+      "_localReportActor",
+      "_foldLocalPlaceReports",
+      "_linkedDeviceForPubkey",
+      "_loadIdentityCluster",
+      "_persistIdentityCrossSignRow",
+      "_ingestIdentityCrossSign",
+      "logFabricSync"
+    ]
+  },
+  "componentsNotInDashboard": [
+    {
+      "file": "components/GroupPage.js",
+      "lines": 999,
+      "testRefs": 1,
+      "prodRefs": 2
+    },
+    {
+      "file": "components/DiscordChatSettings.js",
+      "lines": 974,
+      "testRefs": 2,
+      "prodRefs": 1
+    },
+    {
+      "file": "components/ProfilePage.js",
+      "lines": 611,
+      "testRefs": 4,
+      "prodRefs": 2
+    },
+    {
+      "file": "components/MissionPage.js",
+      "lines": 512,
+      "testRefs": 1,
+      "prodRefs": 2
+    },
+    {
+      "file": "components/GroupFabricInspector.js",
+      "lines": 471,
+      "testRefs": 0,
+      "prodRefs": 3
+    },
+    {
+      "file": "components/BitcoinWalletPanel.js",
+      "lines": 437,
+      "testRefs": 3,
+      "prodRefs": 2
+    },
+    {
+      "file": "components/MasterSeedWizard.js",
+      "lines": 386,
+      "testRefs": 1,
+      "prodRefs": 1
+    },
+    {
+      "file": "components/WalletConstruct.js",
+      "lines": 377,
+      "testRefs": 2,
+      "prodRefs": 2
+    },
+    {
+      "file": "components/IdentityNotePanel.js",
+      "lines": 376,
+      "testRefs": 3,
+      "prodRefs": 3
+    },
+    {
+      "file": "components/MissionHome.js",
+      "lines": 314,
+      "testRefs": 0,
+      "prodRefs": 0
+    },
+    {
+      "file": "components/FilePage.js",
+      "lines": 300,
+      "testRefs": 1,
+      "prodRefs": 2
+    },
+    {
+      "file": "components/StarCitizenHome.js",
+      "lines": 291,
+      "testRefs": 0,
+      "prodRefs": 0
+    },
+    {
+      "file": "components/LocalGroups.js",
+      "lines": 290,
+      "testRefs": 1,
+      "prodRefs": 1
+    },
+    {
+      "file": "components/Interface.js",
+      "lines": 286,
+      "testRefs": 0,
+      "prodRefs": 0
+    },
+    {
+      "file": "components/LocationPage.js",
+      "lines": 212,
+      "testRefs": 1,
+      "prodRefs": 2
+    },
+    {
+      "file": "components/GroupBitcoinPanel.js",
+      "lines": 182,
+      "testRefs": 1,
+      "prodRefs": 3
+    },
+    {
+      "file": "components/CollectionRecord.js",
+      "lines": 173,
+      "testRefs": 1,
+      "prodRefs": 2
+    },
+    {
+      "file": "components/GroupContractSummary.js",
+      "lines": 134,
+      "testRefs": 0,
+      "prodRefs": 2
+    },
+    {
+      "file": "components/RegisterEventLog.js",
+      "lines": 102,
+      "testRefs": 0,
+      "prodRefs": 2
+    },
+    {
+      "file": "components/ActivityHeatmap.js",
+      "lines": 85,
+      "testRefs": 0,
+      "prodRefs": 4
+    },
+    {
+      "file": "components/GroupComposition.js",
+      "lines": 73,
+      "testRefs": 1,
+      "prodRefs": 3
+    },
+    {
+      "file": "components/MissionOutcomesChart.js",
+      "lines": 64,
+      "testRefs": 0,
+      "prodRefs": 2
+    },
+    {
+      "file": "components/PubkeyEmoji.js",
+      "lines": 38,
+      "testRefs": 2,
+      "prodRefs": 3
+    }
+  ]
+}

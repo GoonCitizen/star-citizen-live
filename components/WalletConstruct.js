@@ -104,9 +104,18 @@ class WalletConstruct extends React.Component {
     if (!bridge || typeof bridge.get !== 'function') return null;
     try {
       const summary = await bridge.get();
-      if (summary && summary.unlocked && summary.xpub) return String(summary.xpub).trim();
+      const wallet = summary && summary.unlocked && summary.wallet;
+      if (wallet && wallet.segwit && wallet.segwit.xpub) {
+        this._standardXpub = (wallet.standard && wallet.standard.xpub) || '';
+        return String(wallet.segwit.xpub).trim();
+      }
     } catch (_) { /* ignore */ }
     return null;
+  }
+
+  xpubQuery () {
+    const q = `xpub=${encodeURIComponent(this.state.xpub)}`;
+    return this._standardXpub ? `${q}&standardXpub=${encodeURIComponent(this._standardXpub)}` : q;
   }
 
   async bootstrap () {
@@ -128,11 +137,11 @@ class WalletConstruct extends React.Component {
     }
     this.setState({ loading: true, error: null, notice: null });
     try {
-      const q = encodeURIComponent(xpub);
+      const q = this.xpubQuery();
       const [statusRes, recvRes, utxoRes] = await Promise.all([
         fetch(`${BASE}/status`).then((r) => r.json().then((j) => ({ ok: r.ok, j }))),
-        fetch(`${BASE}/receive?xpub=${q}&index=0`).then((r) => r.json().then((j) => ({ ok: r.ok, j }))),
-        fetch(`${BASE}/utxos?xpub=${q}`).then((r) => r.json().then((j) => ({ ok: r.ok, j }))).catch(() => ({ ok: false, j: null }))
+        fetch(`${BASE}/receive?${q}&index=0`).then((r) => r.json().then((j) => ({ ok: r.ok, j }))),
+        fetch(`${BASE}/utxos?${q}`).then((r) => r.json().then((j) => ({ ok: r.ok, j }))).catch(() => ({ ok: false, j: null }))
       ]);
       if (!statusRes.ok) throw new Error((statusRes.j && statusRes.j.error) || 'Hub status failed');
       if (!recvRes.ok) throw new Error((recvRes.j && recvRes.j.error) || 'Receive address failed');
@@ -341,7 +350,7 @@ class WalletConstruct extends React.Component {
         React.createElement('h2', null, 'Watch UTXOs'),
         React.createElement('div', { className: 'body' },
           React.createElement('p', { className: 'wpage-hint' },
-            'Identity xpub coins (watch-only). Hub send spends the Hub bitcoind wallet, not these UTXOs.'),
+            'Account wallet coins (watch-only). Hub send spends the Hub bitcoind wallet, not these UTXOs.'),
           this.state.utxos.length
             ? React.createElement('table', { className: 'wpage-table' },
               React.createElement('thead', null,
@@ -363,7 +372,7 @@ class WalletConstruct extends React.Component {
               )
             )
             : React.createElement('p', { className: 'wpage-hint' },
-              this.state.loading ? 'Loading UTXOs…' : 'No watch UTXOs for this xpub.')
+              this.state.loading ? 'Loading UTXOs…' : 'No watch UTXOs for this wallet.')
         )
       ),
       this.state.error

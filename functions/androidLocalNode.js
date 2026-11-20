@@ -178,7 +178,7 @@ async function syncIdentityToLocalNode (identity, opts = {}) {
   const url = `${String(origin).replace(/\/$/, '')}/services/star-citizen/identity/session`;
   try {
     const body = identity
-      ? { xprv: identity.xprv, mnemonic: identity.mnemonic || undefined }
+      ? { xprv: identity.xprv, account: identity.account, network: identity.network }
       : { lock: true };
     const res = await fetchImpl(url, {
       method: 'POST',

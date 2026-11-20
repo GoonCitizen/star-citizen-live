@@ -5,8 +5,7 @@
  * default (primary) group id for this instance.
  *
  * Accepted paste forms:
- * - opaque `fabric:<payload>` GroupOffer / invite / publish (hex or base64 body)
- * - raw AMP Message hex/base64 (same as Import share)
+ * - opaque `fabric:<frame>` GroupOffer / invite / publish (same as Import share)
  * - AMP message hash / id (64 hex) — looked up in the Fabric message log
  * - group id (8–128 `[a-zA-Z0-9_-]`)
  */
@@ -73,7 +72,7 @@ function parseDefaultGroupRef (paste) {
     };
   }
 
-  // Opaque fabric: / raw hex|base64 Message.
+  // Opaque fabric: Message.
   const parsed = parseOpaqueFabricMessage(raw);
   if (parsed.ok) {
     let classified = { kind: 'unknown', groupId: null, contractId: null };
@@ -142,7 +141,7 @@ function resolveDefaultGroup (paste, ctx = {}) {
       contractId: null,
       kind: 'empty',
       localJsSnippet: null,
-      error: 'Paste a Fabric message id, fabric:<hex> share, or group id'
+      error: 'Paste a Fabric message id, fabric: share, or group id'
     };
   }
 
@@ -176,7 +175,7 @@ function resolveDefaultGroup (paste, ctx = {}) {
         contractId: null,
         kind: 'messageHash',
         localJsSnippet: localJsSnippetFor(parsed.messageId),
-        error: 'Message hash not in the local Fabric message buffer — paste the full fabric:<hex> share, or copy the id again after Share'
+        error: 'Message hash not in the local Fabric message buffer — paste the full fabric: share, or copy the id again after Share'
       };
     }
   }
@@ -229,7 +228,7 @@ function localJsSnippetFor (value) {
   const v = String(value || '').trim();
   // Prefer single-quoted JS string; escape embedded quotes/backslashes.
   const escaped = v.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
-  return `  // Default group — Fabric message id / fabric:<hex> share / group id\n  defaultGroupMessageId: '${escaped}',`;
+  return `  // Default group — Fabric message id / fabric: share / group id\n  defaultGroupMessageId: '${escaped}',`;
 }
 
 module.exports = {

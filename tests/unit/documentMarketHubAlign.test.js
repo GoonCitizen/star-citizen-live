@@ -3,6 +3,7 @@
 const { describe, it } = require('node:test');
 const assert = require('node:assert');
 const path = require('path');
+const { HTLC_MINIMUM_SATS } = require('@fabric/core/constants');
 
 function loadHubMarket () {
   const candidates = [
@@ -25,7 +26,8 @@ describe('document market Hub helper alignment', () => {
     }
     const origin = 100;
     const listed = market.markupListPrice(origin, { markupBps: 1000, markupSats: 0 });
-    assert.strictEqual(listed, 110);
+    // 10% of 100 is 110; a paid listing cannot sit under the mainnet HTLC minimum.
+    assert.strictEqual(listed, Math.max(110, HTLC_MINIMUM_SATS));
     assert.ok(listed > origin);
 
     const decision = market.republishDecision({
@@ -35,7 +37,7 @@ describe('document market Hub helper alignment', () => {
       policy: { republishWithMarkup: true, markupBps: 1000, markupSats: 0 }
     });
     assert.strictEqual(decision.action, 'publish');
-    assert.strictEqual(decision.purchasePriceSats, 110);
+    assert.strictEqual(decision.purchasePriceSats, listed);
 
     const noBlob = market.republishDecision({
       hasLocalFile: false,
@@ -50,7 +52,7 @@ describe('document market Hub helper alignment', () => {
         costBasisSats: origin,
         local: true
       });
-      assert.strictEqual(publicRow.purchasePriceSats, 110);
+      assert.strictEqual(publicRow.purchasePriceSats, listed);
       assert.strictEqual(publicRow.costBasisSats, undefined);
 
       const fileId = 'ab'.repeat(32);
@@ -66,7 +68,7 @@ describe('document market Hub helper alignment', () => {
         costBasisSats: origin,
         published: true
       }], market.listOffers(map));
-      assert.strictEqual(merged[0].purchasePriceSats, 110);
+      assert.strictEqual(merged[0].purchasePriceSats, listed);
       assert.strictEqual(merged[0].bestPeerPriceSats, 100);
       assert.strictEqual(merged[0].costBasisSats, undefined);
     }

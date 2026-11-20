@@ -16,6 +16,12 @@ Missions can be accepted by signing with secp256k1 or Musig2 multisig.</p>
 <dd></dd>
 <dt><a href="#FabricNetwork">FabricNetwork</a></dt>
 <dd></dd>
+<dt><a href="#GoonDelegation">GoonDelegation</a></dt>
+<dd></dd>
+<dt><a href="#GroupWallets">GroupWallets</a></dt>
+<dd></dd>
+<dt><a href="#MarketManager">MarketManager</a></dt>
+<dd></dd>
 <dt><a href="#MissionManager">MissionManager</a></dt>
 <dd><p>Mission Manager service.
 Handles mission lifecycle, applications, and cryptographic verification.
@@ -79,7 +85,8 @@ idempotent — the same convergence rule as the event uplink.</p>
 <p>Wire Messages:</p>
 <ul>
 <li>P2P_CHAT_MESSAGE     — network-wide <code>global</code> chat (Peer auto-relays)</li>
-<li>CONTRACT_MESSAGE     — GoonCitizen app types + per-Group Federation types</li>
+<li>CONTRACT_MESSAGE     — GoonCitizen app types + per-Group Federation types,
+                   plus core named-federation bodies (group wallets)</li>
 <li>CONTRACT_PUBLISH     — GoonCitizen genesis + per-Group Federation genesis</li>
 </ul>
 <p>Durable outbound frames set AMP <code>parent</code> to the previous signed <code>Message.id</code>
@@ -101,6 +108,25 @@ frames chain <a href="Message#parent">Message#parent</a> to this node&#39;s prev
 <dt><a href="#isKnownAppRelayType">isKnownAppRelayType</a></dt>
 <dd><p>True when <code>appType</code> is a known GoonCitizen / Group contract body type.</p>
 </dd>
+<dt><a href="#EventEmitter">EventEmitter</a></dt>
+<dd><p>GoonCitizen as a delegation participant (<code>@fabric/core</code> docs/DELEGATION.md).</p>
+<p>GoonCitizen keeps its own <code>Delegation</code>: the player&#39;s identity key and its
+frames in the register Store (collection <code>delegations</code>). Nothing is shared
+with the signers it links to; each keeps its own key and its own record.</p>
+<ul>
+<li><strong>Linking.</strong> Passport on this computer pairs over the loopback delegate
+(<code>@fabric/http</code> fabricDelegate; the native dialog confirms the code).
+Anyone else pairs through a rendezvous: this app shows an invitation, or
+takes one, and the player matches the six-digit code in the dashboard
+before either side grants anything.</li>
+<li><strong>Requests.</strong> A linked signer&#39;s <code>DELEGATION_REQUEST</code> (loopback or a
+mailbox) never signs on its own: it becomes a register inbox row
+(<code>DelegationRequest</code>) with Sign and Decline, and a desktop toast.</li>
+<li><strong>Who is who.</strong> Mutual <code>identity</code> grants make one actor; every grant and
+revoke this app holds is handed to the relay (<code>identity</code>), which feeds
+the identity cluster and gossips them as <code>DelegationShare</code>.</li>
+</ul>
+</dd>
 <dt><a href="#crypto">crypto</a></dt>
 <dd><p>GroupManager — member-created groups with k-of-n Schnorr multisig,
 optional nested subgroups (<code>parentId</code>), public/private visibility,
@@ -114,6 +140,24 @@ accepts or rejects. Private groups are members-only.</p>
 <code>/collections/*</code> paths) under
 <code>stores/gooncitizen/register</code> (Hub-style named store root).</p>
 </dd>
+<dt><a href="#EventEmitter">EventEmitter</a></dt>
+<dd><p>Group wallets — each Group&#39;s signers form a named Fabric federation
+(<code>@fabric/core</code> <code>types/federation</code>): the same descriptor, Taproot vault,
+withdrawal PSBT, and member messages as Hub and Passport, so a group
+wallet is a federation any Fabric member software can verify and sign for.</p>
+<p>The validators are the signers&#39; cosigner keys (<code>m/87&#39;/B&#39;/n&#39;/0/0</code>), which
+each signer ties to their identity with a <code>cosigner.set</code> GroupChange
+(<code>functions/groupCosigner.js</code>) — never identity keys. A group shows no
+vault until every signer has one for the wallet&#39;s network. Federation
+messages are signed by the cosigner key.</p>
+<p>Changing a group&#39;s signers or threshold makes a new descriptor (new
+federation id and vault). Every descriptor seen for a group is kept, so
+coins left on an earlier vault can still be withdrawn by its signers.</p>
+<p>Group membership is GoonCitizen&#39;s own (GroupChange); federation invites
+and responses are not used here. Withdrawal requests, signatures,
+broadcast notices, and sync travel as <code>CONTRACT_MESSAGE</code> under the
+federation id.</p>
+</dd>
 <dt><a href="#http">http</a></dt>
 <dd><p>Star Citizen Live — LiveRelay (dashboard, register, Fabric Peer ingest).</p>
 <p>Entry: <code>scripts/node.js</code> (<code>npm start</code>). Desktop: <code>main.js</code>.
@@ -122,9 +166,6 @@ Game.log is read-only. Fabric git deps are required (<code>npm i</code>).</p>
 Game.log parsing (<code>functions/parser.js</code>), optional Discord, missions/groups/
 chat, and a Fabric Peer (D-009 / D-010).</p>
 <p>It edits NOTHING in the Star Citizen installation — the log is only ever read.</p>
-</dd>
-<dt><a href="#BEARER_TTL_MS">BEARER_TTL_MS</a></dt>
-<dd><p>Hosted / site-login Bearer session lifetime (ms).</p>
 </dd>
 <dt><a href="#SESSION_LOG_CAP">SESSION_LOG_CAP</a></dt>
 <dd><p>Rolling cap for raw session log/activity maps (history.json is the archive).</p>
@@ -217,6 +258,9 @@ browser/server sessions — the manager stays idle.</p>
 <li>Group Federation contracts → GroupChat / GroupChange / GroupShare / invites
 (by typed app message, and/or <code>handlers.isKnownGroupContract(id)</code>)</li>
 </ul>
+</dd>
+<dt><a href="#registerKv">registerKv(registerStore, [collection])</a> ⇒ <code>Object</code></dt>
+<dd><p><code>{ get, set }</code> over one register Store collection.</p>
 </dd>
 </dl>
 
@@ -845,7 +889,7 @@ Deterministic id for a message payload (mirror of post()).
         * [._signAndRelay(vectorType, body, [opts])](#FabricNetwork+_signAndRelay)
         * [.signContractMessage(contractId, type, object, [opts])](#FabricNetwork+signContractMessage)
         * [.relaySignedMessage(message, [opts])](#FabricNetwork+relaySignedMessage) ⇒ <code>object</code>
-        * [.encodeOpaqueMessage(message, [opts])](#FabricNetwork+encodeOpaqueMessage) ⇒ <code>Object</code>
+        * [.encodeOpaqueMessage(message)](#FabricNetwork+encodeOpaqueMessage) ⇒ <code>Object</code>
         * [._wrapPeerConnect(peer)](#FabricNetwork+_wrapPeerConnect) ⇒ <code>void</code>
         * [._wrapPeeringCandidateEnqueue(peer)](#FabricNetwork+_wrapPeeringCandidateEnqueue) ⇒ <code>void</code>
         * [._sanitizePeerCandidates(peer)](#FabricNetwork+_sanitizePeerCandidates) ⇒ <code>void</code>
@@ -862,7 +906,7 @@ Deterministic id for a message payload (mirror of post()).
         * [.publishPeerPresence(presenceObject)](#FabricNetwork+publishPeerPresence)
         * [.publishDirectChat(payload)](#FabricNetwork+publishDirectChat)
         * [.publishNoteShare(payload)](#FabricNetwork+publishNoteShare)
-        * [.publishIdentityCrossSign(payload)](#FabricNetwork+publishIdentityCrossSign)
+        * [.publishDelegationShare(payload)](#FabricNetwork+publishDelegationShare)
         * [.publishDeviceDataShare(payload)](#FabricNetwork+publishDeviceDataShare)
         * [.publishGroupDataShare(contractId, payload)](#FabricNetwork+publishGroupDataShare)
         * [.publishDiscordCatalogShare(contractId, payload)](#FabricNetwork+publishDiscordCatalogShare)
@@ -892,6 +936,9 @@ Deterministic id for a message payload (mirror of post()).
         * [.replyDocumentInventory(originName, items)](#FabricNetwork+replyDocumentInventory) ⇒ <code>boolean</code>
         * [.sendCatalogFile(peerAddress, buffer, [opts])](#FabricNetwork+sendCatalogFile) ⇒ <code>number</code>
         * [.sendCatalogFileToAddresses(addresses, buffer, [opts])](#FabricNetwork+sendCatalogFileToAddresses) ⇒ <code>number</code>
+        * [.publishMarketArtifact(type, object)](#FabricNetwork+publishMarketArtifact)
+        * [.publishWatchtowerAppointment(appointment, [opts])](#FabricNetwork+publishWatchtowerAppointment) ⇒ <code>object</code>
+        * [.publishFederationMessage(body, [opts])](#FabricNetwork+publishFederationMessage) ⇒ <code>Object</code>
     * _static_
         * [.connectionMatchesAddress(connectionId, rosterAddress)](#FabricNetwork.connectionMatchesAddress)
 
@@ -1010,16 +1057,14 @@ are bit-identical to Import… paste.
 
 <a name="FabricNetwork+encodeOpaqueMessage"></a>
 
-### fabricNetwork.encodeOpaqueMessage(message, [opts]) ⇒ <code>Object</code>
-Encode a signed Message as opaque fabric:&lt;payload&gt; (base64 body by default, or hex).
+### fabricNetwork.encodeOpaqueMessage(message) ⇒ <code>Object</code>
+Encode a signed Message as a `fabric:` share.
 
 **Kind**: instance method of [<code>FabricNetwork</code>](#FabricNetwork)  
 
-| Param | Type | Description |
-| --- | --- | --- |
-| message | <code>object</code> |  |
-| [opts] | <code>Object</code> |  |
-| [opts.encoding] | <code>string</code> | `'base64'` (default) or `'hex'` |
+| Param | Type |
+| --- | --- |
+| message | <code>object</code> | 
 
 <a name="FabricNetwork+_wrapPeerConnect"></a>
 
@@ -1207,21 +1252,22 @@ Publish an identity note share or update under the GoonCitizen namespace.
 | --- | --- | --- |
 | payload | <code>Object</code> | NoteShare / NoteUpdate fields |
 
-<a name="FabricNetwork+publishIdentityCrossSign"></a>
+<a name="FabricNetwork+publishDelegationShare"></a>
 
-### fabricNetwork.publishIdentityCrossSign(payload)
-Gossip an IdentityCrossSign / IdentityCrossSignRevoke under GoonCitizen.
+### fabricNetwork.publishDelegationShare(payload)
+Relay one identity grant or revoke frame under GoonCitizen.
 
 **Kind**: instance method of [<code>FabricNetwork</code>](#FabricNetwork)  
 
 | Param | Type | Description |
 | --- | --- | --- |
-| payload | <code>Object</code> | verified-ready body from signCrossSign |
+| payload | <code>Object</code> |  |
+| payload.frame | <code>string</code> | `fabric:` `DELEGATION_GRANT` or `DELEGATION_REVOKE` |
 
 <a name="FabricNetwork+publishDeviceDataShare"></a>
 
 ### fabricNetwork.publishDeviceDataShare(payload)
-Gossip a cluster-gated account snapshot after device-link.
+Gossip a cluster-gated account snapshot to linked signers.
 
 **Kind**: instance method of [<code>FabricNetwork</code>](#FabricNetwork)  
 
@@ -1551,6 +1597,49 @@ Send a catalog blob to every currently connected address in `addresses`.
 | buffer | <code>Buffer</code> | 
 | [opts] | <code>Object</code> | 
 
+<a name="FabricNetwork+publishMarketArtifact"></a>
+
+### fabricNetwork.publishMarketArtifact(type, object)
+Publish a market artifact (`AvailabilityCommitment` / `AvailabilityResponse`
+/ `FraudProof`) under the Fabric document-market namespace shared with Hub
+`services/challenge.js` (`SHA256('fabric-document-market')`).
+
+**Kind**: instance method of [<code>FabricNetwork</code>](#FabricNetwork)  
+
+| Param | Type |
+| --- | --- |
+| type | <code>string</code> | 
+| object | <code>object</code> | 
+
+<a name="FabricNetwork+publishWatchtowerAppointment"></a>
+
+### fabricNetwork.publishWatchtowerAppointment(appointment, [opts]) ⇒ <code>object</code>
+File a signed `WatchtowerAppointment` with peered Fabric nodes under the
+watchtower contract (`sha256('fabric-watchtower')`).
+
+**Kind**: instance method of [<code>FabricNetwork</code>](#FabricNetwork)  
+**Returns**: <code>object</code> - signed Message  
+
+| Param | Type |
+| --- | --- |
+| appointment | <code>object</code> | 
+| [opts] | <code>object</code> | 
+
+<a name="FabricNetwork+publishFederationMessage"></a>
+
+### fabricNetwork.publishFederationMessage(body, [opts]) ⇒ <code>Object</code>
+Sign and relay a named-federation body (`@fabric/core` `Federation`
+message builders) as-is, so Hub and Passport members read the same frame.
+Signed even when the peer is down (relayed once it is up via sync).
+
+**Kind**: instance method of [<code>FabricNetwork</code>](#FabricNetwork)  
+**Returns**: <code>Object</code> - signed Message  
+
+| Param | Type | Description |
+| --- | --- | --- |
+| body | <code>Object</code> | Federation message (`contract` = federation id) |
+| [opts] | <code>Object</code> |  |
+
 <a name="FabricNetwork.connectionMatchesAddress"></a>
 
 ### FabricNetwork.connectionMatchesAddress(connectionId, rosterAddress)
@@ -1562,6 +1651,630 @@ True when `connectionId` matches a roster address (exact or host match).
 | --- | --- |
 | connectionId | <code>string</code> | 
 | rosterAddress | <code>string</code> | 
+
+<a name="GoonDelegation"></a>
+
+## GoonDelegation
+**Kind**: global class  
+
+* [GoonDelegation](#GoonDelegation)
+    * [new GoonDelegation(settings)](#new_GoonDelegation_new)
+    * [.pubkey](#GoonDelegation+pubkey)
+    * [.mailboxes](#GoonDelegation+mailboxes)
+    * [.take(frame, [origin])](#GoonDelegation+take) ⇒ <code>Promise.&lt;object&gt;</code>
+    * [.pollMailboxes()](#GoonDelegation+pollMailboxes) ⇒ <code>Promise.&lt;number&gt;</code>
+    * [.pending()](#GoonDelegation+pending) ⇒ <code>Promise.&lt;Array.&lt;object&gt;&gt;</code>
+    * [.answer(hash, action, [options])](#GoonDelegation+answer) ⇒ <code>Promise.&lt;{status: number, json: object}&gt;</code>
+    * [.signers()](#GoonDelegation+signers) ⇒ <code>Promise.&lt;object&gt;</code>
+    * [.revoke(hash)](#GoonDelegation+revoke) ⇒ <code>Promise.&lt;object&gt;</code>
+    * [.unlink(pubkey)](#GoonDelegation+unlink) ⇒ <code>Promise.&lt;{ok: true, revoked: Array.&lt;string&gt;}&gt;</code>
+    * [.pairing()](#GoonDelegation+pairing) ⇒ <code>object</code> \| <code>null</code>
+    * [.invite(hub)](#GoonDelegation+invite) ⇒ <code>Promise.&lt;object&gt;</code>
+    * [.accept(invitation)](#GoonDelegation+accept) ⇒ <code>Promise.&lt;object&gt;</code>
+    * [.confirm(scopesRaw)](#GoonDelegation+confirm) ⇒ <code>Promise.&lt;object&gt;</code>
+    * [.cancelPairing()](#GoonDelegation+cancelPairing) ⇒ <code>Promise.&lt;{ok: true}&gt;</code>
+    * [.identityFrames()](#GoonDelegation+identityFrames) ⇒ <code>Promise.&lt;Array.&lt;string&gt;&gt;</code>
+
+<a name="new_GoonDelegation_new"></a>
+
+### new GoonDelegation(settings)
+
+| Param | Type | Default | Description |
+| --- | --- | --- | --- |
+| settings | <code>Object</code> |  |  |
+| settings.key | <code>Object</code> |  | The player's identity key (private). |
+| settings.network | <code>string</code> |  |  |
+| [settings.registerStore] | <code>Object</code> |  | Register Store; in memory when omitted. |
+| settings.getAccount | <code>function</code> |  | `({ network, account }) => account|null`. |
+| [settings.approve] | <code>function</code> |  | `(prompt) => Promise<boolean>` native dialog; loopback pairing needs it. |
+| [settings.loopback] | <code>boolean</code> | <code>true</code> | Answer Passport on this computer. |
+| [settings.mailboxes] | <code>Array.&lt;string&gt;</code> |  | Hub origins whose mailboxes this app reads. |
+| [settings.extensionIds] | <code>Array.&lt;string&gt;</code> |  | Chrome Passport ids. |
+| [settings.allowlist] | <code>Object</code> |  | Options for `isAllowedFabricHub` (`extra`). |
+| [settings.fetch] | <code>function</code> |  |  |
+| [settings.now] | <code>function</code> |  |  |
+
+<a name="GoonDelegation+pubkey"></a>
+
+### goonDelegation.pubkey
+Compressed pubkey of the player's delegation identity.
+
+**Kind**: instance property of [<code>GoonDelegation</code>](#GoonDelegation)  
+<a name="GoonDelegation+mailboxes"></a>
+
+### goonDelegation.mailboxes
+Hub origins this app pairs through and reads mail from.
+
+**Kind**: instance property of [<code>GoonDelegation</code>](#GoonDelegation)  
+<a name="GoonDelegation+take"></a>
+
+### goonDelegation.take(frame, [origin]) ⇒ <code>Promise.&lt;object&gt;</code>
+A frame addressed to this player arrived (a mailbox on this relay, or
+one this app read).
+
+**Kind**: instance method of [<code>GoonDelegation</code>](#GoonDelegation)  
+
+| Param | Type | Description |
+| --- | --- | --- |
+| frame | <code>string</code> \| <code>Buffer</code> |  |
+| [origin] | <code>string</code> | Mailbox the frame came from (results go back there). |
+
+<a name="GoonDelegation+pollMailboxes"></a>
+
+### goonDelegation.pollMailboxes() ⇒ <code>Promise.&lt;number&gt;</code>
+Read every mailbox once.
+
+**Kind**: instance method of [<code>GoonDelegation</code>](#GoonDelegation)  
+**Returns**: <code>Promise.&lt;number&gt;</code> - frames taken  
+<a name="GoonDelegation+pending"></a>
+
+### goonDelegation.pending() ⇒ <code>Promise.&lt;Array.&lt;object&gt;&gt;</code>
+Requests waiting for the player, oldest first.
+
+**Kind**: instance method of [<code>GoonDelegation</code>](#GoonDelegation)  
+<a name="GoonDelegation+answer"></a>
+
+### goonDelegation.answer(hash, action, [options]) ⇒ <code>Promise.&lt;{status: number, json: object}&gt;</code>
+The player signs or declines a request; the requester gets the result
+from the mailbox it asked through (or from loopback, where Passport polls).
+
+**Kind**: instance method of [<code>GoonDelegation</code>](#GoonDelegation)  
+
+| Param | Type |
+| --- | --- |
+| hash | <code>string</code> | 
+| action | <code>&#x27;sign&#x27;</code> \| <code>&#x27;decline&#x27;</code> | 
+| [options] | <code>Object</code> | 
+
+<a name="GoonDelegation+signers"></a>
+
+### goonDelegation.signers() ⇒ <code>Promise.&lt;object&gt;</code>
+Linked signers: pairings and grants both ways, plus identity-linked keys.
+
+**Kind**: instance method of [<code>GoonDelegation</code>](#GoonDelegation)  
+<a name="GoonDelegation+revoke"></a>
+
+### goonDelegation.revoke(hash) ⇒ <code>Promise.&lt;object&gt;</code>
+Withdraw a grant the player made; the grantee finds the revocation in the mailboxes.
+
+**Kind**: instance method of [<code>GoonDelegation</code>](#GoonDelegation)  
+
+| Param | Type |
+| --- | --- |
+| hash | <code>string</code> | 
+
+<a name="GoonDelegation+unlink"></a>
+
+### goonDelegation.unlink(pubkey) ⇒ <code>Promise.&lt;{ok: true, revoked: Array.&lt;string&gt;}&gt;</code>
+Withdraw every grant the player gave one signer.
+
+**Kind**: instance method of [<code>GoonDelegation</code>](#GoonDelegation)  
+
+| Param | Type |
+| --- | --- |
+| pubkey | <code>string</code> | 
+
+<a name="GoonDelegation+pairing"></a>
+
+### goonDelegation.pairing() ⇒ <code>object</code> \| <code>null</code>
+The pairing in progress, for the dashboard (no nonces).
+
+**Kind**: instance method of [<code>GoonDelegation</code>](#GoonDelegation)  
+<a name="GoonDelegation+invite"></a>
+
+### goonDelegation.invite(hub) ⇒ <code>Promise.&lt;object&gt;</code>
+Show an invitation on a Hub; the other side takes it and both match the code.
+
+**Kind**: instance method of [<code>GoonDelegation</code>](#GoonDelegation)  
+**Returns**: <code>Promise.&lt;object&gt;</code> - the pairing view  
+
+| Param | Type |
+| --- | --- |
+| hub | <code>string</code> | 
+
+<a name="GoonDelegation+accept"></a>
+
+### goonDelegation.accept(invitation) ⇒ <code>Promise.&lt;object&gt;</code>
+Take an invitation another signer shows.
+
+**Kind**: instance method of [<code>GoonDelegation</code>](#GoonDelegation)  
+**Returns**: <code>Promise.&lt;object&gt;</code> - the pairing view  
+
+| Param | Type | Description |
+| --- | --- | --- |
+| invitation | <code>string</code> | `fabric:` link offer |
+
+<a name="GoonDelegation+confirm"></a>
+
+### goonDelegation.confirm(scopesRaw) ⇒ <code>Promise.&lt;object&gt;</code>
+The player matched the code: grant what they chose, then take the other side's grant.
+
+**Kind**: instance method of [<code>GoonDelegation</code>](#GoonDelegation)  
+**Returns**: <code>Promise.&lt;object&gt;</code> - the pairing view  
+
+| Param | Type |
+| --- | --- |
+| scopesRaw | <code>Array.&lt;string&gt;</code> | 
+
+<a name="GoonDelegation+cancelPairing"></a>
+
+### goonDelegation.cancelPairing() ⇒ <code>Promise.&lt;{ok: true}&gt;</code>
+Stop the pairing in progress and close its link on the Hub.
+
+**Kind**: instance method of [<code>GoonDelegation</code>](#GoonDelegation)  
+<a name="GoonDelegation+identityFrames"></a>
+
+### goonDelegation.identityFrames() ⇒ <code>Promise.&lt;Array.&lt;string&gt;&gt;</code>
+Every identity grant and revoke this app holds, as `fabric:` frames (to gossip).
+
+**Kind**: instance method of [<code>GoonDelegation</code>](#GoonDelegation)  
+<a name="GroupWallets"></a>
+
+## GroupWallets
+**Kind**: global class  
+
+* [GroupWallets](#GroupWallets)
+    * [new GroupWallets(settings)](#new_GroupWallets_new)
+    * [.cosignerOf(group, member)](#GroupWallets+cosignerOf) ⇒ <code>string</code> \| <code>null</code>
+    * [.missingCosigners(group)](#GroupWallets+missingCosigners) ⇒ <code>Array.&lt;string&gt;</code>
+    * [.descriptor(group)](#GroupWallets+descriptor) ⇒ <code>Object</code> \| <code>null</code>
+    * [.federation(group)](#GroupWallets+federation) ⇒ <code>Object</code> \| <code>null</code>
+    * [.federations(group)](#GroupWallets+federations) ⇒ <code>Array.&lt;Object&gt;</code>
+    * [.wallet(group, [viewer])](#GroupWallets+wallet) ⇒ <code>Object</code>
+    * [.withdrawals(groupId)](#GroupWallets+withdrawals) ⇒ <code>Array.&lt;Object&gt;</code>
+    * [.view(w)](#GroupWallets+view) ⇒ <code>Object</code>
+    * [.request(group, actor, opts)](#GroupWallets+request) ⇒ <code>Promise.&lt;Object&gt;</code>
+    * [.approve(group, requestId, actor, [opts])](#GroupWallets+approve) ⇒ <code>Promise.&lt;Object&gt;</code>
+    * [.receive(body, signer)](#GroupWallets+receive) ⇒ <code>Promise.&lt;boolean&gt;</code>
+    * [._knownFederation()](#GroupWallets+_knownFederation)
+
+<a name="new_GroupWallets_new"></a>
+
+### new GroupWallets(settings)
+
+| Param | Type | Default | Description |
+| --- | --- | --- | --- |
+| settings | <code>Object</code> |  |  |
+| settings.store | <code>Object</code> |  | Register store (`get` / `put` / `all`) |
+| [settings.network] | <code>string</code> \| <code>function</code> | <code>&quot;&#x27;regtest&#x27;&quot;</code> | Bitcoin network name, or `() => name` |
+| [settings.allowMainnet] | <code>boolean</code> | <code>false</code> | Allow withdrawals on mainnet |
+| [settings.maxFeeSats] | <code>number</code> | <code>100000</code> | Highest withdrawal fee this node signs |
+| [settings.signingKey] | <code>function</code> |  | `(network) => Key|null` — the unlocked local   cosigner key for the wallet network |
+| [settings.publish] | <code>function</code> |  | `(body) => void` — send a federation message |
+| [settings.chain] | <code>Object</code> |  | `{ scan(address), rawTransaction(txid, { height }), broadcast(txHex) }` |
+| [settings.groups] | <code>function</code> |  | `() => Array<Group>` — this node's groups, to recognise   the current federation of a group whose wallet was never opened here |
+
+<a name="GroupWallets+cosignerOf"></a>
+
+### groupWallets.cosignerOf(group, member) ⇒ <code>string</code> \| <code>null</code>
+A member's cosigner key for the wallet network.
+
+**Kind**: instance method of [<code>GroupWallets</code>](#GroupWallets)  
+
+| Param | Type | Description |
+| --- | --- | --- |
+| group | <code>Object</code> |  |
+| member | <code>string</code> | Identity pubkey. |
+
+<a name="GroupWallets+missingCosigners"></a>
+
+### groupWallets.missingCosigners(group) ⇒ <code>Array.&lt;string&gt;</code>
+Signers that have not published a cosigner key for the wallet network.
+
+**Kind**: instance method of [<code>GroupWallets</code>](#GroupWallets)  
+**Returns**: <code>Array.&lt;string&gt;</code> - identity pubkeys  
+
+| Param | Type |
+| --- | --- |
+| group | <code>Object</code> | 
+
+<a name="GroupWallets+descriptor"></a>
+
+### groupWallets.descriptor(group) ⇒ <code>Object</code> \| <code>null</code>
+Canonical federation descriptor for a group's current signers.
+
+**Kind**: instance method of [<code>GroupWallets</code>](#GroupWallets)  
+**Returns**: <code>Object</code> \| <code>null</code> - descriptor, or null when the group has no signers
+  or a signer has no cosigner key yet  
+
+| Param | Type | Description |
+| --- | --- | --- |
+| group | <code>Object</code> | Group (or its JSON) |
+
+<a name="GroupWallets+federation"></a>
+
+### groupWallets.federation(group) ⇒ <code>Object</code> \| <code>null</code>
+The group's current federation, remembered so its vault stays spendable
+after the signers change.
+
+**Kind**: instance method of [<code>GroupWallets</code>](#GroupWallets)  
+
+| Param | Type |
+| --- | --- |
+| group | <code>Object</code> | 
+
+<a name="GroupWallets+federations"></a>
+
+### groupWallets.federations(group) ⇒ <code>Array.&lt;Object&gt;</code>
+Every federation this node has seen for a group, current first.
+
+**Kind**: instance method of [<code>GroupWallets</code>](#GroupWallets)  
+
+| Param | Type |
+| --- | --- |
+| group | <code>Object</code> | 
+
+<a name="GroupWallets+wallet"></a>
+
+### groupWallets.wallet(group, [viewer]) ⇒ <code>Object</code>
+Wallet view: current vault plus earlier ones.
+
+**Kind**: instance method of [<code>GroupWallets</code>](#GroupWallets)  
+
+| Param | Type | Default | Description |
+| --- | --- | --- | --- |
+| group | <code>Object</code> |  |  |
+| [viewer] | <code>string</code> | <code>null</code> | pubkey of the viewer (for `viewerIsSigner`) |
+
+<a name="GroupWallets+withdrawals"></a>
+
+### groupWallets.withdrawals(groupId) ⇒ <code>Array.&lt;Object&gt;</code>
+Withdrawals for a group, newest first (without the funding transaction).
+
+**Kind**: instance method of [<code>GroupWallets</code>](#GroupWallets)  
+
+| Param | Type |
+| --- | --- |
+| groupId | <code>string</code> | 
+
+<a name="GroupWallets+view"></a>
+
+### groupWallets.view(w) ⇒ <code>Object</code>
+Public view of a withdrawal record.
+
+**Kind**: instance method of [<code>GroupWallets</code>](#GroupWallets)  
+
+| Param | Type |
+| --- | --- |
+| w | <code>Object</code> | 
+
+<a name="GroupWallets+request"></a>
+
+### groupWallets.request(group, actor, opts) ⇒ <code>Promise.&lt;Object&gt;</code>
+Request a withdrawal from one of the group's vaults. Any signer of that
+vault may ask; the request is signed by this node right away when the
+requester is the unlocked local identity.
+
+**Kind**: instance method of [<code>GroupWallets</code>](#GroupWallets)  
+**Returns**: <code>Promise.&lt;Object&gt;</code> - withdrawal view  
+
+| Param | Type | Description |
+| --- | --- | --- |
+| group | <code>Object</code> |  |
+| actor | <code>string</code> | requester identity pubkey |
+| opts | <code>Object</code> | `{ destinationAddress, amountSats, feeSats, federationId?, fundedTxHex?, txid?, vout? }` |
+
+<a name="GroupWallets+approve"></a>
+
+### groupWallets.approve(group, requestId, actor, [opts]) ⇒ <code>Promise.&lt;Object&gt;</code>
+Add a signer's signatures to a pending withdrawal. Without `signatures`
+the unlocked local cosigner key signs (it must be `actor`'s).
+
+**Kind**: instance method of [<code>GroupWallets</code>](#GroupWallets)  
+**Returns**: <code>Promise.&lt;Object&gt;</code> - withdrawal view  
+
+| Param | Type | Description |
+| --- | --- | --- |
+| group | <code>Object</code> |  |
+| requestId | <code>string</code> |  |
+| actor | <code>string</code> | signer identity pubkey |
+| [opts] | <code>Object</code> | `{ signatures? }` from [Federation.signWithdrawal](Federation.signWithdrawal) |
+
+<a name="GroupWallets+receive"></a>
+
+### groupWallets.receive(body, signer) ⇒ <code>Promise.&lt;boolean&gt;</code>
+Handle a federation `CONTRACT_MESSAGE` body from the mesh.
+
+**Kind**: instance method of [<code>GroupWallets</code>](#GroupWallets)  
+**Returns**: <code>Promise.&lt;boolean&gt;</code> - true when the message was for one of our group federations  
+
+| Param | Type | Description |
+| --- | --- | --- |
+| body | <code>Object</code> |  |
+| signer | <code>string</code> | verified frame author |
+
+<a name="GroupWallets+_knownFederation"></a>
+
+### groupWallets.\_knownFederation()
+Stored federation, else the current federation of one of this node's groups.
+
+**Kind**: instance method of [<code>GroupWallets</code>](#GroupWallets)  
+<a name="MarketManager"></a>
+
+## MarketManager
+**Kind**: global class  
+
+* [MarketManager](#MarketManager)
+    * [new MarketManager([settings])](#new_MarketManager_new)
+    * [.agentEnabled](#MarketManager+agentEnabled) ⇒ <code>boolean</code>
+    * [.channelsEnabled](#MarketManager+channelsEnabled) ⇒ <code>boolean</code>
+    * [.attach(deps)](#MarketManager+attach)
+    * [._ensureAgent()](#MarketManager+_ensureAgent) ⇒ <code>MarketAgent</code> \| <code>null</code>
+    * [.start()](#MarketManager+start)
+    * [.agentStatus()](#MarketManager+agentStatus) ⇒ <code>Object</code>
+    * [.agentWant(body)](#MarketManager+agentWant)
+    * [.agentForget(documentId)](#MarketManager+agentForget)
+    * [.agentConfigure(body)](#MarketManager+agentConfigure)
+    * [.persist()](#MarketManager+persist) ⇒ <code>object</code> \| <code>null</code>
+    * [.ingestInventoryResponse(ev)](#MarketManager+ingestInventoryResponse) ⇒ <code>Array.&lt;object&gt;</code>
+    * [.chunkIndex([filter])](#MarketManager+chunkIndex) ⇒ <code>Object.&lt;string, Array.&lt;object&gt;&gt;</code>
+    * [.planFor()](#MarketManager+planFor)
+    * [._ensureChannels()](#MarketManager+_ensureChannels) ⇒ <code>object</code> \| <code>null</code>
+    * [.fileWatchtowerAppointment(appointment)](#MarketManager+fileWatchtowerAppointment) ⇒ <code>object</code> \| <code>null</code>
+    * [.ingestChannelMessage(body, [meta])](#MarketManager+ingestChannelMessage) ⇒ <code>object</code> \| <code>null</code>
+    * [.onBitcoinBlock(payload)](#MarketManager+onBitcoinBlock) ⇒ <code>object</code> \| <code>null</code>
+    * [.channelsStatus()](#MarketManager+channelsStatus) ⇒ <code>object</code>
+    * [.channelOpen(body)](#MarketManager+channelOpen)
+    * [.ingestFraudProof(body, [ctx])](#MarketManager+ingestFraudProof) ⇒ <code>object</code>
+    * [.providerPubkey()](#MarketManager+providerPubkey)
+    * [.commitAvailability(opts)](#MarketManager+commitAvailability) ⇒ <code>object</code>
+    * [.onAvailabilityChallenge(challenge, [opts])](#MarketManager+onAvailabilityChallenge) ⇒ <code>object</code> \| <code>null</code>
+    * [.publishWrongfulPenalty(challenge, response, [penalty], [ctx])](#MarketManager+publishWrongfulPenalty) ⇒ <code>object</code>
+
+<a name="new_MarketManager_new"></a>
+
+### new MarketManager([settings])
+
+| Param | Type | Default | Description |
+| --- | --- | --- | --- |
+| [settings] | <code>Object</code> |  |  |
+| [settings.store] | <code>object</code> |  | GoonCitizen `types/Store` instance. |
+| [settings.persistDebounceMs] | <code>number</code> | <code>2000</code> |  |
+| [settings.book] | <code>object</code> |  | `DocumentBook` settings (alpha, hopPenaltyMs, weights). |
+
+<a name="MarketManager+agentEnabled"></a>
+
+### marketManager.agentEnabled ⇒ <code>boolean</code>
+**Kind**: instance property of [<code>MarketManager</code>](#MarketManager)  
+<a name="MarketManager+channelsEnabled"></a>
+
+### marketManager.channelsEnabled ⇒ <code>boolean</code>
+**Kind**: instance property of [<code>MarketManager</code>](#MarketManager)  
+<a name="MarketManager+attach"></a>
+
+### marketManager.attach(deps)
+Late-bind the Fabric Peer (LiveRelay starts it after construction) and the
+Hub-proxied Bitcoin settings used to fund purchases.
+
+**Kind**: instance method of [<code>MarketManager</code>](#MarketManager)  
+
+| Param | Type | Description |
+| --- | --- | --- |
+| deps | <code>Object</code> | `{ peer?: Function|Object, bitcoin?: Object }` |
+
+<a name="MarketManager+_ensureAgent"></a>
+
+### marketManager.\_ensureAgent() ⇒ <code>MarketAgent</code> \| <code>null</code>
+Build the core budget agent once. Refuses mainnet.
+
+**Kind**: instance method of [<code>MarketManager</code>](#MarketManager)  
+<a name="MarketManager+start"></a>
+
+### marketManager.start()
+Start the budget agent scheduler when enabled.
+
+**Kind**: instance method of [<code>MarketManager</code>](#MarketManager)  
+<a name="MarketManager+agentStatus"></a>
+
+### marketManager.agentStatus() ⇒ <code>Object</code>
+**Kind**: instance method of [<code>MarketManager</code>](#MarketManager)  
+**Returns**: <code>Object</code> - agent status or `{ available: false }`.  
+<a name="MarketManager+agentWant"></a>
+
+### marketManager.agentWant(body)
+**Kind**: instance method of [<code>MarketManager</code>](#MarketManager)  
+
+| Param | Type | Description |
+| --- | --- | --- |
+| body | <code>Object</code> | `{ documentId, merkleRootHex?, blobTotal?, maxSats? }` |
+
+<a name="MarketManager+agentForget"></a>
+
+### marketManager.agentForget(documentId)
+**Kind**: instance method of [<code>MarketManager</code>](#MarketManager)  
+
+| Param | Type |
+| --- | --- |
+| documentId | <code>string</code> | 
+
+<a name="MarketManager+agentConfigure"></a>
+
+### marketManager.agentConfigure(body)
+**Kind**: instance method of [<code>MarketManager</code>](#MarketManager)  
+
+| Param | Type | Description |
+| --- | --- | --- |
+| body | <code>Object</code> | `{ budgetSats?, perPlanMaxSats?, proximityWeight? }` |
+
+<a name="MarketManager+persist"></a>
+
+### marketManager.persist() ⇒ <code>object</code> \| <code>null</code>
+Write the signable telemetry record to the Store now.
+
+**Kind**: instance method of [<code>MarketManager</code>](#MarketManager)  
+<a name="MarketManager+ingestInventoryResponse"></a>
+
+### marketManager.ingestInventoryResponse(ev) ⇒ <code>Array.&lt;object&gt;</code>
+Fold one `P2P_INVENTORY_RESPONSE` into the book (telemetry + chunk index).
+
+**Kind**: instance method of [<code>MarketManager</code>](#MarketManager)  
+**Returns**: <code>Array.&lt;object&gt;</code> - rows upserted  
+
+| Param | Type | Description |
+| --- | --- | --- |
+| ev | <code>Object</code> | `{ message, origin, latencyMs?, hops?, signerPubkeyHex? }` |
+
+<a name="MarketManager+chunkIndex"></a>
+
+### marketManager.chunkIndex([filter]) ⇒ <code>Object.&lt;string, Array.&lt;object&gt;&gt;</code>
+Chunk locator: blob hash → providers, optionally narrowed by document / root.
+
+**Kind**: instance method of [<code>MarketManager</code>](#MarketManager)  
+
+| Param | Type |
+| --- | --- |
+| [filter] | <code>Object</code> | 
+
+<a name="MarketManager+planFor"></a>
+
+### marketManager.planFor()
+Cheapest ranked per-blob plan for one document (see `DocumentBook#pickBlobPlan`).
+
+**Kind**: instance method of [<code>MarketManager</code>](#MarketManager)  
+<a name="MarketManager+_ensureChannels"></a>
+
+### marketManager.\_ensureChannels() ⇒ <code>object</code> \| <code>null</code>
+Channel registry keyed by this node's Fabric key; bodies gossip as
+`CONTRACT_MESSAGE` under the document-market namespace (no new opcode).
+
+**Kind**: instance method of [<code>MarketManager</code>](#MarketManager)  
+**Returns**: <code>object</code> \| <code>null</code> - core `ChannelBook`  
+<a name="MarketManager+fileWatchtowerAppointment"></a>
+
+### marketManager.fileWatchtowerAppointment(appointment) ⇒ <code>object</code> \| <code>null</code>
+Keep a filing from a client this node has registered.
+
+**Kind**: instance method of [<code>MarketManager</code>](#MarketManager)  
+
+| Param | Type |
+| --- | --- |
+| appointment | <code>object</code> | 
+
+<a name="MarketManager+ingestChannelMessage"></a>
+
+### marketManager.ingestChannelMessage(body, [meta]) ⇒ <code>object</code> \| <code>null</code>
+Route an inbound `Channel*` body from the Fabric contract stream.
+
+**Kind**: instance method of [<code>MarketManager</code>](#MarketManager)  
+
+| Param | Type | Description |
+| --- | --- | --- |
+| body | <code>object</code> |  |
+| [meta] | <code>object</code> | `{ sellerId }` |
+
+<a name="MarketManager+onBitcoinBlock"></a>
+
+### marketManager.onBitcoinBlock(payload) ⇒ <code>object</code> \| <code>null</code>
+New chain tip (Hub Bitcoin status poll or host hook): refresh the book's
+tip, tick expiries, and classify any supplied transactions — a stale
+counterparty commitment yields a justice tx and a gossiped `FraudProof`.
+Supply `blockHeaderHex` + `txids` (the block the transactions confirmed in)
+so the proof carries an SPV inclusion artifact third parties can verify.
+
+**Kind**: instance method of [<code>MarketManager</code>](#MarketManager)  
+
+| Param | Type | Description |
+| --- | --- | --- |
+| payload | <code>object</code> | `{ height, txHexes?, blockHeaderHex?, txids?, destinationAddress? }` |
+
+<a name="MarketManager+channelsStatus"></a>
+
+### marketManager.channelsStatus() ⇒ <code>object</code>
+**Kind**: instance method of [<code>MarketManager</code>](#MarketManager)  
+<a name="MarketManager+channelOpen"></a>
+
+### marketManager.channelOpen(body)
+Open a channel as funder (operator). Caller supplies the funding tx hex.
+
+**Kind**: instance method of [<code>MarketManager</code>](#MarketManager)  
+
+| Param | Type | Description |
+| --- | --- | --- |
+| body | <code>object</code> | `{ remotePubkey, fundedTxHex, capacitySats, expireAfter, localAddress, remoteAddress, feeSats?, aliases? }` |
+
+<a name="MarketManager+ingestFraudProof"></a>
+
+### marketManager.ingestFraudProof(body, [ctx]) ⇒ <code>object</code>
+Verify a peer-relayed `FraudProof` and penalize the offender in the local
+book (core `DocumentBook#ingestFraudProof`). Reputation stays local.
+
+**Kind**: instance method of [<code>MarketManager</code>](#MarketManager)  
+**Returns**: <code>object</code> - verdict  
+
+| Param | Type | Description |
+| --- | --- | --- |
+| body | <code>object</code> |  |
+| [ctx] | <code>object</code> | `{ epoch }` |
+
+<a name="MarketManager+providerPubkey"></a>
+
+### marketManager.providerPubkey()
+x-only provider pubkey (hex) this node answers challenges for, or null.
+
+**Kind**: instance method of [<code>MarketManager</code>](#MarketManager)  
+<a name="MarketManager+commitAvailability"></a>
+
+### marketManager.commitAvailability(opts) ⇒ <code>object</code>
+Sign an `AvailabilityCommitment` for a tree this node serves and publish it
+as a `CONTRACT_MESSAGE` (via the injected `publish(type, object)`).
+
+**Kind**: instance method of [<code>MarketManager</code>](#MarketManager)  
+**Returns**: <code>object</code> - signed commitment  
+
+| Param | Type | Description |
+| --- | --- | --- |
+| opts | <code>object</code> | `{ merkleRootHex, blobTotal, publisherPubkey, fromEpoch, untilEpoch, depositAddress?, depositTxid? }` |
+
+<a name="MarketManager+onAvailabilityChallenge"></a>
+
+### marketManager.onAvailabilityChallenge(challenge, [opts]) ⇒ <code>object</code> \| <code>null</code>
+Answer an `AvailabilityChallenge` addressed to this provider from the local
+catalog (`localTree(merkleRootHex)` → `{ blobHashes, bytesFor(i) }`).
+
+**Kind**: instance method of [<code>MarketManager</code>](#MarketManager)  
+**Returns**: <code>object</code> \| <code>null</code> - signed response, or null when not ours / not held  
+
+| Param | Type | Description |
+| --- | --- | --- |
+| challenge | <code>object</code> | signed artifact |
+| [opts] | <code>object</code> | `{ epoch }` |
+
+<a name="MarketManager+publishWrongfulPenalty"></a>
+
+### marketManager.publishWrongfulPenalty(challenge, response, [penalty], [ctx]) ⇒ <code>object</code>
+Counter-proof when this provider is penalized despite a valid response.
+The penalty's `prevouts` let verifiers check the penalty leaf and both
+signatures; `ctx` is this node's chain view showing the penalty confirmed.
+
+**Kind**: instance method of [<code>MarketManager</code>](#MarketManager)  
+**Returns**: <code>object</code> - `FraudProof` body (also published)  
+
+| Param | Type | Default | Description |
+| --- | --- | --- | --- |
+| challenge | <code>object</code> |  |  |
+| response | <code>object</code> |  |  |
+| [penalty] | <code>object</code> | <code></code> | `{ txHex, txid?, prevouts: [{ scriptHex, valueSats }], anchor? }` (spent outputs in input order). `anchor` is the publisher's `AvailabilityReceipt` or trusted `EpochAttestation`s showing the response existed by the deadline. |
+| [ctx] | <code>object</code> |  | `{ txConfirmed(txid, depth) }` or `{ headerKnown(blockHash), confirmations(blockHash) }` |
 
 <a name="MissionManager"></a>
 
@@ -2090,7 +2803,8 @@ FabricNetwork — local `@fabric/core` Peer for GoonCitizen peering.
 
 Wire Messages:
   - P2P_CHAT_MESSAGE     — network-wide `global` chat (Peer auto-relays)
-  - CONTRACT_MESSAGE     — GoonCitizen app types + per-Group Federation types
+  - CONTRACT_MESSAGE     — GoonCitizen app types + per-Group Federation types,
+                           plus core named-federation bodies (group wallets)
   - CONTRACT_PUBLISH     — GoonCitizen genesis + per-Group Federation genesis
 
 Durable outbound frames set AMP `parent` to the previous signed `Message.id`
@@ -2130,6 +2844,28 @@ App `type` values under GoonCitizen / Group CONTRACT_MESSAGE (ingest catalog).
 True when `appType` is a known GoonCitizen / Group contract body type.
 
 **Kind**: global constant  
+<a name="EventEmitter"></a>
+
+## EventEmitter
+GoonCitizen as a delegation participant (`@fabric/core` docs/DELEGATION.md).
+
+GoonCitizen keeps its own `Delegation`: the player's identity key and its
+frames in the register Store (collection `delegations`). Nothing is shared
+with the signers it links to; each keeps its own key and its own record.
+
+- **Linking.** Passport on this computer pairs over the loopback delegate
+  (`@fabric/http` fabricDelegate; the native dialog confirms the code).
+  Anyone else pairs through a rendezvous: this app shows an invitation, or
+  takes one, and the player matches the six-digit code in the dashboard
+  before either side grants anything.
+- **Requests.** A linked signer's `DELEGATION_REQUEST` (loopback or a
+  mailbox) never signs on its own: it becomes a register inbox row
+  (`DelegationRequest`) with Sign and Decline, and a desktop toast.
+- **Who is who.** Mutual `identity` grants make one actor; every grant and
+  revoke this app holds is handed to the relay (`identity`), which feeds
+  the identity cluster and gossips them as `DelegationShare`.
+
+**Kind**: global constant  
 <a name="crypto"></a>
 
 ## crypto
@@ -2149,6 +2885,30 @@ Persistence: uses `types/Store.js` (composes `@fabric/core` Store;
 `stores/gooncitizen/register` (Hub-style named store root).
 
 **Kind**: global constant  
+<a name="EventEmitter"></a>
+
+## EventEmitter
+Group wallets — each Group's signers form a named Fabric federation
+(`@fabric/core` `types/federation`): the same descriptor, Taproot vault,
+withdrawal PSBT, and member messages as Hub and Passport, so a group
+wallet is a federation any Fabric member software can verify and sign for.
+
+The validators are the signers' cosigner keys (`m/87'/B'/n'/0/0`), which
+each signer ties to their identity with a `cosigner.set` GroupChange
+(`functions/groupCosigner.js`) — never identity keys. A group shows no
+vault until every signer has one for the wallet's network. Federation
+messages are signed by the cosigner key.
+
+Changing a group's signers or threshold makes a new descriptor (new
+federation id and vault). Every descriptor seen for a group is kept, so
+coins left on an earlier vault can still be withdrawn by its signers.
+
+Group membership is GoonCitizen's own (GroupChange); federation invites
+and responses are not used here. Withdrawal requests, signatures,
+broadcast notices, and sync travel as `CONTRACT_MESSAGE` under the
+federation id.
+
+**Kind**: global constant  
 <a name="http"></a>
 
 ## http
@@ -2162,12 +2922,6 @@ Game.log parsing (`functions/parser.js`), optional Discord, missions/groups/
 chat, and a Fabric Peer (D-009 / D-010).
 
 It edits NOTHING in the Star Citizen installation — the log is only ever read.
-
-**Kind**: global constant  
-<a name="BEARER_TTL_MS"></a>
-
-## BEARER\_TTL\_MS
-Hosted / site-login Bearer session lifetime (ms).
 
 **Kind**: global constant  
 <a name="SESSION_LOG_CAP"></a>
@@ -2300,6 +3054,18 @@ Namespaces:
 | handlers | <code>Object</code> |  |
 | [opts] | <code>Object</code> |  |
 | [opts.relay] | <code>boolean</code> |  |
+
+<a name="registerKv"></a>
+
+## registerKv(registerStore, [collection]) ⇒ <code>Object</code>
+`{ get, set }` over one register Store collection.
+
+**Kind**: global function  
+
+| Param | Type | Description |
+| --- | --- | --- |
+| registerStore | <code>object</code> | `types/Store.js` |
+| [collection] | <code>string</code> |  |
 
 <a name="StarCitizenActivity"></a>
 

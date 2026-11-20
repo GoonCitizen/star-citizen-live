@@ -1,10 +1,10 @@
 'use strict';
 
 /**
- * UI model for the dedicated linked-devices page.
+ * UI model for the Linked signers page.
  *
- * Stages (pairing → Fabric IdentityCrossSign → LAN/WebRTC discovery → DeviceDataShare):
- *   this, unpaired, waiting-cross-sign, waiting-sync, lan, webrtc, synced
+ * Stages (pairing → mutual identity grants → LAN/WebRTC discovery → DeviceDataShare):
+ *   this, unpaired, waiting-grant, waiting-sync, lan, webrtc, synced
  */
 
 const { xOnly } = require('./clusterMesh');
@@ -17,8 +17,8 @@ function _pk (row) {
 }
 
 function _label (row) {
-  if (!row || typeof row !== 'object') return 'Linked device';
-  return String(row.label || row.name || 'Linked device').slice(0, 64);
+  if (!row || typeof row !== 'object') return 'Linked signer';
+  return String(row.label || row.name || 'Linked signer').slice(0, 64);
 }
 
 function pendingFor (cluster, localPubkey) {
@@ -34,7 +34,7 @@ function pendingFor (cluster, localPubkey) {
     const to = xOnly(rec.peer || rec.to || rec.peerPubkey);
     if (!from || !to) continue;
     if (from !== local && to !== local) continue;
-    out.push({ from, to, nonce: rec.nonce || null });
+    out.push({ from, to, grant: rec.grant || null });
   }
   return out;
 }
@@ -50,7 +50,7 @@ function pendingFromClusterInstance (identityCluster, localPubkey) {
     pending.push({
       local: rec.local,
       peer: rec.peer,
-      nonce: rec.nonce
+      grant: rec.grant
     });
   }
   return pendingFor({ pending }, localPubkey);
@@ -59,7 +59,7 @@ function pendingFromClusterInstance (identityCluster, localPubkey) {
 /**
  * @param {Object} opts
  * @param {string} opts.localPubkey
- * @param {Array<object>} [opts.linkedDevices]
+ * @param {Array<object>} [opts.linkedDevices] linked signers `{ pubkey, label, linkedAt }`
  * @param {object} [opts.cluster] { members, edges, pending }
  * @param {object} [opts.sync] ClusterSync data
  * @param {object} [opts.mesh] { registered, discovered }
@@ -102,7 +102,7 @@ function mergeDeviceRows (opts = {}) {
         pubkey: pk,
         xonly: x,
         kind: x === localX ? 'this' : 'sibling',
-        label: x === localX ? 'This device' : 'Linked device',
+        label: x === localX ? 'This app' : 'Linked signer',
         pairing: false,
         cluster: members.some((m) => xOnly(m) === x),
         pending: false,
@@ -119,7 +119,7 @@ function mergeDeviceRows (opts = {}) {
   if (local) {
     ensure(local, {
       kind: 'this',
-      label: 'This device',
+      label: 'This app',
       pairing: true,
       cluster: true,
       candidates: localCandidates.slice(),
@@ -139,18 +139,15 @@ function mergeDeviceRows (opts = {}) {
     const row = ensure(pk, {
       pairing: true,
       label: _label(d),
-      linkedAt: d.linkedAt || null,
-      nonce: d.nonce || null
+      linkedAt: d.linkedAt || null
     });
     if (row && row.kind !== 'this') row.pairing = true;
-    if (row && d.nonce && !row.nonce) row.nonce = d.nonce;
   }
 
   for (const p of pending) {
     const other = p.from === localX ? p.to : p.from;
-    const row = ensure(other, { pending: true, nonce: p.nonce || null });
+    const row = ensure(other, { pending: true });
     if (row && !row.cluster) row.pending = true;
-    if (row && p.nonce && !row.nonce) row.nonce = p.nonce;
   }
 
   for (const p of peerRows) {
@@ -204,7 +201,7 @@ function mergeDeviceRows (opts = {}) {
   let stage = 'unpaired';
   if (!siblings.length) stage = 'unpaired';
   else if (siblings.every((d) => d.stage === 'synced') && frames) stage = 'synced';
-  else if (siblings.some((d) => d.stage === 'waiting-cross-sign' || d.pending)) stage = 'waiting-cross-sign';
+  else if (siblings.some((d) => d.stage === 'waiting-grant' || d.pending)) stage = 'waiting-grant';
   else if (siblings.some((d) => d.webrtc || d.candidates.length)) stage = 'lan';
   else stage = 'waiting-sync';
 
@@ -224,19 +221,19 @@ function stageFor (row, ctx = {}) {
     return row.webrtc && !row.candidates.length ? 'webrtc' : 'lan';
   }
   if (row.cluster) return 'waiting-sync';
-  if (row.pairing || row.pending) return 'waiting-cross-sign';
+  if (row.pairing || row.pending) return 'waiting-grant';
   return 'unpaired';
 }
 
 function stageLabel (stage) {
   switch (stage) {
-    case 'this': return 'This device';
+    case 'this': return 'This app';
     case 'synced': return 'Account synced';
     case 'lan': return 'LAN advertised';
     case 'webrtc': return 'Hub coordinator';
     case 'waiting-sync': return 'Waiting for DeviceDataShare';
-    case 'waiting-cross-sign': return 'Waiting for Fabric cross-sign';
-    default: return 'Add a device';
+    case 'waiting-grant': return 'Waiting for the other side to grant identity';
+    default: return 'Link a signer';
   }
 }
 

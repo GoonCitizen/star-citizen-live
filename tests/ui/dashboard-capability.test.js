@@ -12,7 +12,7 @@ describe('Dashboard capability chrome', () => {
   it('hides Import and Settings for public visitors on liveRelay', () => {
     const dash = new Dashboard({});
     dash.state.apiRuntime = GC_UI_RUNTIME_LIVE;
-    dash.state.siteToken = null;
+    dash.state.siteSession = null;
     dash.state.identityPubkey = null;
     dash.state.online = true;
     dash.state.status = 'ok';
@@ -53,10 +53,10 @@ describe('Dashboard capability chrome', () => {
     }
   });
 
-  it('authenticated siteToken keeps Import visible', () => {
+  it('a Passport session keeps Import visible', () => {
     const dash = new Dashboard({});
     dash.state.apiRuntime = GC_UI_RUNTIME_LIVE;
-    dash.state.siteToken = 'tok';
+    dash.state.siteSession = { identity: { id: 'id1abc', pubkey: '02' + 'ab'.repeat(32) } };
     dash.state.online = true;
     dash.state.status = 'ok';
     const prev = global.window && global.window.electronAPI;

@@ -3,10 +3,9 @@
 /**
  * Wallet — Bitcoin components brought forward from the Hub, group-aware.
  * Shows the payout backend (ledger vs bitcoind, network), each group's
- * alliance treasury — a deterministic Taproot (P2TR) spend-ladder address
- * on this org node (same on every member's relay — sorted keys; Hub does
- * not hold these coins; legacy P2WSH kept under legacyP2wsh), and mission
- * escrows with status.
+ * alliance treasury — the group's named-federation vault (core
+ * `types/federation`: same address on every member's relay; Hub does not
+ * hold these coins), and mission escrows with status.
  */
 
 const React = require('react');
@@ -82,26 +81,6 @@ class Wallet extends React.Component {
     try { navigator.clipboard.writeText(text); this.setState({ notice: 'Copied.' }); } catch (_) { /* no clipboard */ }
   }
 
-  async proposeWithdraw (groupId) {
-    try {
-      const res = await fetch(`${BASE}/groups/${encodeURIComponent(groupId)}/withdrawals`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'spend', utxoAgeBlocks: 0 })
-      });
-      const json = await res.json();
-      if (!res.ok) throw new Error(json.error || res.statusText);
-      const pref = json.data && json.data.prepared && json.data.prepared.preferredTierId;
-      const tiers = (json.data && json.data.prepared && json.data.prepared.activeTiers) || [];
-      const tip = tiers.length
-        ? `Active tier: ${tiers[0].id} (${tiers[0].threshold}-of-n). Address ready — fund UTXO then POST fundedTxHex + destinationAddress.`
-        : 'Withdrawal proposed.';
-      this.setState({ notice: tip + (pref ? ` Preferred: ${pref}` : '') });
-    } catch (e) {
-      this.setState({ notice: e.message || String(e) });
-    }
-  }
-
   render () {
     const w = this.state.wallet;
     const bitcoinEnable = this.props.bitcoinEnable !== false &&
@@ -137,13 +116,12 @@ class Wallet extends React.Component {
 
       React.createElement('div', { className: 'wa-panel' },
         React.createElement('h2', null, '👥 Alliance treasury ',
-          React.createElement('span', { className: 'sub' }, '— Group Taproot P2TR on this node; Hub does not hold these coins. Other orgs inherit the same vault by running this desktop.')
+          React.createElement('span', { className: 'sub' }, '— each group\'s k-of-n federation vault; Hub does not hold these coins. Every signer\'s desktop derives the same vault.')
         ),
         this.state.groups.length
           ? this.state.groups.map((g) => {
             const gw = this.state.groupWallets[g.id];
             const nSigners = (g.validators || g.members || []).length;
-            const isCreator = this.props.pubkey && g.creator === this.props.pubkey;
             return React.createElement('div', { className: 'wa-row', key: g.id },
               React.createElement('span', { className: 'wa-name' }, g.name),
               React.createElement('span', { className: 'wa-tag btc' }, `${g.threshold}-of-${nSigners}`),
@@ -156,17 +134,14 @@ class Wallet extends React.Component {
                   ? React.createElement(GroupBitcoinPanel, {
                     wallet: gw,
                     bitcoinEnable,
-                    isCreator,
-                    showLeaves: true,
                     onCopy: (addr) => this.copy(addr),
-                    onProposeWithdraw: () => this.proposeWithdraw(g.id),
                     onRefresh: () => this.load()
                   })
                   : React.createElement('span', { className: 'wa-addr', style: { color: 'var(--muted)' } }, 'deriving…')
               )
             );
           })
-          : React.createElement('div', { className: 'wa-note' }, 'No groups yet — create or join a Federation group. Its Taproot address is the org treasury on this node, not on Hub.')
+          : React.createElement('div', { className: 'wa-note' }, 'No groups yet — create or join a Federation group. Its federation vault is the org treasury, not a Hub wallet.')
       ),
 
       React.createElement('div', { className: 'wa-panel' },

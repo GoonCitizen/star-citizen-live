@@ -10,6 +10,7 @@
 
 const React = require('react');
 const { readOfflineMode } = require('../functions/offlineMode');
+const { currentViewer } = require('../functions/goonCitizenClientEnvironment');
 const OfflineNotice = require('./OfflineNotice');
 const Chat = require('./Chat');
 const { JoinVoiceButton } = require('./ActiveVoicePanel');
@@ -100,10 +101,6 @@ const CSS = `
   ${RegisterEventLog.CSS || ''}
 `;
 
-function identityBridge () {
-  return (typeof window !== 'undefined' && window.electronAPI && window.electronAPI.identity) || null;
-}
-
 function shortKey (pubkey) {
   return pubkey ? pubkey.slice(0, 10) + '…' + pubkey.slice(-6) : '—';
 }
@@ -112,7 +109,6 @@ class GroupPage extends React.Component {
   constructor (props) {
     super(props);
     this.state = {
-      token: null,
       pubkey: null,
       nickname: null,
       group: null,
@@ -156,33 +152,15 @@ class GroupPage extends React.Component {
 
   _onPop = () => { this.boot(); };
 
-  headers (token) {
-    const h = { 'Content-Type': 'application/json' };
-    const t = token || this.state.token;
-    if (t) h.Authorization = `Bearer ${t}`;
-    return h;
+  headers () {
+    return { 'Content-Type': 'application/json' };
   }
 
+  /** Who acts here: the app's identity, else this browser's Passport session (cookie). */
   async login () {
-    const bridge = identityBridge();
-    if (!bridge) return null;
-    try {
-      const info = await bridge.get();
-      if (!info || !info.unlocked) return null;
-      const envelope = await bridge.signEnvelope({ intent: 'login', ts: new Date().toISOString() });
-      if (!envelope || envelope.error) return null;
-      const res = await fetch(`${BASE}/auth`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(envelope)
-      });
-      if (!res.ok) return null;
-      const json = await res.json();
-      this.setState({
-        token: json.data.token,
-        pubkey: json.data.pubkey,
-        nickname: (info && info.nickname) || null
-      });
-      return json.data.token;
-    } catch (_) { return null; }
+    const viewer = await currentViewer();
+    if (viewer) this.setState({ pubkey: viewer.pubkey });
+    return null;
   }
 
   async boot () {
@@ -192,35 +170,35 @@ class GroupPage extends React.Component {
     }
     this.setState({ loading: true, error: null, offlineMode: false });
     this.loadDiscordCatalog();
-    const token = await this.login();
-    await this.load(token);
+    await this.login();
+    await this.load();
   }
 
-  async load (token) {
+  async load () {
     const key = this.pathKey;
     if (!key) {
       this.setState({ loading: false, error: 'Missing group id' });
       return;
     }
     try {
-      const res = await fetch(`${BASE}/groups/${encodeURIComponent(key)}`, { headers: this.headers(token) });
+      const res = await fetch(`${BASE}/groups/${encodeURIComponent(key)}`, { headers: this.headers() });
       const json = await res.json();
       if (!res.ok) throw new Error(json.error || `HTTP ${res.status}`);
       const group = json.data;
       let applications = [];
       if (group.role === 'creator') {
-        const ar = await fetch(`${BASE}/groups/${encodeURIComponent(group.id)}/applications`, { headers: this.headers(token) });
+        const ar = await fetch(`${BASE}/groups/${encodeURIComponent(group.id)}/applications`, { headers: this.headers() });
         if (ar.ok) applications = ((await ar.json()).data || []).filter((a) => a.status === 'pending');
       }
       let presenceRoster = {};
       try {
-        const pr = await fetchPresenceRoster({ authToken: token });
+        const pr = await fetchPresenceRoster();
         if (pr.ok) presenceRoster = pr.data || {};
       } catch (_) { /* optional */ }
       let events = [];
       try {
         const er = await fetch(`${BASE}/inbox?groupId=${encodeURIComponent(group.id)}`, {
-          headers: this.headers(token)
+          headers: this.headers()
         });
         if (er.ok) events = ((await er.json()).data) || [];
       } catch (_) { /* optional */ }
@@ -228,7 +206,7 @@ class GroupPage extends React.Component {
       if (group.role === 'member' || group.role === 'creator') {
         try {
           const pr = await fetch(`${BASE}/groups/${encodeURIComponent(group.id)}/proposals`, {
-            headers: this.headers(token)
+            headers: this.headers()
           });
           if (pr.ok) proposals = ((await pr.json()).data) || [];
         } catch (_) { /* optional */ }
@@ -237,7 +215,7 @@ class GroupPage extends React.Component {
       if (group.role === 'member' || group.role === 'creator') {
         try {
           const wr = await fetch(`${BASE}/groups/${encodeURIComponent(group.id)}/wallet`, {
-            headers: this.headers(token)
+            headers: this.headers()
           });
           const wj = await wr.json().catch(() => ({}));
           groupWallet = wr.ok ? (wj.data || wj) : { error: (wj && wj.error) || `HTTP ${wr.status}` };
@@ -248,7 +226,7 @@ class GroupPage extends React.Component {
       let fleets = [];
       try {
         const fr = await fetch(`${BASE}/groups/${encodeURIComponent(group.id)}/fleets`, {
-          headers: this.headers(token)
+          headers: this.headers()
         });
         if (fr.ok) fleets = ((await fr.json()).data) || [];
       } catch (_) { /* optional */ }
@@ -424,7 +402,7 @@ class GroupPage extends React.Component {
     if (this.state.applying || !this.state.group) return;
     this.setState({ applying: true, error: null, notice: null });
     try {
-      if (!this.state.token) throw new Error('Unlock your identity to apply');
+      if (!this.state.pubkey) throw new Error('Unlock your identity (or sign in with Passport) to apply');
       const res = await fetch(`${BASE}/groups/${encodeURIComponent(this.state.group.id)}/applications`, {
         method: 'POST',
         headers: this.headers(),
@@ -528,54 +506,24 @@ class GroupPage extends React.Component {
     }
   }
 
-  async proposeWithdraw () {
-    const g = this.state.group;
-    if (!g || this.state.busy || g.role !== 'creator') return;
-    this.setState({ busy: true, error: null, notice: null });
-    try {
-      const res = await fetch(`${BASE}/groups/${encodeURIComponent(g.id)}/withdrawals`, {
-        method: 'POST',
-        headers: this.headers(),
-        body: JSON.stringify({ action: 'spend', utxoAgeBlocks: 0 })
-      });
-      const json = await res.json();
-      if (!res.ok) throw new Error(json.error || res.statusText);
-      const pref = json.data && json.data.prepared && json.data.prepared.preferredTierId;
-      const tiers = (json.data && json.data.prepared && json.data.prepared.activeTiers) || [];
-      const tip = tiers.length
-        ? `Active tier: ${tiers[0].id} (${tiers[0].threshold}-of-n). Address ready — fund UTXO then complete withdrawal.`
-        : 'Withdrawal proposed.';
-      this.setState({
-        busy: false,
-        notice: tip + (pref ? ` Preferred: ${pref}` : '')
-      });
-      await this.load();
-    } catch (e) {
-      this.setState({ busy: false, error: e.message || String(e) });
-    }
-  }
-
   renderWallet () {
     const g = this.state.group;
     const gw = this.state.groupWallet;
     if (!g || (g.role !== 'member' && g.role !== 'creator')) return null;
     if (!gw) return null;
-    const isCreator = g.role === 'creator';
     return React.createElement('div', { className: 'gpage-panel' },
       React.createElement('h2', null, 'Wallet'),
       React.createElement('div', { className: 'body' },
         React.createElement(GroupBitcoinPanel, {
           wallet: gw,
           bitcoinEnable: this.props.bitcoinEnable,
-          isCreator,
-          busy: this.state.busy,
+          headers: () => this.headers(),
           onCopy: (addr) => {
             try {
               navigator.clipboard.writeText(addr);
               this.setState({ notice: 'Address copied.' });
             } catch (_) { /* ignore */ }
           },
-          onProposeWithdraw: () => this.proposeWithdraw(),
           onRefresh: () => this.load()
         })
       )
@@ -1005,8 +953,7 @@ class GroupPage extends React.Component {
                   className: 'gpage-btn ghost',
                   groupId: g.id,
                   handle: this.state.nickname || null,
-                  identityPubkey: this.state.pubkey,
-                  authToken: this.state.token
+                  identityPubkey: this.state.pubkey
                 })
                 : null,
               g.role === 'creator' || g.role === 'member'
@@ -1049,8 +996,7 @@ class GroupPage extends React.Component {
           groupId: g.id,
           embedded: true,
           identityPubkey: this.state.pubkey,
-          nickname: this.state.nickname,
-          authToken: this.state.token
+          nickname: this.state.nickname
         })
       )
     );
@@ -1073,7 +1019,6 @@ class GroupPage extends React.Component {
     if (!g || !readAdvancedMode()) return null;
     if (g.role !== 'member' && g.role !== 'creator') return null;
     const headers = {};
-    if (this.state.token) headers.Authorization = `Bearer ${this.state.token}`;
     return React.createElement(GroupFabricInspector, {
       groupId: g.id,
       contractId: g.contractId || null,

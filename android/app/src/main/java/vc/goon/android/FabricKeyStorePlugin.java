@@ -18,8 +18,6 @@ import java.io.FileInputStream;
 import java.io.FileOutputStream;
 import java.nio.charset.StandardCharsets;
 import java.security.KeyStore;
-import java.security.SecureRandom;
-
 import javax.crypto.Cipher;
 import javax.crypto.KeyGenerator;
 import javax.crypto.SecretKey;
@@ -73,10 +71,13 @@ public class FabricKeyStorePlugin extends Plugin {
         call.reject("Android Keystore AES key unavailable");
         return;
       }
-      byte[] iv = new byte[GCM_IV_BYTES];
-      new SecureRandom().nextBytes(iv);
       Cipher cipher = Cipher.getInstance(TRANSFORMATION);
-      cipher.init(Cipher.ENCRYPT_MODE, key, new GCMParameterSpec(GCM_TAG_BITS, iv));
+      cipher.init(Cipher.ENCRYPT_MODE, key);
+      byte[] iv = cipher.getIV();
+      if (iv == null || iv.length != GCM_IV_BYTES) {
+        call.reject("unexpected Keystore GCM IV length");
+        return;
+      }
       byte[] ct = cipher.doFinal(json.getBytes(StandardCharsets.UTF_8));
       byte[] packed = new byte[MAGIC.length + iv.length + ct.length];
       System.arraycopy(MAGIC, 0, packed, 0, MAGIC.length);

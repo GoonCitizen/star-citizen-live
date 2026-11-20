@@ -22,15 +22,18 @@ function hasIdentity (dir) {
 }
 
 /**
- * Load the encrypted identity blob (public fields readable, secrets sealed).
+ * Load the stored identity vault (public account views readable, master
+ * sealed). A blob from before account vaults is returned as-is so callers can
+ * tell the user to restore from their seed.
  * @param {String} dir Directory holding identity.json.
- * @returns {Object|null} Encrypted blob, or null when absent/corrupt.
+ * @returns {Object|null} Vault (or legacy blob), or null when absent/corrupt.
  */
 function loadEncrypted (dir) {
   try {
     const raw = fs.readFileSync(identityPath(dir), 'utf8');
     const blob = JSON.parse(raw);
-    if (!blob || !blob.ciphertext || !blob.pubkey) return null;
+    if (!blob || typeof blob !== 'object') return null;
+    if (!(blob.seal && blob.seal.ciphertext) && !blob.ciphertext) return null;
     return blob;
   } catch (error) {
     return null;
@@ -38,13 +41,15 @@ function loadEncrypted (dir) {
 }
 
 /**
- * Persist an encrypted identity blob. Refuses to write plaintext secrets.
+ * Persist an identity vault. Refuses to write plaintext secrets.
  * @param {String} dir Target directory (created if missing).
  * @param {Object} blob Result of functions/identity.js encryptIdentity().
  * @returns {String} Path written.
  */
 function saveEncrypted (dir, blob) {
-  if (!blob || !blob.ciphertext) throw new Error('refusing to save: not an encrypted identity blob');
+  if (!blob || !blob.seal || !blob.seal.ciphertext || !blob.accounts) {
+    throw new Error('refusing to save: not an encrypted identity blob');
+  }
   if (blob.xprv || blob.mnemonic) throw new Error('refusing to save: blob contains plaintext secrets');
   fs.mkdirSync(dir, { recursive: true });
   const file = identityPath(dir);

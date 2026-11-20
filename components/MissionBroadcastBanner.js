@@ -62,14 +62,10 @@ function shortKey (pk) {
   return pk ? pk.slice(0, 8) + '…' : '?';
 }
 
-function identityBridge () {
-  return (typeof window !== 'undefined' && window.electronAPI && window.electronAPI.identity) || null;
-}
-
 class MissionBroadcastBanner extends React.Component {
   constructor (props) {
     super(props);
-    this.state = { pending: [], busyId: null, error: null, token: null };
+    this.state = { pending: [], busyId: null, error: null };
     this._timer = null;
     this._seen = loadSeen();
     this._inboxSeen = loadInboxSeen();
@@ -78,7 +74,7 @@ class MissionBroadcastBanner extends React.Component {
   }
 
   componentDidMount () {
-    this.ensureSession().then(() => this.tick());
+    this.tick();
     this._timer = setInterval(() => this.tick(), 4000);
     if (window.electronAPI && typeof window.electronAPI.onNotifyAction === 'function') {
       this._unsubAction = window.electronAPI.onNotifyAction((data) => {
@@ -122,28 +118,7 @@ class MissionBroadcastBanner extends React.Component {
   }
 
   headers () {
-    const h = { 'Content-Type': 'application/json' };
-    if (this.state.token) h.Authorization = `Bearer ${this.state.token}`;
-    return h;
-  }
-
-  async ensureSession () {
-    const b = identityBridge();
-    if (!b) return;
-    try {
-      const info = await b.get();
-      if (!info || !info.unlocked || !b.signEnvelope) return;
-      const envelope = await b.signEnvelope({ intent: 'login', ts: new Date().toISOString() });
-      if (!envelope || envelope.error) return;
-      const res = await fetch(`${BASE}/auth`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(envelope)
-      });
-      if (!res.ok) return;
-      const json = await res.json();
-      this.setState({ token: json.data.token });
-    } catch (_) { /* locked */ }
+    return { 'Content-Type': 'application/json' };
   }
 
   reportPending (n) {
@@ -270,7 +245,6 @@ class MissionBroadcastBanner extends React.Component {
     if (this.state.busyId) return;
     this.setState({ busyId: id, error: null });
     try {
-      if (!this.state.token) await this.ensureSession();
       const res = await fetch(`${BASE}/missionbroadcasts/${encodeURIComponent(id)}/accept`, {
         method: 'POST',
         headers: this.headers(),
@@ -291,7 +265,6 @@ class MissionBroadcastBanner extends React.Component {
     if (this.state.busyId) return;
     this.setState({ busyId: id, error: null });
     try {
-      if (!this.state.token) await this.ensureSession();
       const res = await fetch(`${BASE}/missionbroadcasts/${encodeURIComponent(id)}/ignore`, {
         method: 'POST',
         headers: this.headers(),

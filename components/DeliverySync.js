@@ -55,8 +55,8 @@ async function tryElectronDeliveryReceipt (wireHash, opts = {}) {
 }
 
 /**
- * Hub Bridge WebRTC mesh: caller must supply signed AMP hex/base64 via opts.messageHex.
- * @param {{ messageHex?: string, messageBase64?: string, originalType?: string }} opts
+ * Hub Bridge WebRTC mesh: caller must supply the signed AMP frame hex via opts.messageHex.
+ * @param {{ messageHex?: string, originalType?: string }} opts
  * @returns {Promise<object|null>}
  */
 async function tryBridgeMeshRelay (opts = {}) {
@@ -67,7 +67,7 @@ async function tryBridgeMeshRelay (opts = {}) {
     null
   );
   if (!bridge || typeof bridge.relaySignedFabricWire !== 'function') return null;
-  const wire = opts.messageHex || opts.messageBase64 || null;
+  const wire = opts.messageHex || null;
   if (!wire) return null;
   const result = bridge.relaySignedFabricWire(wire, {
     originalType: opts.originalType || 'CONTRACT_MESSAGE'
@@ -118,7 +118,7 @@ async function postDeliveryReceipt (wireHash, opts = {}) {
   }
 
   // If Bridge already has a signed MessageReceipt wire, fan it over WebRTC.
-  if (opts.messageHex || opts.messageBase64) {
+  if (opts.messageHex) {
     const viaMesh = await tryBridgeMeshRelay(opts);
     if (viaMesh) return viaMesh;
   }

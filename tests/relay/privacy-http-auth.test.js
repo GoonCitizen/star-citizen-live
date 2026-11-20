@@ -8,7 +8,8 @@ const path = require('path');
 const http = require('http');
 
 const LiveRelay = require('../../services/LiveRelay');
-const { createIdentity, signEnvelope } = require('../../functions/identity');
+const { createIdentity } = require('../../functions/identity');
+const { passportLogin } = require('../helpers/passportLogin');
 
 const BASE = '/services/star-citizen';
 const FILE_ID = 'ab'.repeat(32);
@@ -38,11 +39,8 @@ function request (port, method, reqPath, payload, token) {
   });
 }
 
-async function login (port, identity) {
-  const envelope = signEnvelope(identity, { intent: 'login', ts: new Date().toISOString() });
-  const res = await request(port, 'POST', `${BASE}/auth`, envelope);
-  assert.strictEqual(res.status, 200, `login should succeed: ${JSON.stringify(res.body)}`);
-  return res.body.data.token;
+function login (port, identity) {
+  return passportLogin(port, identity);
 }
 
 describe('hosted relay privacy HTTP', () => {
@@ -218,13 +216,15 @@ describe('hosted relay privacy HTTP', () => {
     }
   });
 
-  it('_requestViewer never falls back to the operator identity when remote auth is on', () => {
+  it('_requestViewer never falls back to the operator identity when remote auth is on', async () => {
     const unauth = { headers: {}, socket: { remoteAddress: '127.0.0.1' } };
     assert.strictEqual(svc._requestViewer(unauth), null);
     const authed = {
+      method: 'GET',
       headers: { authorization: `Bearer ${token}` },
       socket: { remoteAddress: '1.2.3.4' }
     };
+    authed._passportSession = await svc._passportSignIn().requestSession(authed);
     assert.strictEqual(svc._requestViewer(authed), operator.pubkey);
   });
 
@@ -320,14 +320,11 @@ describe('hosted relay privacy HTTP', () => {
     assert.ok(!JSON.stringify(runtime).includes('should-never-echo'));
   });
 
-  it('revokes Bearer sessions via DELETE /auth', async () => {
-    const revoke = await request(port, 'DELETE', `${BASE}/auth`, null, token);
+  it('ends Bearer sessions via DELETE /sessions/current', async () => {
+    const revoke = await request(port, 'DELETE', '/sessions/current', null, token);
     assert.strictEqual(revoke.status, 200);
-    assert.strictEqual(revoke.body.data.revoked, true);
     assert.strictEqual((await request(port, 'GET', `${BASE}/notes`, null, token)).status, 401);
-    const again = await request(port, 'DELETE', `${BASE}/auth`, null, token);
-    assert.strictEqual(again.status, 200);
-    assert.strictEqual(again.body.data.revoked, false);
+    assert.strictEqual((await request(port, 'GET', '/sessions/current', null, token)).status, 401);
   });
 });
 

@@ -22,6 +22,7 @@ stores/*
 coverage/
 .nyc_output/
 reports/coverage/
+reports/coverage.lcov
 
 # IDE
 .vscode/

@@ -142,7 +142,7 @@ describe('deviceDataSync', () => {
       messages.push({
         id: String(i).padStart(32, '0'),
         channel: 'global',
-        body: ('o7 from desktop ' + i + ' ').repeat(18),
+        body: ('o7 from desktop ').repeat(200).slice(0, sync.CHAT_BODY_MAX),
         author: key.pubkey,
         ts: '2026-08-15T20:00:' + String(i).padStart(2, '0') + '.000Z'
       });

@@ -91,8 +91,9 @@ describe('chatDelivery 2PC helpers', () => {
     const store = memStore();
     const aKey = new Key();
     const bKey = new Key();
-    const a = require('../../functions/groupChatSeal').pubkeyXOnly(aKey.pubkey);
-    const b = require('../../functions/groupChatSeal').pubkeyXOnly(bKey.pubkey);
+    const { pubkeyXOnly } = require('@fabric/core/functions/pubkey');
+    const a = pubkeyXOnly(aKey.pubkey);
+    const b = pubkeyXOnly(bKey.pubkey);
     const hash = 'cc'.repeat(32);
     const out = chatDelivery.markLocalReceipt(store, {
       wireHash: hash,

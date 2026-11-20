@@ -44,7 +44,6 @@ class Group {
     this.contractId = data.contractId || null;
     this.proposedPolicy = data.proposedPolicy || null;
     this.policyFingerprint = data.policyFingerprint || null;
-    this.spendLadder = data.spendLadder || null;
     this.primaryColor = data.primaryColor || null;
     {
       const { sanitizeRsiTag } = require('../functions/rsiLookup');
@@ -58,6 +57,8 @@ class Group {
       const { sanitizePinnedMessageIds } = require('../functions/chatMessagePins');
       this.pinnedMessages = sanitizePinnedMessageIds(data.pinnedMessages);
     }
+    // Wallet cosigner keys `{ <x-only member>: { <network>: record } }`, verified on ingest.
+    this.cosigners = (data.cosigners && typeof data.cosigners === 'object') ? data.cosigners : {};
     this._federation = null;
   }
 
@@ -184,11 +185,11 @@ class Group {
       contractId: this.contractId || null,
       proposedPolicy: this.proposedPolicy || null,
       policyFingerprint: this.policyFingerprint || null,
-      spendLadder: this.spendLadder || null,
       primaryColor: this.primaryColor || null,
       rsiTag: this.rsiTag || null,
       pinnedChannels: Array.isArray(this.pinnedChannels) ? this.pinnedChannels.slice() : [],
       pinnedMessages: Array.isArray(this.pinnedMessages) ? this.pinnedMessages.slice() : [],
+      cosigners: Object.assign({}, this.cosigners),
       commitment: this.commitment()
     };
   }

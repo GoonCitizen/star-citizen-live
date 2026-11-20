@@ -4,7 +4,7 @@
  * Peers — Fabric Network peer management (Network → Peers).
  *
  * Peers are Fabric `host:port` addresses (AMP/Message over TCP/NOISE). The
- * default seeds are `hub.fabric.pub:7777` and `relay.goon.vc:7777`. Local
+ * default seeds are `hub.fabric.pub:7777`, `hub.goon.vc:7777`, and `relay.goon.vc:7777`. Local
  * dashboard HTTP on :3041 is UI only — not the peering transport.
  *
  * Log sharing is opt-in (D-017): per-peer "Share logs" and/or Settings
@@ -328,7 +328,7 @@ class Peers extends React.Component {
       React.createElement('h2', null, 'Network hubs (observe)'),
       React.createElement('div', { className: 'body' },
         React.createElement('div', { className: 'pr-hint' },
-          'Discovers hub.fabric.pub / relay.goon.vc via HTTP OPTIONS Application Resource Contract ',
+          'Discovers hub.fabric.pub / hub.goon.vc / relay.goon.vc via HTTP OPTIONS Application Resource Contract ',
           '(Fabric contract + peering capability), then reads live TCP / WebRTC registration counts. ',
           'Desktop dials Fabric TCP only; WebRTC counts show clients reachable through the hubs so gossip can fill open slots.'),
         React.createElement('div', { className: 'pr-id', style: { marginTop: 10 } },
@@ -545,7 +545,7 @@ class Peers extends React.Component {
           React.createElement('div', { className: 'pr-hint' },
             'Native Fabric TCP/NOISE on port ',
             String(listenPort),
-            ' — dial pins are pubkey@host:port. Default rendezvous seeds: hub.fabric.pub:7777 and relay.goon.vc:7777. ',
+            ' — dial pins are pubkey@host:port. Default rendezvous seeds: hub.fabric.pub:7777, hub.goon.vc:7777, and relay.goon.vc:7777. ',
             'Opt in to announce open slots (P2P_PEERING_OFFER) so peers can discover you. ',
             'Parsed game logs only leave this machine when you authorize sharing.'),
           React.createElement('div', { className: 'pr-id', style: { marginTop: 10 } },
@@ -662,7 +662,7 @@ class Peers extends React.Component {
               )))
             : (unlocked && fabricReady
               ? React.createElement('div', { className: 'pr-conns', style: { color: 'var(--kill)' } },
-                'No live Fabric sockets — chat cannot leave this machine. Use “Restore network seeds” below, then wait for hub.fabric.pub / relay.goon.vc to show connected.')
+                'No live Fabric sockets — chat cannot leave this machine. Use “Restore network seeds” below, then wait for hub.fabric.pub / hub.goon.vc / relay.goon.vc to show connected.')
               : null),
           Array.isArray(rt.meshAliases) && rt.meshAliases.length
             ? React.createElement('div', { className: 'pr-conns' },

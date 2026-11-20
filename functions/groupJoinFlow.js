@@ -8,12 +8,7 @@ const { formatInviteExpiryLabel } = require('./inviteExpiry');
 
 function shareClipboardText (data) {
   if (!data || typeof data !== 'object') return '';
-  return String(
-    data.protocolUrl ||
-    data.protocolUrlBase64 ||
-    data.protocolUrlHex ||
-    ''
-  ).trim();
+  return String(data.protocolUrl || '').trim();
 }
 
 /**

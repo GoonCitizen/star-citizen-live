@@ -6,7 +6,17 @@
  *
  * Operator units: `satsPerKiB` (integer). Canonical math uses sats/byte.
  * `minSats` floors the **document** total (chat attach default), not each blob.
+ *
+ * Every paid price is at least `HTLC_MINIMUM_SATS` (716) per HTLC — a whole
+ * document, or each blob of a packed one — so it settles on Bitcoin mainnet;
+ * buyers skip cheaper paid offers. 0 stays free.
  */
+
+const { HTLC_MINIMUM_SATS } = require('@fabric/core/constants');
+
+function paidFloor (sats) {
+  return sats > 0 ? Math.max(HTLC_MINIMUM_SATS, sats) : 0;
+}
 
 function resolveSatsPerByte (policy = {}) {
   if (policy.satsPerByte != null && Number.isFinite(Number(policy.satsPerByte))) {
@@ -33,26 +43,32 @@ function hasFlatOverride (policy = {}) {
  */
 function listPriceSats (byteLength, policy = {}) {
   if (hasFlatOverride(policy)) {
-    return Math.max(0, Math.floor(Number(policy.purchasePriceSats)));
+    return paidFloor(Math.max(0, Math.floor(Number(policy.purchasePriceSats))));
   }
   const size = Math.max(0, Math.floor(Number(byteLength) || 0));
   const rate = resolveSatsPerByte(policy);
   const proportional = rate > 0 ? Math.ceil(size * rate) : 0;
-  return Math.max(minSatsOf(policy), proportional);
+  return paidFloor(Math.max(minSatsOf(policy), proportional));
 }
 
 /**
  * Split `total` sats across blobs in proportion to byte size (sums exactly).
  * @param {Array<{ size?: number }>} blobs
  * @param {number} total
+ * @param {number} [floor=0] minimum per blob (total must cover blobs × floor)
  * @returns {number[]}
  */
-function allocateBlobRates (blobs, total) {
+function allocateBlobRates (blobs, total, floor = 0) {
   const list = Array.isArray(blobs) ? blobs : [];
   const n = list.length || 1;
   const want = Math.max(0, Math.floor(Number(total) || 0));
   if (!list.length) return [want];
   if (want === 0) return list.map(() => 0);
+  const base = Math.max(0, Math.floor(Number(floor) || 0));
+  if (base > 0) {
+    if (want < base * list.length) throw new Error(`allocateBlobRates: ${want} sats cannot give ${list.length} blobs ${base} each`);
+    return allocateBlobRates(list, want - base * list.length).map((r) => r + base);
+  }
   const sizes = list.map((b) => Math.max(0, Number(b && b.size) || 0));
   const sumSize = sizes.reduce((a, b) => a + b, 0) || n;
   const raw = sizes.map((s) => (s / sumSize) * want);
@@ -71,10 +87,12 @@ function allocateBlobRates (blobs, total) {
  * @returns {{ total: number, blobs: number[], satsPerByte: number }}
  */
 function pricePackedDocument (blobs, totalBytes, policy = {}) {
-  const total = listPriceSats(totalBytes, policy);
+  const count = Array.isArray(blobs) && blobs.length ? blobs.length : 1;
+  const listed = listPriceSats(totalBytes, policy);
+  const total = listed > 0 ? Math.max(listed, count * HTLC_MINIMUM_SATS) : 0;
   return {
     total,
-    blobs: allocateBlobRates(blobs, total),
+    blobs: allocateBlobRates(blobs, total, total > 0 ? HTLC_MINIMUM_SATS : 0),
     satsPerByte: resolveSatsPerByte(policy)
   };
 }
@@ -109,6 +127,7 @@ function policyFromSettings (settings = {}, override = {}) {
 }
 
 module.exports = {
+  HTLC_MINIMUM_SATS,
   resolveSatsPerByte,
   listPriceSats,
   allocateBlobRates,

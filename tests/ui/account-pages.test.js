@@ -92,7 +92,7 @@ describe('Android first-run and account pages', () => {
     });
   });
 
-  it('Account subnav lists Keys, Devices, Security, and Privacy', () => {
+  it('Account subnav lists Keys, Linked signers, Security, and Privacy', () => {
     withAndroid(() => {
       const account = new Account({
         section: 'privacy',
@@ -102,7 +102,8 @@ describe('Android first-run and account pages', () => {
       const tree = account.render();
       const text = textOf(tree);
       assert.match(text, /Keys/);
-      assert.match(text, /Devices/);
+      assert.match(text, /Linked signers/);
+      assert.doesNotMatch(text, /Devices/);
       assert.match(text, /Security/);
       assert.match(text, /Privacy/);
       assert.match(text, /Relay & advanced/);
@@ -117,7 +118,7 @@ describe('Android first-run and account pages', () => {
       dash.state.showIdentity = false;
       const view = dash.renderTab();
       assert.ok(findType(view, Account).length >= 1);
-      dash.state.tab = 'devices';
+      dash.state.tab = 'signers';
       assert.ok(findType(dash.renderTab(), Account).length >= 1);
       dash.state.tab = 'security';
       assert.ok(findType(dash.renderTab(), Account).length >= 1);

@@ -9,6 +9,28 @@ next. Each milestone closes with a short retro. Newest at the top.
 
 ---
 
+## Linked signers (delegation) replace device links
+**Date:** 2026-10-30 · branch `feature/passport-v2` (staged; owner commits)
+
+Hard cutover across `@fabric/core`, `@fabric/http`, Hub, Passport, and this
+app (D-022). Linking is delegation: an invitation (`DELEGATION_LINK_OFFER`), a
+six-digit code matched on both screens, then grants with scopes (`identity`,
+`passport`, `message`) and revokes — all signed Fabric frames each app keeps
+in its own store (`services/GoonDelegation.js`). Signing requests from a
+linked signer become Notifications rows with Sign / Decline. The identity
+cluster now folds mutual `identity` grants (`functions/identityCluster.js`),
+gossiped as `DelegationShare`; `DeviceDataShare` account sync is gated on it
+as before. User copy says "linked signers" / "apps", not "devices".
+
+**Retro:** the tests that still used the old cross-sign helpers had been
+failing at load, which hid a real bug: `PassportSignIn` called the removed
+`passportStatus`; it now awaits `probePassport` (the `PASSPORT_HELLO`
+handshake). The relay fixture identities in `tests/relay/fixtures` still
+expect pre-`m/7777'` pubkeys and fail against current core; that predates this
+change and needs its own fixture refresh.
+
+---
+
 ## When you fly on own profile
 **Date:** 2026-08-21 · branch `feature/rsi`
 

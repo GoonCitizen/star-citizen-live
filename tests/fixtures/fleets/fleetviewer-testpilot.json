@@ -1,0 +1,25 @@
+{
+  "type": "starjumpFleetviewer",
+  "version": 1,
+  "backgroundImageBase64": "",
+  "canvasItems": [
+    {
+      "id": "00000000-0000-4000-8000-000000000001",
+      "itemType": "SHIP",
+      "x": "0.0000000000",
+      "y": "0.0000000000",
+      "shipSlug": "ironclad-assault",
+      "variantSlug": "",
+      "defaultText": "Ironclad Assault"
+    },
+    {
+      "id": "00000000-0000-4000-8000-000000000002",
+      "itemType": "SHIP",
+      "x": "4000.0000000000",
+      "y": "0.0000000000",
+      "shipSlug": "cutlass-black",
+      "variantSlug": "",
+      "defaultText": "Cutlass Black"
+    }
+  ]
+}

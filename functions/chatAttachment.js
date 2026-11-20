@@ -9,10 +9,13 @@
  * channels get the caption only (the bot relays as itself); the Fabric
  * ChatMessage keeps the `fabric-doc:` line.
  *
- * Default list price matches Hub DocumentView (`DEFAULT_PUBLISH_PRICE_SATS`).
+ * Default list price matches Hub DocumentView (`DEFAULT_PUBLISH_PRICE_SATS`):
+ * the smallest HTLC that settles on Bitcoin mainnet.
  */
 
-const DEFAULT_CHAT_ATTACH_PRICE_SATS = 25;
+const { HTLC_MINIMUM_SATS } = require('@fabric/core/constants');
+
+const DEFAULT_CHAT_ATTACH_PRICE_SATS = HTLC_MINIMUM_SATS;
 const ATTACHMENT_KIND = 'DocumentPublish';
 const WIRE_PREFIX = 'fabric-doc:';
 

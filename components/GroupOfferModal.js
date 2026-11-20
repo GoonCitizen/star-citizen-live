@@ -6,6 +6,7 @@
  */
 
 const React = require('react');
+const { currentViewer } = require('../functions/goonCitizenClientEnvironment');
 const {
   dispatchGroupImported,
   dispatchInboxRefresh
@@ -47,10 +48,6 @@ const CSS = `
 .group-offer-modal textarea:focus { outline: none; border-color: #4a7eb8; }
 `;
 
-function identityBridge () {
-  return (typeof window !== 'undefined' && window.electronAPI && window.electronAPI.identity) || null;
-}
-
 class GroupOfferModal extends React.Component {
   constructor (props) {
     super(props);
@@ -60,7 +57,6 @@ class GroupOfferModal extends React.Component {
       error: null,
       notice: null,
       pasteText: '',
-      token: null,
       pubkey: null,
       lastImport: null,
       pendingJoin: null
@@ -101,52 +97,16 @@ class GroupOfferModal extends React.Component {
     if (ev && ev.detail) this.setState({ prompt: ev.detail, error: null, notice: null });
   };
 
-  /**
-   * Schnorr session via Electron identity bridge (same as Groups tab).
-   * Falls back to fabric.delegation SiteLogin token when present.
-   */
+  /** Who acts here: the app's identity, else this browser's Passport session (cookie). */
   async ensureSession () {
-    const bridge = identityBridge();
-    if (bridge) {
-      try {
-        const info = await bridge.get();
-        if (info && info.unlocked) {
-          const envelope = await bridge.signEnvelope({ intent: 'login', ts: new Date().toISOString() });
-          if (envelope && !envelope.error) {
-            const res = await fetch(`${BASE}/auth`, {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify(envelope)
-            });
-            if (res.ok) {
-              const json = await res.json();
-              const token = json.data && json.data.token;
-              const pubkey = json.data && json.data.pubkey;
-              this.setState({ token, pubkey });
-              return { token, pubkey };
-            }
-          }
-        }
-      } catch (_) { /* fall through */ }
-    }
-    try {
-      const raw = window.localStorage && window.localStorage.getItem('fabric.delegation');
-      if (raw) {
-        const parsed = JSON.parse(raw);
-        const token = parsed && (parsed.token || parsed.delegationToken);
-        if (token) {
-          this.setState({ token, pubkey: (parsed && parsed.pubkey) || this.state.pubkey });
-          return { token, pubkey: parsed.pubkey || null };
-        }
-      }
-    } catch (_) { /* ignore */ }
-    return { token: this.state.token, pubkey: this.state.pubkey };
+    const viewer = await currentViewer();
+    const pubkey = (viewer && viewer.pubkey) || this.state.pubkey || null;
+    if (pubkey !== this.state.pubkey) this.setState({ pubkey });
+    return { pubkey };
   }
 
   headers () {
-    const h = { 'Content-Type': 'application/json', Accept: 'application/json' };
-    if (this.state.token) h.Authorization = 'Bearer ' + this.state.token;
-    return h;
+    return { 'Content-Type': 'application/json', Accept: 'application/json' };
   }
 
   closePaste () {
@@ -164,16 +124,8 @@ class GroupOfferModal extends React.Component {
   async ingestEncoded (raw) {
     await this.ensureSession();
     const text = String(raw || '').trim();
-    if (!text) throw new Error('Paste a fabric: message');
-    const cleaned = text.replace(/\s+/g, '');
-    let body;
-    if (/^fabric:/i.test(text)) {
-      body = { protocolUrl: text };
-    } else if (/^[0-9a-fA-F]+$/.test(cleaned) && cleaned.length % 2 === 0) {
-      body = { messageHex: cleaned };
-    } else {
-      body = { messageBase64: cleaned };
-    }
+    if (!/^fabric:/i.test(text)) throw new Error('Paste a fabric: message');
+    const body = { protocolUrl: text.replace(/\s+/g, '') };
     const res = await fetch(`${BASE}/groups/share/ingest`, {
       method: 'POST',
       headers: this.headers(),

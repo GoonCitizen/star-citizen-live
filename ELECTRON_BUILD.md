@@ -133,11 +133,13 @@ Icons: GoonCitizen **gc** lettermark `assets/icon.png` (window / Linux),
 
 ### `exited with signal SIGSEGV` / `SIGTRAP`
 Electron **28** (and other pre-Tahoe builds) crash during Chromium init on
-**macOS 26 (Tahoe) arm64**. This project pins **Electron 43+**. Fix:
+**macOS 26 (Tahoe) arm64**. This project pins **Electron 44.9.3**, which needs
+macOS 13 or later. Electron no longer downloads itself during `npm install`; the
+binary arrives the first time `electron` runs. Fix:
 
 ```bash
 npm install
-node node_modules/electron/install.js   # if dist/ is missing
+npx install-electron   # if dist/ is missing
 npm run start:desktop
 ```
 

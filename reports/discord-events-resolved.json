@@ -1,0 +1,775 @@
+{
+  "guildId": "1190527980120850493",
+  "events": [
+    {
+      "id": "1464468495260717240",
+      "guildId": "1190527980120850493",
+      "name": "FLIGHT SCHOOL EUROPA",
+      "description": "Basic flight school.  Settings, mechanics, and drills.",
+      "scheduledStartTime": "2026-08-20T17:00:00+00:00",
+      "scheduledEndTime": null,
+      "entityType": 2,
+      "entityTypeName": "voice",
+      "status": 1,
+      "statusName": "scheduled",
+      "channelId": "1229937881989120061",
+      "creatorId": "420222636954615808",
+      "userCount": 7,
+      "image": null,
+      "entityMetadata": {
+        "location": null
+      },
+      "recurrenceRule": {
+        "start": "2026-01-29T17:00:00+00:00",
+        "end": null,
+        "frequency": 2,
+        "frequencyName": "weekly",
+        "interval": 1,
+        "byWeekday": [
+          3
+        ],
+        "byWeekdayNames": [
+          "Thursday"
+        ],
+        "byNWeekday": null,
+        "count": null
+      },
+      "updatedAt": "2026-08-15T02:26:12.608Z"
+    },
+    {
+      "id": "1329917962928390196",
+      "guildId": "1190527980120850493",
+      "name": "TRAINING THURSDAY",
+      "description": ":crossed_swords: Steel sharpens steel.  Fighters only, Arena Commander.  Get rotated!",
+      "scheduledStartTime": "2026-08-21T00:00:00+00:00",
+      "scheduledEndTime": null,
+      "entityType": 2,
+      "entityTypeName": "voice",
+      "status": 1,
+      "statusName": "scheduled",
+      "channelId": "1229937881989120061",
+      "creatorId": "420222636954615808",
+      "userCount": 31,
+      "image": null,
+      "entityMetadata": {
+        "location": null
+      },
+      "recurrenceRule": {
+        "start": "2025-01-24T00:00:00+00:00",
+        "end": null,
+        "frequency": 2,
+        "frequencyName": "weekly",
+        "interval": 1,
+        "byWeekday": [
+          4
+        ],
+        "byWeekdayNames": [
+          "Friday"
+        ],
+        "byNWeekday": null,
+        "count": null
+      },
+      "updatedAt": "2026-08-15T02:26:12.608Z"
+    },
+    {
+      "id": "1331479564060463135",
+      "guildId": "1190527980120850493",
+      "name": "FIGHTER FRIDAY",
+      "description": "Get into a fighter and have some fun.\n\nOther ideas:\n- Boxing matches on the 890\n- Live PU Bounty Hunting\n- Live PU Defense Operations",
+      "scheduledStartTime": "2026-08-21T11:00:00+00:00",
+      "scheduledEndTime": null,
+      "entityType": 2,
+      "entityTypeName": "voice",
+      "status": 1,
+      "statusName": "scheduled",
+      "channelId": "1236721094153732276",
+      "creatorId": "420222636954615808",
+      "userCount": 6,
+      "image": null,
+      "entityMetadata": {
+        "location": null
+      },
+      "recurrenceRule": {
+        "start": "2026-06-19T11:00:00+00:00",
+        "end": null,
+        "frequency": 2,
+        "frequencyName": "weekly",
+        "interval": 1,
+        "byWeekday": [
+          4
+        ],
+        "byWeekdayNames": [
+          "Friday"
+        ],
+        "byNWeekday": null,
+        "count": null
+      },
+      "updatedAt": "2026-08-15T02:26:12.608Z"
+    },
+    {
+      "id": "1329917501768994916",
+      "guildId": "1190527980120850493",
+      "name": "FRIDAY NIGHT FIGHTS",
+      "description": "Official BRAVO SQUADRON training time.",
+      "scheduledStartTime": "2026-08-14T20:00:00+00:00",
+      "scheduledEndTime": null,
+      "entityType": 2,
+      "entityTypeName": "voice",
+      "status": 1,
+      "statusName": "scheduled",
+      "channelId": "1229937881989120061",
+      "creatorId": "420222636954615808",
+      "userCount": 14,
+      "image": null,
+      "entityMetadata": {
+        "location": null
+      },
+      "recurrenceRule": {
+        "start": "2026-08-07T20:00:00+00:00",
+        "end": null,
+        "frequency": 2,
+        "frequencyName": "weekly",
+        "interval": 1,
+        "byWeekday": [
+          4
+        ],
+        "byWeekdayNames": [
+          "Friday"
+        ],
+        "byNWeekday": null,
+        "count": null
+      },
+      "updatedAt": "2026-08-15T02:26:12.608Z"
+    },
+    {
+      "id": "1363254583928946759",
+      "guildId": "1190527980120850493",
+      "name": "SATURDAY SHENANIGANS",
+      "description": "We solemnly swear that we are up to no good.",
+      "scheduledStartTime": "2026-08-15T16:00:00+00:00",
+      "scheduledEndTime": null,
+      "entityType": 2,
+      "entityTypeName": "voice",
+      "status": 1,
+      "statusName": "scheduled",
+      "channelId": "1236721094153732276",
+      "creatorId": "420222636954615808",
+      "userCount": 17,
+      "image": null,
+      "entityMetadata": {
+        "location": null
+      },
+      "recurrenceRule": {
+        "start": "2025-04-19T16:00:00+00:00",
+        "end": null,
+        "frequency": 2,
+        "frequencyName": "weekly",
+        "interval": 1,
+        "byWeekday": [
+          5
+        ],
+        "byWeekdayNames": [
+          "Saturday"
+        ],
+        "byNWeekday": null,
+        "count": null
+      },
+      "updatedAt": "2026-08-15T02:26:12.608Z"
+    },
+    {
+      "id": "1470102737076093170",
+      "guildId": "1190527980120850493",
+      "name": "1v1 Tournament",
+      "description": "1v1 tournament; best of 3, double elimination.  After defeat by two separate opponents in a best of 3, you are ineligible for the Championship.\n\n# 🚨 PERMAFLEET P1+ PILOTS! 🚨\nThe gloves are off. It's time to find out who the best dogfighter in Permafleet really is.\n🗓️ When\nSaturday @ 8:00 PM Central\n💰 Prize\n🏆 $100 toward a Ship or CCU on your RSI account\n⚔️ Tournament Format\n🎯 Standard Single-Elimination Bracket\n🎯 Best of 3 Matches\n👑 Grand Finals – Best of 5\n🚀 Rules\n✅ Arrow or Gladius only\n✅ Laser Repeaters only\n❌ No other ships or weapon loadouts\nNo missile spam.\nNo gimmicks.\nJust pilot skill.\n\nDo you have what it takes to outfly every challenger and earn the title of Permafleet Dogfighting Champion?\n\n🔥 P1 and above only.\n🔥 One Night. One Bracket. One Champion.\n\nSign up now and prepare for combat. 🚀",
+      "scheduledStartTime": "2026-08-15T23:00:00+00:00",
+      "scheduledEndTime": null,
+      "entityType": 1,
+      "entityTypeName": "stage",
+      "status": 1,
+      "statusName": "scheduled",
+      "channelId": "1230783677525528687",
+      "creatorId": "420222636954615808",
+      "userCount": 10,
+      "image": "5496d825a6c0773aa52d1fe70c8a6f68",
+      "entityMetadata": {
+        "location": null
+      },
+      "recurrenceRule": {
+        "start": "2026-02-14T23:00:00+00:00",
+        "end": null,
+        "frequency": 2,
+        "frequencyName": "weekly",
+        "interval": 1,
+        "byWeekday": [
+          5
+        ],
+        "byWeekdayNames": [
+          "Saturday"
+        ],
+        "byNWeekday": null,
+        "count": null
+      },
+      "updatedAt": "2026-08-15T02:26:12.608Z"
+    },
+    {
+      "id": "1329917795554689118",
+      "guildId": "1190527980120850493",
+      "name": "SUNDAY FUNDAY",
+      "description": "# THE BIG WEEKLY EVENT\nWe'll adventure together live on Twitch for all the world to see.  Shenanigans shall be streamed!",
+      "scheduledStartTime": "2026-08-16T20:45:00+00:00",
+      "scheduledEndTime": null,
+      "entityType": 2,
+      "entityTypeName": "voice",
+      "status": 1,
+      "statusName": "scheduled",
+      "channelId": "1236721094153732276",
+      "creatorId": "420222636954615808",
+      "userCount": 15,
+      "image": null,
+      "entityMetadata": {
+        "location": null
+      },
+      "recurrenceRule": {
+        "start": "2025-01-19T20:45:00+00:00",
+        "end": null,
+        "frequency": 2,
+        "frequencyName": "weekly",
+        "interval": 1,
+        "byWeekday": [
+          6
+        ],
+        "byWeekdayNames": [
+          "Sunday"
+        ],
+        "byNWeekday": null,
+        "count": null
+      },
+      "updatedAt": "2026-08-15T02:26:12.608Z"
+    },
+    {
+      "id": "1262666749543710762",
+      "guildId": "1190527980120850493",
+      "name": "MINING MONDAY",
+      "description": "Remember that time we had to mine a rock for a platinum ticket?  Let's get out those mining ships and find those rocks.",
+      "scheduledStartTime": "2026-08-24T11:00:00+00:00",
+      "scheduledEndTime": null,
+      "entityType": 2,
+      "entityTypeName": "voice",
+      "status": 1,
+      "statusName": "scheduled",
+      "channelId": "1236721094153732276",
+      "creatorId": "420222636954615808",
+      "userCount": 14,
+      "image": "354cb54f08e3ef4064108ae1f1db5a1a",
+      "entityMetadata": {
+        "location": null
+      },
+      "recurrenceRule": {
+        "start": "2026-03-16T11:00:00+00:00",
+        "end": null,
+        "frequency": 2,
+        "frequencyName": "weekly",
+        "interval": 1,
+        "byWeekday": [
+          0
+        ],
+        "byWeekdayNames": [
+          "Monday"
+        ],
+        "byNWeekday": null,
+        "count": null
+      },
+      "updatedAt": "2026-08-15T02:26:12.605Z"
+    },
+    {
+      "id": "1514115392446922903",
+      "guildId": "1190527980120850493",
+      "name": "HATHOR DOMINANCE",
+      "description": "Let's get that Carinite!",
+      "scheduledStartTime": "2026-08-18T00:00:00+00:00",
+      "scheduledEndTime": null,
+      "entityType": 2,
+      "entityTypeName": "voice",
+      "status": 1,
+      "statusName": "scheduled",
+      "channelId": "1240639202815901696",
+      "creatorId": "420222636954615808",
+      "userCount": 5,
+      "image": null,
+      "entityMetadata": {
+        "location": null
+      },
+      "recurrenceRule": {
+        "start": "2026-06-16T00:00:00+00:00",
+        "end": null,
+        "frequency": 2,
+        "frequencyName": "weekly",
+        "interval": 1,
+        "byWeekday": [
+          1
+        ],
+        "byWeekdayNames": [
+          "Tuesday"
+        ],
+        "byNWeekday": null,
+        "count": null
+      },
+      "updatedAt": "2026-08-15T02:26:12.608Z"
+    },
+    {
+      "id": "1267818715001655376",
+      "guildId": "1190527980120850493",
+      "name": "TRAUMA TUESDAY",
+      "description": "Let's run rescue beacons on the PU to beef up our medical training.",
+      "scheduledStartTime": "2026-08-18T11:00:00+00:00",
+      "scheduledEndTime": null,
+      "entityType": 2,
+      "entityTypeName": "voice",
+      "status": 1,
+      "statusName": "scheduled",
+      "channelId": "1236721094153732276",
+      "creatorId": "420222636954615808",
+      "userCount": 7,
+      "image": "2c97b0b5864a693036846e38e0f017b5",
+      "entityMetadata": {
+        "location": null
+      },
+      "recurrenceRule": {
+        "start": "2024-07-30T11:00:00+00:00",
+        "end": null,
+        "frequency": 2,
+        "frequencyName": "weekly",
+        "interval": 1,
+        "byWeekday": [
+          1
+        ],
+        "byWeekdayNames": [
+          "Tuesday"
+        ],
+        "byNWeekday": null,
+        "count": null
+      },
+      "updatedAt": "2026-08-15T02:26:12.608Z"
+    },
+    {
+      "id": "1331479493000433797",
+      "guildId": "1190527980120850493",
+      "name": "HUMPDAY HAULING",
+      "description": "Logistics day — industry, haulers, and fighters.\n\nTHEME: https://discord.com/channels/1190527980120850493/1190527981110694040/1230019918687371315",
+      "scheduledStartTime": "2026-08-19T11:00:00+00:00",
+      "scheduledEndTime": null,
+      "entityType": 2,
+      "entityTypeName": "voice",
+      "status": 1,
+      "statusName": "scheduled",
+      "channelId": "1236721094153732276",
+      "creatorId": "420222636954615808",
+      "userCount": 10,
+      "image": null,
+      "entityMetadata": {
+        "location": null
+      },
+      "recurrenceRule": {
+        "start": "2026-06-10T11:00:00+00:00",
+        "end": null,
+        "frequency": 2,
+        "frequencyName": "weekly",
+        "interval": 1,
+        "byWeekday": [
+          2
+        ],
+        "byWeekdayNames": [
+          "Wednesday"
+        ],
+        "byNWeekday": null,
+        "count": null
+      },
+      "updatedAt": "2026-08-15T02:26:12.608Z"
+    },
+    {
+      "id": "1329917949573730315",
+      "guildId": "1190527980120850493",
+      "name": "TRAINING WEDNESDAY",
+      "description": "First training night in the week.\n\nSTEEL SHARPENS STEEL MOTHERFUCKERS :crossed_swords:",
+      "scheduledStartTime": "2026-08-20T00:00:00+00:00",
+      "scheduledEndTime": null,
+      "entityType": 2,
+      "entityTypeName": "voice",
+      "status": 1,
+      "statusName": "scheduled",
+      "channelId": "1229937881989120061",
+      "creatorId": "420222636954615808",
+      "userCount": 12,
+      "image": null,
+      "entityMetadata": {
+        "location": null
+      },
+      "recurrenceRule": {
+        "start": "2025-01-23T00:00:00+00:00",
+        "end": null,
+        "frequency": 2,
+        "frequencyName": "weekly",
+        "interval": 1,
+        "byWeekday": [
+          3
+        ],
+        "byWeekdayNames": [
+          "Thursday"
+        ],
+        "byNWeekday": null,
+        "count": null
+      },
+      "updatedAt": "2026-08-15T02:26:12.608Z"
+    },
+    {
+      "id": "1307560795323764777",
+      "guildId": "1190527980120850493",
+      "name": "CAPITAL COMBAT",
+      "description": "Suit up for boarding maneuvers — Org vs. Org Fleet Scrimmages.  Capital ships only.  Every other Saturday.",
+      "scheduledStartTime": "2026-08-16T01:00:00+00:00",
+      "scheduledEndTime": null,
+      "entityType": 2,
+      "entityTypeName": "voice",
+      "status": 1,
+      "statusName": "scheduled",
+      "channelId": "1229937881989120061",
+      "creatorId": "420222636954615808",
+      "userCount": 5,
+      "image": null,
+      "entityMetadata": {
+        "location": null
+      },
+      "recurrenceRule": {
+        "start": "2024-11-24T01:00:00+00:00",
+        "end": null,
+        "frequency": 2,
+        "frequencyName": "weekly",
+        "interval": 2,
+        "byWeekday": [
+          6
+        ],
+        "byWeekdayNames": [
+          "Sunday"
+        ],
+        "byNWeekday": null,
+        "count": null
+      },
+      "updatedAt": "2026-08-15T02:26:12.608Z"
+    },
+    {
+      "id": "1493009843056017588",
+      "guildId": "1190527980120850493",
+      "name": "Tour Through The Stars",
+      "description": "Your opportunity to speedrun the 'verse.  Every major Star Citizen gameplay loop, chaperoned by us.\n\n- **All experience levels welcomed**\n- **All materials will be provided**\n- **Full briefings will be held before all activities**\n\nWe will hit every major sandbox event one after the other, from Stanton to Pyro, all the way to Nyx.  We will be approaching every raid from an educational approach, giving a full briefing in between missions.\n\n**Please show up 30 minutes ahead of time.  We will be departing promptly.**",
+      "scheduledStartTime": "2026-08-22T17:00:00+00:00",
+      "scheduledEndTime": null,
+      "entityType": 2,
+      "entityTypeName": "voice",
+      "status": 1,
+      "statusName": "scheduled",
+      "channelId": "1236721094153732276",
+      "creatorId": "420222636954615808",
+      "userCount": 23,
+      "image": "20a1cd53e82a824390c5b43de346edd8",
+      "entityMetadata": {
+        "location": null
+      },
+      "recurrenceRule": {
+        "start": "2026-06-27T17:00:00+00:00",
+        "end": null,
+        "frequency": 1,
+        "frequencyName": "monthly",
+        "interval": 1,
+        "byWeekday": null,
+        "byWeekdayNames": null,
+        "byNWeekday": [
+          {
+            "n": 4,
+            "day": 5,
+            "dayName": "Saturday"
+          }
+        ],
+        "count": null
+      },
+      "updatedAt": "2026-08-15T02:26:12.608Z"
+    }
+  ],
+  "missing": [
+    "1517455651293626409",
+    "1480262036112937120",
+    "1522780060338094141",
+    "1514117617579720916"
+  ],
+  "fetched": [],
+  "errors": [
+    {
+      "id": "1517455651293626409",
+      "status": 403,
+      "error": "Missing Access"
+    },
+    {
+      "id": "1480262036112937120",
+      "status": 403,
+      "error": "Missing Access"
+    },
+    {
+      "id": "1522780060338094141",
+      "status": 403,
+      "error": "Missing Access"
+    },
+    {
+      "id": "1514117617579720916",
+      "status": 403,
+      "error": "Missing Access"
+    }
+  ],
+  "schedule": {
+    "generatedAt": "2026-08-15T02:27:45.431Z",
+    "days": {
+      "Monday": {
+        "theme": {
+          "id": "1262666749543710762",
+          "name": "MINING MONDAY",
+          "kind": "theme",
+          "reason": "named day-theme event",
+          "weekday": "Monday",
+          "scheduledStartTime": "2026-08-24T11:00:00+00:00",
+          "scheduledEndTime": null,
+          "cadence": "weekly Monday",
+          "channelId": "1236721094153732276",
+          "entityTypeName": "voice",
+          "statusName": "scheduled",
+          "description": "Remember that time we had to mine a rock for a platinum ticket?  Let's get out those mining ships and find those rocks."
+        },
+        "timed": [],
+        "special": [
+          {
+            "id": "1514115392446922903",
+            "name": "HATHOR DOMINANCE",
+            "kind": "special",
+            "reason": "ops / ad-hoc event",
+            "weekday": "Monday",
+            "scheduledStartTime": "2026-08-18T00:00:00+00:00",
+            "scheduledEndTime": null,
+            "cadence": "weekly Tuesday",
+            "channelId": "1240639202815901696",
+            "entityTypeName": "voice",
+            "statusName": "scheduled",
+            "description": "Let's get that Carinite!"
+          }
+        ],
+        "other": []
+      },
+      "Tuesday": {
+        "theme": {
+          "id": "1267818715001655376",
+          "name": "TRAUMA TUESDAY",
+          "kind": "theme",
+          "reason": "named day-theme event",
+          "weekday": "Tuesday",
+          "scheduledStartTime": "2026-08-18T11:00:00+00:00",
+          "scheduledEndTime": null,
+          "cadence": "weekly Tuesday",
+          "channelId": "1236721094153732276",
+          "entityTypeName": "voice",
+          "statusName": "scheduled",
+          "description": "Let's run rescue beacons on the PU to beef up our medical training."
+        },
+        "timed": [],
+        "special": [],
+        "other": []
+      },
+      "Wednesday": {
+        "theme": {
+          "id": "1331479493000433797",
+          "name": "HUMPDAY HAULING",
+          "kind": "theme",
+          "reason": "named day-theme event",
+          "weekday": "Wednesday",
+          "scheduledStartTime": "2026-08-19T11:00:00+00:00",
+          "scheduledEndTime": null,
+          "cadence": "weekly Wednesday",
+          "channelId": "1236721094153732276",
+          "entityTypeName": "voice",
+          "statusName": "scheduled",
+          "description": "Logistics day — industry, haulers, and fighters.\n\nTHEME: https://discord.com/channels/1190527980120850493/1190527981110694040/1230019918687371315"
+        },
+        "timed": [
+          {
+            "id": "1329917949573730315",
+            "name": "TRAINING WEDNESDAY",
+            "kind": "timed",
+            "reason": "training / flight school block",
+            "weekday": "Wednesday",
+            "scheduledStartTime": "2026-08-20T00:00:00+00:00",
+            "scheduledEndTime": null,
+            "cadence": "weekly Thursday",
+            "channelId": "1229937881989120061",
+            "entityTypeName": "voice",
+            "statusName": "scheduled",
+            "description": "First training night in the week.\n\nSTEEL SHARPENS STEEL MOTHERFUCKERS :crossed_swords:"
+          }
+        ],
+        "special": [],
+        "other": []
+      },
+      "Thursday": {
+        "theme": null,
+        "timed": [
+          {
+            "id": "1464468495260717240",
+            "name": "FLIGHT SCHOOL EUROPA",
+            "kind": "timed",
+            "reason": "training / flight school block",
+            "weekday": "Thursday",
+            "scheduledStartTime": "2026-08-20T17:00:00+00:00",
+            "scheduledEndTime": null,
+            "cadence": "weekly Thursday",
+            "channelId": "1229937881989120061",
+            "entityTypeName": "voice",
+            "statusName": "scheduled",
+            "description": "Basic flight school.  Settings, mechanics, and drills."
+          },
+          {
+            "id": "1329917962928390196",
+            "name": "TRAINING THURSDAY",
+            "kind": "timed",
+            "reason": "training / flight school block",
+            "weekday": "Thursday",
+            "scheduledStartTime": "2026-08-21T00:00:00+00:00",
+            "scheduledEndTime": null,
+            "cadence": "weekly Friday",
+            "channelId": "1229937881989120061",
+            "entityTypeName": "voice",
+            "statusName": "scheduled",
+            "description": ":crossed_swords: Steel sharpens steel.  Fighters only, Arena Commander.  Get rotated!"
+          }
+        ],
+        "special": [],
+        "other": []
+      },
+      "Friday": {
+        "theme": {
+          "id": "1331479564060463135",
+          "name": "FIGHTER FRIDAY",
+          "kind": "theme",
+          "reason": "named day-theme event",
+          "weekday": "Friday",
+          "scheduledStartTime": "2026-08-21T11:00:00+00:00",
+          "scheduledEndTime": null,
+          "cadence": "weekly Friday",
+          "channelId": "1236721094153732276",
+          "entityTypeName": "voice",
+          "statusName": "scheduled",
+          "description": "Get into a fighter and have some fun.\n\nOther ideas:\n- Boxing matches on the 890\n- Live PU Bounty Hunting\n- Live PU Defense Operations"
+        },
+        "timed": [
+          {
+            "id": "1329917501768994916",
+            "name": "FRIDAY NIGHT FIGHTS",
+            "kind": "timed",
+            "reason": "training / flight school block",
+            "weekday": "Friday",
+            "scheduledStartTime": "2026-08-14T20:00:00+00:00",
+            "scheduledEndTime": null,
+            "cadence": "weekly Friday",
+            "channelId": "1229937881989120061",
+            "entityTypeName": "voice",
+            "statusName": "scheduled",
+            "description": "Official BRAVO SQUADRON training time."
+          }
+        ],
+        "special": [],
+        "other": []
+      },
+      "Saturday": {
+        "theme": {
+          "id": "1363254583928946759",
+          "name": "SATURDAY SHENANIGANS",
+          "kind": "theme",
+          "reason": "named day-theme event",
+          "weekday": "Saturday",
+          "scheduledStartTime": "2026-08-15T16:00:00+00:00",
+          "scheduledEndTime": null,
+          "cadence": "weekly Saturday",
+          "channelId": "1236721094153732276",
+          "entityTypeName": "voice",
+          "statusName": "scheduled",
+          "description": "We solemnly swear that we are up to no good."
+        },
+        "timed": [],
+        "special": [
+          {
+            "id": "1470102737076093170",
+            "name": "1v1 Tournament",
+            "kind": "special",
+            "reason": "tournament / capital / tour",
+            "weekday": "Saturday",
+            "scheduledStartTime": "2026-08-15T23:00:00+00:00",
+            "scheduledEndTime": null,
+            "cadence": "weekly Saturday",
+            "channelId": "1230783677525528687",
+            "entityTypeName": "stage",
+            "statusName": "scheduled",
+            "description": "1v1 tournament; best of 3, double elimination.  After defeat by two separate opponents in a best of 3, you are ineligible for the Championship.\n\n# 🚨 PERMAFLEET P1+ PILOTS! 🚨\nThe gloves are off. It's time to find out who the best dogfighter in Permafleet really is.\n🗓️ When\nSaturday @ 8:00 PM Central\n💰 Prize\n🏆 $100 toward a Ship or CCU on your RSI account\n⚔️ Tournament Format\n🎯 Standard Single-Elimination Bracket\n🎯 Best of 3 Matches\n👑 Grand Finals – Best of 5\n🚀 Rules\n✅ Arrow or Gladius only\n✅ Laser Repeaters only\n❌ No other ships or weapon loadouts\nNo missile spam.\nNo gimmicks.\nJust pilot skill.\n\nDo you have what it takes to outfly every challenger and earn the title of Permafleet Dogfighting Champion?\n\n🔥 P1 and above only.\n🔥 One Night. One Bracket. One Champion.\n\nSign up now and prepare for combat. 🚀"
+          },
+          {
+            "id": "1307560795323764777",
+            "name": "CAPITAL COMBAT",
+            "kind": "special",
+            "reason": "tournament / capital / tour",
+            "weekday": "Saturday",
+            "scheduledStartTime": "2026-08-16T01:00:00+00:00",
+            "scheduledEndTime": null,
+            "cadence": "every 2 weeks",
+            "channelId": "1229937881989120061",
+            "entityTypeName": "voice",
+            "statusName": "scheduled",
+            "description": "Suit up for boarding maneuvers — Org vs. Org Fleet Scrimmages.  Capital ships only.  Every other Saturday."
+          },
+          {
+            "id": "1493009843056017588",
+            "name": "Tour Through The Stars",
+            "kind": "special",
+            "reason": "tournament / capital / tour",
+            "weekday": "Saturday",
+            "scheduledStartTime": "2026-08-22T17:00:00+00:00",
+            "scheduledEndTime": null,
+            "cadence": "4th Saturday monthly",
+            "channelId": "1236721094153732276",
+            "entityTypeName": "voice",
+            "statusName": "scheduled",
+            "description": "Your opportunity to speedrun the 'verse.  Every major Star Citizen gameplay loop, chaperoned by us.\n\n- **All experience levels welcomed**\n- **All materials will be provided**\n- **Full briefings will be held before all activities**\n\nWe will hit every major sandbox event one after the other, from Stanton to Pyro, all the way to Nyx.  We will be approaching every raid from an educational approach, giving a full briefing in between missions.\n\n**Please show up 30 minutes ahead of time.  We will be departing promptly.**"
+          }
+        ],
+        "other": []
+      },
+      "Sunday": {
+        "theme": {
+          "id": "1329917795554689118",
+          "name": "SUNDAY FUNDAY",
+          "kind": "theme",
+          "reason": "named day-theme event",
+          "weekday": "Sunday",
+          "scheduledStartTime": "2026-08-16T20:45:00+00:00",
+          "scheduledEndTime": null,
+          "cadence": "weekly Sunday",
+          "channelId": "1236721094153732276",
+          "entityTypeName": "voice",
+          "statusName": "scheduled",
+          "description": "# THE BIG WEEKLY EVENT\nWe'll adventure together live on Twitch for all the world to see.  Shenanigans shall be streamed!"
+        },
+        "timed": [],
+        "special": [],
+        "other": []
+      }
+    },
+    "unassigned": [],
+    "counts": {
+      "theme": 6,
+      "timed": 4,
+      "special": 4,
+      "total": 14
+    }
+  }
+}

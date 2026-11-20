@@ -5,8 +5,8 @@ const assert = require('node:assert');
 const http = require('http');
 
 const LiveRelay = require('../../services/LiveRelay');
-const PayoutManager = require('../../services/PayoutManager');
 const { createIdentity, keyFromIdentity } = require('../../functions/identity');
+const { FEDERATION_WITNESS } = require('@fabric/core/functions/signingTags');
 
 const BASE = '/services/star-citizen';
 
@@ -43,15 +43,16 @@ function fakeRpc (state = {}) {
   return rpc;
 }
 
-test('default peers: hub.fabric.pub and relay.goon.vc are seeded on first boot; removal is respected', async () => {
+test('default peers: the network hubs are seeded on first boot; removal is respected', async () => {
   const svc = new LiveRelay({ port: 0, missions: { enable: false }, fabric: { enable: false } });
   await svc.start();
   const port = svc.server.address().port;
   try {
     const peers = (await request(port, 'GET', '/peers')).body.data;
-    assert.strictEqual(peers.length, 2);
+    assert.strictEqual(peers.length, 3);
     assert.deepStrictEqual(peers.map((p) => p.address).sort(), [
       'hub.fabric.pub:7777',
+      'hub.goon.vc:7777',
       'relay.goon.vc:7777'
     ].sort());
     assert.ok(peers.every((p) => p.enabled === true && p.primary === true));
@@ -63,6 +64,36 @@ test('default peers: hub.fabric.pub and relay.goon.vc are seeded on first boot; 
   try {
     assert.strictEqual((await request(clean.server.address().port, 'GET', '/peers')).body.data.length, 0);
   } finally { await clean.stop(); }
+});
+
+test('a saved roster gets a new default seed once; removing it sticks', async () => {
+  const fs = require('fs');
+  const os = require('os');
+  const path = require('path');
+  const settingsStore = require('../../functions/settingsStore');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'sc-peers-offer-'));
+  const boot = async (edit) => {
+    const svc = new LiveRelay({ port: 0, settingsDir: dir, missions: { enable: false }, fabric: { enable: false } });
+    await svc.start();
+    const addresses = svc.peers.map((p) => p.address).sort();
+    if (edit) edit(svc);
+    await svc.stop();
+    return addresses;
+  };
+  const save = (svc, addresses) => settingsStore.putSetting(svc.registerStore, 'peers',
+    svc.peers.filter((p) => addresses.includes(p.address)).map(({ lastSeen, lastError, ...p }) => p));
+  try {
+    // A roster saved before hub.goon.vc was a seed.
+    await boot((svc) => {
+      save(svc, ['hub.fabric.pub:7777', 'relay.goon.vc:7777']);
+      settingsStore.putSetting(svc.registerStore, 'seedsOffered', null);
+    });
+    const upgraded = await boot((svc) => save(svc, ['hub.fabric.pub:7777', 'relay.goon.vc:7777']));
+    assert.deepStrictEqual(upgraded, ['hub.fabric.pub:7777', 'hub.goon.vc:7777', 'relay.goon.vc:7777']);
+    assert.deepStrictEqual(await boot(), ['hub.fabric.pub:7777', 'relay.goon.vc:7777']);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 test('self loopback peers are rejected; other-port loopback and restore-seeds work', async () => {
@@ -98,12 +129,13 @@ test('self loopback peers are rejected; other-port loopback and restore-seeds wo
     const healed = svc._healPeerRoster({ persist: true, forceHubs: true });
     assert.ok(healed.removed.includes('localhost:7777'));
     assert.ok(healed.added.includes('hub.fabric.pub:7777'));
+    assert.ok(healed.added.includes('hub.goon.vc:7777'));
     assert.ok(healed.added.includes('relay.goon.vc:7777'));
 
     const restored = await request(port, 'POST', '/peers/restore-seeds', {});
     assert.strictEqual(restored.status, 200);
     const addresses = (restored.body.data.peers || []).map((p) => p.address).sort();
-    assert.deepStrictEqual(addresses, ['hub.fabric.pub:7777', 'relay.goon.vc:7777'].sort());
+    assert.deepStrictEqual(addresses, ['hub.fabric.pub:7777', 'hub.goon.vc:7777', 'relay.goon.vc:7777'].sort());
   } finally {
     await svc.stop();
     fs.rmSync(dir, { recursive: true, force: true });
@@ -170,7 +202,7 @@ test('shareLogs consent gates the event uplink but not chat', async () => {
   }
 });
 
-test('group wallet: deterministic k-of-n Taproot (+ legacy P2WSH) from the group roster', async () => {
+test('group wallet: named federation vault from the group signers', async () => {
   const a = createIdentity(); const b = createIdentity(); const c = createIdentity();
   const rpc = fakeRpc();
   const svc = new LiveRelay({
@@ -185,15 +217,49 @@ test('group wallet: deterministic k-of-n Taproot (+ legacy P2WSH) from the group
   try {
     const group = await svc.groupManager.createGroup({ name: 'Wing', members: [b.pubkey, c.pubkey], threshold: 2 }, a.pubkey);
 
+    const waiting = await request(port, 'GET', `${BASE}/groups/${group.id}/wallet`);
+    assert.strictEqual(waiting.status, 200, JSON.stringify(waiting.body));
+    assert.strictEqual(waiting.body.data.address, null, 'no vault until every signer has a cosigner key');
+    assert.strictEqual(waiting.body.data.missingCosigners.length, 3);
+
+    // Each signer ties their account cosigner key to their identity (cosigner.set).
+    const { createGroupCosigner } = require('../../functions/groupCosigner');
+    const { keyFromIdentity, cosignerKeyFromIdentity } = require('../../functions/identity');
+    const { group: withContract } = svc.groupManager.ensureContract(group.id);
+    const cosigners = {};
+    for (const id of [a, b, c]) {
+      const record = createGroupCosigner({
+        identityKey: keyFromIdentity(id),
+        cosignerKey: cosignerKeyFromIdentity(id, 'regtest'),
+        group: withContract,
+        network: 'regtest'
+      });
+      cosigners[id.pubkey] = record.cosigner;
+      assert.strictEqual(svc.groupManager.setCosigner(group.id, record, id.pubkey).applied, true);
+    }
+    const forged = createGroupCosigner({
+      identityKey: keyFromIdentity(b),
+      cosignerKey: cosignerKeyFromIdentity(a, 'regtest'),
+      group: withContract,
+      network: 'regtest'
+    });
+    assert.strictEqual(svc.groupManager.ingestGroupChange(Object.assign({ action: 'cosigner.set', groupId: group.id, contractId: withContract.contractId }, forged), a.pubkey).skipped,
+      'unauthorized', 'nobody sets another member\'s cosigner');
+    const keys = [a, b, c].map((id) => cosigners[id.pubkey]);
+
     const res = await request(port, 'GET', `${BASE}/groups/${group.id}/wallet`);
     assert.strictEqual(res.status, 200, JSON.stringify(res.body));
-    assert.strictEqual(res.body.data.mode, 'taproot');
+    assert.strictEqual(res.body.data.mode, 'federation');
     assert.strictEqual(res.body.data.threshold, 2);
     assert.strictEqual(res.body.data.keys.length, 3);
-    assert.deepStrictEqual(res.body.data.keys, [...group.members].sort(), 'sorted keys → deterministic address');
-    assert.ok(res.body.data.address, 'Taproot deposit address');
-    assert.ok(res.body.data.legacyP2wsh, 'legacy P2WSH retained for transition');
-    assert.ok(String(res.body.data.legacyP2wsh.address || '').startsWith('bcrt1q-fake-2of3-'));
+    assert.deepStrictEqual(res.body.data.keys, [...keys].sort(), 'sorted cosigner keys → deterministic address');
+    const Federation = require('@fabric/core/types/federation');
+    const descriptor = Federation.buildDescriptor({ validators: keys, threshold: 2, network: 'regtest', publisher: cosigners[a.pubkey] });
+    assert.strictEqual(res.body.data.federationId, Federation.descriptorId(descriptor), 'same federation id Hub and Passport derive');
+    assert.strictEqual(res.body.data.address, Federation.vaultForDescriptor(descriptor).address);
+    assert.ok(res.body.data.address.startsWith('bcrt1p'), 'Taproot vault');
+    assert.strictEqual(res.body.data.legacyP2wsh, undefined);
+    assert.deepStrictEqual(res.body.data.previous, []);
     assert.strictEqual(res.body.data.bitcoinEnable, true);
     assert.strictEqual(res.body.data.balanceSats, 0);
     assert.strictEqual(res.body.data.balanceSource, 'payouts-rpc');
@@ -204,21 +270,17 @@ test('group wallet: deterministic k-of-n Taproot (+ legacy P2WSH) from the group
     assert.strictEqual(funded.body.data.history.length, 1);
     assert.strictEqual(funded.body.data.history[0].amountSats, 42000);
 
+    const list = await request(port, 'GET', `${BASE}/groups/${group.id}/withdrawals`);
+    assert.strictEqual(list.status, 200);
+    assert.deepStrictEqual(list.body.data, []);
+    const locked = await request(port, 'POST', `${BASE}/groups/${group.id}/withdrawals`, { destinationAddress: 'bcrt1qx', amountSats: 1000, feeSats: 500 });
+    assert.strictEqual(locked.status, 403, 'no unlocked identity → no signer');
+
     // Wallet summary endpoint reports the backend.
     const wallet = await request(port, 'GET', `${BASE}/wallet`);
     assert.strictEqual(wallet.body.data.mode, 'bitcoin');
     assert.strictEqual(wallet.body.data.network, 'regtest');
   } finally { await svc.stop(); }
-});
-
-test('PayoutManager.multisigAddress validates keys and clamps threshold', async () => {
-  const pm = new PayoutManager({ ledger: true });
-  const a = createIdentity(); const b = createIdentity();
-  const w = await pm.multisigAddress([a.pubkey, b.pubkey], 5);
-  assert.strictEqual(w.threshold, 2, 'threshold clamped to key count');
-  assert.strictEqual(w.mode, 'ledger');
-  assert.strictEqual(w.address, null);
-  await assert.rejects(pm.multisigAddress(['nope'], 1), /compressed secp256k1/);
 });
 
 test('mission with Bitcoin reward: submit completion → approve (Schnorr) → payout unlocks', async () => {
@@ -262,14 +324,14 @@ test('mission with Bitcoin reward: submit completion → approve (Schnorr) → p
       svc.missionManager.getMission(missionId),
       claimRow
     );
-    const badSig = Buffer.from(keyFromIdentity(pilot).signSchnorr(Buffer.from(msg))).toString('hex');
+    const badSig = Buffer.from(keyFromIdentity(pilot).signSchnorr(Buffer.from(msg), FEDERATION_WITNESS)).toString('hex');
     const denied = await request(port, 'POST', `${BASE}/claims/${claimId}/validate`, {
       decision: 'approve', signatures: { [pilot.pubkey]: badSig }
     });
     assert.strictEqual(denied.status, 403, 'non-authority signature rejected');
 
     // APPROVE COMPLETION with the authority's Schnorr signature → coins unlock.
-    const sig = Buffer.from(keyFromIdentity(authority).signSchnorr(Buffer.from(msg))).toString('hex');
+    const sig = Buffer.from(keyFromIdentity(authority).signSchnorr(Buffer.from(msg), FEDERATION_WITNESS)).toString('hex');
     const approved = await request(port, 'POST', `${BASE}/claims/${claimId}/validate`, {
       decision: 'approve', signatures: { [authority.pubkey]: sig }
     });

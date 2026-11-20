@@ -1,0 +1,6967 @@
+{
+  "capturedAt": "2026-08-14T04:52:27.951Z",
+  "origin": "http://127.0.0.1:61895",
+  "views": [
+    {
+      "view": "Home",
+      "path": "/",
+      "hash": "",
+      "tabs": [
+        "Home",
+        "Files",
+        "Groups",
+        "Missions",
+        "Fleets",
+        "Chat",
+        "Wallet",
+        "Network",
+        "When you fly",
+        "Quantum",
+        "Pilots",
+        "Activity Tree",
+        "Parser rules"
+      ],
+      "groupTabs": [],
+      "headings": [
+        "🛰️ GoonCitizen",
+        "🛰️ GoonCitizen — cumulative history from your logs",
+        "Features — jump to Documents, Groups, Missions, Fleets, Chat, Wallet, Network"
+      ],
+      "placeholders": [
+        "Search local data…"
+      ],
+      "snippet": "🛰️ GoonCitizen STARTED missions 0 deaths 0 players 0 Import… 🔔 🔑 029ac269… ⚙️ Home Files Groups Missions Fleets Chat Wallet Network 🛰️ GoonCitizen — cumulative history from your logs Filters My logs… 0 missions · 0 deaths all-time When you fly Missions Quantum Pilots Activity Tree Parser rules Active pilots 0 Sessions 0 Missions done 0 Completion 0% Deaths 0 QT hops 0 0 arrivals Incapacitated 0 CrimeStat 0 Features — jump to Documents, Groups, Missions, Fleets, Chat, Wall",
+      "buttons": [
+        {
+          "text": "Import…",
+          "title": "Paste a group invite or fabric: share",
+          "disabled": false
+        },
+        {
+          "text": "🔔",
+          "title": "Notifications — inbound mission shares, join requests, and invites",
+          "disabled": false
+        },
+        {
+          "text": "🔑 029ac269…",
+          "title": "offline — quick presence; Identity for profile & keys",
+          "disabled": false
+        },
+        {
+          "text": "⚙️",
+          "title": "Settings — Privacy, log path, Fabric, runtime",
+          "disabled": false
+        },
+        {
+          "text": "Home",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Files",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Groups",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Missions",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Fleets",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Chat",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Wallet",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Network",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Filters",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "My logs…",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "When you fly",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Missions",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Quantum",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Pilots",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Activity Tree",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Parser rules",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "📁 FilesThis node's file catalog — create, publish, and chat attachments. Not hub.fabric.pub.advance",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "👥 GroupsCreate a squad, Share a join invite, and accept requests from Notifications. Local tags sta",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "⭐ MissionsPost contracts with Bitcoin rewards — submit completion, authorities approve with Schnorr ",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "🚀 FleetsImport Starjump / FleetViewer JSON, browse your ships, share to peers, groups, or public.pe",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "💬 ChatFlattened channels — Fabric, Discord, or both (the bot relays as itself). Attach files from t",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "₿ WalletPersonal Hub-backed balance / receive / send / history, plus group Taproot and mission escro",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "🌐 NetworkYour live Game.log first — expand the feed to peer shares and group traffic, plus Fabric p",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "💬 Global chatopen",
+          "title": "",
+          "disabled": false
+        }
+      ]
+    },
+    {
+      "view": "Groups",
+      "path": "/",
+      "hash": "#groups",
+      "tabs": [
+        "Home",
+        "Files",
+        "Groups",
+        "Missions",
+        "Fleets",
+        "Chat",
+        "Wallet",
+        "Network"
+      ],
+      "groupTabs": [
+        "Chat",
+        "Members",
+        "Log",
+        "Fleets",
+        "Wallet",
+        "Proposals",
+        "Applications",
+        "Fabric"
+      ],
+      "headings": [
+        "🛰️ GoonCitizen",
+        "👥 Groups — chat, pins, and shared logs",
+        "Sandbox Wing · public"
+      ],
+      "placeholders": [
+        "Search local data…",
+        "Message as 029ac269……  (/ for commands)"
+      ],
+      "snippet": "🛰️ GoonCitizen STARTED missions 0 deaths 0 players 0 Import… 🔔 🔑 029ac269… ⚙️ Home Files Groups Missions Fleets Chat Wallet Network 👥 Groups — chat, pins, and shared logs ⟨ + New group + Channel Import… Federation Local tags you: 029ac269f7…91ad3e Copy pubkey 📌 Sandbox Wingpublic 1 member · 1-of-1 Sandbox Wing · public ⚙️ decisions 1-of-1 created 2026-08-14 public page /groups/group-mssgzy8i-1 Chat Members Log Fleets Wallet Proposals Applications Fabric Group chat member",
+      "buttons": [
+        {
+          "text": "Import…",
+          "title": "Paste a group invite or fabric: share",
+          "disabled": false
+        },
+        {
+          "text": "🔔",
+          "title": "Notifications — inbound mission shares, join requests, and invites",
+          "disabled": false
+        },
+        {
+          "text": "🔑 029ac269…",
+          "title": "offline — quick presence; Identity for profile & keys",
+          "disabled": false
+        },
+        {
+          "text": "⚙️",
+          "title": "Settings — Privacy, log path, Fabric, runtime",
+          "disabled": false
+        },
+        {
+          "text": "Home",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Files",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Groups",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Missions",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Fleets",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Chat",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Wallet",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Network",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Groups",
+          "title": "Expand group list",
+          "disabled": false
+        },
+        {
+          "text": "⟨",
+          "title": "Collapse group list",
+          "disabled": false
+        },
+        {
+          "text": "+ New group",
+          "title": "Create a new group",
+          "disabled": false
+        },
+        {
+          "text": "+ Channel",
+          "title": "Create a chat channel (a Federation group)",
+          "disabled": false
+        },
+        {
+          "text": "Import…",
+          "title": "Paste a fabric: join invite or group share",
+          "disabled": false
+        },
+        {
+          "text": "Federation",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Local tags",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Copy pubkey",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "📌",
+          "title": "Pin this group in your list",
+          "disabled": false
+        },
+        {
+          "text": "⚙️",
+          "title": "Group settings",
+          "disabled": false
+        },
+        {
+          "text": "Chat",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Members",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Log",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Fleets",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Wallet",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Proposals",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Applications",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Fabric",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "📌",
+          "title": "Pinned messages",
+          "disabled": false
+        },
+        {
+          "text": "📎",
+          "title": "Attach file to this node's catalog (25 sats)",
+          "disabled": false
+        },
+        {
+          "text": "Send",
+          "title": "",
+          "disabled": true
+        },
+        {
+          "text": "💬 Global chatopen",
+          "title": "",
+          "disabled": false
+        }
+      ]
+    },
+    {
+      "view": "Missions",
+      "path": "/",
+      "hash": "#missions",
+      "tabs": [
+        "Home",
+        "Files",
+        "Groups",
+        "Missions",
+        "Fleets",
+        "Chat",
+        "Wallet",
+        "Network"
+      ],
+      "groupTabs": [],
+      "headings": [
+        "🛰️ GoonCitizen",
+        "🎯 Game.log outcomes — cumulative from Home → Missions stats",
+        "⭐ Mission register— officer posts plus Game.log missions (log rows are evidence; rewards still need "
+      ],
+      "placeholders": [
+        "Search local data…"
+      ],
+      "snippet": "🛰️ GoonCitizen STARTED missions 0 deaths 0 players 0 Import… 🔔 🔑 029ac269… ⚙️ Home Files Groups Missions Fleets Chat Wallet Network 🎯 Game.log outcomes — cumulative from Home → Missions stats Parsed in-game mission ends (not the officer register below). no ended missions in range yet ⭐ Mission register — officer posts plus Game.log missions (log rows are evidence; rewards still need authority approval) + New mission All (1) Posted (1) From log (0) open Sandbox escort orph",
+      "buttons": [
+        {
+          "text": "Import…",
+          "title": "Paste a group invite or fabric: share",
+          "disabled": false
+        },
+        {
+          "text": "🔔",
+          "title": "Notifications — inbound mission shares, join requests, and invites",
+          "disabled": false
+        },
+        {
+          "text": "🔑 029ac269…",
+          "title": "offline — quick presence; Identity for profile & keys",
+          "disabled": false
+        },
+        {
+          "text": "⚙️",
+          "title": "Settings — Privacy, log path, Fabric, runtime",
+          "disabled": false
+        },
+        {
+          "text": "Home",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Files",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Groups",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Missions",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Fleets",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Chat",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Wallet",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Network",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "+ New mission",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "All (1)",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Posted (1)",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "From log (0)",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Sandbox escort",
+          "title": "Open mission page",
+          "disabled": false
+        },
+        {
+          "text": "💬 Global chatopen",
+          "title": "",
+          "disabled": false
+        }
+      ]
+    },
+    {
+      "view": "Fleets",
+      "path": "/",
+      "hash": "#fleet",
+      "tabs": [
+        "Home",
+        "Files",
+        "Groups",
+        "Missions",
+        "Fleets",
+        "Chat",
+        "Wallet",
+        "Network"
+      ],
+      "groupTabs": [],
+      "headings": [
+        "🛰️ GoonCitizen",
+        "Fleet — custom rosters + Starjump / FleetViewer imports",
+        "Your fleets",
+        "Details"
+      ],
+      "placeholders": [
+        "Search local data…",
+        "New fleet name"
+      ],
+      "snippet": "🛰️ GoonCitizen STARTED missions 0 deaths 0 players 0 Import… 🔔 🔑 029ac269… ⚙️ Home Files Groups Missions Fleets Chat Wallet Network Fleet — custom rosters + Starjump / FleetViewer imports you · offline No ship published yet presence private Identity Opt-in online status from Identity lets group / fleet mates see when you are in-game. New fleet Import JSON… All Mine Shared Public Refresh fleetviewer-thejohnram STARJUMP_FleetViewer-crescendo starjump-codywastaken starjump-ke",
+      "buttons": [
+        {
+          "text": "Import…",
+          "title": "Paste a group invite or fabric: share",
+          "disabled": false
+        },
+        {
+          "text": "🔔",
+          "title": "Notifications — inbound mission shares, join requests, and invites",
+          "disabled": false
+        },
+        {
+          "text": "🔑 029ac269…",
+          "title": "offline — quick presence; Identity for profile & keys",
+          "disabled": false
+        },
+        {
+          "text": "⚙️",
+          "title": "Settings — Privacy, log path, Fabric, runtime",
+          "disabled": false
+        },
+        {
+          "text": "Home",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Files",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Groups",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Missions",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Fleets",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Chat",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Wallet",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Network",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "New fleet",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Import JSON…",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "All",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Mine",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Shared",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Public",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Refresh",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "fleetviewer-thejohnram",
+          "title": "2 unique / 2 ships",
+          "disabled": false
+        },
+        {
+          "text": "STARJUMP_FleetViewer-crescendo",
+          "title": "28 unique / 36 ships",
+          "disabled": false
+        },
+        {
+          "text": "starjump-codywastaken",
+          "title": "7 unique / 7 ships",
+          "disabled": false
+        },
+        {
+          "text": "starjump-kersa",
+          "title": "8 unique / 8 ships",
+          "disabled": false
+        },
+        {
+          "text": "💬 Global chatopen",
+          "title": "",
+          "disabled": false
+        }
+      ]
+    },
+    {
+      "view": "Chat",
+      "path": "/",
+      "hash": "#chat",
+      "tabs": [
+        "Home",
+        "Files",
+        "Groups",
+        "Missions",
+        "Fleets",
+        "Chat",
+        "Wallet",
+        "Network"
+      ],
+      "groupTabs": [],
+      "headings": [
+        "🛰️ GoonCitizen",
+        "Channels",
+        "Members"
+      ],
+      "placeholders": [
+        "Search local data…",
+        "Search channels, guilds…",
+        "Message as 029ac269……  (/ for commands)",
+        "Search people…"
+      ],
+      "snippet": "🛰️ GoonCitizen STARTED missions 0 deaths 0 players 0 Import… 🔔 🔑 029ac269… ⚙️ Home Files Groups Missions Fleets Chat Wallet Network All Global Groups DMs Discord + Channel CHANNELS ⚙ Bot settings Each group is a chat channel — use + Channel here, or Groups. Hover a member to start a DM. global network — relayed via your Fabric peers 📌 ⚙️ loading… 📎 Send MEMBERS Peers sharing presence appear here. Search people across Discord servers and Fabric groups — hover for notes, c",
+      "buttons": [
+        {
+          "text": "Import…",
+          "title": "Paste a group invite or fabric: share",
+          "disabled": false
+        },
+        {
+          "text": "🔔",
+          "title": "Notifications — inbound mission shares, join requests, and invites",
+          "disabled": false
+        },
+        {
+          "text": "🔑 029ac269…",
+          "title": "offline — quick presence; Identity for profile & keys",
+          "disabled": false
+        },
+        {
+          "text": "⚙️",
+          "title": "Settings — Privacy, log path, Fabric, runtime",
+          "disabled": false
+        },
+        {
+          "text": "Home",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Files",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Groups",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Missions",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Fleets",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Chat",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Wallet",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Network",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "All",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Global",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Groups",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "DMs",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Discord",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "+ Channel",
+          "title": "Create a chat channel (a Federation group)",
+          "disabled": false
+        },
+        {
+          "text": "⚙Bot settings",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "📌",
+          "title": "Pinned messages",
+          "disabled": false
+        },
+        {
+          "text": "⚙️",
+          "title": "Discord bot — guilds, channels & users",
+          "disabled": false
+        },
+        {
+          "text": "📎",
+          "title": "Attach file to this node's catalog (25 sats)",
+          "disabled": false
+        },
+        {
+          "text": "Send",
+          "title": "",
+          "disabled": true
+        }
+      ]
+    },
+    {
+      "view": "Wallet",
+      "path": "/",
+      "hash": "#wallet",
+      "tabs": [
+        "Home",
+        "Files",
+        "Groups",
+        "Missions",
+        "Fleets",
+        "Chat",
+        "Wallet",
+        "Network"
+      ],
+      "groupTabs": [],
+      "headings": [
+        "🛰️ GoonCitizen",
+        "₿ Personal wallet — identity watch + Hub faucet sendRefresh",
+        "Recent activity",
+        "₿ Escrow backend — mission escrow backend and group multisigRefresh",
+        "👥 Group Taproot — failover ladder P2TR from signer keys (readers do not change the address)",
+        "⭐ Mission escrows — rewards locked to the mission authorities; approval signatures release them"
+      ],
+      "placeholders": [
+        "Search local data…"
+      ],
+      "snippet": "🛰️ GoonCitizen STARTED missions 0 deaths 0 players 0 Import… 🔔 🔑 029ac269… ⚙️ Home Files Groups Missions Fleets Chat Wallet Network ₿ Personal wallet — identity watch + Hub faucet send Refresh Hub offline network regtest balance — Send goes through this app’s Hub-shaped API (LiveRelay → Hub HTTP). The operator admin token stays in the desktop process — never in the browser. Balance / history watch your identity xpub. Beacon faucet appears only when the Hub OPTIONS contract",
+      "buttons": [
+        {
+          "text": "Import…",
+          "title": "Paste a group invite or fabric: share",
+          "disabled": false
+        },
+        {
+          "text": "🔔",
+          "title": "Notifications — inbound mission shares, join requests, and invites",
+          "disabled": false
+        },
+        {
+          "text": "🔑 029ac269…",
+          "title": "offline — quick presence; Identity for profile & keys",
+          "disabled": false
+        },
+        {
+          "text": "⚙️",
+          "title": "Settings — Privacy, log path, Fabric, runtime",
+          "disabled": false
+        },
+        {
+          "text": "Home",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Files",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Groups",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Missions",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Fleets",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Chat",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Wallet",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Network",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Refresh",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Send",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Refresh",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "💬 Global chatopen",
+          "title": "",
+          "disabled": false
+        }
+      ]
+    },
+    {
+      "view": "Network/Feed",
+      "path": "/",
+      "hash": "#network",
+      "tabs": [
+        "Home",
+        "Files",
+        "Groups",
+        "Missions",
+        "Fleets",
+        "Chat",
+        "Wallet",
+        "Network",
+        "Feed",
+        "Peers",
+        "Messages"
+      ],
+      "groupTabs": [],
+      "headings": [
+        "🛰️ GoonCitizen",
+        "📡 Live feed — Showing your local Game.log by default — enable Peers / Groups (or All) to widen cont"
+      ],
+      "placeholders": [
+        "Search local data…",
+        "filter by keyword(s), comma-separated…"
+      ],
+      "snippet": "🛰️ GoonCitizen STARTED missions 0 deaths 0 players 0 Import… 🔔 🔑 029ac269… ⚙️ Home Files Groups Missions Fleets Chat Wallet Network Feed Peers Messages Live Game.log + peer event stream 📡 Live feed — Showing your local Game.log by default — enable Peers / Groups (or All) to widen context. missions ✅0 · ⤺0 · ✖0 · ●0 · 1 group Copy all Game.log not found — set path in Settings My logs… type All Chat Missions Combat Players Quantum Broadcasts Notes HUD Other from All Local P",
+      "buttons": [
+        {
+          "text": "Import…",
+          "title": "Paste a group invite or fabric: share",
+          "disabled": false
+        },
+        {
+          "text": "🔔",
+          "title": "Notifications — inbound mission shares, join requests, and invites",
+          "disabled": false
+        },
+        {
+          "text": "🔑 029ac269…",
+          "title": "offline — quick presence; Identity for profile & keys",
+          "disabled": false
+        },
+        {
+          "text": "⚙️",
+          "title": "Settings — Privacy, log path, Fabric, runtime",
+          "disabled": false
+        },
+        {
+          "text": "Home",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Files",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Groups",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Missions",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Fleets",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Chat",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Wallet",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Network",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Feed",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Peers",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Messages",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Copy all",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "My logs…",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "All",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Chat",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Missions",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Combat",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Players",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Quantum",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Broadcasts",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Notes",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "HUD",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Other",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "All",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Local",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Peers",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Groups",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "copy",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "copy",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "💬 Global chatopen",
+          "title": "",
+          "disabled": false
+        }
+      ]
+    },
+    {
+      "view": "Network/Peers",
+      "path": "/",
+      "hash": "#network/peers",
+      "tabs": [
+        "Home",
+        "Files",
+        "Groups",
+        "Missions",
+        "Fleets",
+        "Chat",
+        "Wallet",
+        "Network",
+        "Feed",
+        "Peers",
+        "Messages"
+      ],
+      "groupTabs": [],
+      "headings": [
+        "🛰️ GoonCitizen",
+        "Fabric Network",
+        "Network hubs (observe)",
+        "Connected peers (2)"
+      ],
+      "placeholders": [
+        "Search local data…",
+        "advertise host (e.g. relay.example.com)",
+        "hub.fabric.pub:7777 or pubkey@host:port",
+        "label (optional)"
+      ],
+      "snippet": "🛰️ GoonCitizen STARTED missions 0 deaths 0 players 0 Import… 🔔 🔑 029ac269… ⚙️ Home Files Groups Missions Fleets Chat Wallet Network Feed Peers Messages Fabric hubs, connections, and log sharing Fabric Network Native Fabric TCP/NOISE on port 7777 — dial pins are pubkey@host:port. Default rendezvous seeds: hub.fabric.pub:7777 and relay.goon.vc:7777. Opt in to announce open slots (P2P_PEERING_OFFER) so peers can discover you. Parsed game logs only leave this machine when you ",
+      "buttons": [
+        {
+          "text": "Import…",
+          "title": "Paste a group invite or fabric: share",
+          "disabled": false
+        },
+        {
+          "text": "🔔",
+          "title": "Notifications — inbound mission shares, join requests, and invites",
+          "disabled": false
+        },
+        {
+          "text": "🔑 029ac269…",
+          "title": "offline — quick presence; Identity for profile & keys",
+          "disabled": false
+        },
+        {
+          "text": "⚙️",
+          "title": "Settings — Privacy, log path, Fabric, runtime",
+          "disabled": false
+        },
+        {
+          "text": "Home",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Files",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Groups",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Missions",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Fleets",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Chat",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Wallet",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Network",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Feed",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Peers",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Messages",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Save host",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Announce now",
+          "title": "Force one P2P_PEERING_OFFER now (needs advertise host + a live Fabric connection",
+          "disabled": true
+        },
+        {
+          "text": "Copy pin",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Inspect",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Disable",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Remove",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Copy pin",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Inspect",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Disable",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Remove",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Restore network seeds",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Add peer",
+          "title": "",
+          "disabled": true
+        },
+        {
+          "text": "💬 Global chatopen",
+          "title": "",
+          "disabled": false
+        }
+      ]
+    },
+    {
+      "view": "Network/Messages",
+      "path": "/",
+      "hash": "#network/messages",
+      "tabs": [
+        "Home",
+        "Files",
+        "Groups",
+        "Missions",
+        "Fleets",
+        "Chat",
+        "Wallet",
+        "Network",
+        "Feed",
+        "Peers",
+        "Messages"
+      ],
+      "groupTabs": [],
+      "headings": [
+        "🛰️ GoonCitizen",
+        "Fabric messages — AMP wire Messages only (chat, contracts, peering). Not Game.log."
+      ],
+      "placeholders": [
+        "Search local data…",
+        "filter type, peer, body…"
+      ],
+      "snippet": "🛰️ GoonCitizen STARTED missions 0 deaths 0 players 0 Import… 🔔 🔑 029ac269… ⚙️ Home Files Groups Missions Fleets Chat Wallet Network Feed Peers Messages AMP wire Message log Fabric messages — AMP wire Messages only (chat, contracts, peering). Not Game.log. Live ring buffer of signed Fabric Messages your peer sends and receives. Session keepalive frames are hidden by default. Buffer is in-memory and clears on restart. All ← In → Out Refresh Auto-refresh Show keepalive Pause ",
+      "buttons": [
+        {
+          "text": "Import…",
+          "title": "Paste a group invite or fabric: share",
+          "disabled": false
+        },
+        {
+          "text": "🔔",
+          "title": "Notifications — inbound mission shares, join requests, and invites",
+          "disabled": false
+        },
+        {
+          "text": "🔑 029ac269…",
+          "title": "offline — quick presence; Identity for profile & keys",
+          "disabled": false
+        },
+        {
+          "text": "⚙️",
+          "title": "Settings — Privacy, log path, Fabric, runtime",
+          "disabled": false
+        },
+        {
+          "text": "Home",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Files",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Groups",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Missions",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Fleets",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Chat",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Wallet",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Network",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Feed",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Peers",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Messages",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "All",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "← In",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "→ Out",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Refresh",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Pause capture",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Clear",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "💬 Global chatopen",
+          "title": "",
+          "disabled": false
+        }
+      ]
+    },
+    {
+      "view": "Files",
+      "path": "/",
+      "hash": "#documents",
+      "tabs": [
+        "Home",
+        "Files",
+        "Groups",
+        "Missions",
+        "Fleets",
+        "Chat",
+        "Wallet",
+        "Network"
+      ],
+      "groupTabs": [],
+      "headings": [
+        "🛰️ GoonCitizen",
+        "📁 Files 2 listingsRefreshQuery peersNew file"
+      ],
+      "placeholders": [
+        "Search local data…",
+        "Search name, id, MIME, sha…"
+      ],
+      "snippet": "🛰️ GoonCitizen STARTED missions 0 deaths 0 players 0 Import… 🔔 🔑 029ac269… ⚙️ Home Files Groups Missions Fleets Chat Wallet Network 📁 Files 2 listings Refresh Query peers New file This node's catalog plus published listings from connected Fabric peers. Publish marks a local file listed (optional sats on the fabric-doc: chat wire). Pin a file to your profile with 📌 on its page so Federation groups see the listing (metadata only). 2 shown All types2 Text1 Other1 Any status",
+      "buttons": [
+        {
+          "text": "Import…",
+          "title": "Paste a group invite or fabric: share",
+          "disabled": false
+        },
+        {
+          "text": "🔔",
+          "title": "Notifications — inbound mission shares, join requests, and invites",
+          "disabled": false
+        },
+        {
+          "text": "🔑 029ac269…",
+          "title": "offline — quick presence; Identity for profile & keys",
+          "disabled": false
+        },
+        {
+          "text": "⚙️",
+          "title": "Settings — Privacy, log path, Fabric, runtime",
+          "disabled": false
+        },
+        {
+          "text": "Home",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Files",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Groups",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Missions",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Fleets",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Chat",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Wallet",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Network",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Refresh",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Query peers",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "New file",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "All types2",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Text1",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Other1",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Any status",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Published",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Local",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "From peers",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Priced",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Free / unset",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "📌",
+          "title": "Unpin from profile",
+          "disabled": false
+        },
+        {
+          "text": "📌",
+          "title": "Pin to profile",
+          "disabled": false
+        },
+        {
+          "text": "💬 Global chatopen",
+          "title": "",
+          "disabled": false
+        }
+      ]
+    },
+    {
+      "view": "Home/When you fly",
+      "path": "/",
+      "hash": "",
+      "tabs": [
+        "Home",
+        "Files",
+        "Groups",
+        "Missions",
+        "Fleets",
+        "Chat",
+        "Wallet",
+        "Network",
+        "When you fly",
+        "Quantum",
+        "Pilots",
+        "Activity Tree",
+        "Parser rules"
+      ],
+      "groupTabs": [],
+      "headings": [
+        "🛰️ GoonCitizen",
+        "🛰️ GoonCitizen — cumulative history from your logs",
+        "🗓️ When you fly — day & hour (local); darker = busier"
+      ],
+      "placeholders": [
+        "Search local data…"
+      ],
+      "snippet": "🛰️ GoonCitizen STARTED missions 0 deaths 0 players 0 Import… 🔔 🔑 029ac269… ⚙️ Home Files Groups Missions Fleets Chat Wallet Network 🛰️ GoonCitizen — cumulative history from your logs Filters My logs… 0 missions · 0 deaths all-time When you fly Missions Quantum Pilots Activity Tree Parser rules Active pilots 0 Sessions 0 Missions done 0 Completion 0% Deaths 0 QT hops 0 0 arrivals Incapacitated 0 CrimeStat 0 🗓️ When you fly — day & hour (local); darker = busier no activity",
+      "buttons": [
+        {
+          "text": "Import…",
+          "title": "Paste a group invite or fabric: share",
+          "disabled": false
+        },
+        {
+          "text": "🔔",
+          "title": "Notifications — inbound mission shares, join requests, and invites",
+          "disabled": false
+        },
+        {
+          "text": "🔑 029ac269…",
+          "title": "offline — quick presence; Identity for profile & keys",
+          "disabled": false
+        },
+        {
+          "text": "⚙️",
+          "title": "Settings — Privacy, log path, Fabric, runtime",
+          "disabled": false
+        },
+        {
+          "text": "Home",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Files",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Groups",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Missions",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Fleets",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Chat",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Wallet",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Network",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Filters",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "My logs…",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "When you fly",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Missions",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Quantum",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Pilots",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Activity Tree",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Parser rules",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "💬 Global chatopen",
+          "title": "",
+          "disabled": false
+        }
+      ]
+    },
+    {
+      "view": "Home/Missions",
+      "path": "/",
+      "hash": "",
+      "tabs": [
+        "Home",
+        "Files",
+        "Groups",
+        "Missions",
+        "Fleets",
+        "Chat",
+        "Wallet",
+        "Network",
+        "When you fly",
+        "Quantum",
+        "Pilots",
+        "Activity Tree",
+        "Parser rules"
+      ],
+      "groupTabs": [],
+      "headings": [
+        "🛰️ GoonCitizen",
+        "🛰️ GoonCitizen — cumulative history from your logs",
+        "🎯 Mission outcomes — click a slice to filter",
+        "📊 By mission type — click a bar to focus",
+        "🏷️ By faction — click a row to filter"
+      ],
+      "placeholders": [
+        "Search local data…"
+      ],
+      "snippet": "🛰️ GoonCitizen STARTED missions 0 deaths 0 players 0 Import… 🔔 🔑 029ac269… ⚙️ Home Files Groups Missions Fleets Chat Wallet Network 🛰️ GoonCitizen — cumulative history from your logs Filters My logs… 0 missions · 0 deaths all-time When you fly Missions Quantum Pilots Activity Tree Parser rules Active pilots 0 Sessions 0 Missions done 0 Completion 0% Deaths 0 QT hops 0 0 arrivals Incapacitated 0 CrimeStat 0 🎯 Mission outcomes — click a slice to filter no ended missions in",
+      "buttons": [
+        {
+          "text": "Import…",
+          "title": "Paste a group invite or fabric: share",
+          "disabled": false
+        },
+        {
+          "text": "🔔",
+          "title": "Notifications — inbound mission shares, join requests, and invites",
+          "disabled": false
+        },
+        {
+          "text": "🔑 029ac269…",
+          "title": "offline — quick presence; Identity for profile & keys",
+          "disabled": false
+        },
+        {
+          "text": "⚙️",
+          "title": "Settings — Privacy, log path, Fabric, runtime",
+          "disabled": false
+        },
+        {
+          "text": "Home",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Files",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Groups",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Missions",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Fleets",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Chat",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Wallet",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Network",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Filters",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "My logs…",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "When you fly",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Missions",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Quantum",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Pilots",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Activity Tree",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Parser rules",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "💬 Global chatopen",
+          "title": "",
+          "disabled": false
+        }
+      ]
+    },
+    {
+      "view": "Home/Quantum",
+      "path": "/",
+      "hash": "",
+      "tabs": [
+        "Home",
+        "Files",
+        "Groups",
+        "Missions",
+        "Fleets",
+        "Chat",
+        "Wallet",
+        "Network",
+        "When you fly",
+        "Quantum",
+        "Pilots",
+        "Activity Tree",
+        "Parser rules"
+      ],
+      "groupTabs": [],
+      "headings": [
+        "🛰️ GoonCitizen",
+        "🛰️ GoonCitizen — cumulative history from your logs",
+        "🚀 Quantum destinations"
+      ],
+      "placeholders": [
+        "Search local data…"
+      ],
+      "snippet": "🛰️ GoonCitizen STARTED missions 0 deaths 0 players 0 Import… 🔔 🔑 029ac269… ⚙️ Home Files Groups Missions Fleets Chat Wallet Network 🛰️ GoonCitizen — cumulative history from your logs Filters My logs… 0 missions · 0 deaths all-time When you fly Missions Quantum Pilots Activity Tree Parser rules Active pilots 0 Sessions 0 Missions done 0 Completion 0% Deaths 0 QT hops 0 0 arrivals Incapacitated 0 CrimeStat 0 🚀 Quantum destinations no QT hops in the filtered period 💬 Globa",
+      "buttons": [
+        {
+          "text": "Import…",
+          "title": "Paste a group invite or fabric: share",
+          "disabled": false
+        },
+        {
+          "text": "🔔",
+          "title": "Notifications — inbound mission shares, join requests, and invites",
+          "disabled": false
+        },
+        {
+          "text": "🔑 029ac269…",
+          "title": "offline — quick presence; Identity for profile & keys",
+          "disabled": false
+        },
+        {
+          "text": "⚙️",
+          "title": "Settings — Privacy, log path, Fabric, runtime",
+          "disabled": false
+        },
+        {
+          "text": "Home",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Files",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Groups",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Missions",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Fleets",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Chat",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Wallet",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Network",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Filters",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "My logs…",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "When you fly",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Missions",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Quantum",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Pilots",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Activity Tree",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Parser rules",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "💬 Global chatopen",
+          "title": "",
+          "disabled": false
+        }
+      ]
+    },
+    {
+      "view": "Home/Pilots",
+      "path": "/",
+      "hash": "",
+      "tabs": [
+        "Home",
+        "Files",
+        "Groups",
+        "Missions",
+        "Fleets",
+        "Chat",
+        "Wallet",
+        "Network",
+        "When you fly",
+        "Quantum",
+        "Pilots",
+        "Activity Tree",
+        "Parser rules"
+      ],
+      "groupTabs": [],
+      "headings": [
+        "🛰️ GoonCitizen",
+        "🛰️ GoonCitizen — cumulative history from your logs",
+        "🏅 Pilots — click a row to filter",
+        "⚖️ Pilot comparison — side-by-side (ignores pilot filter)"
+      ],
+      "placeholders": [
+        "Search local data…"
+      ],
+      "snippet": "🛰️ GoonCitizen STARTED missions 0 deaths 0 players 0 Import… 🔔 🔑 029ac269… ⚙️ Home Files Groups Missions Fleets Chat Wallet Network 🛰️ GoonCitizen — cumulative history from your logs Filters My logs… 0 missions · 0 deaths all-time When you fly Missions Quantum Pilots Activity Tree Parser rules Active pilots 0 Sessions 0 Missions done 0 Completion 0% Deaths 0 QT hops 0 0 arrivals Incapacitated 0 CrimeStat 0 🏅 Pilots — click a row to filter no pilot activity in range yet ⚖",
+      "buttons": [
+        {
+          "text": "Import…",
+          "title": "Paste a group invite or fabric: share",
+          "disabled": false
+        },
+        {
+          "text": "🔔",
+          "title": "Notifications — inbound mission shares, join requests, and invites",
+          "disabled": false
+        },
+        {
+          "text": "🔑 029ac269…",
+          "title": "offline — quick presence; Identity for profile & keys",
+          "disabled": false
+        },
+        {
+          "text": "⚙️",
+          "title": "Settings — Privacy, log path, Fabric, runtime",
+          "disabled": false
+        },
+        {
+          "text": "Home",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Files",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Groups",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Missions",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Fleets",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Chat",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Wallet",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Network",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Filters",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "My logs…",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "When you fly",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Missions",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Quantum",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Pilots",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Activity Tree",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Parser rules",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "💬 Global chatopen",
+          "title": "",
+          "disabled": false
+        }
+      ]
+    },
+    {
+      "view": "Home/Activity Tree",
+      "path": "/",
+      "hash": "",
+      "tabs": [
+        "Home",
+        "Files",
+        "Groups",
+        "Missions",
+        "Fleets",
+        "Chat",
+        "Wallet",
+        "Network",
+        "When you fly",
+        "Quantum",
+        "Pilots",
+        "Activity Tree",
+        "Parser rules"
+      ],
+      "groupTabs": [],
+      "headings": [
+        "🛰️ GoonCitizen",
+        "🛰️ GoonCitizen — cumulative history from your logs",
+        "🌳 Activity Tree — composed history Merkle root, leaf provenance, and sealed Group tip"
+      ],
+      "placeholders": [
+        "Search local data…"
+      ],
+      "snippet": "🛰️ GoonCitizen STARTED missions 0 deaths 0 players 0 Import… 🔔 🔑 029ac269… ⚙️ Home Files Groups Missions Fleets Chat Wallet Network 🛰️ GoonCitizen — cumulative history from your logs Filters My logs… 0 missions · 0 deaths all-time When you fly Missions Quantum Pilots Activity Tree Parser rules Active pilots 0 Sessions 0 Missions done 0 Completion 0% Deaths 0 QT hops 0 0 arrivals Incapacitated 0 CrimeStat 0 🌳 Activity Tree — composed history Merkle root, leaf provenance, ",
+      "buttons": [
+        {
+          "text": "Import…",
+          "title": "Paste a group invite or fabric: share",
+          "disabled": false
+        },
+        {
+          "text": "🔔",
+          "title": "Notifications — inbound mission shares, join requests, and invites",
+          "disabled": false
+        },
+        {
+          "text": "🔑 029ac269…",
+          "title": "offline — quick presence; Identity for profile & keys",
+          "disabled": false
+        },
+        {
+          "text": "⚙️",
+          "title": "Settings — Privacy, log path, Fabric, runtime",
+          "disabled": false
+        },
+        {
+          "text": "Home",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Files",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Groups",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Missions",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Fleets",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Chat",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Wallet",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Network",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Filters",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "My logs…",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "When you fly",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Missions",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Quantum",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Pilots",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Activity Tree",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Parser rules",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Publish to Group",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Refresh tree",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Inspect leaves",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "💬 Global chatopen",
+          "title": "",
+          "disabled": false
+        }
+      ]
+    },
+    {
+      "view": "Home/Parser rules",
+      "path": "/",
+      "hash": "",
+      "tabs": [
+        "Home",
+        "Files",
+        "Groups",
+        "Missions",
+        "Fleets",
+        "Chat",
+        "Wallet",
+        "Network",
+        "When you fly",
+        "Quantum",
+        "Pilots",
+        "Activity Tree",
+        "Parser rules"
+      ],
+      "groupTabs": [],
+      "headings": [
+        "🛰️ GoonCitizen",
+        "🛰️ GoonCitizen — cumulative history from your logs",
+        "🧩 Parser rules — the configured regular expressions, all highlighting by default. Toggle any off to"
+      ],
+      "placeholders": [
+        "Search local data…"
+      ],
+      "snippet": "🛰️ GoonCitizen STARTED missions 0 deaths 0 players 0 Import… 🔔 🔑 029ac269… ⚙️ Home Files Groups Missions Fleets Chat Wallet Network 🛰️ GoonCitizen — cumulative history from your logs Filters My logs… 0 missions · 0 deaths all-time When you fly Missions Quantum Pilots Activity Tree Parser rules Active pilots 0 Sessions 0 Missions done 0 Completion 0% Deaths 0 QT hops 0 0 arrivals Incapacitated 0 CrimeStat 0 🧩 Parser rules — the configured regular expressions, all highligh",
+      "buttons": [
+        {
+          "text": "Import…",
+          "title": "Paste a group invite or fabric: share",
+          "disabled": false
+        },
+        {
+          "text": "🔔",
+          "title": "Notifications — inbound mission shares, join requests, and invites",
+          "disabled": false
+        },
+        {
+          "text": "🔑 029ac269…",
+          "title": "offline — quick presence; Identity for profile & keys",
+          "disabled": false
+        },
+        {
+          "text": "⚙️",
+          "title": "Settings — Privacy, log path, Fabric, runtime",
+          "disabled": false
+        },
+        {
+          "text": "Home",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Files",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Groups",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Missions",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Fleets",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Chat",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Wallet",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Network",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Filters",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "My logs…",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "When you fly",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Missions",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Quantum",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Pilots",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Activity Tree",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Parser rules",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Clear highlights",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "● on",
+          "title": "highlight lines matching this rule",
+          "disabled": false
+        },
+        {
+          "text": "● on",
+          "title": "highlight lines matching this rule",
+          "disabled": false
+        },
+        {
+          "text": "● on",
+          "title": "highlight lines matching this rule",
+          "disabled": false
+        },
+        {
+          "text": "● on",
+          "title": "highlight lines matching this rule",
+          "disabled": false
+        },
+        {
+          "text": "● on",
+          "title": "highlight lines matching this rule",
+          "disabled": false
+        },
+        {
+          "text": "● on",
+          "title": "highlight lines matching this rule",
+          "disabled": false
+        },
+        {
+          "text": "● on",
+          "title": "highlight lines matching this rule",
+          "disabled": false
+        },
+        {
+          "text": "● on",
+          "title": "highlight lines matching this rule",
+          "disabled": false
+        },
+        {
+          "text": "● on",
+          "title": "highlight lines matching this rule",
+          "disabled": false
+        },
+        {
+          "text": "● on",
+          "title": "highlight lines matching this rule",
+          "disabled": false
+        },
+        {
+          "text": "● on",
+          "title": "highlight lines matching this rule",
+          "disabled": false
+        },
+        {
+          "text": "● on",
+          "title": "highlight lines matching this rule",
+          "disabled": false
+        },
+        {
+          "text": "● on",
+          "title": "highlight lines matching this rule",
+          "disabled": false
+        },
+        {
+          "text": "● on",
+          "title": "highlight lines matching this rule",
+          "disabled": false
+        },
+        {
+          "text": "● on",
+          "title": "highlight lines matching this rule",
+          "disabled": false
+        },
+        {
+          "text": "● on",
+          "title": "highlight lines matching this rule",
+          "disabled": false
+        },
+        {
+          "text": "● on",
+          "title": "highlight lines matching this rule",
+          "disabled": false
+        },
+        {
+          "text": "● on",
+          "title": "highlight lines matching this rule",
+          "disabled": false
+        },
+        {
+          "text": "● on",
+          "title": "highlight lines matching this rule",
+          "disabled": false
+        },
+        {
+          "text": "● on",
+          "title": "highlight lines matching this rule",
+          "disabled": false
+        },
+        {
+          "text": "● on",
+          "title": "highlight lines matching this rule",
+          "disabled": false
+        },
+        {
+          "text": "● on",
+          "title": "highlight lines matching this rule",
+          "disabled": false
+        },
+        {
+          "text": "● on",
+          "title": "highlight lines matching this rule",
+          "disabled": false
+        },
+        {
+          "text": "● on",
+          "title": "highlight lines matching this rule",
+          "disabled": false
+        },
+        {
+          "text": "● on",
+          "title": "highlight lines matching this rule",
+          "disabled": false
+        },
+        {
+          "text": "● on",
+          "title": "highlight lines matching this rule",
+          "disabled": false
+        },
+        {
+          "text": "● on",
+          "title": "highlight lines matching this rule",
+          "disabled": false
+        },
+        {
+          "text": "● on",
+          "title": "highlight lines matching this rule",
+          "disabled": false
+        },
+        {
+          "text": "● on",
+          "title": "highlight lines matching this rule",
+          "disabled": false
+        },
+        {
+          "text": "● on",
+          "title": "highlight lines matching this rule",
+          "disabled": false
+        },
+        {
+          "text": "● on",
+          "title": "highlight lines matching this rule",
+          "disabled": false
+        },
+        {
+          "text": "● on",
+          "title": "highlight lines matching this rule",
+          "disabled": false
+        },
+        {
+          "text": "● on",
+          "title": "highlight lines matching this rule",
+          "disabled": false
+        },
+        {
+          "text": "● on",
+          "title": "highlight lines matching this rule",
+          "disabled": false
+        },
+        {
+          "text": "● on",
+          "title": "highlight lines matching this rule",
+          "disabled": false
+        },
+        {
+          "text": "● on",
+          "title": "highlight lines matching this rule",
+          "disabled": false
+        },
+        {
+          "text": "● on",
+          "title": "highlight lines matching this rule",
+          "disabled": false
+        },
+        {
+          "text": "● on",
+          "title": "highlight lines matching this rule",
+          "disabled": false
+        },
+        {
+          "text": "● on",
+          "title": "highlight lines matching this rule",
+          "disabled": false
+        },
+        {
+          "text": "● on",
+          "title": "highlight lines matching this rule",
+          "disabled": false
+        },
+        {
+          "text": "● on",
+          "title": "highlight lines matching this rule",
+          "disabled": false
+        },
+        {
+          "text": "● on",
+          "title": "highlight lines matching this rule",
+          "disabled": false
+        },
+        {
+          "text": "● on",
+          "title": "highlight lines matching this rule",
+          "disabled": false
+        },
+        {
+          "text": "● on",
+          "title": "highlight lines matching this rule",
+          "disabled": false
+        },
+        {
+          "text": "● on",
+          "title": "highlight lines matching this rule",
+          "disabled": false
+        },
+        {
+          "text": "● on",
+          "title": "highlight lines matching this rule",
+          "disabled": false
+        },
+        {
+          "text": "● on",
+          "title": "highlight lines matching this rule",
+          "disabled": false
+        },
+        {
+          "text": "● on",
+          "title": "highlight lines matching this rule",
+          "disabled": false
+        },
+        {
+          "text": "● on",
+          "title": "highlight lines matching this rule",
+          "disabled": false
+        },
+        {
+          "text": "● on",
+          "title": "highlight lines matching this rule",
+          "disabled": false
+        },
+        {
+          "text": "● on",
+          "title": "highlight lines matching this rule",
+          "disabled": false
+        },
+        {
+          "text": "● on",
+          "title": "highlight lines matching this rule",
+          "disabled": false
+        },
+        {
+          "text": "● on",
+          "title": "highlight lines matching this rule",
+          "disabled": false
+        },
+        {
+          "text": "● on",
+          "title": "highlight lines matching this rule",
+          "disabled": false
+        },
+        {
+          "text": "● on",
+          "title": "highlight lines matching this rule",
+          "disabled": false
+        },
+        {
+          "text": "💬 Global chatopen",
+          "title": "",
+          "disabled": false
+        }
+      ]
+    },
+    {
+      "view": "Home/Filters",
+      "path": "/",
+      "hash": "",
+      "tabs": [
+        "Home",
+        "Files",
+        "Groups",
+        "Missions",
+        "Fleets",
+        "Chat",
+        "Wallet",
+        "Network",
+        "When you fly",
+        "Quantum",
+        "Pilots",
+        "Activity Tree",
+        "Parser rules"
+      ],
+      "groupTabs": [],
+      "headings": [
+        "🛰️ GoonCitizen",
+        "🛰️ GoonCitizen — cumulative history from your logs",
+        "🧩 Parser rules — the configured regular expressions, all highlighting by default. Toggle any off to"
+      ],
+      "placeholders": [
+        "Search local data…"
+      ],
+      "snippet": "🛰️ GoonCitizen STARTED missions 0 deaths 0 players 0 Import… 🔔 🔑 029ac269… ⚙️ Home Files Groups Missions Fleets Chat Wallet Network 🛰️ GoonCitizen — cumulative history from your logs Filters My logs… 0 missions · 0 deaths all-time When you fly Missions Quantum Pilots Activity Tree Parser rules Filters cross-cut KPIs and the selected view · 1 log files · import via My logs… period All None range to pilot All mission All faction All outcome All Completed Abandoned Failed De",
+      "buttons": [
+        {
+          "text": "Import…",
+          "title": "Paste a group invite or fabric: share",
+          "disabled": false
+        },
+        {
+          "text": "🔔",
+          "title": "Notifications — inbound mission shares, join requests, and invites",
+          "disabled": false
+        },
+        {
+          "text": "🔑 029ac269…",
+          "title": "offline — quick presence; Identity for profile & keys",
+          "disabled": false
+        },
+        {
+          "text": "⚙️",
+          "title": "Settings — Privacy, log path, Fabric, runtime",
+          "disabled": false
+        },
+        {
+          "text": "Home",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Files",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Groups",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Missions",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Fleets",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Chat",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Wallet",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Network",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Filters",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "My logs…",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "When you fly",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Missions",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Quantum",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Pilots",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Activity Tree",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Parser rules",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "All",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "None",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "All",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "All",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "All",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "All",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Completed",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Abandoned",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Failed",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Deactivated",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Clear highlights",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "● on",
+          "title": "highlight lines matching this rule",
+          "disabled": false
+        },
+        {
+          "text": "● on",
+          "title": "highlight lines matching this rule",
+          "disabled": false
+        },
+        {
+          "text": "● on",
+          "title": "highlight lines matching this rule",
+          "disabled": false
+        },
+        {
+          "text": "● on",
+          "title": "highlight lines matching this rule",
+          "disabled": false
+        },
+        {
+          "text": "● on",
+          "title": "highlight lines matching this rule",
+          "disabled": false
+        },
+        {
+          "text": "● on",
+          "title": "highlight lines matching this rule",
+          "disabled": false
+        },
+        {
+          "text": "● on",
+          "title": "highlight lines matching this rule",
+          "disabled": false
+        },
+        {
+          "text": "● on",
+          "title": "highlight lines matching this rule",
+          "disabled": false
+        },
+        {
+          "text": "● on",
+          "title": "highlight lines matching this rule",
+          "disabled": false
+        },
+        {
+          "text": "● on",
+          "title": "highlight lines matching this rule",
+          "disabled": false
+        },
+        {
+          "text": "● on",
+          "title": "highlight lines matching this rule",
+          "disabled": false
+        },
+        {
+          "text": "● on",
+          "title": "highlight lines matching this rule",
+          "disabled": false
+        },
+        {
+          "text": "● on",
+          "title": "highlight lines matching this rule",
+          "disabled": false
+        },
+        {
+          "text": "● on",
+          "title": "highlight lines matching this rule",
+          "disabled": false
+        },
+        {
+          "text": "● on",
+          "title": "highlight lines matching this rule",
+          "disabled": false
+        },
+        {
+          "text": "● on",
+          "title": "highlight lines matching this rule",
+          "disabled": false
+        },
+        {
+          "text": "● on",
+          "title": "highlight lines matching this rule",
+          "disabled": false
+        },
+        {
+          "text": "● on",
+          "title": "highlight lines matching this rule",
+          "disabled": false
+        },
+        {
+          "text": "● on",
+          "title": "highlight lines matching this rule",
+          "disabled": false
+        },
+        {
+          "text": "● on",
+          "title": "highlight lines matching this rule",
+          "disabled": false
+        },
+        {
+          "text": "● on",
+          "title": "highlight lines matching this rule",
+          "disabled": false
+        },
+        {
+          "text": "● on",
+          "title": "highlight lines matching this rule",
+          "disabled": false
+        },
+        {
+          "text": "● on",
+          "title": "highlight lines matching this rule",
+          "disabled": false
+        },
+        {
+          "text": "● on",
+          "title": "highlight lines matching this rule",
+          "disabled": false
+        },
+        {
+          "text": "● on",
+          "title": "highlight lines matching this rule",
+          "disabled": false
+        },
+        {
+          "text": "● on",
+          "title": "highlight lines matching this rule",
+          "disabled": false
+        },
+        {
+          "text": "● on",
+          "title": "highlight lines matching this rule",
+          "disabled": false
+        },
+        {
+          "text": "● on",
+          "title": "highlight lines matching this rule",
+          "disabled": false
+        },
+        {
+          "text": "● on",
+          "title": "highlight lines matching this rule",
+          "disabled": false
+        },
+        {
+          "text": "● on",
+          "title": "highlight lines matching this rule",
+          "disabled": false
+        },
+        {
+          "text": "● on",
+          "title": "highlight lines matching this rule",
+          "disabled": false
+        },
+        {
+          "text": "● on",
+          "title": "highlight lines matching this rule",
+          "disabled": false
+        },
+        {
+          "text": "● on",
+          "title": "highlight lines matching this rule",
+          "disabled": false
+        },
+        {
+          "text": "● on",
+          "title": "highlight lines matching this rule",
+          "disabled": false
+        },
+        {
+          "text": "● on",
+          "title": "highlight lines matching this rule",
+          "disabled": false
+        },
+        {
+          "text": "● on",
+          "title": "highlight lines matching this rule",
+          "disabled": false
+        },
+        {
+          "text": "● on",
+          "title": "highlight lines matching this rule",
+          "disabled": false
+        },
+        {
+          "text": "● on",
+          "title": "highlight lines matching this rule",
+          "disabled": false
+        },
+        {
+          "text": "● on",
+          "title": "highlight lines matching this rule",
+          "disabled": false
+        },
+        {
+          "text": "● on",
+          "title": "highlight lines matching this rule",
+          "disabled": false
+        },
+        {
+          "text": "● on",
+          "title": "highlight lines matching this rule",
+          "disabled": false
+        },
+        {
+          "text": "● on",
+          "title": "highlight lines matching this rule",
+          "disabled": false
+        },
+        {
+          "text": "● on",
+          "title": "highlight lines matching this rule",
+          "disabled": false
+        },
+        {
+          "text": "● on",
+          "title": "highlight lines matching this rule",
+          "disabled": false
+        },
+        {
+          "text": "● on",
+          "title": "highlight lines matching this rule",
+          "disabled": false
+        },
+        {
+          "text": "● on",
+          "title": "highlight lines matching this rule",
+          "disabled": false
+        },
+        {
+          "text": "● on",
+          "title": "highlight lines matching this rule",
+          "disabled": false
+        },
+        {
+          "text": "● on",
+          "title": "highlight lines matching this rule",
+          "disabled": false
+        },
+        {
+          "text": "● on",
+          "title": "highlight lines matching this rule",
+          "disabled": false
+        },
+        {
+          "text": "● on",
+          "title": "highlight lines matching this rule",
+          "disabled": false
+        },
+        {
+          "text": "● on",
+          "title": "highlight lines matching this rule",
+          "disabled": false
+        },
+        {
+          "text": "● on",
+          "title": "highlight lines matching this rule",
+          "disabled": false
+        },
+        {
+          "text": "● on",
+          "title": "highlight lines matching this rule",
+          "disabled": false
+        },
+        {
+          "text": "● on",
+          "title": "highlight lines matching this rule",
+          "disabled": false
+        },
+        {
+          "text": "● on",
+          "title": "highlight lines matching this rule",
+          "disabled": false
+        },
+        {
+          "text": "💬 Global chatopen",
+          "title": "",
+          "disabled": false
+        }
+      ]
+    },
+    {
+      "view": "Groups/Sandbox Wing/Chat",
+      "path": "/",
+      "hash": "#groups?id=group-mssgzy8i-1",
+      "tabs": [
+        "Home",
+        "Files",
+        "Groups",
+        "Missions",
+        "Fleets",
+        "Chat",
+        "Wallet",
+        "Network"
+      ],
+      "groupTabs": [
+        "Chat",
+        "Members",
+        "Log",
+        "Fleets",
+        "Wallet",
+        "Proposals",
+        "Applications",
+        "Fabric"
+      ],
+      "headings": [
+        "🛰️ GoonCitizen",
+        "👥 Groups — chat, pins, and shared logs",
+        "Sandbox Wing · public"
+      ],
+      "placeholders": [
+        "Search local data…",
+        "Message as 029ac269……  (/ for commands)"
+      ],
+      "snippet": "🛰️ GoonCitizen STARTED missions 0 deaths 0 players 0 Import… 🔔 🔑 029ac269… ⚙️ Home Files Groups Missions Fleets Chat Wallet Network 👥 Groups — chat, pins, and shared logs ⟨ + New group + Channel Import… Federation Local tags you: 029ac269f7…91ad3e Copy pubkey 📌 Sandbox Wingpublic 1 member · 1-of-1 Sandbox Wing · public ⚙️ decisions 1-of-1 created 2026-08-14 public page /groups/group-mssgzy8i-1 Chat Members Log Fleets Wallet Proposals Applications Fabric Group chat member",
+      "buttons": [
+        {
+          "text": "Import…",
+          "title": "Paste a group invite or fabric: share",
+          "disabled": false
+        },
+        {
+          "text": "🔔",
+          "title": "Notifications — inbound mission shares, join requests, and invites",
+          "disabled": false
+        },
+        {
+          "text": "🔑 029ac269…",
+          "title": "offline — quick presence; Identity for profile & keys",
+          "disabled": false
+        },
+        {
+          "text": "⚙️",
+          "title": "Settings — Privacy, log path, Fabric, runtime",
+          "disabled": false
+        },
+        {
+          "text": "Home",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Files",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Groups",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Missions",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Fleets",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Chat",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Wallet",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Network",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Groups",
+          "title": "Expand group list",
+          "disabled": false
+        },
+        {
+          "text": "⟨",
+          "title": "Collapse group list",
+          "disabled": false
+        },
+        {
+          "text": "+ New group",
+          "title": "Create a new group",
+          "disabled": false
+        },
+        {
+          "text": "+ Channel",
+          "title": "Create a chat channel (a Federation group)",
+          "disabled": false
+        },
+        {
+          "text": "Import…",
+          "title": "Paste a fabric: join invite or group share",
+          "disabled": false
+        },
+        {
+          "text": "Federation",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Local tags",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Copy pubkey",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "📌",
+          "title": "Pin this group in your list",
+          "disabled": false
+        },
+        {
+          "text": "⚙️",
+          "title": "Group settings",
+          "disabled": false
+        },
+        {
+          "text": "Chat",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Members",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Log",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Fleets",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Wallet",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Proposals",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Applications",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Fabric",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "📌",
+          "title": "Pinned messages",
+          "disabled": false
+        },
+        {
+          "text": "📎",
+          "title": "Attach file to this node's catalog (25 sats)",
+          "disabled": false
+        },
+        {
+          "text": "Send",
+          "title": "",
+          "disabled": true
+        },
+        {
+          "text": "💬 Global chatopen",
+          "title": "",
+          "disabled": false
+        }
+      ]
+    },
+    {
+      "view": "Groups/Sandbox Wing/Members",
+      "path": "/",
+      "hash": "#groups?id=group-mssgzy8i-1&tab=members",
+      "tabs": [
+        "Home",
+        "Files",
+        "Groups",
+        "Missions",
+        "Fleets",
+        "Chat",
+        "Wallet",
+        "Network"
+      ],
+      "groupTabs": [
+        "Chat",
+        "Members",
+        "Log",
+        "Fleets",
+        "Wallet",
+        "Proposals",
+        "Applications",
+        "Fabric"
+      ],
+      "headings": [
+        "🛰️ GoonCitizen",
+        "👥 Groups — chat, pins, and shared logs",
+        "Sandbox Wing · public"
+      ],
+      "placeholders": [
+        "Search local data…",
+        "add member — paste a compressed pubkey (02…/03…)",
+        "Invite — paste their compressed pubkey (02…/03…)"
+      ],
+      "snippet": "🛰️ GoonCitizen STARTED missions 0 deaths 0 players 0 Import… 🔔 🔑 029ac269… ⚙️ Home Files Groups Missions Fleets Chat Wallet Network 👥 Groups — chat, pins, and shared logs ⟨ + New group + Channel Import… Federation Local tags you: 029ac269f7…91ad3e Copy pubkey 📌 Sandbox Wingpublic 1 member · 1-of-1 Sandbox Wing · public ⚙️ decisions 1-of-1 created 2026-08-14 public page /groups/group-mssgzy8i-1 Chat Members Log Fleets Wallet Proposals Applications Fabric 029ac269f75f5c9d3",
+      "buttons": [
+        {
+          "text": "Import…",
+          "title": "Paste a group invite or fabric: share",
+          "disabled": false
+        },
+        {
+          "text": "🔔",
+          "title": "Notifications — inbound mission shares, join requests, and invites",
+          "disabled": false
+        },
+        {
+          "text": "🔑 029ac269…",
+          "title": "offline — quick presence; Identity for profile & keys",
+          "disabled": false
+        },
+        {
+          "text": "⚙️",
+          "title": "Settings — Privacy, log path, Fabric, runtime",
+          "disabled": false
+        },
+        {
+          "text": "Home",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Files",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Groups",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Missions",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Fleets",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Chat",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Wallet",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Network",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Groups",
+          "title": "Expand group list",
+          "disabled": false
+        },
+        {
+          "text": "⟨",
+          "title": "Collapse group list",
+          "disabled": false
+        },
+        {
+          "text": "+ New group",
+          "title": "Create a new group",
+          "disabled": false
+        },
+        {
+          "text": "+ Channel",
+          "title": "Create a chat channel (a Federation group)",
+          "disabled": false
+        },
+        {
+          "text": "Import…",
+          "title": "Paste a fabric: join invite or group share",
+          "disabled": false
+        },
+        {
+          "text": "Federation",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Local tags",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Copy pubkey",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "📌",
+          "title": "Pin this group in your list",
+          "disabled": false
+        },
+        {
+          "text": "⚙️",
+          "title": "Group settings",
+          "disabled": false
+        },
+        {
+          "text": "Chat",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Members",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Log",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Fleets",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Wallet",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Proposals",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Applications",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Fabric",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Add",
+          "title": "",
+          "disabled": true
+        },
+        {
+          "text": "Send invite",
+          "title": "",
+          "disabled": true
+        },
+        {
+          "text": "💬 Global chatopen",
+          "title": "",
+          "disabled": false
+        }
+      ]
+    },
+    {
+      "view": "Groups/Sandbox Wing/Log",
+      "path": "/",
+      "hash": "#groups?id=group-mssgzy8i-1&tab=log",
+      "tabs": [
+        "Home",
+        "Files",
+        "Groups",
+        "Missions",
+        "Fleets",
+        "Chat",
+        "Wallet",
+        "Network"
+      ],
+      "groupTabs": [
+        "Chat",
+        "Members",
+        "Log",
+        "Fleets",
+        "Wallet",
+        "Proposals",
+        "Applications",
+        "Fabric"
+      ],
+      "headings": [
+        "🛰️ GoonCitizen",
+        "👥 Groups — chat, pins, and shared logs",
+        "Sandbox Wing · public"
+      ],
+      "placeholders": [
+        "Search local data…"
+      ],
+      "snippet": "🛰️ GoonCitizen STARTED missions 0 deaths 0 players 0 Import… 🔔 🔑 029ac269… ⚙️ Home Files Groups Missions Fleets Chat Wallet Network 👥 Groups — chat, pins, and shared logs ⟨ + New group + Channel Import… Federation Local tags you: 029ac269f7…91ad3e Copy pubkey 📌 Sandbox Wingpublic 1 member · 1-of-1 Sandbox Wing · public ⚙️ decisions 1-of-1 created 2026-08-14 public page /groups/group-mssgzy8i-1 Chat Members Log Fleets Wallet Proposals Applications Fabric No synchronized e",
+      "buttons": [
+        {
+          "text": "Import…",
+          "title": "Paste a group invite or fabric: share",
+          "disabled": false
+        },
+        {
+          "text": "🔔",
+          "title": "Notifications — inbound mission shares, join requests, and invites",
+          "disabled": false
+        },
+        {
+          "text": "🔑 029ac269…",
+          "title": "offline — quick presence; Identity for profile & keys",
+          "disabled": false
+        },
+        {
+          "text": "⚙️",
+          "title": "Settings — Privacy, log path, Fabric, runtime",
+          "disabled": false
+        },
+        {
+          "text": "Home",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Files",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Groups",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Missions",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Fleets",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Chat",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Wallet",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Network",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Groups",
+          "title": "Expand group list",
+          "disabled": false
+        },
+        {
+          "text": "⟨",
+          "title": "Collapse group list",
+          "disabled": false
+        },
+        {
+          "text": "+ New group",
+          "title": "Create a new group",
+          "disabled": false
+        },
+        {
+          "text": "+ Channel",
+          "title": "Create a chat channel (a Federation group)",
+          "disabled": false
+        },
+        {
+          "text": "Import…",
+          "title": "Paste a fabric: join invite or group share",
+          "disabled": false
+        },
+        {
+          "text": "Federation",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Local tags",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Copy pubkey",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "📌",
+          "title": "Pin this group in your list",
+          "disabled": false
+        },
+        {
+          "text": "⚙️",
+          "title": "Group settings",
+          "disabled": false
+        },
+        {
+          "text": "Chat",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Members",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Log",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Fleets",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Wallet",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Proposals",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Applications",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Fabric",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "💬 Global chatopen",
+          "title": "",
+          "disabled": false
+        }
+      ]
+    },
+    {
+      "view": "Groups/Sandbox Wing/Fleets",
+      "path": "/",
+      "hash": "#groups?id=group-mssgzy8i-1&tab=fleets",
+      "tabs": [
+        "Home",
+        "Files",
+        "Groups",
+        "Missions",
+        "Fleets",
+        "Chat",
+        "Wallet",
+        "Network"
+      ],
+      "groupTabs": [
+        "Chat",
+        "Members",
+        "Log",
+        "Fleets",
+        "Wallet",
+        "Proposals",
+        "Applications",
+        "Fabric"
+      ],
+      "headings": [
+        "🛰️ GoonCitizen",
+        "👥 Groups — chat, pins, and shared logs",
+        "Sandbox Wing · public"
+      ],
+      "placeholders": [
+        "Search local data…"
+      ],
+      "snippet": "🛰️ GoonCitizen STARTED missions 0 deaths 0 players 0 Import… 🔔 🔑 029ac269… ⚙️ Home Files Groups Missions Fleets Chat Wallet Network 👥 Groups — chat, pins, and shared logs ⟨ + New group + Channel Import… Federation Local tags you: 029ac269f7…91ad3e Copy pubkey 📌 Sandbox Wingpublic 1 member · 1-of-1 Sandbox Wing · public ⚙️ decisions 1-of-1 created 2026-08-14 public page /groups/group-mssgzy8i-1 Chat Members Log Fleets Wallet Proposals Applications Fabric SHARE A FLEET Pub",
+      "buttons": [
+        {
+          "text": "Import…",
+          "title": "Paste a group invite or fabric: share",
+          "disabled": false
+        },
+        {
+          "text": "🔔",
+          "title": "Notifications — inbound mission shares, join requests, and invites",
+          "disabled": false
+        },
+        {
+          "text": "🔑 029ac269…",
+          "title": "offline — quick presence; Identity for profile & keys",
+          "disabled": false
+        },
+        {
+          "text": "⚙️",
+          "title": "Settings — Privacy, log path, Fabric, runtime",
+          "disabled": false
+        },
+        {
+          "text": "Home",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Files",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Groups",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Missions",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Fleets",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Chat",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Wallet",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Network",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Groups",
+          "title": "Expand group list",
+          "disabled": false
+        },
+        {
+          "text": "⟨",
+          "title": "Collapse group list",
+          "disabled": false
+        },
+        {
+          "text": "+ New group",
+          "title": "Create a new group",
+          "disabled": false
+        },
+        {
+          "text": "+ Channel",
+          "title": "Create a chat channel (a Federation group)",
+          "disabled": false
+        },
+        {
+          "text": "Import…",
+          "title": "Paste a fabric: join invite or group share",
+          "disabled": false
+        },
+        {
+          "text": "Federation",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Local tags",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Copy pubkey",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "📌",
+          "title": "Pin this group in your list",
+          "disabled": false
+        },
+        {
+          "text": "⚙️",
+          "title": "Group settings",
+          "disabled": false
+        },
+        {
+          "text": "Chat",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Members",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Log",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Fleets",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Wallet",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Proposals",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Applications",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Fabric",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Share to group",
+          "title": "",
+          "disabled": true
+        },
+        {
+          "text": "💬 Global chatopen",
+          "title": "",
+          "disabled": false
+        }
+      ]
+    },
+    {
+      "view": "Groups/Sandbox Wing/Wallet",
+      "path": "/",
+      "hash": "#groups?id=group-mssgzy8i-1&tab=wallet",
+      "tabs": [
+        "Home",
+        "Files",
+        "Groups",
+        "Missions",
+        "Fleets",
+        "Chat",
+        "Wallet",
+        "Network"
+      ],
+      "groupTabs": [
+        "Chat",
+        "Members",
+        "Log",
+        "Fleets",
+        "Wallet",
+        "Proposals",
+        "Applications",
+        "Fabric"
+      ],
+      "headings": [
+        "🛰️ GoonCitizen",
+        "👥 Groups — chat, pins, and shared logs",
+        "Sandbox Wing · public"
+      ],
+      "placeholders": [
+        "Search local data…"
+      ],
+      "snippet": "🛰️ GoonCitizen STARTED missions 0 deaths 0 players 0 Import… 🔔 🔑 029ac269… ⚙️ Home Files Groups Missions Fleets Chat Wallet Network 👥 Groups — chat, pins, and shared logs ⟨ + New group + Channel Import… Federation Local tags you: 029ac269f7…91ad3e Copy pubkey 📌 Sandbox Wingpublic 1 member · 1-of-1 Sandbox Wing · public ⚙️ decisions 1-of-1 created 2026-08-14 public page /groups/group-mssgzy8i-1 Chat Members Log Fleets Wallet Proposals Applications Fabric mode disabled sig",
+      "buttons": [
+        {
+          "text": "Import…",
+          "title": "Paste a group invite or fabric: share",
+          "disabled": false
+        },
+        {
+          "text": "🔔",
+          "title": "Notifications — inbound mission shares, join requests, and invites",
+          "disabled": false
+        },
+        {
+          "text": "🔑 029ac269…",
+          "title": "offline — quick presence; Identity for profile & keys",
+          "disabled": false
+        },
+        {
+          "text": "⚙️",
+          "title": "Settings — Privacy, log path, Fabric, runtime",
+          "disabled": false
+        },
+        {
+          "text": "Home",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Files",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Groups",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Missions",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Fleets",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Chat",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Wallet",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Network",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Groups",
+          "title": "Expand group list",
+          "disabled": false
+        },
+        {
+          "text": "⟨",
+          "title": "Collapse group list",
+          "disabled": false
+        },
+        {
+          "text": "+ New group",
+          "title": "Create a new group",
+          "disabled": false
+        },
+        {
+          "text": "+ Channel",
+          "title": "Create a chat channel (a Federation group)",
+          "disabled": false
+        },
+        {
+          "text": "Import…",
+          "title": "Paste a fabric: join invite or group share",
+          "disabled": false
+        },
+        {
+          "text": "Federation",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Local tags",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Copy pubkey",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "📌",
+          "title": "Pin this group in your list",
+          "disabled": false
+        },
+        {
+          "text": "⚙️",
+          "title": "Group settings",
+          "disabled": false
+        },
+        {
+          "text": "Chat",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Members",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Log",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Fleets",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Wallet",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Proposals",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Applications",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Fabric",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "💬 Global chatopen",
+          "title": "",
+          "disabled": false
+        }
+      ]
+    },
+    {
+      "view": "Groups/Sandbox Wing/Proposals",
+      "path": "/",
+      "hash": "#groups?id=group-mssgzy8i-1&tab=proposals",
+      "tabs": [
+        "Home",
+        "Files",
+        "Groups",
+        "Missions",
+        "Fleets",
+        "Chat",
+        "Wallet",
+        "Network"
+      ],
+      "groupTabs": [
+        "Chat",
+        "Members",
+        "Log",
+        "Fleets",
+        "Wallet",
+        "Proposals",
+        "Applications",
+        "Fabric"
+      ],
+      "headings": [
+        "🛰️ GoonCitizen",
+        "👥 Groups — chat, pins, and shared logs",
+        "Sandbox Wing · public"
+      ],
+      "placeholders": [
+        "Search local data…"
+      ],
+      "snippet": "🛰️ GoonCitizen STARTED missions 0 deaths 0 players 0 Import… 🔔 🔑 029ac269… ⚙️ Home Files Groups Missions Fleets Chat Wallet Network 👥 Groups — chat, pins, and shared logs ⟨ + New group + Channel Import… Federation Local tags you: 029ac269f7…91ad3e Copy pubkey 📌 Sandbox Wingpublic 1 member · 1-of-1 Sandbox Wing · public ⚙️ decisions 1-of-1 created 2026-08-14 public page /groups/group-mssgzy8i-1 Chat Members Log Fleets Wallet Proposals Applications Fabric No open proposals",
+      "buttons": [
+        {
+          "text": "Import…",
+          "title": "Paste a group invite or fabric: share",
+          "disabled": false
+        },
+        {
+          "text": "🔔",
+          "title": "Notifications — inbound mission shares, join requests, and invites",
+          "disabled": false
+        },
+        {
+          "text": "🔑 029ac269…",
+          "title": "offline — quick presence; Identity for profile & keys",
+          "disabled": false
+        },
+        {
+          "text": "⚙️",
+          "title": "Settings — Privacy, log path, Fabric, runtime",
+          "disabled": false
+        },
+        {
+          "text": "Home",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Files",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Groups",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Missions",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Fleets",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Chat",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Wallet",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Network",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Groups",
+          "title": "Expand group list",
+          "disabled": false
+        },
+        {
+          "text": "⟨",
+          "title": "Collapse group list",
+          "disabled": false
+        },
+        {
+          "text": "+ New group",
+          "title": "Create a new group",
+          "disabled": false
+        },
+        {
+          "text": "+ Channel",
+          "title": "Create a chat channel (a Federation group)",
+          "disabled": false
+        },
+        {
+          "text": "Import…",
+          "title": "Paste a fabric: join invite or group share",
+          "disabled": false
+        },
+        {
+          "text": "Federation",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Local tags",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Copy pubkey",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "📌",
+          "title": "Pin this group in your list",
+          "disabled": false
+        },
+        {
+          "text": "⚙️",
+          "title": "Group settings",
+          "disabled": false
+        },
+        {
+          "text": "Chat",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Members",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Log",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Fleets",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Wallet",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Proposals",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Applications",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Fabric",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "💬 Global chatopen",
+          "title": "",
+          "disabled": false
+        }
+      ]
+    },
+    {
+      "view": "Groups/Sandbox Wing/Applications",
+      "path": "/",
+      "hash": "#groups?id=group-mssgzy8i-1&tab=applications",
+      "tabs": [
+        "Home",
+        "Files",
+        "Groups",
+        "Missions",
+        "Fleets",
+        "Chat",
+        "Wallet",
+        "Network"
+      ],
+      "groupTabs": [
+        "Chat",
+        "Members",
+        "Log",
+        "Fleets",
+        "Wallet",
+        "Proposals",
+        "Applications",
+        "Fabric"
+      ],
+      "headings": [
+        "🛰️ GoonCitizen",
+        "👥 Groups — chat, pins, and shared logs",
+        "Sandbox Wing · public"
+      ],
+      "placeholders": [
+        "Search local data…"
+      ],
+      "snippet": "🛰️ GoonCitizen STARTED missions 0 deaths 0 players 0 Import… 🔔 🔑 029ac269… ⚙️ Home Files Groups Missions Fleets Chat Wallet Network 👥 Groups — chat, pins, and shared logs ⟨ + New group + Channel Import… Federation Local tags you: 029ac269f7…91ad3e Copy pubkey 📌 Sandbox Wingpublic 1 member · 1-of-1 Sandbox Wing · public ⚙️ decisions 1-of-1 created 2026-08-14 public page /groups/group-mssgzy8i-1 Chat Members Log Fleets Wallet Proposals Applications Fabric No pending applic",
+      "buttons": [
+        {
+          "text": "Import…",
+          "title": "Paste a group invite or fabric: share",
+          "disabled": false
+        },
+        {
+          "text": "🔔",
+          "title": "Notifications — inbound mission shares, join requests, and invites",
+          "disabled": false
+        },
+        {
+          "text": "🔑 029ac269…",
+          "title": "offline — quick presence; Identity for profile & keys",
+          "disabled": false
+        },
+        {
+          "text": "⚙️",
+          "title": "Settings — Privacy, log path, Fabric, runtime",
+          "disabled": false
+        },
+        {
+          "text": "Home",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Files",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Groups",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Missions",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Fleets",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Chat",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Wallet",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Network",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Groups",
+          "title": "Expand group list",
+          "disabled": false
+        },
+        {
+          "text": "⟨",
+          "title": "Collapse group list",
+          "disabled": false
+        },
+        {
+          "text": "+ New group",
+          "title": "Create a new group",
+          "disabled": false
+        },
+        {
+          "text": "+ Channel",
+          "title": "Create a chat channel (a Federation group)",
+          "disabled": false
+        },
+        {
+          "text": "Import…",
+          "title": "Paste a fabric: join invite or group share",
+          "disabled": false
+        },
+        {
+          "text": "Federation",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Local tags",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Copy pubkey",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "📌",
+          "title": "Pin this group in your list",
+          "disabled": false
+        },
+        {
+          "text": "⚙️",
+          "title": "Group settings",
+          "disabled": false
+        },
+        {
+          "text": "Chat",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Members",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Log",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Fleets",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Wallet",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Proposals",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Applications",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Fabric",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "💬 Global chatopen",
+          "title": "",
+          "disabled": false
+        }
+      ]
+    },
+    {
+      "view": "Groups/Sandbox Wing/Fabric",
+      "path": "/",
+      "hash": "#groups?id=group-mssgzy8i-1&tab=fabric",
+      "tabs": [
+        "Home",
+        "Files",
+        "Groups",
+        "Missions",
+        "Fleets",
+        "Chat",
+        "Wallet",
+        "Network"
+      ],
+      "groupTabs": [
+        "Chat",
+        "Members",
+        "Log",
+        "Fleets",
+        "Wallet",
+        "Proposals",
+        "Applications",
+        "Fabric"
+      ],
+      "headings": [
+        "🛰️ GoonCitizen",
+        "👥 Groups — chat, pins, and shared logs",
+        "Sandbox Wing · public",
+        "Advanced · Fabric history — messages, Statechain journal, Activity Tree, codec"
+      ],
+      "placeholders": [
+        "Search local data…",
+        "filter type, peer, body…"
+      ],
+      "snippet": "🛰️ GoonCitizen STARTED missions 0 deaths 0 players 0 Import… 🔔 🔑 029ac269… ⚙️ Home Files Groups Missions Fleets Chat Wallet Network 👥 Groups — chat, pins, and shared logs ⟨ + New group + Channel Import… Federation Local tags you: 029ac269f7…91ad3e Copy pubkey 📌 Sandbox Wingpublic 1 member · 1-of-1 Sandbox Wing · public ⚙️ decisions 1-of-1 created 2026-08-14 public page /groups/group-mssgzy8i-1 Chat Members Log Fleets Wallet Proposals Applications Fabric Messages Statecha",
+      "buttons": [
+        {
+          "text": "Import…",
+          "title": "Paste a group invite or fabric: share",
+          "disabled": false
+        },
+        {
+          "text": "🔔",
+          "title": "Notifications — inbound mission shares, join requests, and invites",
+          "disabled": false
+        },
+        {
+          "text": "🔑 029ac269…",
+          "title": "offline — quick presence; Identity for profile & keys",
+          "disabled": false
+        },
+        {
+          "text": "⚙️",
+          "title": "Settings — Privacy, log path, Fabric, runtime",
+          "disabled": false
+        },
+        {
+          "text": "Home",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Files",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Groups",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Missions",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Fleets",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Chat",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Wallet",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Network",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Groups",
+          "title": "Expand group list",
+          "disabled": false
+        },
+        {
+          "text": "⟨",
+          "title": "Collapse group list",
+          "disabled": false
+        },
+        {
+          "text": "+ New group",
+          "title": "Create a new group",
+          "disabled": false
+        },
+        {
+          "text": "+ Channel",
+          "title": "Create a chat channel (a Federation group)",
+          "disabled": false
+        },
+        {
+          "text": "Import…",
+          "title": "Paste a fabric: join invite or group share",
+          "disabled": false
+        },
+        {
+          "text": "Federation",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Local tags",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Copy pubkey",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "📌",
+          "title": "Pin this group in your list",
+          "disabled": false
+        },
+        {
+          "text": "⚙️",
+          "title": "Group settings",
+          "disabled": false
+        },
+        {
+          "text": "Chat",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Members",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Log",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Fleets",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Wallet",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Proposals",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Applications",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Fabric",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Messages",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Statechain",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Activity Tree",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Codec",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "All",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "← In",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "→ Out",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Refresh",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "💬 Global chatopen",
+          "title": "",
+          "disabled": false
+        }
+      ]
+    },
+    {
+      "view": "Groups/Sandbox Wing/settings",
+      "path": "/",
+      "hash": "#groups?id=group-mssgzy8i-1&tab=fabric",
+      "tabs": [
+        "Home",
+        "Files",
+        "Groups",
+        "Missions",
+        "Fleets",
+        "Chat",
+        "Wallet",
+        "Network"
+      ],
+      "groupTabs": [
+        "Chat",
+        "Members",
+        "Log",
+        "Fleets",
+        "Wallet",
+        "Proposals",
+        "Applications",
+        "Fabric"
+      ],
+      "headings": [
+        "🛰️ GoonCitizen",
+        "👥 Groups — chat, pins, and shared logs",
+        "Sandbox Wing · public",
+        "Advanced · Fabric history — messages, Statechain journal, Activity Tree, codec",
+        "Group settings"
+      ],
+      "placeholders": [
+        "Search local data…",
+        "filter type, peer, body…"
+      ],
+      "snippet": "🛰️ GoonCitizen STARTED missions 0 deaths 0 players 0 Import… 🔔 🔑 029ac269… ⚙️ Home Files Groups Missions Fleets Chat Wallet Network 👥 Groups — chat, pins, and shared logs ⟨ + New group + Channel Import… Federation Local tags you: 029ac269f7…91ad3e Copy pubkey 📌 Sandbox Wingpublic 1 member · 1-of-1 Sandbox Wing · public ⚙️ decisions 1-of-1 created 2026-08-14 public page /groups/group-mssgzy8i-1 Chat Members Log Fleets Wallet Proposals Applications Fabric Messages Statecha",
+      "buttons": [
+        {
+          "text": "Import…",
+          "title": "Paste a group invite or fabric: share",
+          "disabled": false
+        },
+        {
+          "text": "🔔",
+          "title": "Notifications — inbound mission shares, join requests, and invites",
+          "disabled": false
+        },
+        {
+          "text": "🔑 029ac269…",
+          "title": "offline — quick presence; Identity for profile & keys",
+          "disabled": false
+        },
+        {
+          "text": "⚙️",
+          "title": "Settings — Privacy, log path, Fabric, runtime",
+          "disabled": false
+        },
+        {
+          "text": "Home",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Files",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Groups",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Missions",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Fleets",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Chat",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Wallet",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Network",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Groups",
+          "title": "Expand group list",
+          "disabled": false
+        },
+        {
+          "text": "⟨",
+          "title": "Collapse group list",
+          "disabled": false
+        },
+        {
+          "text": "+ New group",
+          "title": "Create a new group",
+          "disabled": false
+        },
+        {
+          "text": "+ Channel",
+          "title": "Create a chat channel (a Federation group)",
+          "disabled": false
+        },
+        {
+          "text": "Import…",
+          "title": "Paste a fabric: join invite or group share",
+          "disabled": false
+        },
+        {
+          "text": "Federation",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Local tags",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Copy pubkey",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "📌",
+          "title": "Pin this group in your list",
+          "disabled": false
+        },
+        {
+          "text": "⚙️",
+          "title": "Group settings",
+          "disabled": false
+        },
+        {
+          "text": "Chat",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Members",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Log",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Fleets",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Wallet",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Proposals",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Applications",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Fabric",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Messages",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Statechain",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Activity Tree",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Codec",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "All",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "← In",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "→ Out",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Refresh",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "✕",
+          "title": "Close settings",
+          "disabled": false
+        },
+        {
+          "text": "+ Nested channel",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Share this group",
+          "title": "Copy a share others paste via Import… to apply",
+          "disabled": false
+        },
+        {
+          "text": "Open page",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Share fleet",
+          "title": "",
+          "disabled": true
+        },
+        {
+          "text": "Set as primary",
+          "title": "Use this group for the desktop member/ship overlay",
+          "disabled": false
+        },
+        {
+          "text": "Make private",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Save color",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "💬 Global chatopen",
+          "title": "",
+          "disabled": false
+        }
+      ]
+    },
+    {
+      "view": "Import modal",
+      "path": "/",
+      "hash": "#groups?id=group-mssgzy8i-1&tab=fabric",
+      "tabs": [
+        "Home",
+        "Files",
+        "Groups",
+        "Missions",
+        "Fleets",
+        "Chat",
+        "Wallet",
+        "Network"
+      ],
+      "groupTabs": [
+        "Chat",
+        "Members",
+        "Log",
+        "Fleets",
+        "Wallet",
+        "Proposals",
+        "Applications",
+        "Fabric"
+      ],
+      "headings": [
+        "Join a group",
+        "🛰️ GoonCitizen",
+        "👥 Groups — chat, pins, and shared logs",
+        "Sandbox Wing · public",
+        "Advanced · Fabric history — messages, Statechain journal, Activity Tree, codec"
+      ],
+      "placeholders": [
+        "fabric:… join invite or group share",
+        "Search local data…",
+        "filter type, peer, body…"
+      ],
+      "snippet": "Join a group Paste the invite someone shared (fabric:…). Import sniffs hex vs base64 from the body, then Join or Apply from Notifications. Cancel Import 🛰️ GoonCitizen STARTED missions 0 deaths 0 players 0 Import… 🔔 🔑 029ac269… ⚙️ Home Files Groups Missions Fleets Chat Wallet Network 👥 Groups — chat, pins, and shared logs ⟨ + New group + Channel Import… Federation Local tags you: 029ac269f7…91ad3e Copy pubkey 📌 Sandbox Wingpublic 1 member · 1-of-1 Sandbox Wing · public ⚙",
+      "buttons": [
+        {
+          "text": "Cancel",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Import",
+          "title": "",
+          "disabled": true
+        },
+        {
+          "text": "Import…",
+          "title": "Paste a group invite or fabric: share",
+          "disabled": false
+        },
+        {
+          "text": "🔔",
+          "title": "Notifications — inbound mission shares, join requests, and invites",
+          "disabled": false
+        },
+        {
+          "text": "🔑 029ac269…",
+          "title": "offline — quick presence; Identity for profile & keys",
+          "disabled": false
+        },
+        {
+          "text": "⚙️",
+          "title": "Settings — Privacy, log path, Fabric, runtime",
+          "disabled": false
+        },
+        {
+          "text": "Home",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Files",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Groups",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Missions",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Fleets",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Chat",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Wallet",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Network",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Groups",
+          "title": "Expand group list",
+          "disabled": false
+        },
+        {
+          "text": "⟨",
+          "title": "Collapse group list",
+          "disabled": false
+        },
+        {
+          "text": "+ New group",
+          "title": "Create a new group",
+          "disabled": false
+        },
+        {
+          "text": "+ Channel",
+          "title": "Create a chat channel (a Federation group)",
+          "disabled": false
+        },
+        {
+          "text": "Import…",
+          "title": "Paste a fabric: join invite or group share",
+          "disabled": false
+        },
+        {
+          "text": "Federation",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Local tags",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Copy pubkey",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "📌",
+          "title": "Pin this group in your list",
+          "disabled": false
+        },
+        {
+          "text": "⚙️",
+          "title": "Group settings",
+          "disabled": false
+        },
+        {
+          "text": "Chat",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Members",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Log",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Fleets",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Wallet",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Proposals",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Applications",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Fabric",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Messages",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Statechain",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Activity Tree",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Codec",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "All",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "← In",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "→ Out",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Refresh",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "💬 Global chatopen",
+          "title": "",
+          "disabled": false
+        }
+      ]
+    },
+    {
+      "view": "Notifications",
+      "path": "/",
+      "hash": "#notifications",
+      "tabs": [
+        "Home",
+        "Files",
+        "Groups",
+        "Missions",
+        "Fleets",
+        "Chat",
+        "Wallet",
+        "Network"
+      ],
+      "groupTabs": [],
+      "headings": [
+        "🛰️ GoonCitizen",
+        "🔔 NotificationsGroup shares, join requests, invites, and wallet events"
+      ],
+      "placeholders": [
+        "Search local data…"
+      ],
+      "snippet": "🛰️ GoonCitizen STARTED missions 0 deaths 0 players 0 Import… 🔔 🔑 029ac269… ⚙️ Home Files Groups Missions Fleets Chat Wallet Network 🔔 Notifications Group shares, join requests, invites, and wallet events Pending All Resolved No pending notifications. 💬 Global chat open",
+      "buttons": [
+        {
+          "text": "Import…",
+          "title": "Paste a group invite or fabric: share",
+          "disabled": false
+        },
+        {
+          "text": "🔔",
+          "title": "Notifications — inbound mission shares, join requests, and invites",
+          "disabled": false
+        },
+        {
+          "text": "🔑 029ac269…",
+          "title": "offline — quick presence; Identity for profile & keys",
+          "disabled": false
+        },
+        {
+          "text": "⚙️",
+          "title": "Settings — Privacy, log path, Fabric, runtime",
+          "disabled": false
+        },
+        {
+          "text": "Home",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Files",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Groups",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Missions",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Fleets",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Chat",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Wallet",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Network",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Pending",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "All",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Resolved",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "💬 Global chatopen",
+          "title": "",
+          "disabled": false
+        }
+      ]
+    },
+    {
+      "view": "Settings",
+      "path": "/",
+      "hash": "#notifications",
+      "tabs": [
+        "Home",
+        "Files",
+        "Groups",
+        "Missions",
+        "Fleets",
+        "Chat",
+        "Wallet",
+        "Network"
+      ],
+      "groupTabs": [],
+      "headings": [
+        "⚙️ Settings",
+        "Privacy",
+        "Notifications (attention)",
+        "Linked devices",
+        "Relay",
+        "Discord bot",
+        "Snapshots",
+        "Primary group overlay",
+        "Identity & presence",
+        "Desktop notifications",
+        "When you play",
+        "Files on your profile",
+        "Advanced mode",
+        "Fabric Network",
+        "Share encoding",
+        "Runtime",
+        "🛰️ GoonCitizen",
+        "🔔 NotificationsGroup shares, join requests, invites, and wallet events"
+      ],
+      "placeholders": [
+        "e.g. relay.example.com",
+        "auto-detect (e.g. C:\\...\\StarCitizen\\LIVE\\Game.log)",
+        "auto (LIVE / PTU / EPTU / HOTFIX / TECH-PREVIEW)",
+        "Discord application / client id",
+        "snowflake channel id for embeds",
+        "Bot token from Discord Developer Portal",
+        "(optional)",
+        "https://discord.com/api/webhooks/…",
+        "fabric:… · message hash · group id",
+        "e.g. relay.example.com — no port; listen uses fabricPort",
+        "Search local data…"
+      ],
+      "snippet": "⚙️ Settings ✕ Privacy What can leave this machine. Same controls also live under Relay, Fabric Network, Identity, Peers, and Desktop notifications — this panel is the overview. chat idle (peer down) missions idle presence private game logs private dashboard local only peering announce off group chat cleartext at relays Chat, mission offers, and your profile nickname publish on the Fabric mesh whenever your peer is connected — unlike game logs, which stay private until you aut",
+      "buttons": [
+        {
+          "text": "✕",
+          "title": "Close",
+          "disabled": false
+        },
+        {
+          "text": "Open Peers (per-peer log share)",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Save advertise host",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Open Identity (profile & presence detail)",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Save",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Save app / channel",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Save Discord secrets",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Apply",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Set as default",
+          "title": "",
+          "disabled": true
+        },
+        {
+          "text": "Open Identity",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Send test notification",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Save advertise host",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Open Network",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Fabric Messages",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Import…",
+          "title": "Paste a group invite or fabric: share",
+          "disabled": false
+        },
+        {
+          "text": "🔔",
+          "title": "Notifications — inbound mission shares, join requests, and invites",
+          "disabled": false
+        },
+        {
+          "text": "🔑 029ac269…",
+          "title": "offline — quick presence; Identity for profile & keys",
+          "disabled": false
+        },
+        {
+          "text": "⚙️",
+          "title": "Settings — Privacy, log path, Fabric, runtime",
+          "disabled": false
+        },
+        {
+          "text": "Home",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Files",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Groups",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Missions",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Fleets",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Chat",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Wallet",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Network",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Pending",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "All",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Resolved",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "💬 Global chatopen",
+          "title": "",
+          "disabled": false
+        }
+      ]
+    },
+    {
+      "view": "Chat/+ Channel",
+      "path": "/",
+      "hash": "#chat",
+      "tabs": [
+        "Home",
+        "Files",
+        "Groups",
+        "Missions",
+        "Fleets",
+        "Chat",
+        "Wallet",
+        "Network"
+      ],
+      "groupTabs": [],
+      "headings": [
+        "🛰️ GoonCitizen",
+        "Channels",
+        "On channel · 2"
+      ],
+      "placeholders": [
+        "Search local data…",
+        "Search channels, guilds…",
+        "Channel name",
+        "Message as 029ac269……  (/ for commands)",
+        "Search people…"
+      ],
+      "snippet": "🛰️ GoonCitizen STARTED missions 0 deaths 0 players 0 Import… 🔔 🔑 029ac269… ⚙️ Home Files Groups Missions Fleets Chat Wallet Network All Global Groups DMs Discord A new channel is a Federation group with its own chat and log. Members stay in sync. Top-level channel Inside Sandbox Wing Create Cancel CHANNELS 🌐 Global Fabric 1 👥 Sandbox Wing Fabric ⚙ Bot settings 🌐 Global network — relayed via your Fabric peers 📌 ⚙️ 9ac269f7… 04:52 📌 hello from sandbox 📎 Send ON CHANNEL",
+      "buttons": [
+        {
+          "text": "Import…",
+          "title": "Paste a group invite or fabric: share",
+          "disabled": false
+        },
+        {
+          "text": "🔔",
+          "title": "Notifications — inbound mission shares, join requests, and invites",
+          "disabled": false
+        },
+        {
+          "text": "🔑 029ac269…",
+          "title": "offline — quick presence; Identity for profile & keys",
+          "disabled": false
+        },
+        {
+          "text": "⚙️",
+          "title": "Settings — Privacy, log path, Fabric, runtime",
+          "disabled": false
+        },
+        {
+          "text": "Home",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Files",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Groups",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Missions",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Fleets",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Chat",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Wallet",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Network",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "All",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Global",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Groups",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "DMs",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Discord",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Create",
+          "title": "",
+          "disabled": true
+        },
+        {
+          "text": "Cancel",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "🌐GlobalFabric1",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "👥Sandbox WingFabric",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "⚙Bot settings",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "📌",
+          "title": "Pinned messages",
+          "disabled": false
+        },
+        {
+          "text": "⚙️",
+          "title": "Discord bot — guilds, channels & users",
+          "disabled": false
+        },
+        {
+          "text": "📌",
+          "title": "Pin message",
+          "disabled": false
+        },
+        {
+          "text": "📎",
+          "title": "Attach file to this node's catalog (25 sats)",
+          "disabled": false
+        },
+        {
+          "text": "Send",
+          "title": "",
+          "disabled": true
+        }
+      ]
+    },
+    {
+      "view": "Files/search",
+      "path": "/",
+      "hash": "#documents",
+      "tabs": [
+        "Home",
+        "Files",
+        "Groups",
+        "Missions",
+        "Fleets",
+        "Chat",
+        "Wallet",
+        "Network"
+      ],
+      "groupTabs": [],
+      "headings": [
+        "🛰️ GoonCitizen",
+        "📁 Files 2 listingsRefreshQuery peersNew file"
+      ],
+      "placeholders": [
+        "Search local data…",
+        "Search name, id, MIME, sha…"
+      ],
+      "snippet": "🛰️ GoonCitizen STARTED missions 0 deaths 0 players 0 Import… 🔔 🔑 029ac269… ⚙️ Home Files Groups Missions Fleets Chat Wallet Network 📁 Files 2 listings Refresh Query peers New file This node's catalog plus published listings from connected Fabric peers. Publish marks a local file listed (optional sats on the fabric-doc: chat wire). Pin a file to your profile with 📌 on its page so Federation groups see the listing (metadata only). × 1 shown / 2 All types2 Text1 Other1 Any ",
+      "buttons": [
+        {
+          "text": "Import…",
+          "title": "Paste a group invite or fabric: share",
+          "disabled": false
+        },
+        {
+          "text": "🔔",
+          "title": "Notifications — inbound mission shares, join requests, and invites",
+          "disabled": false
+        },
+        {
+          "text": "🔑 029ac269…",
+          "title": "offline — quick presence; Identity for profile & keys",
+          "disabled": false
+        },
+        {
+          "text": "⚙️",
+          "title": "Settings — Privacy, log path, Fabric, runtime",
+          "disabled": false
+        },
+        {
+          "text": "Home",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Files",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Groups",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Missions",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Fleets",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Chat",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Wallet",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Network",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Refresh",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Query peers",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "New file",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "×",
+          "title": "Clear search",
+          "disabled": false
+        },
+        {
+          "text": "All types2",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Text1",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Other1",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Any status",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Published",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Local",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "From peers",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Priced",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Free / unset",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "📌",
+          "title": "Unpin from profile",
+          "disabled": false
+        },
+        {
+          "text": "💬 Global chatopen",
+          "title": "",
+          "disabled": false
+        }
+      ]
+    },
+    {
+      "view": "Groups/Sandbox Wing/Fabric",
+      "path": "/",
+      "hash": "#groups?id=group-mssgzy8i-1&tab=fabric",
+      "tabs": [
+        "Home",
+        "Files",
+        "Groups",
+        "Missions",
+        "Fleets",
+        "Chat",
+        "Wallet",
+        "Network"
+      ],
+      "groupTabs": [
+        "Chat",
+        "Members",
+        "Log",
+        "Fleets",
+        "Wallet",
+        "Proposals",
+        "Applications",
+        "Fabric"
+      ],
+      "headings": [
+        "🛰️ GoonCitizen",
+        "👥 Groups — chat, pins, and shared logs",
+        "Sandbox Wing · public",
+        "Advanced · Fabric history — messages, Statechain journal, Activity Tree, codec"
+      ],
+      "placeholders": [
+        "Search local data…",
+        "filter type, peer, body…"
+      ],
+      "snippet": "🛰️ GoonCitizen STARTED missions 0 deaths 0 players 0 Import… 🔔 🔑 029ac269… ⚙️ Home Files Groups Missions Fleets Chat Wallet Network 👥 Groups — chat, pins, and shared logs ⟨ + New group + Channel Import… Federation Local tags you: 029ac269f7…91ad3e Copy pubkey 📌 Sandbox Wingpublic 1 member · 1-of-1 Sandbox Wing · public ⚙️ decisions 1-of-1 created 2026-08-14 public page /groups/group-mssgzy8i-1 Chat Members Log Fleets Wallet Proposals Applications Fabric Messages Statecha",
+      "buttons": [
+        {
+          "text": "Import…",
+          "title": "Paste a group invite or fabric: share",
+          "disabled": false
+        },
+        {
+          "text": "🔔",
+          "title": "Notifications — inbound mission shares, join requests, and invites",
+          "disabled": false
+        },
+        {
+          "text": "🔑 029ac269…",
+          "title": "offline — quick presence; Identity for profile & keys",
+          "disabled": false
+        },
+        {
+          "text": "⚙️",
+          "title": "Settings — Privacy, log path, Fabric, runtime",
+          "disabled": false
+        },
+        {
+          "text": "Home",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Files",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Groups",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Missions",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Fleets",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Chat",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Wallet",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Network",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Groups",
+          "title": "Expand group list",
+          "disabled": false
+        },
+        {
+          "text": "⟨",
+          "title": "Collapse group list",
+          "disabled": false
+        },
+        {
+          "text": "+ New group",
+          "title": "Create a new group",
+          "disabled": false
+        },
+        {
+          "text": "+ Channel",
+          "title": "Create a chat channel (a Federation group)",
+          "disabled": false
+        },
+        {
+          "text": "Import…",
+          "title": "Paste a fabric: join invite or group share",
+          "disabled": false
+        },
+        {
+          "text": "Federation",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Local tags",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Copy pubkey",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "📌",
+          "title": "Pin this group in your list",
+          "disabled": false
+        },
+        {
+          "text": "⚙️",
+          "title": "Group settings",
+          "disabled": false
+        },
+        {
+          "text": "Chat",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Members",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Log",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Fleets",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Wallet",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Proposals",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Applications",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Fabric",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Messages",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Statechain",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Activity Tree",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Codec",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "All",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "← In",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "→ Out",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Refresh",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "💬 Global chatopen",
+          "title": "",
+          "disabled": false
+        }
+      ]
+    },
+    {
+      "view": "Groups/Sandbox Wing/Fabric/Statechain",
+      "path": "/",
+      "hash": "#groups?id=group-mssgzy8i-1&tab=fabric",
+      "tabs": [
+        "Home",
+        "Files",
+        "Groups",
+        "Missions",
+        "Fleets",
+        "Chat",
+        "Wallet",
+        "Network"
+      ],
+      "groupTabs": [
+        "Chat",
+        "Members",
+        "Log",
+        "Fleets",
+        "Wallet",
+        "Proposals",
+        "Applications",
+        "Fabric"
+      ],
+      "headings": [
+        "🛰️ GoonCitizen",
+        "👥 Groups — chat, pins, and shared logs",
+        "Sandbox Wing · public",
+        "Advanced · Fabric history — messages, Statechain journal, Activity Tree, codec"
+      ],
+      "placeholders": [
+        "Search local data…"
+      ],
+      "snippet": "🛰️ GoonCitizen STARTED missions 0 deaths 0 players 0 Import… 🔔 🔑 029ac269… ⚙️ Home Files Groups Missions Fleets Chat Wallet Network 👥 Groups — chat, pins, and shared logs ⟨ + New group + Channel Import… Federation Local tags you: 029ac269f7…91ad3e Copy pubkey 📌 Sandbox Wingpublic 1 member · 1-of-1 Sandbox Wing · public ⚙️ decisions 1-of-1 created 2026-08-14 public page /groups/group-mssgzy8i-1 Chat Members Log Fleets Wallet Proposals Applications Fabric Messages Statecha",
+      "buttons": [
+        {
+          "text": "Import…",
+          "title": "Paste a group invite or fabric: share",
+          "disabled": false
+        },
+        {
+          "text": "🔔",
+          "title": "Notifications — inbound mission shares, join requests, and invites",
+          "disabled": false
+        },
+        {
+          "text": "🔑 029ac269…",
+          "title": "offline — quick presence; Identity for profile & keys",
+          "disabled": false
+        },
+        {
+          "text": "⚙️",
+          "title": "Settings — Privacy, log path, Fabric, runtime",
+          "disabled": false
+        },
+        {
+          "text": "Home",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Files",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Groups",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Missions",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Fleets",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Chat",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Wallet",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Network",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Groups",
+          "title": "Expand group list",
+          "disabled": false
+        },
+        {
+          "text": "⟨",
+          "title": "Collapse group list",
+          "disabled": false
+        },
+        {
+          "text": "+ New group",
+          "title": "Create a new group",
+          "disabled": false
+        },
+        {
+          "text": "+ Channel",
+          "title": "Create a chat channel (a Federation group)",
+          "disabled": false
+        },
+        {
+          "text": "Import…",
+          "title": "Paste a fabric: join invite or group share",
+          "disabled": false
+        },
+        {
+          "text": "Federation",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Local tags",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Copy pubkey",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "📌",
+          "title": "Pin this group in your list",
+          "disabled": false
+        },
+        {
+          "text": "⚙️",
+          "title": "Group settings",
+          "disabled": false
+        },
+        {
+          "text": "Chat",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Members",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Log",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Fleets",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Wallet",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Proposals",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Applications",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Fabric",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Messages",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Statechain",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Activity Tree",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Codec",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "💬 Global chatopen",
+          "title": "",
+          "disabled": false
+        }
+      ]
+    },
+    {
+      "view": "Groups/Sandbox Wing/Fabric/Activity Tree",
+      "path": "/",
+      "hash": "#groups?id=group-mssgzy8i-1&tab=fabric",
+      "tabs": [
+        "Home",
+        "Files",
+        "Groups",
+        "Missions",
+        "Fleets",
+        "Chat",
+        "Wallet",
+        "Network"
+      ],
+      "groupTabs": [
+        "Chat",
+        "Members",
+        "Log",
+        "Fleets",
+        "Wallet",
+        "Proposals",
+        "Applications",
+        "Fabric"
+      ],
+      "headings": [
+        "🛰️ GoonCitizen",
+        "👥 Groups — chat, pins, and shared logs",
+        "Sandbox Wing · public",
+        "Advanced · Fabric history — messages, Statechain journal, Activity Tree, codec"
+      ],
+      "placeholders": [
+        "Search local data…"
+      ],
+      "snippet": "🛰️ GoonCitizen STARTED missions 0 deaths 0 players 0 Import… 🔔 🔑 029ac269… ⚙️ Home Files Groups Missions Fleets Chat Wallet Network 👥 Groups — chat, pins, and shared logs ⟨ + New group + Channel Import… Federation Local tags you: 029ac269f7…91ad3e Copy pubkey 📌 Sandbox Wingpublic 1 member · 1-of-1 Sandbox Wing · public ⚙️ decisions 1-of-1 created 2026-08-14 public page /groups/group-mssgzy8i-1 Chat Members Log Fleets Wallet Proposals Applications Fabric Messages Statecha",
+      "buttons": [
+        {
+          "text": "Import…",
+          "title": "Paste a group invite or fabric: share",
+          "disabled": false
+        },
+        {
+          "text": "🔔",
+          "title": "Notifications — inbound mission shares, join requests, and invites",
+          "disabled": false
+        },
+        {
+          "text": "🔑 029ac269…",
+          "title": "offline — quick presence; Identity for profile & keys",
+          "disabled": false
+        },
+        {
+          "text": "⚙️",
+          "title": "Settings — Privacy, log path, Fabric, runtime",
+          "disabled": false
+        },
+        {
+          "text": "Home",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Files",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Groups",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Missions",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Fleets",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Chat",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Wallet",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Network",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Groups",
+          "title": "Expand group list",
+          "disabled": false
+        },
+        {
+          "text": "⟨",
+          "title": "Collapse group list",
+          "disabled": false
+        },
+        {
+          "text": "+ New group",
+          "title": "Create a new group",
+          "disabled": false
+        },
+        {
+          "text": "+ Channel",
+          "title": "Create a chat channel (a Federation group)",
+          "disabled": false
+        },
+        {
+          "text": "Import…",
+          "title": "Paste a fabric: join invite or group share",
+          "disabled": false
+        },
+        {
+          "text": "Federation",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Local tags",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Copy pubkey",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "📌",
+          "title": "Pin this group in your list",
+          "disabled": false
+        },
+        {
+          "text": "⚙️",
+          "title": "Group settings",
+          "disabled": false
+        },
+        {
+          "text": "Chat",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Members",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Log",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Fleets",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Wallet",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Proposals",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Applications",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Fabric",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Messages",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Statechain",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Activity Tree",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Codec",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Refresh",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Publish tree to group",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Inspect leaves",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "💬 Global chatopen",
+          "title": "",
+          "disabled": false
+        }
+      ]
+    },
+    {
+      "view": "Groups/Sandbox Wing/Fabric/Codec",
+      "path": "/",
+      "hash": "#groups?id=group-mssgzy8i-1&tab=fabric",
+      "tabs": [
+        "Home",
+        "Files",
+        "Groups",
+        "Missions",
+        "Fleets",
+        "Chat",
+        "Wallet",
+        "Network"
+      ],
+      "groupTabs": [
+        "Chat",
+        "Members",
+        "Log",
+        "Fleets",
+        "Wallet",
+        "Proposals",
+        "Applications",
+        "Fabric"
+      ],
+      "headings": [
+        "🛰️ GoonCitizen",
+        "👥 Groups — chat, pins, and shared logs",
+        "Sandbox Wing · public",
+        "Advanced · Fabric history — messages, Statechain journal, Activity Tree, codec"
+      ],
+      "placeholders": [
+        "Search local data…",
+        "fabric:…"
+      ],
+      "snippet": "🛰️ GoonCitizen STARTED missions 0 deaths 0 players 0 Import… 🔔 🔑 029ac269… ⚙️ Home Files Groups Missions Fleets Chat Wallet Network 👥 Groups — chat, pins, and shared logs ⟨ + New group + Channel Import… Federation Local tags you: 029ac269f7…91ad3e Copy pubkey 📌 Sandbox Wingpublic 1 member · 1-of-1 Sandbox Wing · public ⚙️ decisions 1-of-1 created 2026-08-14 public page /groups/group-mssgzy8i-1 Chat Members Log Fleets Wallet Proposals Applications Fabric Messages Statecha",
+      "buttons": [
+        {
+          "text": "Import…",
+          "title": "Paste a group invite or fabric: share",
+          "disabled": false
+        },
+        {
+          "text": "🔔",
+          "title": "Notifications — inbound mission shares, join requests, and invites",
+          "disabled": false
+        },
+        {
+          "text": "🔑 029ac269…",
+          "title": "offline — quick presence; Identity for profile & keys",
+          "disabled": false
+        },
+        {
+          "text": "⚙️",
+          "title": "Settings — Privacy, log path, Fabric, runtime",
+          "disabled": false
+        },
+        {
+          "text": "Home",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Files",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Groups",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Missions",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Fleets",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Chat",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Wallet",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Network",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Groups",
+          "title": "Expand group list",
+          "disabled": false
+        },
+        {
+          "text": "⟨",
+          "title": "Collapse group list",
+          "disabled": false
+        },
+        {
+          "text": "+ New group",
+          "title": "Create a new group",
+          "disabled": false
+        },
+        {
+          "text": "+ Channel",
+          "title": "Create a chat channel (a Federation group)",
+          "disabled": false
+        },
+        {
+          "text": "Import…",
+          "title": "Paste a fabric: join invite or group share",
+          "disabled": false
+        },
+        {
+          "text": "Federation",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Local tags",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Copy pubkey",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "📌",
+          "title": "Pin this group in your list",
+          "disabled": false
+        },
+        {
+          "text": "⚙️",
+          "title": "Group settings",
+          "disabled": false
+        },
+        {
+          "text": "Chat",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Members",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Log",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Fleets",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Wallet",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Proposals",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Applications",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Fabric",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Messages",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Statechain",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Activity Tree",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Codec",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Decode",
+          "title": "",
+          "disabled": true
+        },
+        {
+          "text": "Encode hex",
+          "title": "",
+          "disabled": true
+        },
+        {
+          "text": "Encode base64",
+          "title": "",
+          "disabled": true
+        },
+        {
+          "text": "💬 Global chatopen",
+          "title": "",
+          "disabled": false
+        }
+      ]
+    },
+    {
+      "view": "Network/Messages/paused",
+      "path": "/",
+      "hash": "#network/messages",
+      "tabs": [
+        "Home",
+        "Files",
+        "Groups",
+        "Missions",
+        "Fleets",
+        "Chat",
+        "Wallet",
+        "Network",
+        "Feed",
+        "Peers",
+        "Messages"
+      ],
+      "groupTabs": [],
+      "headings": [
+        "🛰️ GoonCitizen",
+        "Fabric messages — AMP wire Messages only (chat, contracts, peering). Not Game.log."
+      ],
+      "placeholders": [
+        "Search local data…",
+        "filter type, peer, body…"
+      ],
+      "snippet": "🛰️ GoonCitizen STARTED missions 0 deaths 0 players 0 Import… 🔔 🔑 029ac269… ⚙️ Home Files Groups Missions Fleets Chat Wallet Network Feed Peers Messages AMP wire Message log Fabric messages — AMP wire Messages only (chat, contracts, peering). Not Game.log. Live ring buffer of signed Fabric Messages your peer sends and receives. Session keepalive frames are hidden by default. Buffer is in-memory and clears on restart. All ← In → Out Refresh Auto-refresh Show keepalive Resume",
+      "buttons": [
+        {
+          "text": "Import…",
+          "title": "Paste a group invite or fabric: share",
+          "disabled": false
+        },
+        {
+          "text": "🔔",
+          "title": "Notifications — inbound mission shares, join requests, and invites",
+          "disabled": false
+        },
+        {
+          "text": "🔑 029ac269…",
+          "title": "offline — quick presence; Identity for profile & keys",
+          "disabled": false
+        },
+        {
+          "text": "⚙️",
+          "title": "Settings — Privacy, log path, Fabric, runtime",
+          "disabled": false
+        },
+        {
+          "text": "Home",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Files",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Groups",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Missions",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Fleets",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Chat",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Wallet",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Network",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Feed",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Peers",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Messages",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "All",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "← In",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "→ Out",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Refresh",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Resume capture",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "Clear",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "text": "💬 Global chatopen",
+          "title": "",
+          "disabled": false
+        }
+      ]
+    }
+  ]
+}

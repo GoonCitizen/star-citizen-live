@@ -164,7 +164,7 @@ test('local registry Accept cascade hits only the loopback Hub', async () => {
       baseUrl: plan.accept.baseUrl,
       candidates: [
         { token: 'bad', source: 'env' },
-        { token: 'good', source: 'operator-master' }
+        { token: 'good', source: 'operator-identity' }
       ],
       rpc: async (_method, params) => {
         if (params.adminToken === 'bad') {
@@ -179,7 +179,7 @@ test('local registry Accept cascade hits only the loopback Hub', async () => {
       }
     });
     assert.equal(direct.ok, true);
-    assert.equal(direct.source, 'operator-master');
+    assert.equal(direct.source, 'operator-identity');
     assert.equal(accepted.adminToken, 'good');
     assert.match(String(hitHost), /^127\.0\.0\.1:/);
     assert.equal(isProductionRegistryHubUrl(baseUrl), false);

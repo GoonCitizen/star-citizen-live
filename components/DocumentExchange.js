@@ -17,6 +17,9 @@ const {
 
 const BASE = '/services/star-citizen/documents';
 
+let FabricDocument = null;
+try { FabricDocument = require('@fabric/http/components/document'); } catch (_) { FabricDocument = null; }
+
 const CSS = `
   .dx-wrap{width:100%;max-width:none;margin:0;padding:12px 14px;display:grid;gap:14px;box-sizing:border-box}
   .dx-panel{background:var(--panel);border:1px solid var(--line);border-radius:12px;overflow:hidden}
@@ -230,10 +233,84 @@ class DocumentExchange extends React.Component {
       const res = await fetch(`${BASE}/${encodeURIComponent(documentId)}`)
         .then((r) => r.json().then((j) => ({ ok: r.ok, j })));
       if (!res.ok) throw new Error((res.j && res.j.error) || 'Get document failed');
-      this.setState({ detail: res.j.data || res.j, busy: false });
+      const detail = res.j.data || res.j;
+      this.setState({ detail, busy: false, chunkOffers: [] });
+      this.loadChunkOffers(detail);
     } catch (e) {
       this.setState({ busy: false, error: e && e.message ? e.message : String(e), detail: null });
     }
+  }
+
+  /** Hash-only record for `fabric-document` (sealed blob tree), or null. */
+  sealedRecordFor (detail) {
+    if (!FabricDocument || !detail) return null;
+    const doc = detail.document || detail;
+    const root = doc.merkleRootHex || doc.merkleRoot || null;
+    let blobs = Array.isArray(doc.blobs) ? doc.blobs : null;
+    if (!blobs && Array.isArray(doc.blobHashes)) blobs = doc.blobHashes.map((h, i) => ({ index: i, blobHashHex: h }));
+    if (!root || !blobs || !blobs.length) return null;
+    return FabricDocument.sanitizeRecord({
+      documentId: doc.id || this.state.selectedId,
+      merkleRootHex: root,
+      blobTotal: doc.blobTotal != null ? doc.blobTotal : blobs.length,
+      chunkBytes: doc.chunkBytes,
+      sealed: doc.sealed === true || doc.perBlob === true,
+      size: doc.size,
+      publisher: doc.publisher || null,
+      blobs
+    });
+  }
+
+  /** Chunk providers from the local market book (`GET …/market/chunks`). */
+  async loadChunkOffers (detail) {
+    const record = this.sealedRecordFor(detail);
+    if (!record || typeof fetch !== 'function') return;
+    try {
+      const res = await fetch(`${BASE}/market/chunks?merkleRootHex=${encodeURIComponent(record.merkleRootHex)}`);
+      const body = await res.json();
+      const chunks = (body && (body.data || body).chunks) || {};
+      const rows = [];
+      for (const hash of Object.keys(chunks)) {
+        for (const row of (chunks[hash] || [])) rows.push(Object.assign({ blobHashHex: hash }, row));
+      }
+      if (this.state.detail === detail) this.setState({ chunkOffers: rows });
+    } catch (_) { /* market index unavailable */ }
+  }
+
+  /** Hand this blob tree to the local budget agent (`POST …/market/agent/wants`). */
+  async wantWithAgent (record) {
+    if (!record || typeof fetch !== 'function') return;
+    this.setState({ agentBusy: true, error: null, notice: null });
+    try {
+      const res = await fetch(`${BASE}/market/agent/wants`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ documentId: record.documentId, merkleRootHex: record.merkleRootHex, blobTotal: record.blobTotal })
+      }).then((r) => r.json().then((j) => ({ ok: r.ok, status: r.status, j })));
+      if (res.status === 503) throw new Error('Budget agent is disabled (settings.market.agent.enable, regtest/signet only).');
+      if (!res.ok) throw new Error((res.j && res.j.error) || 'Budget agent refused the want');
+      this.setState({ agentBusy: false, notice: `Budget agent will acquire ${record.blobTotal} blob(s) when a plan fits its cap.` });
+    } catch (e) {
+      this.setState({ agentBusy: false, error: e.message });
+    }
+  }
+
+  renderSealedTree () {
+    const record = this.sealedRecordFor(this.state.detail);
+    if (!record) return null;
+    const component = new FabricDocument({ href: '/files', document: record, offers: this.state.chunkOffers || [] });
+    return React.createElement('div', { key: 'sealed-tree' },
+      React.createElement('fabric-document', {
+        'data-merkle-root': record.merkleRootHex,
+        dangerouslySetInnerHTML: { __html: component._getInnerHTML(component._view) }
+      }),
+      React.createElement('button', {
+        className: 'ui mini basic button',
+        disabled: !!this.state.agentBusy,
+        title: 'Let the budget agent pick the cheapest / nearest provider per blob',
+        onClick: () => this.wantWithAgent(record)
+      }, 'Want with budget agent')
+    );
   }
 
   canCreate () {
@@ -415,8 +492,8 @@ class DocumentExchange extends React.Component {
       this.setState({
         busy: false,
         notice: enabled
-          ? 'This file will copy to your other linked devices over Fabric'
-          : 'Stopped syncing this file to other devices'
+          ? 'This file will copy to your linked signers over Fabric'
+          : 'Stopped syncing this file to your linked signers'
       });
       await this.refresh();
       if (this.state.selectedId === id) await this.selectDoc(id);
@@ -549,6 +626,7 @@ class DocumentExchange extends React.Component {
           ? React.createElement('p', { className: 'dx-note' }, 'Binary content (base64 present).')
           : React.createElement('p', { className: 'dx-note' },
             isLocal ? 'No content on this node.' : 'Content lives on the offering peer — this listing is metadata only.')),
+      this.renderSealedTree(),
       this.renderOffers(detail.offers || [], id),
       React.createElement('div', { className: 'dx-actions' },
         React.createElement('a', {
@@ -570,10 +648,10 @@ class DocumentExchange extends React.Component {
             className: 'dx-btn' + (doc.clusterSync ? ' primary' : ''),
             disabled: this.state.busy,
             title: doc.clusterSync
-              ? 'Stop copying this file to linked devices'
-              : 'Copy this file to other devices in your identity cluster',
+              ? 'Stop copying this file to your linked signers'
+              : 'Copy this file to the apps linked as this player',
             onClick: () => this.setClusterSync(id, !doc.clusterSync)
-          }, doc.clusterSync ? 'Stop device sync' : 'Sync to my devices')
+          }, doc.clusterSync ? 'Stop signer sync' : 'Sync to my linked signers')
           : null
       ),
       isLocal
@@ -694,7 +772,7 @@ class DocumentExchange extends React.Component {
             checked: !!this.state.createClusterSync,
             onChange: (e) => this.setState({ createClusterSync: !!(e.target && e.target.checked) })
           }),
-          ' Sync to my other devices (identity cluster)'
+          ' Sync to my linked signers (same player)'
         ),
         React.createElement('div', { className: 'dx-actions' },
           React.createElement('button', {
@@ -750,7 +828,7 @@ class DocumentExchange extends React.Component {
             'This node\'s catalog plus published listings from connected Fabric peers. Publish marks a local file listed (optional sats on the ',
             React.createElement('code', null, 'fabric-doc:'),
             ' chat wire). Pin a file to your profile with 📌 on its page so Federation groups see the listing (metadata only). ',
-            React.createElement('strong', null, 'Sync to my devices'),
+            React.createElement('strong', null, 'Sync to my linked signers'),
             ' copies opted-in files to phones and desktops in your identity cluster over Fabric — not a public listing.'),
           this.state.error
             ? React.createElement('div', { className: 'dx-err' }, this.state.error)
@@ -828,8 +906,8 @@ class DocumentExchange extends React.Component {
                             className: 'dx-btn' + (d.clusterSync ? ' primary' : ''),
                             disabled: this.state.busy,
                             title: d.clusterSync
-                              ? 'Stop copying this file to linked devices'
-                              : 'Copy this file to other devices in your identity cluster',
+                              ? 'Stop copying this file to your linked signers'
+                              : 'Copy this file to the apps linked as this player',
                             onClick: () => this.setClusterSync(id, !d.clusterSync)
                           }, d.clusterSync ? 'Synced' : 'Sync')
                           : null

@@ -174,42 +174,6 @@ test('opaque public GroupOffer ingest + apply uses local publishing identity', a
   }
 });
 
-test('opaque hex fabric: url still ingests a GroupOffer', async () => {
-  const alice = createIdentity();
-  const bob = createIdentity();
-  const def = groupContractDefinition({
-    groupId: 'group-hex-offer-1',
-    creator: alice.pubkey,
-    validators: [alice.pubkey],
-    threshold: 1,
-    createdAt: '2026-01-01T00:00:00.000Z',
-    meta: { name: 'Hex Ops', visibility: 'public' }
-  });
-  const contractId = groupContractId(def);
-  const offer = buildGroupOfferBody({
-    group: { id: def.groupId, name: 'Hex Ops', visibility: 'public', contractId },
-    definition: def,
-    actor: alice.pubkey
-  });
-  const { service, port, dir } = await startRelay(bob);
-  try {
-    const net = new FabricNetwork({ enable: false, listen: false, peers: [], peersDb: null });
-    net.setIdentity(alice);
-    const msg = net.signContractMessage(contractId, 'GroupShare', offer, { relay: false });
-    const protocolUrl = net.encodeOpaqueMessage(msg, { encoding: 'hex' }).protocolUrl;
-    assert.ok(protocolUrl.startsWith('fabric:'));
-    assert.ok(!protocolUrl.startsWith('fabric:base64'));
-    const ingest = await request(port, 'POST', `${BASE}/groups/share/ingest`, { protocolUrl });
-    assert.strictEqual(ingest.status, 200, ingest.body && ingest.body.error);
-    assert.strictEqual(ingest.body.data.kind, 'GroupOffer');
-    assert.ok(ingest.body.data.inbox);
-    assert.strictEqual(ingest.body.data.inbox.status, 'pending');
-  } finally {
-    await service.stop();
-    fs.rmSync(dir, { recursive: true, force: true });
-  }
-});
-
 test('expired GroupOffer and Federation invite clips return 410', async () => {
   const alice = createIdentity();
   const bob = createIdentity();
@@ -350,6 +314,46 @@ test('targeted invite clip is refused by a different identity; invitee accept jo
       ),
       'bob joined locally'
     );
+  } finally {
+    await service.stop();
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('a DirectChat DM lands in the transcript; an invite clip shows as a line, not raw JSON', async () => {
+  const ChatManager = require('../../services/ChatManager');
+  const alice = createIdentity();
+  const bob = createIdentity();
+  const def = groupContractDefinition({
+    groupId: 'group-dm-invite-1',
+    creator: alice.pubkey,
+    validators: [alice.pubkey],
+    threshold: 1,
+    createdAt: '2026-01-01T00:00:00.000Z',
+    meta: { name: 'DM Wing', visibility: 'private' }
+  });
+  const contractId = groupContractId(def);
+  const invite = parseFederationContractInvite(buildFederationContractInviteJson({
+    inviteId: 'inv-dm-1',
+    inviterHubId: alice.pubkey,
+    contractId,
+    proposedPolicy: def.proposedPolicy,
+    groupId: def.groupId,
+    groupName: 'DM Wing'
+  }));
+  const { service, dir } = await startRelay(bob);
+  try {
+    const channel = ChatManager.dmChannelKey(alice.pubkey, bob.pubkey);
+    const handlers = service._fabricIngestHandlers();
+    handlers.onDirectChat({ channel, body: 'hello bob', ts: '2026-01-01T00:00:01.000Z' }, alice.pubkey, {});
+    handlers.onDirectChat({
+      channel,
+      body: JSON.stringify(invite),
+      protocolUrl: opaqueInviteUrl(alice, invite, contractId),
+      ts: '2026-01-01T00:00:02.000Z'
+    }, alice.pubkey, {});
+    const bodies = service.chatManager.list(channel).map((m) => m.body);
+    assert.deepStrictEqual(bodies, ['hello bob', 'Group invite: DM Wing']);
   } finally {
     await service.stop();
     fs.rmSync(dir, { recursive: true, force: true });

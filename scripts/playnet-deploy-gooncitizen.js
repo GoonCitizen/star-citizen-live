@@ -228,8 +228,7 @@ async function main () {
     networking: true,
     peers,
     key: peerKey,
-    peersDb: null,
-    flushChainMinTrustedScore: -1
+    peersDb: null
   });
   peer.on('error', (err) => console.error('[playnet:deploy] peer error', err && err.message ? err.message : err));
   peer.on('warning', (w) => console.warn('[playnet:deploy] warning', w));
@@ -247,7 +246,7 @@ async function main () {
     throw new Error('no Fabric peer connections — cannot publish');
   }
 
-  const msg = Message.fromVector(['CONTRACT_PUBLISH', JSON.stringify(gc.definition)]).signWithKey(peer.key);
+  const msg = Message.fromLegacyBody('CONTRACT_PUBLISH', gc.definition).signWithKey(peer.key);
   if (typeof peer.broadcast === 'function') {
     peer.broadcast(msg.toBuffer());
   } else if (typeof peer.relayFrom === 'function') {

@@ -278,7 +278,7 @@ class ProfilePage extends React.Component {
         : null,
       cluster && cluster.members && cluster.members.length > 1
         ? React.createElement('div', { className: 'ppage-hint', style: { marginTop: 8 } },
-          'Device cluster (' + cluster.members.length + ')',
+          'Linked signers (' + cluster.members.length + ')',
           React.createElement('div', {
             style: { marginTop: 4, fontFamily: 'Cascadia Code, Consolas, monospace', fontSize: 11 }
           }, cluster.members.map((pk) => String(pk).slice(0, 16) + '…').join(' · ')))
@@ -703,7 +703,7 @@ class ProfilePage extends React.Component {
             ? React.createElement('div', { className: 'ppage-hint', style: { marginTop: 8 } },
               'Identity cluster',
               d.linkedDevice.members && d.linkedDevice.members.length
-                ? (': ' + d.linkedDevice.members.length + ' devices')
+                ? (': ' + d.linkedDevice.members.length + ' apps')
                 : (': ' + (d.linkedDevice.label || d.linkedDevice.peerFabricId)),
               d.linkedDevice.members
                 ? React.createElement('div', { style: { marginTop: 4, fontFamily: 'Cascadia Code, Consolas, monospace', fontSize: 11 } },

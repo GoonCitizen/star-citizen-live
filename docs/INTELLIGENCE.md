@@ -143,7 +143,7 @@ module.exports = {
 | `DISCORD_BOT_TOKEN` (env) | Prefer env over `local.js`. Never commit. |
 | `http` | Dashboard. Default loopback. `SC_MODE=server` + Caddy for a hosted desk. |
 | `documents.enable` | Local Files catalog (Advanced). Chat 📎 still writes the catalog. |
-| `bitcoin.enable` | Personal Hub-wallet proxy. Off for a desk that is not paying. Group Taproot treasury is **on the Group**, not this flag ([`APPLICATION.md`](APPLICATION.md) §9). |
+| `bitcoin.enable` | Personal Hub-wallet proxy. Off for a desk that is not paying. The group federation vault is **on the Group**, not this flag ([`APPLICATION.md`](APPLICATION.md) §9). |
 | `logfile` / `SC_LOGFILE` | Game.log path. Server mode does not tail. Share of parsed events is **opt-in** (`shareLogsGlobal` / per-peer `shareLogs`, D-017). |
 | `SC_OFFICERS` | Mission-register officer allowlist (pubkeys). Empty + server mode refuses officer writes. |
 

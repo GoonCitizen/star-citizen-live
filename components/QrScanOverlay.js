@@ -61,11 +61,11 @@ class QrScanOverlay extends React.Component {
   async startCamera () {
     const Detector = typeof window !== 'undefined' ? window.BarcodeDetector : null;
     if (typeof Detector !== 'function') {
-      this.setState({ detector: false, error: 'This shell has no QR detector — paste the fabric://link from the other device.' });
+      this.setState({ detector: false, error: 'This shell has no QR detector — paste the invitation from the other app.' });
       return;
     }
     if (!navigator.mediaDevices || typeof navigator.mediaDevices.getUserMedia !== 'function') {
-      this.setState({ detector: false, error: 'Camera is not available. Paste the fabric://link instead.' });
+      this.setState({ detector: false, error: 'Camera is not available. Paste the invitation instead.' });
       return;
     }
     try {
@@ -119,9 +119,9 @@ class QrScanOverlay extends React.Component {
       React.createElement('style', null, CSS),
       React.createElement('div', { className: 'qs-overlay', role: 'dialog', 'aria-modal': 'true' },
         React.createElement('div', { className: 'qs-card' },
-          React.createElement('h2', null, 'Scan to link a device'),
+          React.createElement('h2', null, 'Scan to link a signer'),
           React.createElement('p', null,
-            'Point the camera at the QR on the other GoonCitizen (Identity / Security → Add a device). A confirm modal then shows that key as emoji — match it with the other screen, then approve.'),
+            'Point the camera at the invitation on the other app (Passport, GoonCitizen, or Hub → Linked signers). Both screens then show a six-digit code; continue only if they match.'),
           this.state.detector
             ? React.createElement('video', {
               className: 'qs-video',
@@ -138,7 +138,7 @@ class QrScanOverlay extends React.Component {
             React.createElement('input', {
               className: 'qs-input',
               type: 'text',
-              placeholder: 'or paste fabric://link?sessionId=…',
+              placeholder: 'or paste the fabric:… invitation',
               value: this.state.paste,
               onChange: (e) => this.setState({ paste: e.target.value }),
               onKeyDown: (e) => { if (e.key === 'Enter') this.submitPaste(); }

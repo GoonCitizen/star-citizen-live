@@ -2,7 +2,7 @@
 
 const { describe, it } = require('node:test');
 const assert = require('node:assert/strict');
-const { shouldEnforceRemoteAuth } = require('../../functions/httpRemoteAuth');
+const { shouldEnforceRemoteAuth, isRebindingHost } = require('../../functions/httpRemoteAuth');
 
 function req (addr) {
   return { socket: { remoteAddress: addr }, headers: {} };
@@ -52,5 +52,15 @@ describe('httpRemoteAuth', () => {
       req: req('192.168.1.50')
     }), false);
     assert.equal(shouldEnforceRemoteAuth({ req: req('8.8.8.8') }), false);
+  });
+
+  it('refuses a DNS name it does not answer to, and nothing else', () => {
+    const at = (host) => ({ headers: host == null ? {} : { host } });
+    for (const host of ['127.0.0.1:3041', 'localhost:3041', '[::1]:3041', '192.168.1.20:3041', 'relay.goon.vc', 'RELAY.goon.vc:443', null]) {
+      assert.equal(isRebindingHost(at(host), { names: ['relay.goon.vc'] }), false, String(host));
+    }
+    for (const host of ['evil.example:3041', 'evil.example', '127.0.0.1.evil.example', 'localhost.evil.example:3041']) {
+      assert.equal(isRebindingHost(at(host), { names: ['relay.goon.vc'] }), true, host);
+    }
   });
 });

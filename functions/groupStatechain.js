@@ -188,6 +188,8 @@ function foldGroupState (definition, entries = []) {
   const fleets = {};
   /** Pending / adopted GroupChangeProposal rows (non-roster until GroupChange). */
   const proposals = {};
+  /** Wallet cosigner keys: `{ <x-only member>: { <network>: record } }` (verified). */
+  const cosigners = {};
   const seen = new Set();
 
   const list = (Array.isArray(entries) ? entries : []).slice().sort((a, b) => {
@@ -285,6 +287,21 @@ function foldGroupState (definition, entries = []) {
           members = members.filter((m) => m !== pubkey);
           signers = signers.filter((m) => m !== pubkey);
           threshold = Math.min(threshold, Math.max(1, signers.length));
+          delete cosigners[pubkey.slice(-64)];
+        }
+      } else if (action === 'cosigner.set') {
+        const { verifyGroupCosigner } = require('./groupCosigner');
+        const member = String(message.member || '').toLowerCase();
+        const record = {
+          member,
+          cosigner: String(message.cosigner || '').toLowerCase(),
+          proof: message.proof,
+          endorsement: message.endorsement,
+          network: String(message.network || '').toLowerCase()
+        };
+        if (members.some((m) => m.slice(-64) === member.slice(-64)) && verifyGroupCosigner(record, contractId)) {
+          const x = member.slice(-64);
+          cosigners[x] = Object.assign({}, cosigners[x], { [record.network]: record });
         }
       } else if (action === 'update' && message.patch && typeof message.patch === 'object') {
         const patch = message.patch;
@@ -329,7 +346,7 @@ function foldGroupState (definition, entries = []) {
   threshold = Math.max(1, Math.min(threshold, signers.length || 1));
   const proposedPolicy = normalizeProposedPolicy({ validators: signers, threshold });
 
-  return {
+  const state = {
     '@type': 'GoonCitizenGroupState',
     groupId,
     contractId,
@@ -352,6 +369,9 @@ function foldGroupState (definition, entries = []) {
       return acc;
     }, {})
   };
+  // Only when present, so states without cosigners keep their digests.
+  if (Object.keys(cosigners).length) state.cosigners = cosigners;
+  return state;
 }
 
 function stateDigestOfContent (content) {

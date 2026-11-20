@@ -51,3 +51,33 @@ describe('desktopInboxKinds', () => {
     }), false);
   });
 });
+
+describe('DelegationRequest in Notifications', () => {
+  it('a linked signer\'s request becomes an actionable entry that toasts', async () => {
+    const Key = require('@fabric/core/types/key');
+    const Message = require('@fabric/core/types/message');
+    const Delegation = require('@fabric/core/types/delegation');
+    const { entryFromDelegationRequest } = require('../../functions/registerInbox');
+    const player = new Delegation({ key: new Key() });
+    const passport = new Delegation({ key: new Key() });
+    const grant = await player.grant({ grantee: passport.key.pubkey, scopes: ['message'], label: 'Passport' });
+    await passport.receive(grant.uri);
+    const req = await passport.request({ target: player.key.pubkey, request: Message.fromVector(['P2P_CHAT_MESSAGE', 'sign me']) });
+    const events = [];
+    player.on('request', (ev) => events.push(ev));
+    assert.equal((await player.receive(req.uri)).ok, true);
+    assert.equal(events.length, 1);
+
+    const entry = entryFromDelegationRequest(events[0]);
+    assert.equal(entry.id, 'delegation:' + req.hash);
+    assert.equal(entry.kind, 'DelegationRequest');
+    assert.equal(entry.status, 'pending');
+    assert.equal(entry.actionable, true);
+    assert.equal(entry.refs.request, req.hash);
+    assert.equal(entry.refs.scope, 'message');
+    assert.ok(isDesktopInboxKind('DelegationRequest'));
+    assert.ok(shouldDesktopToast(entry));
+    assert.equal(desktopNotifyMeta('DelegationRequest').notifyKind, 'delegationrequest');
+    assert.equal(entryFromDelegationRequest({ hash: 'nope' }), null);
+  });
+});

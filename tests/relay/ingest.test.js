@@ -6,6 +6,7 @@ const http = require('http');
 
 const LiveRelay = require('../../services/LiveRelay');
 const { createIdentity, signEnvelope } = require('../../functions/identity');
+const { passportLogin } = require('../helpers/passportLogin');
 
 const BASE = '/services/star-citizen';
 
@@ -26,11 +27,8 @@ function request (port, method, path, payload, token) {
 
 // Hosted gameplay GETs are session-gated (see tests/relay/privacy-http-auth.js).
 // Reading back an ingested batch therefore needs a Bearer session.
-async function login (port, identity) {
-  const envelope = signEnvelope(identity, { intent: 'login', ts: new Date().toISOString() });
-  const res = await request(port, 'POST', `${BASE}/auth`, envelope);
-  assert.strictEqual(res.status, 200, `login should succeed: ${JSON.stringify(res.body)}`);
-  return res.body.data.token;
+function login (port, identity) {
+  return passportLogin(port, identity);
 }
 
 async function startServer (extra = {}) {

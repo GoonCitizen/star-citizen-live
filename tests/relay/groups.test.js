@@ -8,6 +8,8 @@ const LiveRelay = require('../../services/LiveRelay');
 const Group = require('../../types/Group');
 const GroupManager = require('../../services/GroupManager');
 const { createIdentity, signEnvelope, keyFromIdentity } = require('../../functions/identity');
+const { passportLogin } = require('../helpers/passportLogin');
+const { FEDERATION_WITNESS } = require('@fabric/core/functions/signingTags');
 
 const BASE = '/services/star-citizen';
 
@@ -26,11 +28,8 @@ function request (port, method, path, payload, token) {
   });
 }
 
-async function login (port, identity) {
-  const envelope = signEnvelope(identity, { intent: 'login', ts: new Date().toISOString() });
-  const res = await request(port, 'POST', `${BASE}/auth`, envelope);
-  assert.strictEqual(res.status, 200, `login should succeed: ${JSON.stringify(res.body)}`);
-  return res.body.data.token;
+function login (port, identity) {
+  return passportLogin(port, identity);
 }
 
 // ---- Group type ----
@@ -56,7 +55,7 @@ test('Group verifies k-of-n Schnorr multisignatures and ignores outsiders', () =
   const group = new Group({ id: 'g', name: 'Fleet', creator: a.pubkey, members: [a.pubkey, b.pubkey, c.pubkey], threshold: 2 });
 
   const message = JSON.stringify({ action: 'validate', claimId: 'claim-1' });
-  const sign = (identity) => keyFromIdentity(identity).signSchnorr(Buffer.from(message)).toString('hex');
+  const sign = (identity) => keyFromIdentity(identity).signSchnorr(Buffer.from(message), FEDERATION_WITNESS).toString('hex');
 
   assert.strictEqual(group.verifyMultiSignature({ message, signatures: { [a.pubkey]: sign(a), [b.pubkey]: sign(b) } }), true, '2-of-3 passes');
   assert.strictEqual(group.verifyMultiSignature({ message, signatures: { [a.pubkey]: sign(a) } }), false, '1-of-3 fails');
@@ -138,9 +137,9 @@ test('hosted mode: login session, group CRUD, and membership-scoped missions', a
     const anon = await request(port, 'POST', `${BASE}/groups`, { name: 'X' });
     assert.strictEqual(anon.status, 401);
 
-    // Bad login: stale timestamp.
-    const stale = signEnvelope(alice, { intent: 'login', ts: new Date(Date.now() - 10 * 60 * 1000).toISOString() });
-    assert.strictEqual((await request(port, 'POST', `${BASE}/auth`, stale)).status, 401);
+    // The v1 envelope login is gone.
+    const stale = signEnvelope(alice, { intent: 'login', ts: new Date().toISOString() });
+    assert.notStrictEqual((await request(port, 'POST', `${BASE}/auth`, stale)).status, 200);
 
     const aliceToken = await login(port, alice);
     const bobToken = await login(port, bob);

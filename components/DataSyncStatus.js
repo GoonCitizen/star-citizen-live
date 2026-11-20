@@ -135,7 +135,7 @@ class DataSyncStatus extends React.Component {
     const snap = this.state.snapshot || {};
     const local = snap.local || {};
     const lines = [];
-    if (sum.members) lines.push(sum.members + ' device' + (sum.members === 1 ? '' : 's') + ' in this identity');
+    if (sum.members) lines.push(sum.members + ' app' + (sum.members === 1 ? '' : 's') + ' acting as this player');
     if (sum.connected) lines.push(sum.connected + ' Fabric TCP peer' + (sum.connected === 1 ? '' : 's') + ' connected');
     if (sum.lan) lines.push(sum.lan + ' LAN address' + (sum.lan === 1 ? '' : 'es') + ' advertised');
     if (Array.isArray(local.candidates) && local.candidates.length) {
@@ -144,7 +144,7 @@ class DataSyncStatus extends React.Component {
     if (sum.frames) lines.push('Last share: ' + sum.frames + ' Fabric frame' + (sum.frames === 1 ? '' : 's'));
     if (sum.localChat || sum.inboundChat) {
       lines.push(
-        (sum.localChat ? (sum.localChat + ' chat on this device') : 'No local chat yet') +
+        (sum.localChat ? (sum.localChat + ' chat in this app') : 'No local chat yet') +
           (sum.inboundChat ? (' · ' + sum.inboundChat + ' received from siblings') : ' · waiting for sibling chat')
       );
     }
@@ -156,33 +156,33 @@ class DataSyncStatus extends React.Component {
       if (inv.missions != null) bits.push(inv.missions + ' mission' + (inv.missions === 1 ? '' : 's'));
       if (inv.chat != null) bits.push(inv.chat + ' chat');
       if (inv.files != null) bits.push(inv.files + ' file' + (inv.files === 1 ? '' : 's'));
-      if (bits.length) lines.push('This device: ' + bits.join(' · '));
+      if (bits.length) lines.push('This app: ' + bits.join(' · '));
     }
     return lines;
   }
 
   actions (sum) {
-    const manage = typeof this.props.onManageDevices === 'function'
+    const manage = typeof this.props.onManageSigners === 'function'
       ? React.createElement('button', {
         type: 'button',
         className: 'btn',
         onClick: (e) => {
           if (e && e.stopPropagation) e.stopPropagation();
           this.setState({ open: false });
-          this.props.onManageDevices();
+          this.props.onManageSigners();
         }
-      }, 'Manage devices')
+      }, 'Linked signers')
       : null;
-    const add = typeof this.props.onAddDevice === 'function'
+    const add = typeof this.props.onAddSigner === 'function'
       ? React.createElement('button', {
         type: 'button',
         className: 'btn',
         onClick: (e) => {
           if (e && e.stopPropagation) e.stopPropagation();
           this.setState({ open: false });
-          this.props.onAddDevice();
+          this.props.onAddSigner();
         }
-      }, 'Add a device')
+      }, 'Add a signer')
       : null;
     const sync = React.createElement('button', {
       type: 'button',

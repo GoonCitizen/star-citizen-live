@@ -34,6 +34,22 @@ describe('android-patch backup exclusion', () => {
     assert.equal(twice, once);
   });
 
+  it('registers the fabric: scheme, and drops older fabric://login and fabric://link filters', () => {
+    const out = patchManifest(CAPACITOR_DEFAULT);
+    assert.match(out, /<data android:scheme="fabric" \/>/);
+    assert.doesNotMatch(out, /android:host=/);
+    const older = out.replace('</activity>', ['login', 'link'].map((host) => [
+      '<intent-filter>',
+      '                <action android:name="android.intent.action.VIEW" />',
+      '                <data android:scheme="fabric" android:host="' + host + '" />',
+      '            </intent-filter>'
+    ].join('\n')).join('\n') + '\n        </activity>');
+    const again = patchManifest(older);
+    assert.doesNotMatch(again, /android:host=/);
+    assert.match(again, /<data android:scheme="fabric" \/>/);
+    assert.equal((again.match(/<intent-filter>/g) || []).length, (out.match(/<intent-filter>/g) || []).length);
+  });
+
   it('adds the Play services code scanner next to Capacitor plugins', () => {
     const gradle = [
       "apply from: 'capacitor.build.gradle'",

@@ -11,6 +11,7 @@
 
 const DEFAULT_HUB_ORIGINS = Object.freeze([
   'https://hub.fabric.pub',
+  'https://hub.goon.vc',
   'https://relay.goon.vc'
 ]);
 

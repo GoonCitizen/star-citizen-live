@@ -19,7 +19,6 @@ const hubBitcoinProxy = require('../../functions/hubBitcoinProxy');
 const {
   SWEEP_STEPS,
   normalizeSnapshotHash,
-  buildFlushChainBody,
   planPlaynetSweep,
   runLocalChainWipe,
   acquireHubFaucetFunds,
@@ -92,28 +91,18 @@ test('sweep plan orders wipe → faucet → deploy', () => {
     hub: 'http://127.0.0.1:8080'
   });
   assert.deepStrictEqual(plan.steps, SWEEP_STEPS);
-  assert.strictEqual(plan.wipe.flushBody.snapshotBlockHash, snap);
-  assert.strictEqual(plan.wipe.flushBody.network, 'regtest');
+  assert.strictEqual(plan.wipe.snapshotBlockHash, snap);
+  assert.strictEqual(plan.wipe.network, 'regtest');
   assert.strictEqual(plan.faucet.amountSats, 25000);
   assert.strictEqual(plan.deploy.contractId, gooncitizenContractId());
   assert.strictEqual(plan.deploy.accept, true);
   assert.strictEqual(plan.deploy.definition.name, gooncitizenContractDefinition().name);
 });
 
-test('wipe: snapshot hash validation + flush body', () => {
+test('wipe: snapshot hash validation', () => {
   assert.throws(() => normalizeSnapshotHash('nope'), /64 hex/);
-  assert.throws(() => buildFlushChainBody({ snapshotBlockHash: 'zz' }), /64 hex/);
-  const hash = 'cd'.repeat(32);
-  const body = buildFlushChainBody({
-    snapshotBlockHash: hash,
-    network: 'regtest',
-    label: 'unit-wipe'
-  });
-  assert.deepStrictEqual(body, {
-    snapshotBlockHash: hash,
-    network: 'regtest',
-    label: 'unit-wipe'
-  });
+  assert.throws(() => planPlaynetSweep({ snapshotBlockHash: 'zz' }), /64 hex/);
+  assert.strictEqual(normalizeSnapshotHash('CD'.repeat(32)), 'cd'.repeat(32));
 });
 
 test('wipe: local invalidate walks tip back to snapshot', async () => {
@@ -136,7 +125,7 @@ test('wipe: local invalidate walks tip back to snapshot', async () => {
 
 test('faucet: acquire from fake local Hub via LiveRelay proxy', async () => {
   const id = createIdentity();
-  const recv = hubBitcoinProxy.deriveReceiveAddress(id.xpub, 0, 'regtest');
+  const recv = hubBitcoinProxy.deriveReceiveAddress(hubBitcoinProxy.walletKeysFromIdentity(id, 'regtest').xpub, 0, 'regtest');
   assert.ok(recv && recv.address);
 
   let faucetPosts = 0;
@@ -240,7 +229,7 @@ test('full sweep orchestration with injectable runners', async () => {
   const out = await runPlaynetSweep(plan, {
     wipe: async (wipe) => {
       calls.push('wipe');
-      assert.strictEqual(wipe.flushBody.snapshotBlockHash, snap);
+      assert.strictEqual(wipe.snapshotBlockHash, snap);
       return runLocalChainWipe(snap, {
         getBestBlockHash: async () => snap,
         invalidateBlock: async () => { throw new Error('should not invalidate'); }
@@ -290,7 +279,7 @@ test('live playnet sweep (opt-in FABRIC_PLAYNET_SWEEP=1)', async (t) => {
     return;
   }
   const id = createIdentity();
-  const recv = hubBitcoinProxy.deriveReceiveAddress(id.xpub, 0, 'regtest');
+  const recv = hubBitcoinProxy.deriveReceiveAddress(hubBitcoinProxy.walletKeysFromIdentity(id, 'regtest').xpub, 0, 'regtest');
   const funded = await acquireHubFaucetFunds({
     hub,
     address: recv.address,

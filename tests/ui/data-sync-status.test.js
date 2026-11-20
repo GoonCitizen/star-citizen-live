@@ -22,7 +22,7 @@ describe('DataSyncStatus', () => {
     const chip = buttons.find((n) => n.props && n.props['aria-label'] === 'Data sync status');
     assert.ok(chip, 'missing compact sync button');
     assert.equal(chip.props['data-sync-state'], 'synced');
-    assert.match(chip.props.title, /Chat syncing|Devices synced/);
+    assert.match(chip.props.title, /Chat syncing|Apps synced/);
   });
 
   it('panel lists facts and Sync now', () => {
@@ -38,26 +38,28 @@ describe('DataSyncStatus', () => {
     assert.match(text, /Chat syncing/);
     assert.match(text, /Sync now/);
     assert.match(text, /192\.168\.1\.9:7777/);
-    assert.match(text, /This device: 12 notes · 6 logs · 40 missions/);
-    assert.match(text, /3 chat on this device/);
+    assert.match(text, /This app: 12 notes · 6 logs · 40 missions/);
+    assert.match(text, /3 chat in this app/);
   });
 
-  it('offers Manage devices when a handler is provided', () => {
-    const ctl = new DataSyncStatus({ variant: 'panel', onManageDevices: () => {} });
-    assert.match(textOf(ctl.render()), /Manage devices/);
+  it('offers Linked signers and Add a signer when handlers are provided', () => {
+    const ctl = new DataSyncStatus({ variant: 'panel', onManageSigners: () => {}, onAddSigner: () => {} });
+    const text = textOf(ctl.render());
+    assert.match(text, /Linked signers/);
+    assert.match(text, /Add a signer/);
+    assert.doesNotMatch(text, /device/i);
   });
 
-  it('Dashboard header and Identity linked-devices mount the control', () => {
+  it('Dashboard header and the Identity linked-signers section mount the control', () => {
     const dash = new Dashboard({});
     dash.state.online = true;
     dash.state.status = 'ok';
     assert.strictEqual(findType(dash.render(), DataSyncStatus).length, 1);
     assert.match(Dashboard.CSS, /\.syncstat\{/);
 
-    const LinkedDevices = require('../../components/LinkedDevices');
+    const LinkedSigners = require('../../components/LinkedSigners');
     const identity = new Identity({});
     identity.state.info = { exists: true, unlocked: true, pubkey: '02' + 'ab'.repeat(32) };
-    identity.state.linkedDevices = [];
-    assert.ok(findType(identity.renderLinkedDevices(), LinkedDevices).length >= 1);
+    assert.ok(findType(identity.renderLinkedSigners({ variant: 'page' }), LinkedSigners).length >= 1);
   });
 });

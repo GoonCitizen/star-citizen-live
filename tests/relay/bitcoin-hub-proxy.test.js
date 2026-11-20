@@ -55,26 +55,31 @@ function startFakeHub (handler) {
   });
 }
 
-test('hubBitcoinProxy.deriveReceiveAddress: BIP44 with xprv matches Hub faucet path', () => {
-  const id = createIdentity();
-  const got = hubBitcoinProxy.deriveReceiveAddress(id.xpub, 0, 'regtest', { xprv: id.xprv });
-  assert.ok(got);
-  assert.match(got.address, /^bcrt1/);
-  assert.strictEqual(got.path, "m/44'/0'/0'/0/0");
-  assert.ok(got.accountXpub && got.accountXpub.startsWith('xpub'));
-  const watch = hubBitcoinProxy.bitcoinWatchXpubFromIdentity(id);
-  assert.strictEqual(watch, got.accountXpub);
-  const legacy = hubBitcoinProxy.deriveReceiveAddress(id.xpub, 0, 'regtest');
-  assert.ok(legacy);
-  assert.notStrictEqual(legacy.address, got.address);
+test('hubBitcoinProxy.walletKeysFromIdentity: m/84\' + m/44\' of the account, null while locked', () => {
+  const id = createIdentity({ network: 'regtest' });
+  const keys = hubBitcoinProxy.walletKeysFromIdentity(id, 'regtest');
+  assert.strictEqual(keys.segwitPath, "m/84'/1'/0'");
+  assert.strictEqual(keys.standardPath, "m/44'/1'/0'");
+  assert.notStrictEqual(keys.xpub, keys.standardXpub);
+  const other = hubBitcoinProxy.walletKeysFromIdentity(Object.assign({}, id, { account: 1 }), 'regtest');
+  assert.strictEqual(other.segwitPath, "m/84'/1'/1'");
+  assert.notStrictEqual(other.xpub, keys.xpub);
+  const main = hubBitcoinProxy.walletKeysFromIdentity(id, 'mainnet');
+  assert.strictEqual(main.segwitPath, "m/84'/0'/0'");
+  assert.strictEqual(hubBitcoinProxy.walletKeysFromIdentity({ pubkey: id.pubkey }, 'regtest'), null);
+  assert.strictEqual(hubBitcoinProxy.walletKeysFromIdentity(null, 'regtest'), null);
 });
 
-test('hubBitcoinProxy.deriveReceiveAddress: Fabric xpub → bcrt1 on regtest', () => {
-  const id = createIdentity();
-  const got = hubBitcoinProxy.deriveReceiveAddress(id.xpub, 0, 'regtest');
+test('hubBitcoinProxy.deriveReceiveAddress: SegWit account xpub → bcrt1 on regtest', () => {
+  const id = createIdentity({ network: 'regtest' });
+  const keys = hubBitcoinProxy.walletKeysFromIdentity(id, 'regtest');
+  const got = hubBitcoinProxy.deriveReceiveAddress(keys.xpub, 0, 'regtest');
   assert.ok(got);
-  assert.match(got.address, /^bcrt1/);
+  assert.match(got.address, /^bcrt1q/);
   assert.strictEqual(got.index, 0);
+  const next = hubBitcoinProxy.deriveReceiveAddress(keys.xpub, 1, 'regtest');
+  assert.notStrictEqual(next.address, got.address);
+  assert.strictEqual(hubBitcoinProxy.deriveReceiveAddress('', 0, 'regtest'), null);
 });
 
 test('bitcoin.enable false → /bitcoin/* returns 503', async () => {
@@ -96,7 +101,9 @@ test('bitcoin.enable false → /bitcoin/* returns 503', async () => {
 });
 
 test('bitcoin.enable true → status/wallet/receive/transactions/send via mock Hub', async () => {
-  const id = createIdentity();
+  const id = createIdentity({ network: 'regtest' });
+  const keys = hubBitcoinProxy.walletKeysFromIdentity(id, 'regtest');
+  const xq = `xpub=${encodeURIComponent(keys.xpub)}&standardXpub=${encodeURIComponent(keys.standardXpub)}`;
   const fake = await startFakeHub((req, url, body, res) => {
     const json = (code, obj) => {
       res.writeHead(code, { 'Content-Type': 'application/json' });
@@ -127,7 +134,8 @@ test('bitcoin.enable true → status/wallet/receive/transactions/send via mock H
       return json(200, { available: true, status: 'ONLINE', network: 'regtest' });
     }
     if (req.method === 'GET' && url.pathname === '/services/bitcoin/xpub') {
-      assert.ok(url.searchParams.get('xpub'));
+      assert.strictEqual(url.searchParams.get('xpub'), keys.xpub);
+      assert.strictEqual(url.searchParams.get('standardXpub'), keys.standardXpub);
       return json(200, { balanceSats: 12345, confirmedSats: 12345, unconfirmedSats: 0 });
     }
     if (req.method === 'GET' && url.pathname === '/services/bitcoin/xpub/transactions') {
@@ -188,22 +196,22 @@ test('bitcoin.enable true → status/wallet/receive/transactions/send via mock H
     assert.strictEqual(status.body.data.status, 'ONLINE');
 
     const wallet = await request(port, 'GET',
-      `${BASE}/bitcoin/wallet?xpub=${encodeURIComponent(id.xpub)}`);
+      `${BASE}/bitcoin/wallet?${xq}`);
     assert.strictEqual(wallet.status, 200);
     assert.strictEqual(wallet.body.data.balanceSats, 12345);
 
     const recv = await request(port, 'GET',
-      `${BASE}/bitcoin/receive?xpub=${encodeURIComponent(id.xpub)}&index=0`);
+      `${BASE}/bitcoin/receive?${xq}&index=0`);
     assert.strictEqual(recv.status, 200);
     assert.match(recv.body.data.address, /^bcrt1/);
 
     const txs = await request(port, 'GET',
-      `${BASE}/bitcoin/transactions?xpub=${encodeURIComponent(id.xpub)}`);
+      `${BASE}/bitcoin/transactions?${xq}`);
     assert.strictEqual(txs.status, 200);
     assert.strictEqual(txs.body.data.transactions.length, 1);
 
     const utxos = await request(port, 'GET',
-      `${BASE}/bitcoin/utxos?xpub=${encodeURIComponent(id.xpub)}`);
+      `${BASE}/bitcoin/utxos?${xq}`);
     assert.strictEqual(utxos.status, 200);
     assert.strictEqual(utxos.body.data.utxos.length, 1);
     assert.strictEqual(utxos.body.data.utxos[0].amountSats, 12345);
@@ -224,7 +232,7 @@ test('bitcoin.enable true → status/wallet/receive/transactions/send via mock H
     const send = await request(port, 'POST', `${BASE}/bitcoin/send`, {
       to: recv.body.data.address,
       amountSats: 1000,
-      xpub: id.xpub
+      xpub: keys.xpub
     });
     assert.strictEqual(send.status, 200);
     assert.ok(send.body.data.txid);

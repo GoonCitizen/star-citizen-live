@@ -1,21 +1,27 @@
 'use strict';
 
-// Player identity helpers — BIP39 mnemonic keypairs via @fabric/core Key,
-// password-encrypted storage (scrypt + AES-256-GCM, Node built-ins only),
-// and Schnorr-signed event envelopes for the goon.vc uplink.
+// Player identity helpers on `@fabric/core/functions/accountKeys`.
 //
-// Actor id is the Fabric-protocol compressed pubkey (Identity#pubkey /
-// m/44'/7777|7778'/…), matching @fabric/core Peer signing — not the HD master.
+// One seed per install. The seed phrase and the BIP39 passphrase (the
+// derivation password) make the master xprv; the lock password seals it.
+// Nothing else is kept secret: the stored record is a core account vault
+// (`FabricAccountVault` v2) holding the sealed master, the selected account +
+// network, and the public view of every account used so far.
+//
+// An unlocked identity is `{ xprv (master), account, network, pubkey, id }`.
+// Actor id is the account's Fabric identity key `m/44'/F'/n'/0/0` (F = 7777
+// mainnet, 7778 otherwise), matching @fabric/core Peer signing — never the HD
+// master. Bitcoin keys live on `m/84'/B'/n'` + `m/44'/B'/n'`, the federation
+// cosigner on `m/87'/B'/n'/0/0`.
 
 const crypto = require('crypto');
 const Key = require('@fabric/core/types/key');
-const Identity = require('@fabric/core/types/identity');
+const accountKeys = require('@fabric/core/functions/accountKeys');
 const fabricPubkey = require('@fabric/http/functions/fabricPubkey');
+const { ENVELOPE: ENVELOPE_TAG } = require('./signingTags');
 const { fromSeed: bip32FromSeed } = require('@fabric/core/functions/bip32');
 
-const ENCRYPTION_VERSION = 1;
-const SCRYPT_PARAMS = { N: 16384, r: 8, p: 1 };
-const KEY_LENGTH = 32;
+const LEGACY_BLOB_ERROR = 'This identity file is from an older GoonCitizen. Restore from your seed phrase instead.';
 
 /**
  * Bitcoin network label for Fabric coin-type selection (7777 mainnet / 7778 else).
@@ -27,22 +33,18 @@ function fabricIdentityNetwork (opts = {}) {
     || process.env.FABRIC_BITCOIN_NETWORK
     || process.env.BITCOIN_NETWORK
     || 'regtest';
-  return String(raw).trim().toLowerCase() || 'regtest';
+  return accountKeys.normalizeAccountNetwork(String(raw).trim().toLowerCase() || 'regtest');
 }
 
 /**
- * @param {object} [opts]
- * @param {string} [opts.mnemonic]
- * @param {string} [opts.xprv]
- * @param {string} [opts.network]
- * @returns {InstanceType<typeof Identity>}
+ * @param {*} value
+ * @returns {number}
  */
-function fabricIdentityFrom (opts = {}) {
-  const settings = { network: fabricIdentityNetwork(opts) };
-  if (opts.xprv) settings.xprv = opts.xprv;
-  if (opts.mnemonic) settings.mnemonic = opts.mnemonic;
-  if (opts.seed) settings.seed = opts.seed;
-  return new Identity(settings);
+function accountIndex (value) {
+  if (value == null || value === '') return 0;
+  const n = Number(value);
+  if (!Number.isInteger(n) || n < 0 || n >= 0x80000000) throw new Error('account must be an integer from 0 to 2147483647');
+  return n;
 }
 
 /**
@@ -67,25 +69,6 @@ function payloadDigest (payload) {
   return crypto.createHash('sha256').update(canonicalStringify(payload)).digest();
 }
 
-/**
- * Create a brand-new identity (BIP39 mnemonic + Fabric-protocol keypair).
- * @param {Object} [opts]
- * @param {String} [opts.network] Bitcoin network for Fabric coin type (default regtest)
- * @returns {{ mnemonic: String, xprv: String, xpub: String, pubkey: String, id: String, network: String }}
- */
-function createIdentity (opts = {}) {
-  const identity = fabricIdentityFrom(opts);
-  const master = identity.key;
-  return {
-    mnemonic: master.mnemonic,
-    xprv: master.xprv,
-    xpub: master.xpub,
-    pubkey: identity.pubkey,
-    id: identity.pubkey,
-    network: fabricIdentityNetwork(opts)
-  };
-}
-
 function looksLikeRawSeedHex (value) {
   if (value == null) return false;
   const trimmed = String(value).trim();
@@ -97,175 +80,302 @@ function looksLikeRawSeedHex (value) {
   return bytes >= 16 && bytes <= 64;
 }
 
-function xprvFromRawSeedHex (hex) {
-  const buf = Buffer.from(String(hex).trim().replace(/^0x/i, ''), 'hex');
-  return bip32FromSeed(buf).toBase58();
-}
-
 /**
- * Restore an identity from a BIP39 mnemonic, raw seed hex, or an xprv.
- * @param {Object|String} input Mnemonic string, seed hex, or `{ mnemonic }` / `{ seed }` / `{ xprv }` / `{ network }`.
- * @returns {{ mnemonic: String|null, seed: String|null, xprv: String, xpub: String, pubkey: String, id: String, network: String }}
+ * Master xprv from a seed phrase (+ BIP39 passphrase), raw seed hex, or a
+ * depth-0 xprv. Account-level xprvs are refused: one seed per install.
+ * @param {Object|string} input
+ * @returns {string}
  */
-function restoreIdentity (input) {
+function masterFromInput (input) {
   let opts = input;
   if (typeof input === 'string') {
     const trimmed = input.trim();
-    if (trimmed.startsWith('xprv') || trimmed.startsWith('tprv')) {
-      opts = { xprv: trimmed };
-    } else if (looksLikeRawSeedHex(trimmed)) {
-      opts = { seed: trimmed.replace(/^0x/i, '').toLowerCase() };
-    } else {
-      opts = { mnemonic: trimmed };
-    }
+    if (/^[xt]prv/.test(trimmed)) opts = { xprv: trimmed };
+    else if (looksLikeRawSeedHex(trimmed)) opts = { seed: trimmed };
+    else opts = { mnemonic: trimmed };
   }
-  if (!opts || (!opts.mnemonic && !opts.xprv && !opts.seed)) {
-    throw new Error('restoreIdentity requires a mnemonic, seed hex, or xprv');
+  if (!opts || typeof opts !== 'object') throw new Error('a seed phrase, seed hex, or master xprv is required');
+  if (opts.xprv) return accountKeys.normalizeMasterXprv(String(opts.xprv).trim());
+  if (opts.seed && looksLikeRawSeedHex(opts.seed)) {
+    const buf = Buffer.from(String(opts.seed).trim().replace(/^0x/i, ''), 'hex');
+    return accountKeys.normalizeMasterXprv(bip32FromSeed(buf).toBase58());
   }
-  if (opts.seed && looksLikeRawSeedHex(opts.seed) && !opts.xprv) {
-    opts = Object.assign({}, opts, { xprv: xprvFromRawSeedHex(opts.seed) });
-  }
-  const identity = fabricIdentityFrom({
-    xprv: opts.xprv,
-    mnemonic: opts.mnemonic,
-    seed: (opts.seed && !looksLikeRawSeedHex(opts.seed)) ? opts.seed : undefined,
-    network: opts.network
-  });
-  const master = identity.key;
-  const seedHex = opts.seed && looksLikeRawSeedHex(opts.seed)
-    ? String(opts.seed).replace(/^0x/i, '').toLowerCase()
-    : null;
+  const phrase = opts.mnemonic || opts.seed;
+  if (phrase) return accountKeys.importSeed(String(phrase), opts.passphrase == null ? '' : String(opts.passphrase));
+  throw new Error('a seed phrase, seed hex, or master xprv is required');
+}
+
+const _derived = new Map();
+const DERIVED_CACHE_LIMIT = 32;
+
+/**
+ * Keys of one (master, account, network), memoized: signing derives the
+ * identity key on every message.
+ * @private
+ */
+function _deriveCached (master, account, network) {
+  const cacheKey = crypto.createHash('sha256').update(`${master}\n${network}\n${account}`).digest('hex');
+  const hit = _derived.get(cacheKey);
+  if (hit) return hit;
+  const derived = accountKeys.deriveAccount(master, { account, network });
+  if (_derived.size >= DERIVED_CACHE_LIMIT) _derived.delete(_derived.keys().next().value);
+  _derived.set(cacheKey, derived);
+  return derived;
+}
+
+/**
+ * Unlocked identity for one account of a master.
+ * @param {string} master Master xprv.
+ * @param {Object} [opts]
+ * @param {number} [opts.account]
+ * @param {string} [opts.network]
+ * @returns {{ xprv: string, account: number, network: string, pubkey: string, id: string }}
+ */
+function identityFromMaster (master, opts = {}) {
+  const xprv = accountKeys.normalizeMasterXprv(master);
+  const network = fabricIdentityNetwork(opts);
+  const account = accountIndex(opts.account);
+  const derived = _deriveCached(xprv, account, network);
   return {
-    mnemonic: opts.mnemonic || master.mnemonic || null,
-    seed: seedHex,
-    xprv: master.xprv,
-    xpub: master.xpub,
-    pubkey: identity.pubkey,
-    id: identity.pubkey,
-    network: fabricIdentityNetwork(opts)
+    xprv,
+    account,
+    network,
+    pubkey: derived.identity.pubkey,
+    id: derived.identity.pubkey
   };
 }
 
 /**
- * Load the Fabric-protocol signing {@link Key} (matches Peer / actor pubkey).
- * @param {Object} identity Identity with `xprv` (or `mnemonic`).
- * @returns {Key} Protocol key capable of Schnorr signing.
+ * Create a brand-new identity. The seed phrase is returned once for the user
+ * to write down; nothing persists it.
+ * @param {Object} [opts]
+ * @param {string} [opts.network]
+ * @param {number} [opts.account]
+ * @param {string} [opts.passphrase] BIP39 passphrase (derivation password)
+ * @returns {{ mnemonic: string, xprv: string, account: number, network: string, pubkey: string, id: string }}
+ */
+function createIdentity (opts = {}) {
+  const mnemonic = accountKeys.generateMnemonic();
+  const master = accountKeys.importSeed(mnemonic, opts.passphrase == null ? '' : String(opts.passphrase));
+  return Object.assign({ mnemonic }, identityFromMaster(master, opts));
+}
+
+/**
+ * Restore an identity from a seed phrase (+ passphrase), raw seed hex, or a
+ * master xprv. The seed phrase is not kept.
+ * @param {Object|String} input Seed phrase / seed hex / xprv string, or
+ *   `{ mnemonic, passphrase }` / `{ seed }` / `{ xprv }` plus `account` / `network`.
+ * @returns {{ xprv: string, account: number, network: string, pubkey: string, id: string }}
+ */
+function restoreIdentity (input) {
+  const opts = (input && typeof input === 'object') ? input : {};
+  return identityFromMaster(masterFromInput(input), { account: opts.account, network: opts.network });
+}
+
+/**
+ * Keys of one account on one network: identity `m/44'/F'/n'/0/0`, wallet
+ * `m/84'/B'/n'` + `m/44'/B'/n'`, cosigner `m/87'/B'/n'/0/0`.
+ * @param {Object} identity Unlocked identity.
+ * @param {Object} [options]
+ * @param {number} [options.account] Defaults to the identity's account.
+ * @param {string} [options.network] Defaults to the identity's network.
+ * @returns {object} `deriveAccount` result
+ */
+function accountFromIdentity (identity, options = {}) {
+  if (!identity || !identity.xprv) throw new Error('unlocked identity required');
+  const account = accountIndex(options.account != null ? options.account : identity.account);
+  const network = fabricIdentityNetwork({ network: options.network || identity.network });
+  return _deriveCached(accountKeys.normalizeMasterXprv(identity.xprv), account, network);
+}
+
+/**
+ * Fabric identity signing key of the identity's account (matches Peer /
+ * CONTRACT_MESSAGE author).
+ * @param {Object} identity
+ * @returns {Key}
+ */
+function protocolKeyFromIdentity (identity) {
+  return accountFromIdentity(identity).identity.key;
+}
+
+/**
+ * @param {Object} identity
+ * @returns {Key}
  */
 function keyFromIdentity (identity) {
   return protocolKeyFromIdentity(identity);
 }
 
 /**
- * HD master {@link Key} for Peer construction (Peer derives the Fabric path).
+ * HD master {@link Key} for Peer construction (Peer derives the Fabric path
+ * from it with the identity's account and network).
  * @param {Object} identity
  * @returns {Key}
  */
 function masterKeyFromIdentity (identity) {
-  if (!identity) throw new Error('identity required');
-  if (identity.xprv) return new Key({ xprv: identity.xprv });
-  if (identity.mnemonic) return new Key({ mnemonic: identity.mnemonic });
-  if (identity.seed) return new Key({ seed: identity.seed });
-  throw new Error('identity has no private material (xprv, mnemonic, or seed)');
+  if (!identity || !identity.xprv) throw new Error('unlocked identity required');
+  return new Key({ xprv: identity.xprv });
 }
 
 /**
- * Fabric-protocol signing key (matches Peer / Identity#pubkey / CONTRACT_MESSAGE author).
+ * Federation cosigner key of the identity's account on `network`.
  * @param {Object} identity
+ * @param {string} [network]
  * @returns {Key}
  */
-function protocolKeyFromIdentity (identity) {
-  if (!identity) throw new Error('identity required');
-  if (!identity.xprv && !identity.mnemonic) {
-    throw new Error('identity has no private material (xprv or mnemonic)');
-  }
-  return fabricIdentityFrom(identity).fabricKey;
+function cosignerKeyFromIdentity (identity, network) {
+  return accountFromIdentity(identity, { network }).cosigner.key;
 }
 
 /**
- * Encrypt an identity for storage at rest. Only public fields remain
- * readable; mnemonic + xprv are sealed with scrypt + AES-256-GCM.
- * @param {Object} identity Result of {@link createIdentity} / {@link restoreIdentity}.
- * @param {String} password User password.
- * @returns {Object} JSON-safe blob (no plaintext secrets).
+ * @param {*} blob
+ * @returns {boolean}
  */
-function encryptIdentity (identity, password) {
-  if (!identity || !identity.xprv) throw new Error('identity with xprv required');
-  if (!password || typeof password !== 'string') throw new Error('password required');
+function isIdentityVault (blob) {
+  return !!(blob && blob.type === accountKeys.ACCOUNT_VAULT_TYPE &&
+    blob.v === accountKeys.ACCOUNT_VAULT_VERSION && blob.seal && blob.current && blob.accounts);
+}
 
-  const salt = crypto.randomBytes(16);
-  const derived = crypto.scryptSync(password, salt, KEY_LENGTH, SCRYPT_PARAMS);
-  const iv = crypto.randomBytes(12);
-  const cipher = crypto.createCipheriv('aes-256-gcm', derived, iv);
-  const secret = JSON.stringify({ mnemonic: identity.mnemonic || null, xprv: identity.xprv });
-  const ciphertext = Buffer.concat([cipher.update(secret, 'utf8'), cipher.final()]);
-  const tag = cipher.getAuthTag();
+/**
+ * @param {*} blob
+ * @returns {object}
+ */
+function assertIdentityVault (blob) {
+  if (isIdentityVault(blob)) return blob;
+  if (blob && (blob.ciphertext || blob.version != null)) throw new Error(LEGACY_BLOB_ERROR);
+  throw new Error('identity vault required');
+}
 
+/**
+ * Stored record around an already-sealed master (core `sealMaster`, or the
+ * same envelope sealed with WebCrypto on Android).
+ * @param {object} seal
+ * @param {Object} identity Unlocked identity (its account + network become current).
+ * @param {Object} [opts]
+ * @param {string} [opts.label]
+ * @returns {object}
+ */
+function identityVaultFromSeal (seal, identity, opts = {}) {
+  const derived = accountFromIdentity(identity);
   return {
-    version: ENCRYPTION_VERSION,
-    kdf: Object.assign({ algorithm: 'scrypt', salt: salt.toString('hex') }, SCRYPT_PARAMS),
-    cipher: 'aes-256-gcm',
-    iv: iv.toString('hex'),
-    tag: tag.toString('hex'),
-    ciphertext: ciphertext.toString('hex'),
-    pubkey: identity.pubkey,
-    xpub: identity.xpub,
-    id: identity.pubkey,
+    type: accountKeys.ACCOUNT_VAULT_TYPE,
+    v: accountKeys.ACCOUNT_VAULT_VERSION,
+    seal,
+    current: { account: derived.account, network: derived.network },
+    accounts: {
+      [accountKeys.vaultAccountKey(derived.account, derived.network)]: accountKeys.accountPublicView(derived, opts.label)
+    },
     createdAt: new Date().toISOString()
   };
 }
 
 /**
- * Decrypt an identity blob produced by {@link encryptIdentity}.
- * @param {Object} blob Encrypted blob.
- * @param {String} password User password.
- * @returns {Object} Full identity (mnemonic, xprv, xpub, pubkey, id).
+ * Seal an identity for storage: the master xprv under the lock password.
+ * @param {Object} identity
+ * @param {string} password Lock password.
+ * @param {Object} [opts]
+ * @param {string} [opts.label]
+ * @returns {object} Account vault (no plaintext secrets).
+ */
+function encryptIdentity (identity, password, opts = {}) {
+  if (!identity || !identity.xprv) throw new Error('identity with xprv required');
+  if (!password || typeof password !== 'string') throw new Error('password required');
+  return identityVaultFromSeal(accountKeys.sealMaster(identity.xprv, password), identity, opts);
+}
+
+/**
+ * Unlocked identity of a vault's current account, given its master.
+ * @param {object} blob
+ * @param {string} master
+ * @returns {object}
+ */
+function openIdentityVault (blob, master) {
+  const vault = assertIdentityVault(blob);
+  return identityFromMaster(master, vault.current);
+}
+
+/**
+ * Unseal a vault and open its current account.
+ * @param {object} blob
+ * @param {string} password Lock password.
+ * @returns {object}
  */
 function decryptIdentity (blob, password) {
-  if (!blob || !blob.ciphertext) throw new Error('encrypted identity blob required');
+  const vault = assertIdentityVault(blob);
   if (!password || typeof password !== 'string') throw new Error('password required');
-
-  const salt = Buffer.from(blob.kdf.salt, 'hex');
-  const params = { N: blob.kdf.N, r: blob.kdf.r, p: blob.kdf.p };
-  const derived = crypto.scryptSync(password, salt, KEY_LENGTH, params);
-  const decipher = crypto.createDecipheriv('aes-256-gcm', derived, Buffer.from(blob.iv, 'hex'));
-  decipher.setAuthTag(Buffer.from(blob.tag, 'hex'));
-
-  let secret = null;
+  let master;
   try {
-    const plaintext = Buffer.concat([
-      decipher.update(Buffer.from(blob.ciphertext, 'hex')),
-      decipher.final()
-    ]);
-    secret = JSON.parse(plaintext.toString('utf8'));
-  } catch (error) {
+    master = accountKeys.unsealMaster(vault.seal, password);
+  } catch (_) {
     throw new Error('Could not decrypt identity (wrong password or corrupted file)');
   }
+  return openIdentityVault(vault, master);
+}
 
-  const identity = fabricIdentityFrom({
-    xprv: secret.xprv,
-    mnemonic: secret.mnemonic || undefined,
-    network: blob.network
+/**
+ * Switch a vault to another account / network. Without the unlocked identity
+ * only pairs already in the vault can be picked (`FABRIC_ACCOUNT_LOCKED`).
+ * @param {object} blob
+ * @param {{ account: number, network: string, label: (string|undefined) }} pair
+ * @param {Object} [identity] Unlocked identity (any account of the same master).
+ * @returns {{ blob: object, identity: (object|null) }}
+ */
+function selectIdentityAccount (blob, pair = {}, identity = null) {
+  const vault = assertIdentityVault(blob);
+  const network = fabricIdentityNetwork({ network: pair.network || vault.current.network });
+  const account = accountIndex(pair.account != null ? pair.account : vault.current.account);
+  const next = accountKeys.selectVaultAccount(vault, {
+    account,
+    network,
+    master: identity && identity.xprv ? identity.xprv : undefined,
+    label: pair.label
   });
   return {
-    mnemonic: secret.mnemonic || null,
-    xprv: secret.xprv,
-    xpub: identity.key.xpub,
-    pubkey: identity.pubkey,
-    id: identity.pubkey,
-    network: fabricIdentityNetwork({ network: blob.network })
+    blob: next,
+    identity: identity && identity.xprv ? identityFromMaster(identity.xprv, next.current) : null
+  };
+}
+
+/**
+ * Public summary of a vault: the current account and every cached one.
+ * @param {object} blob
+ * @returns {object|null}
+ */
+function identityBlobSummary (blob) {
+  if (!isIdentityVault(blob)) return null;
+  const current = accountKeys.currentVaultAccount(blob);
+  const accounts = Object.values(blob.accounts || {})
+    .filter((a) => a && a.identity)
+    .map((a) => ({
+      account: a.account,
+      network: a.network,
+      label: a.label,
+      pubkey: a.identity.pubkey,
+      current: !!(current && a.account === current.account && a.network === current.network)
+    }))
+    .sort((a, b) => (a.network === b.network ? a.account - b.account : a.network.localeCompare(b.network)));
+  return {
+    account: current ? current.account : blob.current.account,
+    network: current ? current.network : blob.current.network,
+    label: current ? current.label : null,
+    pubkey: current && current.identity ? current.identity.pubkey : null,
+    wallet: current ? current.wallet : null,
+    cosigner: current && current.cosigner ? current.cosigner.pubkey : null,
+    accounts,
+    createdAt: blob.createdAt || null
   };
 }
 
 /**
  * Create a Schnorr-signed envelope around a payload.
- * @param {Object} identity Decrypted identity (or object with `xprv`).
+ * @param {Object} identity Unlocked identity (or a Key).
  * @param {Object} payload JSON payload to sign.
  * @returns {{ pubkey: String, payload: Object, signature: String, digest: String }}
  */
 function signEnvelope (identity, payload) {
   const key = (identity instanceof Key) ? identity : protocolKeyFromIdentity(identity);
   const digest = payloadDigest(payload);
-  const signature = key.signSchnorr(digest);
+  const signature = key.signSchnorr(digest, ENVELOPE_TAG);
   return {
     pubkey: key.pubkey,
     payload,
@@ -285,7 +395,7 @@ function verifyEnvelope (envelope) {
   try {
     const digest = payloadDigest(envelope.payload);
     const key = new Key({ public: envelope.pubkey });
-    return key.verifySchnorr(digest, Buffer.from(envelope.signature, 'hex')) === true;
+    return key.verifySchnorr(digest, Buffer.from(envelope.signature, 'hex'), ENVELOPE_TAG) === true;
   } catch (error) {
     return false;
   }
@@ -329,16 +439,27 @@ function canonicalChatAuthor (hex) {
 }
 
 module.exports = {
+  LEGACY_BLOB_ERROR,
+  accountFromIdentity,
+  accountIndex,
   canonicalStringify,
   payloadDigest,
   createIdentity,
   restoreIdentity,
+  identityFromMaster,
+  masterFromInput,
   keyFromIdentity,
   protocolKeyFromIdentity,
   masterKeyFromIdentity,
+  cosignerKeyFromIdentity,
   fabricIdentityNetwork,
+  isIdentityVault,
+  identityVaultFromSeal,
   encryptIdentity,
   decryptIdentity,
+  openIdentityVault,
+  selectIdentityAccount,
+  identityBlobSummary,
   signEnvelope,
   verifyEnvelope,
   pubkeyXOnly,

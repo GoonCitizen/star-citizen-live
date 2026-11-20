@@ -8,7 +8,7 @@ const ME = '02' + 'aa'.repeat(32);
 const PEER = '02' + 'bb'.repeat(32);
 
 describe('clusterDevices', () => {
-  it('marks a paired device waiting for mutual IdentityCrossSign', () => {
+  it('marks a paired signer waiting for the mutual identity grant', () => {
     const model = mergeDeviceRows({
       localPubkey: ME,
       linkedDevices: [{ peerFabricId: PEER, peerPubkey: PEER, label: 'Desktop' }],
@@ -19,27 +19,28 @@ describe('clusterDevices', () => {
         fabric: { ready: true, connected: 2 }
       }
     });
-    assert.equal(model.stage, 'waiting-cross-sign');
+    assert.equal(model.stage, 'waiting-grant');
     const desk = model.devices.find((d) => d.kind === 'sibling');
     assert.equal(desk.label, 'Desktop');
-    assert.equal(desk.stage, 'waiting-cross-sign');
-    assert.match(stageLabel(desk.stage), /cross-sign/i);
+    assert.equal(desk.stage, 'waiting-grant');
+    assert.match(stageLabel(desk.stage), /grant identity/i);
   });
 
-  it('copies a pairing nonce onto the sibling row', () => {
+  it('copies when the signer was linked onto its row', () => {
     const model = mergeDeviceRows({
       localPubkey: ME,
       linkedDevices: [{
         peerFabricId: PEER,
         peerPubkey: PEER,
         label: 'Desktop',
-        nonce: 'ab'.repeat(32)
+        linkedAt: 1800000000000
       }],
       cluster: { members: [ME], pending: [] },
       sync: { local: { pubkey: ME }, members: [ME] }
     });
     const desk = model.devices.find((d) => d.kind === 'sibling');
-    assert.equal(desk.nonce, 'ab'.repeat(32));
+    assert.equal(desk.linkedAt, 1800000000000);
+    assert.equal(desk.label, 'Desktop');
   });
 
   it('promotes LAN + DeviceDataShare to synced', () => {
@@ -97,16 +98,17 @@ describe('clusterDevices', () => {
     assert.deepEqual(phone.inventory.applied, ['notes']);
   });
 
-  it('reads Hub IdentityCluster toJSON pending Map entries', () => {
+  it('reads IdentityCluster toJSON pending Map entries', () => {
     const pending = pendingFromClusterInstance({
       toJSON: () => ({
         pending: [[
           ME.slice(2) + '->' + PEER.slice(2),
-          { local: ME.slice(2), peer: PEER.slice(2), nonce: 'ff'.repeat(32) }
+          { local: ME.slice(2), peer: PEER.slice(2), grant: 'ff'.repeat(32) }
         ]]
       })
     }, ME);
     assert.equal(pending.length, 1);
     assert.equal(pending[0].to, PEER.slice(2));
+    assert.equal(pending[0].grant, 'ff'.repeat(32));
   });
 });

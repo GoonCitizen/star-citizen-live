@@ -19,7 +19,7 @@ const ROOT = path.resolve(__dirname, '..');
 /**
  * @param {object} [opts]
  * @param {boolean} [opts.allowLocalIdentityFallback=true]
- * @returns {{ xprv: string }|{ mnemonic: string }|null}
+ * @returns {{ xprv: string }|null}
  */
 function loadPeerKeySettings (opts = {}) {
   const allowLocal = opts.allowLocalIdentityFallback !== false;
@@ -27,9 +27,7 @@ function loadPeerKeySettings (opts = {}) {
     allowLocalIdentityFallback: allowLocal
   });
   if (!identity) return null;
-  if (identity.xprv) return { xprv: identity.xprv };
-  if (identity.mnemonic) return { mnemonic: identity.mnemonic };
-  return null;
+  return identity.xprv ? { xprv: identity.xprv } : null;
 }
 
 function loadAdminToken () {
@@ -53,7 +51,8 @@ function loadAdminToken () {
 
 /**
  * Mint a Hub admin token from the local operator key (production publisher).
- * Prefers HD master (`FABRIC_XPRV`) so Hub `SetupService._rootKey` verifies it;
+ * Signs with account 0 of the operator master (`FABRIC_XPRV`) on the Hub network,
+ * the Fabric identity key Hub `SetupService` verifies;
  * optionally also mint from a derived Peer key.
  *
  * Does not log the token.
@@ -68,7 +67,6 @@ function mintOperatorAdminToken (keySettings, opts = {}) {
   if (!keySettings || typeof keySettings !== 'object') {
     return { token: '', source: null, pubkeyPrefix: null };
   }
-  const Key = require('@fabric/core/types/key');
   let mint;
   let writeToken = null;
   try {
@@ -90,7 +88,9 @@ function mintOperatorAdminToken (keySettings, opts = {}) {
   const persist = opts.persist !== false;
   const candidates = [];
   try {
-    candidates.push({ key: new Key(keySettings), source: 'operator-master' });
+    const { restoreIdentity, protocolKeyFromIdentity } = require('./identity');
+    const identity = restoreIdentity(Object.assign({}, keySettings, { account: 0, network: opts.network }));
+    candidates.push({ key: protocolKeyFromIdentity(identity), source: 'operator-identity' });
   } catch (_) { /* invalid settings */ }
   if (opts.derivedKey) {
     candidates.push({ key: opts.derivedKey, source: 'operator-derived' });
@@ -407,7 +407,7 @@ function resolveAcceptAdminToken (keySettings, opts = {}) {
   if (!list.length) return { token: '', source: null, pubkeyPrefix: null };
   const first = list[0];
   // Persist a mint when that is what we selected and persist≠false
-  if (opts.persist !== false && first.source === 'operator-master' && keySettings) {
+  if (opts.persist !== false && first.source === 'operator-identity' && keySettings) {
     mintOperatorAdminToken(keySettings, opts);
   }
   return first;
@@ -446,10 +446,13 @@ function extractHubPubkey (status) {
  * @returns {Promise<object>}
  */
 async function preflightOperatorAlignment (keySettings, opts = {}) {
-  const Key = require('@fabric/core/types/key');
   let localPubkey = null;
   try {
-    if (keySettings) localPubkey = String(new Key(keySettings).pubkey || '').toLowerCase();
+    if (keySettings) {
+      const { restoreIdentity } = require('./identity');
+      const identity = restoreIdentity(Object.assign({}, keySettings, { account: 0, network: opts.network }));
+      localPubkey = String(identity.pubkey || '').toLowerCase();
+    }
   } catch (_) { /* ignore */ }
 
   const baseUrl = opts.baseUrl || hubRpcBase();

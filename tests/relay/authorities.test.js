@@ -5,9 +5,10 @@ const assert = require('node:assert');
 
 const MissionManager = require('../../services/MissionManager');
 const { createIdentity, keyFromIdentity } = require('../../functions/identity');
+const { FEDERATION_WITNESS } = require('@fabric/core/functions/signingTags');
 
 function sign (identity, message) {
-  return keyFromIdentity(identity).signSchnorr(Buffer.from(message)).toString('hex');
+  return keyFromIdentity(identity).signSchnorr(Buffer.from(message), FEDERATION_WITNESS).toString('hex');
 }
 
 test('mission defaults authorities to the pubkey creator (1-of-1)', async () => {

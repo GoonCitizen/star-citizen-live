@@ -3,10 +3,9 @@
 /**
  * Groups tab — create and manage k-of-n Schnorr multisig groups.
  *
- * Talks to the relay's group API (`/services/star-citizen/groups`). When the
- * Electron identity is unlocked, the panel logs in via a Schnorr envelope
- * (`POST …/auth`) and acts as that pubkey; mutations are attributed to the
- * authenticated session. Without an identity (browser mode / locked), the
+ * Talks to the relay's group API (`/services/star-citizen/groups`). In the
+ * app, loopback calls act as the unlocked identity; in a browser, as the
+ * Passport session (cookie). Without either (locked, or signed out), the
  * panel is read-only and shows how to enable management.
  */
 
@@ -40,6 +39,7 @@ const GroupContractSummary = require('./GroupContractSummary');
 const { pubkeysMatch } = require('@fabric/http/functions/fabricPubkey');
 const StarMap = require('./StarMap');
 const { profileHref } = require('../functions/identityActor');
+const { currentViewer } = require('../functions/goonCitizenClientEnvironment');
 
 const BASE = '/services/star-citizen';
 const PUBKEY_RE = /^0[23][0-9a-f]{64}$/;
@@ -225,10 +225,6 @@ function writeRosterMode (mode) {
   } catch (_) { /* ignore */ }
 }
 
-function identityBridge () {
-  return (typeof window !== 'undefined' && window.electronAPI && window.electronAPI.identity) || null;
-}
-
 function shortKey (pubkey) {
   return pubkey ? pubkey.slice(0, 10) + '…' + pubkey.slice(-6) : '—';
 }
@@ -387,44 +383,16 @@ class Groups extends React.Component {
     await this.refresh(token);
   }
 
-  /** Schnorr login via the Electron identity bridge; SiteLogin Bearer fallback. */
+  /**
+   * Who acts here: the app's identity, else this browser's Passport session
+   * (cookie). Returns a Bearer token only when the embedder holds one.
+   */
   async login () {
-    const bridge = identityBridge();
-    if (bridge) {
-      try {
-        const info = await bridge.get();
-        if (info && info.unlocked) {
-          const envelope = await bridge.signEnvelope({ intent: 'login', ts: new Date().toISOString() });
-          if (envelope && !envelope.error) {
-            const res = await fetch(`${BASE}/auth`, {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify(envelope)
-            });
-            if (res.ok) {
-              const json = await res.json();
-              const token = json.data && json.data.token;
-              this.setState({ token, pubkey: json.data && json.data.pubkey });
-              return token;
-            }
-          }
-        }
-      } catch (_) { /* fall through */ }
-    }
-    const propTok = this.props && this.props.authToken;
-    if (propTok) {
-      this.setState({ token: propTok });
-      return propTok;
-    }
-    try {
-      const { readStoredSiteLoginToken } = require('../functions/goonCitizenClientEnvironment');
-      const siteTok = readStoredSiteLoginToken();
-      if (siteTok) {
-        this.setState({ token: siteTok });
-        return siteTok;
-      }
-    } catch (_) { /* ignore */ }
-    return null;
+    const viewer = await currentViewer();
+    if (viewer) this.setState({ pubkey: viewer.pubkey });
+    const propTok = (this.props && this.props.authToken) || null;
+    if (propTok) this.setState({ token: propTok });
+    return propTok;
   }
 
   headers (token) {
@@ -1053,33 +1021,6 @@ class Groups extends React.Component {
     }
   }
 
-  async proposeWithdraw () {
-    const g = this.state.groups.find((x) => x.id === this.state.selectedId);
-    if (!g || this.state.busy) return;
-    this.setState({ busy: true, error: null, notice: null });
-    try {
-      const res = await fetch(`${BASE}/groups/${encodeURIComponent(g.id)}/withdrawals`, {
-        method: 'POST',
-        headers: this.headers(),
-        body: JSON.stringify({ action: 'spend', utxoAgeBlocks: 0 })
-      });
-      const json = await res.json();
-      if (!res.ok) throw new Error(json.error || res.statusText);
-      const pref = json.data && json.data.prepared && json.data.prepared.preferredTierId;
-      const tiers = (json.data && json.data.prepared && json.data.prepared.activeTiers) || [];
-      const tip = tiers.length
-        ? `Active tier: ${tiers[0].id} (${tiers[0].threshold}-of-n). Address ready — fund UTXO then complete withdrawal.`
-        : 'Withdrawal proposed.';
-      this.setState({
-        busy: false,
-        notice: tip + (pref ? ` Preferred: ${pref}` : '')
-      });
-      await this.loadGroupExtras(g.id);
-    } catch (e) {
-      this.setState({ busy: false, error: e.message || String(e) });
-    }
-  }
-
   renderCreate (opts = {}) {
     const extras = this.parseMembers();
     const badKey = extras.find((k) => !PUBKEY_RE.test(k));
@@ -1360,7 +1301,7 @@ class Groups extends React.Component {
     );
   }
 
-  renderWalletTab (g, isCreator) {
+  renderWalletTab (g) {
     const gw = this.state.groupWallet;
     if (this.state.detailLoading && !gw) {
       return React.createElement('div', { className: 'gp-hint' }, 'Loading wallet…');
@@ -1372,10 +1313,8 @@ class Groups extends React.Component {
       React.createElement(GroupBitcoinPanel, {
         wallet: gw,
         bitcoinEnable: this.props.bitcoinEnable,
-        isCreator,
-        busy: this.state.busy,
+        headers: () => this.headers(),
         onCopy: (addr) => this.copy(addr),
-        onProposeWithdraw: () => this.proposeWithdraw(),
         onRefresh: () => this.loadGroupExtras(g.id)
       })
     );
@@ -1781,7 +1720,7 @@ class Groups extends React.Component {
 
     let body = null;
     if (tab === 'fleets') body = this.renderFleetsTab();
-    else if (tab === 'wallet') body = this.renderWalletTab(g, isCreator);
+    else if (tab === 'wallet') body = this.renderWalletTab(g);
     else if (tab === 'proposals') body = this.renderProposalsTab(canManage);
     else if (tab === 'applications') body = this.renderApplicationsTab(isCreator);
     else if (tab === 'chat') body = this.renderChat(g, canManage);

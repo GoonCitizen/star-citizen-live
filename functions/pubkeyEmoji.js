@@ -1,7 +1,7 @@
 'use strict';
 
 /**
- * In-person visual fingerprint of a Fabric id / pubkey (device-link confirm).
+ * In-person visual fingerprint of a Fabric id / pubkey.
  * SHA-256 of the canonical id, then eight glyphs from a 64-emoji alphabet.
  * Dashboard bundle cannot use Node `crypto.createHash` (browserCrypto shim).
  */

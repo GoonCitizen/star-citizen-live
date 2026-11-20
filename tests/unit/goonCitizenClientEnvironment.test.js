@@ -9,7 +9,8 @@ const {
   classifyLiveRelayProbe,
   isLiveRelayPeeringJson,
   isLiveRelayShipsJson,
-  readStoredSiteLoginToken,
+  fetchSiteSession,
+  endSiteSession,
   isGoonCitizenVisitor
 } = require('../../functions/goonCitizenClientEnvironment');
 const { dashboardAuthHeaders } = require('../../functions/dashboardAuthHeaders');
@@ -45,20 +46,20 @@ describe('goonCitizenClientEnvironment', () => {
     assert.equal(classifyLiveRelayProbe({ status: 502 }).runtime, GC_UI_RUNTIME_STATIC);
   });
 
-  it('reads SiteLogin token from delegation then session', () => {
-    const mem = Object.create(null);
-    const storage = {
-      getItem: (k) => (Object.prototype.hasOwnProperty.call(mem, k) ? mem[k] : null),
-      setItem: (k, v) => { mem[k] = String(v); }
+  it('reads the Passport session from /sessions/current with the cookie', async () => {
+    const calls = [];
+    const session = { identity: { id: 'id1x', pubkey: '02' + 'ab'.repeat(32) }, network: 'regtest' };
+    const ok = async (url, init) => {
+      calls.push({ url, init });
+      return { ok: true, json: async () => ({ session }) };
     };
-    assert.equal(readStoredSiteLoginToken(storage), null);
-    storage.setItem('fabric.identity.session', JSON.stringify({
-      identity: { id: 'x' },
-      delegationToken: 'sess-tok'
-    }));
-    assert.equal(readStoredSiteLoginToken(storage), 'sess-tok');
-    storage.setItem('fabric.delegation', JSON.stringify({ token: 'del-tok' }));
-    assert.equal(readStoredSiteLoginToken(storage), 'del-tok');
+    assert.deepEqual(await fetchSiteSession(ok, 'https://relay.goon.vc/'), session);
+    assert.equal(calls[0].url, 'https://relay.goon.vc/sessions/current');
+    assert.equal(calls[0].init.credentials, 'same-origin');
+    assert.equal(await fetchSiteSession(async () => ({ ok: false })), null);
+    assert.equal(await fetchSiteSession(async () => ({ ok: true, json: async () => ({ session: { identity: {} } }) })), null);
+    assert.equal(await fetchSiteSession(async () => { throw new Error('offline'); }), null);
+    assert.equal(await endSiteSession(async (url, init) => ({ ok: init.method === 'DELETE' })), true);
   });
 
   it('isGoonCitizenVisitor is true only on live API without auth', () => {
@@ -67,6 +68,10 @@ describe('goonCitizenClientEnvironment', () => {
     assert.equal(isGoonCitizenVisitor({
       runtime: GC_UI_RUNTIME_LIVE,
       auth: { siteToken: 'abc' }
+    }), true, 'a stored token no longer counts');
+    assert.equal(isGoonCitizenVisitor({
+      runtime: GC_UI_RUNTIME_LIVE,
+      auth: { siteSession: { identity: { pubkey: '02' + 'ab'.repeat(32) } } }
     }), false);
     assert.equal(isGoonCitizenVisitor({
       runtime: GC_UI_RUNTIME_LIVE,
@@ -74,15 +79,10 @@ describe('goonCitizenClientEnvironment', () => {
     }), false);
   });
 
-  it('dashboardAuthHeaders attaches Bearer from storage', () => {
-    const mem = Object.create(null);
-    const storage = {
-      getItem: (k) => (Object.prototype.hasOwnProperty.call(mem, k) ? mem[k] : null),
-      setItem: (k, v) => { mem[k] = String(v); }
-    };
-    storage.setItem('fabric.delegation', JSON.stringify({ token: 'bear' }));
-    const h = dashboardAuthHeaders({ storage, headers: { Accept: 'application/json' } });
-    assert.equal(h.Authorization, 'Bearer bear');
+  it('dashboardAuthHeaders adds Bearer only for an explicit token', () => {
+    const h = dashboardAuthHeaders({ headers: { Accept: 'application/json' } });
+    assert.equal(h.Authorization, undefined);
     assert.equal(h.Accept, 'application/json');
+    assert.equal(dashboardAuthHeaders({ token: 'bear' }).Authorization, 'Bearer bear');
   });
 });

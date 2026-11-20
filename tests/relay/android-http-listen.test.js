@@ -76,3 +76,17 @@ test('android start serves HTTP before a slow register store finishes', async ()
     await svc.stop();
   }
 });
+
+test('android CORS answers only the app WebView and this relay, not other localhost pages', () => {
+  const svc = new LiveRelay({ mode: 'android', port: 3041, fabric: { enable: false }, discord: { enable: false }, missions: { enable: false }, logfile: null });
+  const cors = (origin) => svc._localDashboardCorsHeaders({ headers: { origin } })['Access-Control-Allow-Origin'];
+  assert.equal(cors('https://localhost'), 'https://localhost');
+  assert.equal(cors('capacitor://localhost'), 'capacitor://localhost');
+  assert.equal(cors('http://127.0.0.1:3041'), 'http://127.0.0.1:3041');
+  assert.equal(cors('http://localhost:8080'), undefined, 'another app\'s local server');
+  assert.equal(cors('https://localhost:4443'), undefined);
+  assert.equal(cors('capacitor://evil.example'), undefined);
+  assert.equal(cors(''), undefined);
+  const desktop = new LiveRelay({ port: 3041, fabric: { enable: false }, discord: { enable: false }, missions: { enable: false }, logfile: null });
+  assert.deepEqual(desktop._localDashboardCorsHeaders({ headers: { origin: 'https://localhost' } }), {});
+});

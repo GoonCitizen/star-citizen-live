@@ -87,20 +87,12 @@ test('nickname setting sanitizes and round-trips; empty clears', async () => {
   fs.rmSync(dir, { recursive: true, force: true });
 });
 
-test('fabricShareEncoding sanitizes to hex or base64; default is unset (runtime base64)', async () => {
+test('fabricShareEncoding is gone: fabric: shares are always canonical base64url', async () => {
   const dir = tmpDir();
   const store = new Store({ path: path.join(dir, 'register') });
   await store.start();
-  assert.ok(settingsStore.ALLOWED_KEYS.includes('fabricShareEncoding'));
-  assert.strictEqual(settingsStore.sanitizeFabricShareEncoding('HEX'), 'hex');
-  assert.strictEqual(settingsStore.sanitizeFabricShareEncoding('b64'), 'base64');
-  assert.strictEqual(settingsStore.sanitizeFabricShareEncoding('nope'), null);
-  settingsStore.putSetting(store, 'fabricShareEncoding', 'hex');
-  assert.strictEqual(settingsStore.loadSettings(store).fabricShareEncoding, 'hex');
-  settingsStore.putSetting(store, 'fabricShareEncoding', 'base64');
-  assert.strictEqual(settingsStore.loadSettings(store).fabricShareEncoding, 'base64');
-  settingsStore.putSetting(store, 'fabricShareEncoding', null);
-  assert.strictEqual(settingsStore.loadSettings(store).fabricShareEncoding, undefined);
+  assert.ok(!settingsStore.ALLOWED_KEYS.includes('fabricShareEncoding'));
+  assert.throws(() => settingsStore.putSetting(store, 'fabricShareEncoding', 'hex'), /unknown setting/);
   await store.stop();
   fs.rmSync(dir, { recursive: true, force: true });
 });
@@ -125,25 +117,8 @@ test('desktop notification settings round-trip on the Fabric Store', async () =>
   fs.rmSync(dir, { recursive: true, force: true });
 });
 
-test('pendingDeviceLinkOffer persists without QR bytes', async () => {
-  const dir = tmpDir();
-  const store = new Store({ path: path.join(dir, 'register') });
-  await store.start();
-  assert.ok(settingsStore.ALLOWED_KEYS.includes('pendingDeviceLinkOffer'));
-  settingsStore.putSetting(store, 'pendingDeviceLinkOffer', {
-    sessionId: 'ab'.repeat(24),
-    hubBase: 'https://relay.goon.vc',
-    nonce: 'cd'.repeat(32),
-    qrDataUrl: 'data:image/png;base64,AAAA'
-  });
-  const loaded = settingsStore.loadSettings(store);
-  assert.equal(loaded.pendingDeviceLinkOffer.sessionId, 'ab'.repeat(24));
-  assert.equal(loaded.pendingDeviceLinkOffer.hubBase, 'https://relay.goon.vc');
-  assert.equal(loaded.pendingDeviceLinkOffer.qrDataUrl, undefined);
-  settingsStore.putSetting(store, 'pendingDeviceLinkOffer', null);
-  assert.equal(settingsStore.loadSettings(store).pendingDeviceLinkOffer, undefined);
-  await store.stop();
-  fs.rmSync(dir, { recursive: true, force: true });
+test('retired device-link settings are not kept', () => {
+  assert.ok(!settingsStore.ALLOWED_KEYS.includes('pendingDeviceLinkOffer'));
 });
 
 test('legacy settings.json is imported into the Fabric Store once, then retired', async () => {
@@ -172,13 +147,12 @@ test('GET /settings and PUT /settings/:name persist and flag restarts', async ()
     assert.ok(list.body.runtime);
     assert.ok(list.body.allowedKeys.includes('groupChatSeal'));
     assert.ok(list.body.allowedKeys.includes('sharePresence'));
-    assert.ok(list.body.allowedKeys.includes('fabricShareEncoding'));
+    assert.ok(!list.body.allowedKeys.includes('fabricShareEncoding'));
     assert.ok(list.body.allowedKeys.includes('shareDiscordCatalog'));
     assert.ok(list.body.allowedKeys.includes('sharePlaytimes'));
     assert.ok(list.body.allowedKeys.includes('shareFiles'));
     assert.strictEqual(list.body.runtime.groupChatSeal, false);
     assert.strictEqual(list.body.runtime.sharePresence, false);
-    assert.strictEqual(list.body.runtime.fabricShareEncoding, 'base64');
     assert.strictEqual(list.body.runtime.shareDiscordCatalog, false);
     assert.strictEqual(list.body.runtime.sharePlaytimes, false);
     assert.strictEqual(list.body.runtime.shareFiles, false);
@@ -205,11 +179,7 @@ test('GET /settings and PUT /settings/:name persist and flag restarts', async ()
     assert.strictEqual(afterPresence.body.runtime.presenceVisibility, 'peers');
 
     const enc = await request(port, 'PUT', '/settings/fabricShareEncoding', { value: 'hex' });
-    assert.strictEqual(enc.status, 200);
-    assert.strictEqual(enc.body.requiresRestart, false);
-    const afterEnc = await request(port, 'GET', '/settings');
-    assert.strictEqual(afterEnc.body.runtime.fabricShareEncoding, 'hex');
-    assert.strictEqual(settingsStore.loadSettings(svc.registerStore).fabricShareEncoding, 'hex');
+    assert.notStrictEqual(enc.status, 200);
 
     const catalogShare = await request(port, 'PUT', '/settings/shareDiscordCatalog', { value: true });
     assert.strictEqual(catalogShare.status, 200);
@@ -409,7 +379,7 @@ test('PUT /settings/offlineMode stops sharing and keeps saved share prefs', asyn
     assert.strictEqual(listed.body.settings.offlineMode, true);
     assert.strictEqual(listed.body.settings.shareLogsGlobal, true);
 
-    const links = await request(port, 'POST', '/device-links', {});
+    const links = await request(port, 'POST', '/delegations', {});
     assert.strictEqual(links.status, 503);
     assert.match(links.body.error, /Offline Mode/);
     const peers = await request(port, 'POST', '/peers', { address: 'relay.goon.vc:7777' });

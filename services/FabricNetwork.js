@@ -5,7 +5,8 @@
  *
  * Wire Messages:
  *   - P2P_CHAT_MESSAGE     — network-wide `global` chat (Peer auto-relays)
- *   - CONTRACT_MESSAGE     — GoonCitizen app types + per-Group Federation types
+ *   - CONTRACT_MESSAGE     — GoonCitizen app types + per-Group Federation types,
+ *                            plus core named-federation bodies (group wallets)
  *   - CONTRACT_PUBLISH     — GoonCitizen genesis + per-Group Federation genesis
  *
  * Durable outbound frames set AMP `parent` to the previous signed `Message.id`
@@ -125,8 +126,7 @@ const APP_RELAY_TYPES = new Set([
   CONTRACT_BODY_TYPES.NoteUpdate || 'NoteUpdate',
   CONTRACT_BODY_TYPES.GroupDataShare || 'GroupDataShare',
   CONTRACT_BODY_TYPES.DiscordCatalogShare || 'DiscordCatalogShare',
-  CONTRACT_BODY_TYPES.IdentityCrossSign || 'IdentityCrossSign',
-  CONTRACT_BODY_TYPES.IdentityCrossSignRevoke || 'IdentityCrossSignRevoke',
+  CONTRACT_BODY_TYPES.DelegationShare || 'DelegationShare',
   CONTRACT_BODY_TYPES.DeviceDataShare || 'DeviceDataShare',
   CONTRACT_BODY_TYPES.GroupVoiceJoin || 'GroupVoiceJoin',
   CONTRACT_BODY_TYPES.GroupVoiceLeave || 'GroupVoiceLeave',
@@ -277,10 +277,9 @@ function attachAppHandlers (peer, handlers = {}, _opts = {}) {
         } else if ((appType === CONTRACT_BODY_TYPES.DiscordCatalogShare || appType === 'DiscordCatalogShare') &&
           typeof handlers.onDiscordCatalogShare === 'function') {
           handlers.onDiscordCatalogShare(object, signer, meta);
-        } else if ((appType === CONTRACT_BODY_TYPES.IdentityCrossSign || appType === 'IdentityCrossSign' ||
-          appType === CONTRACT_BODY_TYPES.IdentityCrossSignRevoke || appType === 'IdentityCrossSignRevoke') &&
-          typeof handlers.onIdentityCrossSign === 'function') {
-          handlers.onIdentityCrossSign(object, signer, meta);
+        } else if ((appType === CONTRACT_BODY_TYPES.DelegationShare || appType === 'DelegationShare') &&
+          typeof handlers.onDelegationShare === 'function') {
+          handlers.onDelegationShare(object, signer, meta);
         } else if ((appType === CONTRACT_BODY_TYPES.DeviceDataShare || appType === 'DeviceDataShare') &&
           typeof handlers.onDeviceDataShare === 'function') {
           handlers.onDeviceDataShare(object, signer, meta);
@@ -288,10 +287,37 @@ function attachAppHandlers (peer, handlers = {}, _opts = {}) {
         return;
       }
 
-      if ((appType === CONTRACT_BODY_TYPES.IdentityCrossSign || appType === 'IdentityCrossSign' ||
-        appType === CONTRACT_BODY_TYPES.IdentityCrossSignRevoke || appType === 'IdentityCrossSignRevoke') &&
-        typeof handlers.onIdentityCrossSign === 'function') {
-        handlers.onIdentityCrossSign(object, signer, meta);
+      if ((appType === CONTRACT_BODY_TYPES.DelegationShare || appType === 'DelegationShare') &&
+        typeof handlers.onDelegationShare === 'function') {
+        handlers.onDelegationShare(object, signer, meta);
+        return;
+      }
+
+      // Named-federation messages (group wallets): namespace = federation id,
+      // trusted only by the verified frame author.
+      if (require('@fabric/core/types/federation').isMessage(body)) {
+        if (ev.signer && typeof handlers.onFederationMessage === 'function') {
+          handlers.onFederationMessage(body, ev.signer, meta);
+        }
+        return;
+      }
+
+      // Market fraud proofs are self-verifying bundles (core `types/witness`):
+      // namespace-independent, local reputation only.
+      if (appType === 'FraudProof' && typeof handlers.onFraudProof === 'function') {
+        handlers.onFraudProof(object, signer, meta);
+        return;
+      }
+      if ((appType === 'AvailabilityChallenge') && typeof handlers.onAvailabilityChallenge === 'function') {
+        handlers.onAvailabilityChallenge(object, signer, meta);
+        return;
+      }
+      if (typeof appType === 'string' && appType.startsWith('Channel') && typeof handlers.onChannelMessage === 'function') {
+        handlers.onChannelMessage(object, signer, meta);
+        return;
+      }
+      if (appType === 'WatchtowerAppointment' && typeof handlers.onWatchtowerAppointment === 'function') {
+        handlers.onWatchtowerAppointment(object, signer, meta);
         return;
       }
 
@@ -597,15 +623,16 @@ class FabricNetwork extends EventEmitter {
       || (this._peer && this._peer.key)
       || (this._identity ? keyFromIdentity(this._identity) : null);
     if (!key) throw new Error('signing key required (unlock identity)');
-    const wireBody = typeof body === 'string' ? body : JSON.stringify(body);
-    const msg = Message.fromVector([vectorType, wireBody]);
-    const parentLib = require('../functions/fabricMessageParent');
+    // Peers drop JSON bodies of these types; they travel as typed fields.
+    const msg = Message.LEGACY_BODY_TYPES.includes(Message.canonicalTypeName(vectorType))
+      ? Message.fromLegacyBody(vectorType, typeof body === 'string' ? JSON.parse(body) : body)
+      : Message.fromVector([vectorType, typeof body === 'string' ? body : JSON.stringify(body)]);
     const skip = opts.chain === false || FabricNetwork.skipsParentChain(vectorType);
     let parent = opts.parent;
     if (parent == null && !skip) {
-      parent = this._outboundMessageTip || parentLib.ZERO_PARENT;
+      parent = this._outboundMessageTip || Message.ZERO_PARENT;
     }
-    if (parent != null) parentLib.setMessageParent(msg, parent);
+    if (parent != null) Message.setMessageParent(msg, parent);
     msg.signWithKey(key);
     if (!skip) this._outboundMessageTip = msg.id;
     return msg;
@@ -714,27 +741,21 @@ class FabricNetwork extends EventEmitter {
   }
 
   /**
-   * Encode a signed Message as opaque fabric:&lt;payload&gt; (base64 body by default, or hex).
+   * Encode a signed Message as a `fabric:` share.
    * @param {object} message
-   * @param {Object} [opts]
-   * @param {string} [opts.encoding] `'base64'` (default) or `'hex'`
-   * @returns {{ message: object, buffer: Buffer, messageHex: string, messageBase64: string, protocolUrl: string, protocolUrlHex: string, protocolUrlBase64: string }}
+   * @returns {{ message: object, buffer: Buffer, messageHex: string, protocolUrl: string }}
    */
-  encodeOpaqueMessage (message, opts = {}) {
-    const { buildOpaqueFabricUrl, normalizeOpaqueShareEncoding } = require('../functions/groupShareMessage');
+  encodeOpaqueMessage (message) {
+    const { buildOpaqueFabricUrl } = require('../functions/groupShareMessage');
     if (!message || typeof message.toBuffer !== 'function') {
       throw new Error('Fabric Message required');
     }
     const buffer = message.toBuffer();
-    const encoding = normalizeOpaqueShareEncoding(opts.encoding);
     return {
       message,
       buffer,
       messageHex: buffer.toString('hex'),
-      messageBase64: buffer.toString('base64'),
-      protocolUrl: buildOpaqueFabricUrl(buffer, { encoding }),
-      protocolUrlHex: buildOpaqueFabricUrl(buffer, { encoding: 'hex' }),
-      protocolUrlBase64: buildOpaqueFabricUrl(buffer, { encoding: 'base64' })
+      protocolUrl: buildOpaqueFabricUrl(buffer)
     };
   }
 
@@ -757,8 +778,10 @@ class FabricNetwork extends EventEmitter {
   async _startInner () {
     const Peer = require('@fabric/core/types/peer');
     const { masterKeyFromIdentity } = require('../functions/identity');
-    // Peer derives FABRIC_KEY_DERIVATION_PATH from the HD master xprv.
+    // Peer derives the account's Fabric identity key (m/44'/F'/n'/0/0) from
+    // the HD master xprv, the account index, and the network.
     const master = masterKeyFromIdentity(this._identity);
+    const account = Number.isInteger(this._identity.account) ? this._identity.account : 0;
 
     const peersDb = this.settings.peersDb != null
       ? this.settings.peersDb
@@ -776,7 +799,8 @@ class FabricNetwork extends EventEmitter {
       networking: this.settings.networking !== false,
       reconnectToKnownPeers: this.settings.reconnectToKnownPeers === true,
       listenPortAttempts: this.settings.listenPortAttempts || 20,
-      key: { xprv: master.xprv },
+      key: { xprv: master.xprv, account },
+      network: this._identity.network || 'regtest',
       upnp: false,
       constraints: {
         peers: { max: maxPeers }
@@ -934,13 +958,16 @@ class FabricNetwork extends EventEmitter {
         this.emit('federationInviteResponse', { object, source, meta });
         this._forward('onFederationInviteResponse', object, source, meta);
       },
-      onIdentityCrossSign: (object, source, meta) => {
-        this.emit('identityCrossSign', { object, source, meta });
-        this._forward('onIdentityCrossSign', object, source, meta);
+      onDelegationShare: (object, source, meta) => {
+        this.emit('delegationShare', { object, source, meta });
+        this._forward('onDelegationShare', object, source, meta);
       },
       onDeviceDataShare: (object, source, meta) => {
         this.emit('deviceDataShare', { object, source, meta });
         this._forward('onDeviceDataShare', object, source, meta);
+      },
+      onFederationMessage: (body, signer, meta) => {
+        this._forward('onFederationMessage', body, signer, meta);
       },
       onInventoryRequest: (ev) => {
         this.emit('inventoryRequest', ev);
@@ -1423,17 +1450,17 @@ class FabricNetwork extends EventEmitter {
   }
 
   /**
-   * Gossip an IdentityCrossSign / IdentityCrossSignRevoke under GoonCitizen.
-   * @param {Object} payload verified-ready body from signCrossSign
+   * Relay one identity grant or revoke frame under GoonCitizen.
+   * @param {Object} payload
+   * @param {string} payload.frame `fabric:` `DELEGATION_GRANT` or `DELEGATION_REVOKE`
    */
-  publishIdentityCrossSign (payload) {
-    const type = (payload && (payload.type || payload['@type'])) ||
-      CONTRACT_BODY_TYPES.IdentityCrossSign || 'IdentityCrossSign';
-    return this._publishContractMessage(gooncitizenContractId(), type, Object.assign({}, payload));
+  publishDelegationShare (payload) {
+    const type = CONTRACT_BODY_TYPES.DelegationShare || 'DelegationShare';
+    return this._publishContractMessage(gooncitizenContractId(), type, { frame: String((payload && payload.frame) || '') });
   }
 
   /**
-   * Gossip a cluster-gated account snapshot after device-link.
+   * Gossip a cluster-gated account snapshot to linked signers.
    * @param {Object} payload DeviceDataShare fields
    */
   publishDeviceDataShare (payload) {
@@ -1842,10 +1869,10 @@ class FabricNetwork extends EventEmitter {
     if (!buf.length) return 0;
     const documentId = String(opts.documentId || '').trim().toLowerCase();
     if (!/^[0-9a-f]{64}$/.test(documentId)) return 0;
-    const manifest = require('@fabric/core/functions/documentBlobManifest');
+    const Document = require('@fabric/core/types/document');
     const key = this._peer && this._peer.key;
     if (!key) return 0;
-    const split = manifest.splitBlobs(buf, opts.chunkBytes, documentId);
+    const split = Document.split(buf, opts.chunkBytes, documentId);
     let wrote = 0;
     for (const b of split.blobs) {
       const fileObj = {
@@ -1886,6 +1913,44 @@ class FabricNetwork extends EventEmitter {
     return wrote;
   }
 
+  /**
+   * Publish a market artifact (`AvailabilityCommitment` / `AvailabilityResponse`
+   * / `FraudProof`) under the Fabric document-market namespace shared with Hub
+   * `services/challenge.js` (`SHA256('fabric-document-market')`).
+   * @param {string} type
+   * @param {object} object
+   */
+  publishMarketArtifact (type, object, opts = {}) {
+    return this._publishContractMessage(FabricNetwork.MARKET_CONTRACT_ID, type, object, opts);
+  }
+
+  /**
+   * File a signed `WatchtowerAppointment` with peered Fabric nodes under the
+   * watchtower contract (`sha256('fabric-watchtower')`).
+   * @param {object} appointment
+   * @param {object} [opts]
+   * @returns {object} signed Message
+   */
+  publishWatchtowerAppointment (appointment, opts = {}) {
+    const Watchtower = require('@fabric/core/services/watchtower');
+    return this._publishContractMessage(Watchtower.CONTRACT_ID, 'WatchtowerAppointment', appointment, opts);
+  }
+
+  /**
+   * Sign and relay a named-federation body (`@fabric/core` `Federation`
+   * message builders) as-is, so Hub and Passport members read the same frame.
+   * Signed even when the peer is down (relayed once it is up via sync).
+   * @param {Object} body Federation message (`contract` = federation id)
+   * @param {Object} [opts]
+   * @returns {Object} signed Message
+   */
+  publishFederationMessage (body, opts = {}) {
+    if (!body || !body.contract || body.contract !== body.federationId) {
+      throw new Error('federation message needs contract = federationId');
+    }
+    return this._signAndRelay(OUTER.CONTRACT_MESSAGE, body, opts);
+  }
+
   _publishContractMessage (contractId, type, object, opts = {}) {
     const pubkey = this._identity && this._identity.pubkey;
     if (!pubkey) throw new Error('identity required');
@@ -1906,6 +1971,7 @@ class FabricNetwork extends EventEmitter {
 }
 
 FabricNetwork.APP_RELAY_TYPES = APP_RELAY_TYPES;
+FabricNetwork.MARKET_CONTRACT_ID = require('crypto').createHash('sha256').update('fabric-document-market').digest('hex');
 FabricNetwork.PARENT_CHAIN_SKIP = PARENT_CHAIN_SKIP;
 FabricNetwork.skipsParentChain = function skipsParentChain (type) {
   return PARENT_CHAIN_SKIP.has(String(type || ''));

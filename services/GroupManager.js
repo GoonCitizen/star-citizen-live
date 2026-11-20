@@ -22,7 +22,7 @@ const EventEmitter = require('events');
 
 const Group = require('../types/Group');
 const { Store } = require('../types/Store');
-const { pubkeysMatch } = require('../functions/identity');
+const { pubkeysMatch, pubkeyXOnly } = require('../functions/identity');
 const {
   GROUP_CONTRACT_NAME,
   groupContractDefinition,
@@ -524,9 +524,12 @@ class GroupManager extends EventEmitter {
       { name: GROUP_CONTRACT_NAME, parentContractId: gooncitizenContractId() }
     );
 
-    // Fold roster from Statechain content when present.
+    // Fold roster from Statechain content when present. A batch that adds no
+    // entries carries nothing newer than this peer has, and a member added by a
+    // GroupChange (kept on the record, not the journal) must survive it.
     const content = merged.content || {};
-    if (Array.isArray(content.members) && content.members.length) {
+    const rosterKnown = Array.isArray(data.members) && data.members.length > 0;
+    if (Array.isArray(content.members) && content.members.length && (merged.applied > 0 || !rosterKnown)) {
       data.members = content.members.slice();
       if (Array.isArray(content.signers) && content.signers.length) {
         data.validators = content.signers.slice();
@@ -540,6 +543,9 @@ class GroupManager extends EventEmitter {
         data.validators = data.members.slice();
       }
       this._syncPolicyFromSigners(data);
+    }
+    if (content.cosigners && typeof content.cosigners === 'object') {
+      data.cosigners = Object.assign({}, data.cosigners, content.cosigners);
     }
     data.contractId = contractId;
     data._contractDefinition = definition;
@@ -716,7 +722,8 @@ class GroupManager extends EventEmitter {
   }
 
   /**
-   * Apply a remote GroupChange. Actions: member.add | member.remove | update.
+   * Apply a remote GroupChange. Actions: member.add | member.remove | update |
+   * cosigner.set (a member ties their wallet cosigner key to their identity).
    * Idempotent where possible. The AMP signer (`source`) is the capability —
    * `change.actor` is not trusted.
    * @param {Object} change
@@ -760,6 +767,26 @@ class GroupManager extends EventEmitter {
       data.members = data.members.filter((m) => m !== pubkey);
       data.validators = this._signerList(data).filter((m) => m !== pubkey);
       data.threshold = Math.min(data.threshold, data.validators.length || 1);
+      if (data.cosigners) delete data.cosigners[pubkeyXOnly(pubkey)];
+    } else if (action === 'cosigner.set') {
+      const { verifyGroupCosigner } = require('../functions/groupCosigner');
+      const record = {
+        member: String(change.member || '').toLowerCase(),
+        cosigner: String(change.cosigner || '').toLowerCase(),
+        proof: change.proof,
+        endorsement: change.endorsement,
+        network: String(change.network || '').toLowerCase()
+      };
+      if (!data.contractId || !verifyGroupCosigner(record, data.contractId)) {
+        return { group: new Group(data).toJSON(), applied: false, skipped: 'bad-cosigner' };
+      }
+      const x = pubkeyXOnly(record.member);
+      const held = data.cosigners && data.cosigners[x] && data.cosigners[x][record.network];
+      if (held && held.cosigner === record.cosigner) {
+        return { group: new Group(data).toJSON(), applied: false, skipped: 'unchanged' };
+      }
+      data.cosigners = Object.assign({}, data.cosigners);
+      data.cosigners[x] = Object.assign({}, data.cosigners[x], { [record.network]: record });
     } else if (action === 'update' && change.patch && typeof change.patch === 'object') {
       const patch = change.patch;
       if (patch.name !== undefined) data.name = String(patch.name || data.name);
@@ -811,7 +838,7 @@ class GroupManager extends EventEmitter {
     this._appendGroupStatechain(json.id, {
       id: changeId || this._id('gchg'),
       type: 'GroupChange',
-      message: {
+      message: Object.assign({
         id: changeId,
         action,
         groupId: json.id,
@@ -823,7 +850,14 @@ class GroupManager extends EventEmitter {
         via: change.via || null,
         inviteId: change.inviteId || null,
         ts: change.ts || new Date().toISOString()
-      },
+      }, action === 'cosigner.set'
+        ? {
+            cosigner: change.cosigner,
+            proof: change.proof,
+            endorsement: change.endorsement,
+            network: change.network
+          }
+        : {}),
       acceptedAt: change.ts || new Date().toISOString()
     });
     if (change.proposalId) {
@@ -859,6 +893,11 @@ class GroupManager extends EventEmitter {
       return this._pendingInviteAuthorizesMemberAdd(data, change, signer);
     }
     if (action === 'member.remove') return this.sameActor(data.creator, signer);
+    if (action === 'cosigner.set') {
+      const member = String((change && change.member) || '');
+      return pubkeysMatch(member, signer) &&
+        (data.members || []).some((m) => pubkeysMatch(m, member));
+    }
     if (action === 'update') {
       const p = patch && typeof patch === 'object' ? patch : {};
       const { isPinnedMessagesOnlyPatch } = require('../functions/chatMessagePins');
@@ -1474,6 +1513,36 @@ class GroupManager extends EventEmitter {
       signature: opts.signature
     });
     return result.group;
+  }
+
+  /**
+   * Tie a member's wallet cosigner key to their identity in a group. A claim
+   * about the member's own keys, so it applies at once (no vote) and is
+   * published as a GroupChange.
+   * @param {string} groupId
+   * @param {Object} record From `createGroupCosigner` (`member` must be `actor`).
+   * @param {string} actor Member identity pubkey.
+   * @returns {{ group: (Object|null), applied: boolean, skipped: (string|undefined) }}
+   */
+  setCosigner (groupId, record = {}, actor) {
+    const group = this.getGroup(groupId);
+    if (!group) throw new Error('group not found');
+    const change = {
+      id: this._id('gchg'),
+      action: 'cosigner.set',
+      groupId: group.id,
+      contractId: group.contractId || null,
+      actor,
+      member: record.member,
+      cosigner: record.cosigner,
+      proof: record.proof,
+      endorsement: record.endorsement,
+      network: record.network,
+      ts: new Date().toISOString()
+    };
+    const result = this.ingestGroupChange(change, actor);
+    if (result.applied) this.emit('group:local-change', change);
+    return result;
   }
 
   /**

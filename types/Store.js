@@ -27,6 +27,8 @@ const COLLECTIONS = [
   'groupinvites', // FederationContractInvite rows (survive restart)
   'groupchanges', // applied GroupChange dedupe / history
   'groupchangeproposals', // pending GroupChangeProposal + votes (k-of-n adopt)
+  'groupfederations', // every named-federation descriptor a group's wallet has had (services/GroupWallets.js)
+  'groupwithdrawals', // federation withdrawal requests + signatures (services/GroupWallets.js)
   'contractmessages', // ARC multi-origin GroupChat/GroupChange fold (@fabric/core contractMessageAccumulate)
   'contractmessagecommits', // ARC 2PC sidecar (received/receipt; does not alter tip digest)
   'settings', // operator settings records { id: key, value } (functions/settingsStore.js)
@@ -42,6 +44,7 @@ const COLLECTIONS = [
   'clustersync', // last DeviceDataShare collection + sibling LAN/WebRTC dial hints
   'documents', // this node's file catalog (functions/localDocuments.js) — not hub.fabric.pub
   'documentoffers', // remote Fabric inventory listings (functions/documentOffers.js)
+  'markettelemetry', // local-only ProviderTelemetry export (services/MarketManager.js)
   'locationreports' // node-local QT / presence sightings (functions/locationReports.js)
 ];
 

@@ -125,8 +125,7 @@ async function injectDesktopIdentity (page, pubkey) {
           queueMicrotask(() => cb(Object.assign({}, summary)));
           return () => {};
         },
-        signEnvelope: async () => ({ error: 'sandbox: signing not available' }),
-        signMessage: async () => ({ error: 'sandbox: signing not available' })
+        signEnvelope: async () => ({ error: 'sandbox: signing not available' })
       }
     };
   }, pubkey);

@@ -2,8 +2,8 @@
 
 /**
  * Cluster sync HTTP client (GET/POST `/identity/cluster/sync`).
- * Loopback dashboard uses the session cookie / no Bearer; hosted SPA may pass
- * `authToken` from the site-login store.
+ * Browsers send their Passport session cookie; a native client passes its
+ * Bearer token as `authToken`.
  */
 
 function _bases (origin) {
@@ -17,23 +17,9 @@ function _bases (origin) {
 function _headers (opts, json) {
   const headers = { Accept: 'application/json' };
   if (json) headers['Content-Type'] = 'application/json';
-  const token = opts.authToken || _storedToken();
+  const token = opts.authToken || null;
   if (token) headers.Authorization = 'Bearer ' + token;
   return headers;
-}
-
-function _storedToken () {
-  try {
-    if (typeof localStorage === 'undefined') return null;
-    for (const key of ['fabric.identity.session', 'fabric.delegation']) {
-      const raw = localStorage.getItem(key);
-      if (!raw) continue;
-      const parsed = JSON.parse(raw);
-      const token = parsed && (parsed.token || parsed.delegationToken);
-      if (token) return String(token);
-    }
-  } catch (_) { /* ignore */ }
-  return null;
 }
 
 async function _get (origin, opts = {}) {
@@ -140,14 +126,10 @@ function dialClusterSync (origin, addresses, opts = {}) {
   }));
 }
 
-function nudgeCrossSign (origin, opts = {}) {
-  return publishClusterSync(origin, Object.assign({}, opts, { body: { crossSign: true } }));
-}
 
 module.exports = {
   fetchClusterSync,
   publishClusterSync,
   meshClusterSync,
-  dialClusterSync,
-  nudgeCrossSign
+  dialClusterSync
 };

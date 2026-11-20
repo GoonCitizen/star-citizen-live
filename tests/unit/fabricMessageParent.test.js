@@ -13,7 +13,7 @@ const {
   createCollection
 } = require('../../functions/fabricMessageCollection');
 const { summarizeMessage } = require('../../functions/fabricMessageLog');
-const parentLib = require('../../functions/fabricMessageParent');
+const Message = require('@fabric/core/types/message');
 const FabricNetwork = require('../../services/FabricNetwork');
 
 describe('Fabric Message parent chain (GoonCitizen)', () => {
@@ -25,10 +25,10 @@ describe('Fabric Message parent chain (GoonCitizen)', () => {
     const offer = net._signMessage('P2P_PEERING_OFFER', JSON.stringify({ host: '127.0.0.1', port: 7777 }), { key });
     const c = net._signMessage('P2P_CHAT_MESSAGE', 'o7 three', { key });
 
-    assert.equal(parentLib.parentHexOf(a), parentLib.ZERO_PARENT);
-    assert.equal(parentLib.parentHexOf(b), a.id);
-    assert.ok(parentLib.isZeroParent(parentLib.parentHexOf(offer)));
-    assert.equal(parentLib.parentHexOf(c), b.id);
+    assert.equal(Message.parentHexOf(a), Message.ZERO_PARENT);
+    assert.equal(Message.parentHexOf(b), a.id);
+    assert.ok(Message.isZeroParent(Message.parentHexOf(offer)));
+    assert.equal(Message.parentHexOf(c), b.id);
     assert.ok(a.verifyWithKey(key));
     assert.ok(b.verifyWithKey(key));
     assert.ok(c.verifyWithKey(key));
